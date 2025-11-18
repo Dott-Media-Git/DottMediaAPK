@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -25,8 +26,8 @@ jobs:
       - name: Build Expo web app
         run: npm run build:web
 
-      - name: Install Firebase CLI
-        run: npm install -g firebase-tools
+      - name: Install Firebase CLI locally
+        run: npm install firebase-tools --save-dev
 
       - name: Verify Firebase CLI
         run: npx firebase --version
@@ -41,7 +42,7 @@ jobs:
       - name: Debug deployment environment
         run: |
           MASKED_TOKEN="${FIREBASE_TOKEN:0:5}****"
-          echo "Deploying to Firebase with token: ${MASKED_TOKEN}"
+          echo "Deploying to Firebase with token: $MASKED_TOKEN"
 
       - name: Deploy to Firebase Hosting
         run: npx firebase deploy --only hosting
