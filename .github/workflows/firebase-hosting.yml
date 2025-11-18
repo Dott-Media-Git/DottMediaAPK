@@ -39,7 +39,9 @@ jobs:
           fi
 
       - name: Debug deployment environment
-        run: echo "Deploying to Firebase with token: ${FIREBASE_TOKEN:0:5}****"
+        run: |
+          MASKED_TOKEN="${FIREBASE_TOKEN:0:5}****"
+          echo "Deploying to Firebase with token: ${MASKED_TOKEN}"
 
       - name: Deploy to Firebase Hosting
         run: firebase deploy --only hosting
