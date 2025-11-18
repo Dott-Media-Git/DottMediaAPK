@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /automations/{userId}/jobs/{jobId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /messages/{docId} {
+      allow read: if false;
+      allow write: if true; // Server-to-server writes via admin SDK.
+    }
+
+    match /engagements/{docId} {
+      allow read: if false;
+      allow write: if true;
+    }
+
+    match /followups/{docId} {
+      allow read: if false;
+      allow write: if true;
+    }
+
+    match /analytics/{docId}/{collectionId}/{statId} {
+      allow read: if request.auth != null;
+      allow write: if true;
+    }
+  }
+}

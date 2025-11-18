@@ -1,0 +1,48 @@
+{
+  "name": "dott-media-backend",
+  "version": "1.0.0",
+  "description": "Dott Media CRM automation backend",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "worker": "tsx src/workers/automationWorker.ts",
+    "test": "tsx src/tests/runTests.ts",
+    "seed": "tsx scripts/seedAdmin.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@sentry/node": "^10.23.0",
+    "axios": "^1.13.2",
+    "bullmq": "^5.63.0",
+    "cheerio": "^1.1.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.6.0",
+    "googleapis": "^165.0.0",
+    "helmet": "^8.1.0",
+    "http-errors": "^2.0.0",
+    "ioredis": "^5.8.2",
+    "morgan": "^1.10.1",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^7.0.10",
+    "openai": "^6.8.1",
+    "stripe": "^19.3.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.5",
+    "@types/http-errors": "^2.0.5",
+    "@types/morgan": "^1.9.10",
+    "@types/node": "^24.10.0",
+    "@types/nodemailer": "^7.0.3",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

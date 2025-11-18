@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dott Media Widget</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: 'Inter', system-ui, sans-serif;
+        background: #050b1a;
+        color: #fff;
+      }
+      #dotti-root {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        width: 320px;
+        max-width: calc(100% - 32px);
+        z-index: 999999;
+      }
+      .dotti-launcher {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        border: none;
+        background: linear-gradient(135deg, #0b5cff, #f7931a);
+        color: #fff;
+        font-size: 24px;
+        cursor: pointer;
+        box-shadow: 0 12px 28px rgba(11, 92, 255, 0.35);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="dotti-root"></div>
+    <script src="./widget.js"></script>
+    <script>
+      window.DottiWidget?.init?.({
+        api: 'https://api.dott-media.com/widget/webhook',
+        brand: 'Dott Media',
+      });
+    </script>
+  </body>
+</html>

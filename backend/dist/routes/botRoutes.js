@@ -1,0 +1,11 @@
+import { Router } from 'express';
+import { BotController } from '../controllers/botController';
+const router = Router();
+const controller = new BotController();
+router.get('/stats', controller.getStats);
+router.get('/api/stats', controller.getStats);
+router.get('/stats/leads', controller.getLeadStats);
+router.get('/api/stats/leads', controller.getLeadStats);
+router.post('/make-webhook', controller.forwardLead);
+router.post('/api/make-webhook', controller.forwardLead);
+export default router;
