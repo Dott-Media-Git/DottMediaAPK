@@ -26,9 +26,6 @@ jobs:
       - name: Build Expo web app
         run: npm run build:web
 
-      - name: Install Firebase CLI locally
-        run: npm install firebase-tools --save-dev
-
       - name: Verify Firebase CLI
         run: npx firebase --version
 
