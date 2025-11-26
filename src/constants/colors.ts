@@ -1,4 +1,26 @@
-const darkPalette = {
+export type ThemeMode = 'dark' | 'light';
+
+export type Palette = {
+  background: string;
+  backgroundAlt: string;
+  card: string;
+  cardOverlay: string;
+  cardBorderStart: string;
+  cardBorderEnd: string;
+  surface: string;
+  text: string;
+  subtext: string;
+  accent: string;
+  accentSecondary: string;
+  accentMuted: string;
+  border: string;
+  success: string;
+  danger: string;
+  warning: string;
+  overlay: string;
+};
+
+const darkPalette: Palette = {
   background: '#05040F',
   backgroundAlt: '#070A1F',
   card: 'rgba(13, 17, 40, 0.95)',
@@ -16,9 +38,9 @@ const darkPalette = {
   danger: '#FB7185',
   warning: '#FBBF24',
   overlay: 'rgba(5, 7, 18, 0.78)'
-} as const;
+};
 
-const lightPalette: typeof darkPalette = {
+const lightPalette: Palette = {
   background: '#FFFFFF',
   backgroundAlt: '#FFFFFF',
   card: '#FFFFFF',
@@ -37,10 +59,6 @@ const lightPalette: typeof darkPalette = {
   warning: '#FBBF24',
   overlay: 'rgba(15, 23, 42, 0.08)'
 };
-
-export type ThemeMode = 'dark' | 'light';
-
-export type Palette = typeof darkPalette;
 
 export const colors: Palette = { ...darkPalette };
 

@@ -6,7 +6,14 @@ import { DMCard } from '@components/DMCard';
 import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
-import { fetchAnalytics, DashboardAnalytics, fetchOutboundStats, OutboundStats } from '@services/analytics';
+import {
+  fetchAnalytics,
+  DashboardAnalytics,
+  fetchOutboundStats,
+  OutboundStats,
+  subscribeOutboundStats,
+  subscribeAnalytics
+} from '@services/analytics';
 
 type ChartMetric = 'leads' | 'engagement' | 'conversions' | 'feedbackScore';
 
@@ -98,64 +105,87 @@ export const DashboardScreen: React.FC = () => {
 
   useEffect(() => {
     let isMounted = true;
+    let unsubscribe: (() => void) | null = null;
     const loadAnalytics = async () => {
       if (!state.user) return;
       setLoading(true);
-      try {
-        const response = await fetchAnalytics(state.user.uid);
-        if (response && isMounted) {
-          setAnalytics({
-            ...response,
-            history:
-              response.history && response.history.length > 0
-                ? response.history
-                : buildPlaceholderHistory(response)
-          });
-        } else if (isMounted && state.crmData) {
-          const crmAnalytics = state.crmData.analytics;
-          setAnalytics(prev => {
-            const next = {
-              ...prev,
-              leads: crmAnalytics.leads,
-              engagement: crmAnalytics.engagement,
-              conversions: crmAnalytics.conversions,
-              feedbackScore: crmAnalytics.feedbackScore
-            };
-            return {
-              ...next,
-              history: buildPlaceholderHistory(next)
-            };
-          });
+      unsubscribe =
+        subscribeAnalytics(
+          state.user.uid,
+          payload => {
+            if (!isMounted) return;
+            setAnalytics({
+              ...payload,
+              history:
+                payload.history && payload.history.length > 0
+                  ? payload.history
+                  : buildPlaceholderHistory(payload)
+            });
+            setLoading(false);
+          },
+          error => {
+            console.warn('Realtime analytics subscription failed', error);
+          }
+        ) ?? null;
+
+      if (!unsubscribe) {
+        try {
+          const response = await fetchAnalytics(state.user.uid);
+          if (response && isMounted) {
+            setAnalytics({
+              ...response,
+              history:
+                response.history && response.history.length > 0
+                  ? response.history
+                  : buildPlaceholderHistory(response)
+            });
+          } else if (isMounted && state.crmData) {
+            const crmAnalytics = state.crmData.analytics;
+            setAnalytics(prev => {
+              const next = {
+                ...prev,
+                leads: crmAnalytics.leads,
+                engagement: crmAnalytics.engagement,
+                conversions: crmAnalytics.conversions,
+                feedbackScore: crmAnalytics.feedbackScore
+              };
+              return {
+                ...next,
+                history: buildPlaceholderHistory(next)
+              };
+            });
+          }
+        } catch (error) {
+          console.warn('Failed to refresh analytics', error);
+        } finally {
+          if (isMounted) setLoading(false);
         }
-      } catch (error) {
-        console.warn('Failed to refresh analytics', error);
-      } finally {
-        if (isMounted) setLoading(false);
       }
     };
     loadAnalytics();
     return () => {
       isMounted = false;
+      if (unsubscribe) unsubscribe();
     };
   }, [state.user?.uid, state.crmData]);
 
   useEffect(() => {
     let mounted = true;
-    const loadOutbound = async () => {
-      try {
-        const stats = await fetchOutboundStats();
-        if (stats && mounted) {
-          setOutboundStats(stats);
-        }
-      } catch (error) {
-        console.warn('Failed to refresh outbound stats', error);
-      }
-    };
-    loadOutbound();
-    const interval = setInterval(loadOutbound, 60000);
+    const outboundUnsub =
+      subscribeOutboundStats(
+        stats => mounted && setOutboundStats(stats),
+        error => console.warn('Realtime outbound stats failed', error)
+      ) ?? null;
+
+    if (!outboundUnsub) {
+      void fetchOutboundStats().then(stats => {
+        if (stats && mounted) setOutboundStats(stats);
+      });
+    }
+
     return () => {
       mounted = false;
-      clearInterval(interval);
+      outboundUnsub?.();
     };
   }, []);
 

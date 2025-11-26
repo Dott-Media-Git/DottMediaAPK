@@ -1,5 +1,14 @@
 import { env } from '@services/env';
-import { getIdToken } from '@services/firebase';
+import { getIdToken, isFirebaseEnabled, realtimeDb } from '@services/firebase';
+import {
+  collection,
+  doc,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  type Unsubscribe,
+} from 'firebase/firestore';
 import type { CRMAnalytics } from '@models/crm';
 
 export type DashboardAnalytics = CRMAnalytics & {
@@ -83,6 +92,89 @@ export const fetchAnalytics = async (userId: string): Promise<DashboardAnalytics
   return analytics;
 };
 
+export const subscribeAnalytics = (
+  userId: string,
+  onData: (payload: DashboardAnalytics) => void,
+  onError?: (err: unknown) => void
+): Unsubscribe | null => {
+  if (!isFirebaseEnabled || !realtimeDb) return null;
+
+  const dailyRef = query(
+    collection(realtimeDb, 'analytics', userId, 'daily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+  const jobsRef = query(
+    collection(realtimeDb, 'automations', userId, 'jobs'),
+    orderBy('updatedAt', 'desc'),
+    limit(15)
+  );
+
+  let history: DashboardAnalytics['history'] = [];
+  let jobBreakdown: DashboardAnalytics['jobBreakdown'] = { active: 0, queued: 0, failed: 0 };
+  let recentJobs: DashboardAnalytics['recentJobs'] = [];
+
+  const emit = () => {
+    const latest = history[0];
+    if (!latest) return;
+    onData({
+      leads: latest.leads,
+      engagement: latest.engagement,
+      conversions: latest.conversions,
+      feedbackScore: latest.feedbackScore,
+      jobBreakdown,
+      recentJobs,
+      history: [...history].reverse(), // chronological
+    });
+  };
+
+  const unsubDaily = onSnapshot(
+    dailyRef,
+    snap => {
+      history = snap.docs.map(doc => {
+        const data = doc.data() as any;
+        const samples = Number(data.samples ?? 1) || 1;
+        return {
+          date: (data.date as string) ?? doc.id,
+          leads: Math.round(Number(data.leads ?? 0) / samples),
+          engagement: Math.round(Number(data.engagement ?? 0) / samples),
+          conversions: Math.round(Number(data.conversions ?? 0) / samples),
+          feedbackScore: Number(((Number(data.feedbackScore ?? 0) / samples) || 0).toFixed(1)),
+        };
+      });
+      emit();
+    },
+    err => onError?.(err)
+  );
+
+  const unsubJobs = onSnapshot(
+    jobsRef,
+    snap => {
+      jobBreakdown = { active: 0, queued: 0, failed: 0 };
+      recentJobs = snap.docs.map(doc => {
+        const data = doc.data() as any;
+        const status = (data.status as string | undefined)?.toLowerCase() ?? 'queued';
+        if (status === 'active') jobBreakdown.active += 1;
+        else if (status === 'failed') jobBreakdown.failed += 1;
+        else jobBreakdown.queued += 1;
+        return {
+          jobId: (data.jobId as string) ?? doc.id,
+          scenarioId: data.scenarioId as string | undefined,
+          status,
+          updatedAt: data.updatedAt ? new Date(data.updatedAt.seconds * 1000).toISOString() : undefined,
+        };
+      });
+      emit();
+    },
+    err => onError?.(err)
+  );
+
+  return () => {
+    unsubDaily();
+    unsubJobs();
+  };
+};
+
 export const fetchOutboundStats = async (): Promise<OutboundStats | null> => {
   const endpoint = buildApiUrl('/api/stats/outbound');
   if (!endpoint) return null;
@@ -98,6 +190,35 @@ export const fetchOutboundStats = async (): Promise<OutboundStats | null> => {
     console.warn('Outbound stats request failed', error);
     return null;
   }
+};
+
+export const subscribeOutboundStats = (
+  onData: (stats: OutboundStats) => void,
+  onError?: (err: unknown) => void
+): Unsubscribe | null => {
+  if (!isFirebaseEnabled || !realtimeDb) return null;
+  const summaryRef = doc(realtimeDb, 'analytics', 'outboundSummary');
+  return onSnapshot(
+    summaryRef,
+    snap => {
+      const data = (snap.data() ?? {}) as any;
+      const prospectsContacted = Number(data.prospectsContacted ?? 0);
+      const replies = Number(data.replies ?? 0);
+      const conversions = Number(data.conversions ?? 0);
+      const positiveReplies = Number(data.positiveReplies ?? replies);
+      const demoBookings = Number(data.demoBookings ?? 0);
+      const conversionRate = prospectsContacted ? conversions / prospectsContacted : 0;
+      onData({
+        prospectsContacted,
+        replies,
+        positiveReplies,
+        conversions,
+        demoBookings,
+        conversionRate: Number(conversionRate.toFixed(2)),
+      });
+    },
+    err => onError?.(err)
+  );
 };
 
 export type InboundStats = {
@@ -149,3 +270,22 @@ export const fetchInboundStats = () => simpleFetch<InboundStats>('/api/stats/inb
 export const fetchEngagementStats = () => simpleFetch<EngagementStats>('/api/stats/engagement');
 export const fetchFollowupStats = () => simpleFetch<FollowupStats>('/api/stats/followups');
 export const fetchWebLeadStats = () => simpleFetch<WebLeadStats>('/api/stats/webLeads');
+
+export const subscribeWebLeadStats = (
+  onData: (stats: WebLeadStats) => void,
+  onError?: (err: unknown) => void
+): Unsubscribe | null => {
+  if (!isFirebaseEnabled || !realtimeDb) return null;
+  const summaryRef = doc(realtimeDb, 'analytics', 'webLeadsSummary');
+  return onSnapshot(
+    summaryRef,
+    snap => {
+      const data = (snap.data() ?? {}) as any;
+      const leads = Number(data.leads ?? 0);
+      const messages = Number(data.messages ?? 0);
+      const conversionRate = messages ? leads / messages : leads ? 1 : 0;
+      onData({ leads, messages, conversionRate: Number(conversionRate.toFixed(2)) });
+    },
+    err => onError?.(err)
+  );
+};

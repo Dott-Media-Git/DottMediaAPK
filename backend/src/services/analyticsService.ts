@@ -45,103 +45,150 @@ const webLeadSummaryDoc = firestore.collection('analytics').doc('webLeadsSummary
 
 export class AnalyticsService {
   async getSummary(userId: string): Promise<AnalyticsSummary> {
-    const jobsSnap = await firestore
-      .collection('automations')
-      .doc(userId)
-      .collection('jobs')
-      .orderBy('updatedAt', 'desc')
-      .limit(15)
-      .get();
-
-    let leads = 0;
-    let engagement = 0;
-    let conversions = 0;
-    let feedbackScore = 4.2;
-    let active = 0;
-    let queued = 0;
-    let failed = 0;
-
-    jobsSnap.forEach(doc => {
-      const data = doc.data();
-      const status = (data.status as string | undefined)?.toLowerCase() ?? 'queued';
-      if (status === 'active') active += 1;
-      else if (status === 'failed') failed += 1;
-      else queued += 1;
-
-      leads += (data.analytics?.leads as number | undefined) ?? 8;
-      engagement += (data.analytics?.engagement as number | undefined) ?? 40;
-      conversions += (data.analytics?.conversions as number | undefined) ?? 3;
-      feedbackScore += RatingWeights[status] ?? 0.5;
-    });
-
-    const historySnap = await firestore
-      .collection('analytics')
-      .doc(userId)
-      .collection('daily')
-      .orderBy('date', 'desc')
-      .limit(14)
-      .get();
-
-    const history = historySnap.docs
-      .map(doc => {
-        const data = doc.data();
-        const samples = Number(data.samples ?? 1) || 1;
+    // Mock Data Logic
+    if (process.env.ALLOW_MOCK_AUTH === 'true') {
+      const mockHistory = Array.from({ length: 14 }).map((_, i) => {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
         return {
-          date: (data.date as string) ?? doc.id,
-          leads: Math.round(Number(data.leads ?? 0) / samples),
-          engagement: Math.round(Number(data.engagement ?? 0) / samples),
-          conversions: Math.round(Number(data.conversions ?? 0) / samples),
-          feedbackScore: Number(((Number(data.feedbackScore ?? 0) / samples) || 0).toFixed(1)),
+          date: date.toISOString().slice(0, 10),
+          leads: Math.floor(Math.random() * 20) + 5,
+          engagement: Math.floor(Math.random() * 40) + 30,
+          conversions: Math.floor(Math.random() * 5) + 1,
+          feedbackScore: Number((4 + Math.random()).toFixed(1)),
         };
-      })
-      .reverse();
+      }).reverse();
 
-    if (history.length) {
-      const divisor = history.length;
-      leads = history.reduce((sum, day) => sum + day.leads, 0) / divisor;
-      engagement = history.reduce((sum, day) => sum + day.engagement, 0) / divisor;
-      conversions = history.reduce((sum, day) => sum + day.conversions, 0) / divisor;
-      feedbackScore = history.reduce((sum, day) => sum + day.feedbackScore, 0) / divisor;
-    } else {
-      const divisor = Math.max(jobsSnap.size, 1);
-      leads = leads / divisor;
-      engagement = engagement / divisor;
-      conversions = conversions / divisor;
-      feedbackScore = feedbackScore / divisor;
+      return {
+        leads: 145,
+        engagement: 68,
+        conversions: 12,
+        feedbackScore: 4.8,
+        jobBreakdown: {
+          active: 3,
+          queued: 5,
+          failed: 0,
+        },
+        recentJobs: [
+          { jobId: 'job-123', scenarioId: 'lead-gen-v1', status: 'active', updatedAt: new Date().toISOString() },
+          { jobId: 'job-124', scenarioId: 'nurture-seq', status: 'queued', updatedAt: new Date().toISOString() },
+          { jobId: 'job-125', scenarioId: 'outreach-bot', status: 'completed', updatedAt: new Date().toISOString() },
+        ],
+        history: mockHistory,
+      };
     }
 
-    return {
-      leads: Math.round(leads),
-      engagement: Math.round(engagement),
-      conversions: Math.round(conversions),
-      feedbackScore: Math.min(5, Number(feedbackScore.toFixed(1))),
-      jobBreakdown: {
-        active,
-        queued,
-        failed,
-      },
-      recentJobs: jobsSnap.docs.map(doc => {
+    try {
+      const jobsSnap = await firestore
+        .collection('automations')
+        .doc(userId)
+        .collection('jobs')
+        .orderBy('updatedAt', 'desc')
+        .limit(15)
+        .get();
+
+      let leads = 0;
+      let engagement = 0;
+      let conversions = 0;
+      let feedbackScore = 4.2;
+      let active = 0;
+      let queued = 0;
+      let failed = 0;
+
+      jobsSnap.forEach(doc => {
         const data = doc.data();
-        const updatedAt = data.updatedAt as admin.firestore.Timestamp | undefined;
-        return {
-          jobId: data.jobId as string,
-          scenarioId: (data.scenarioId as string) ?? null,
-          status: (data.status as string) ?? 'queued',
-          updatedAt: updatedAt ? updatedAt.toDate().toISOString() : undefined,
-        };
-      }),
-      history: history.length
-        ? history
-        : [
-            {
-              date: new Date().toISOString().slice(0, 10),
-              leads: Math.round(leads),
-              engagement: Math.round(engagement),
-              conversions: Math.round(conversions),
-              feedbackScore: Number(feedbackScore.toFixed(1)),
-            },
-          ],
-    };
+        const status = (data.status as string | undefined)?.toLowerCase() ?? 'queued';
+        if (status === 'active') active += 1;
+        else if (status === 'failed') failed += 1;
+        else queued += 1;
+
+        leads += (data.analytics?.leads as number | undefined) ?? 8;
+        engagement += (data.analytics?.engagement as number | undefined) ?? 40;
+        conversions += (data.analytics?.conversions as number | undefined) ?? 3;
+        feedbackScore += RatingWeights[status] ?? 0.5;
+      });
+
+      const historySnap = await firestore
+        .collection('analytics')
+        .doc(userId)
+        .collection('daily')
+        .orderBy('date', 'desc')
+        .limit(14)
+        .get();
+
+      const history = historySnap.docs
+        .map(doc => {
+          const data = doc.data();
+          const samples = Number(data.samples ?? 1) || 1;
+          return {
+            date: (data.date as string) ?? doc.id,
+            leads: Math.round(Number(data.leads ?? 0) / samples),
+            engagement: Math.round(Number(data.engagement ?? 0) / samples),
+            conversions: Math.round(Number(data.conversions ?? 0) / samples),
+            feedbackScore: Number(((Number(data.feedbackScore ?? 0) / samples) || 0).toFixed(1)),
+          };
+        })
+        .reverse();
+
+      if (history.length) {
+        const divisor = history.length;
+        leads = history.reduce((sum, day) => sum + day.leads, 0) / divisor;
+        engagement = history.reduce((sum, day) => sum + day.engagement, 0) / divisor;
+        conversions = history.reduce((sum, day) => sum + day.conversions, 0) / divisor;
+        feedbackScore = history.reduce((sum, day) => sum + day.feedbackScore, 0) / divisor;
+      } else {
+        const divisor = Math.max(jobsSnap.size, 1);
+        leads = leads / divisor;
+        engagement = engagement / divisor;
+        conversions = conversions / divisor;
+        feedbackScore = feedbackScore / divisor;
+      }
+
+      return {
+        leads: Math.round(leads),
+        engagement: Math.round(engagement),
+        conversions: Math.round(conversions),
+        feedbackScore: Math.min(5, Number(feedbackScore.toFixed(1))),
+        jobBreakdown: {
+          active,
+          queued,
+          failed,
+        },
+        recentJobs: jobsSnap.docs.map(doc => {
+          const data = doc.data();
+          const updatedAt = data.updatedAt as admin.firestore.Timestamp | undefined;
+          return {
+            jobId: data.jobId as string,
+            scenarioId: (data.scenarioId as string) ?? null,
+            status: (data.status as string) ?? 'queued',
+            updatedAt: updatedAt ? updatedAt.toDate().toISOString() : undefined,
+          };
+        }),
+        history: history.length
+          ? history
+          : [
+              {
+                date: new Date().toISOString().slice(0, 10),
+                leads: Math.round(leads),
+                engagement: Math.round(engagement),
+                conversions: Math.round(conversions),
+                feedbackScore: Number(feedbackScore.toFixed(1)),
+              },
+            ],
+      };
+    } catch (error) {
+      console.warn('Firestore analytics fetch failed, returning fallback data', error);
+      // Fallback if Firestore fails even if mock auth is off (or if it crashes during fetch)
+      return {
+        leads: 0,
+        engagement: 0,
+        conversions: 0,
+        feedbackScore: 0,
+        jobBreakdown: { active: 0, queued: 0, failed: 0 },
+        recentJobs: [],
+        history: []
+      };
+    }
   }
 }
 
@@ -287,31 +334,54 @@ export type OutboundStats = {
 };
 
 export async function getOutboundStats(): Promise<OutboundStats> {
-  const doc = await outboundSummaryDoc.get();
-  const data = doc.exists
-    ? (doc.data() as {
-        prospectsFound?: number;
-        messagesSent?: number;
-        replies?: number;
-        positiveReplies?: number;
-        conversions?: number;
-        demosBooked?: number;
-      })
-    : {};
-  const prospectsContacted = data.messagesSent ?? 0;
-  const replies = data.replies ?? 0;
-  const positiveReplies = data.positiveReplies ?? 0;
-  const conversions = data.conversions ?? 0;
-  const demoBookings = data.demosBooked ?? 0;
-  const conversionRate = prospectsContacted ? conversions / prospectsContacted : 0;
-  return {
-    prospectsContacted,
-    replies,
-    positiveReplies,
-    conversions,
-    demoBookings,
-    conversionRate: Number(conversionRate.toFixed(2)),
-  };
+  if (process.env.ALLOW_MOCK_AUTH === 'true') {
+    return {
+      prospectsContacted: 1250,
+      replies: 340,
+      positiveReplies: 85,
+      conversions: 42,
+      demoBookings: 18,
+      conversionRate: 0.03
+    };
+  }
+
+  try {
+    const doc = await outboundSummaryDoc.get();
+    const data = doc.exists
+      ? (doc.data() as {
+          prospectsFound?: number;
+          messagesSent?: number;
+          replies?: number;
+          positiveReplies?: number;
+          conversions?: number;
+          demosBooked?: number;
+        })
+      : {};
+    const prospectsContacted = data.messagesSent ?? 0;
+    const replies = data.replies ?? 0;
+    const positiveReplies = data.positiveReplies ?? 0;
+    const conversions = data.conversions ?? 0;
+    const demoBookings = data.demosBooked ?? 0;
+    const conversionRate = prospectsContacted ? conversions / prospectsContacted : 0;
+    return {
+      prospectsContacted,
+      replies,
+      positiveReplies,
+      conversions,
+      demoBookings,
+      conversionRate: Number(conversionRate.toFixed(2)),
+    };
+  } catch (error) {
+    console.warn('Firestore outbound stats fetch failed', error);
+    return {
+      prospectsContacted: 0,
+      replies: 0,
+      positiveReplies: 0,
+      conversions: 0,
+      demoBookings: 0,
+      conversionRate: 0
+    };
+  }
 }
 
 export type InboundAnalyticsUpdate = {

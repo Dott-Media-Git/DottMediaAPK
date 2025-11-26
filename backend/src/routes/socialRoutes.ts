@@ -60,4 +60,36 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
   }
 });
 
+const credentialsSchema = z.object({
+  userId: z.string().min(1),
+  credentials: z.object({
+    facebook: z.object({ accessToken: z.string(), pageId: z.string(), pageName: z.string().optional() }).optional(),
+    instagram: z.object({ accessToken: z.string(), accountId: z.string(), username: z.string().optional() }).optional(),
+    linkedin: z.object({ accessToken: z.string(), urn: z.string() }).optional(),
+    twitter: z.object({ accessToken: z.string(), accessSecret: z.string() }).optional(),
+  }),
+});
+
+router.post('/social/credentials', requireFirebase, async (req, res, next) => {
+  try {
+    const payload = credentialsSchema.parse(req.body);
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser || authUser.uid !== payload.userId) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    // Import firestore dynamically or from lib to avoid circular deps if any
+    const { firestore } = await import('../lib/firebase');
+
+    await firestore.collection('users').doc(payload.userId).set(
+      { socialAccounts: payload.credentials },
+      { merge: true }
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

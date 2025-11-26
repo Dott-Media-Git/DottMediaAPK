@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { VictoryBar, VictoryChart, VictoryLegend, VictoryLine, VictoryPie, VictoryTheme } from 'victory-native';
 import { colors } from '@constants/colors';
-import { fetchBotAnalytics } from '@services/botStats';
+import { fetchBotAnalytics, subscribeBotAnalytics } from '@services/botStats';
 import { fetchSocialHistory } from '@services/social';
 import { fetchOutboundStats, OutboundStats } from '@services/analytics';
 import type { BotAnalytics, PlatformMetric, PlatformName } from '@models/bot';
@@ -32,28 +32,45 @@ export const BotAnalyticsScreen: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [socialSummary, setSocialSummary] = useState<{ postsAttempted?: number; postsPosted?: number } | null>(null);
   const [outboundStats, setOutboundStats] = useState<OutboundStats | null>(null);
-  const lastAlertRef = useRef<{ hot: number; pending: number }>({ hot: 0, pending: 0 });
+  const lastAlertPendingRef = useRef<number>(0);
 
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        const payload = await fetchBotAnalytics();
-        setAnalytics(payload);
-        const pending = payload.leadInsights?.followUp.pending ?? 0;
-        const hot =
-          payload.leadInsights?.leadTiers.find(tier => tier.label === 'hot')?.value ??
-          sampleBotAnalytics.leadInsights!.leadTiers.find(tier => tier.label === 'hot')!.value;
-        const shouldNotify = pending !== lastAlertRef.current.pending || hot !== lastAlertRef.current.hot;
-        if (shouldNotify) {
-          notifyLeadAlerts({ pendingFollowUps: pending, hotLeads: hot });
-          lastAlertRef.current = { pending, hot };
+    let mounted = true;
+    const unsub =
+      subscribeBotAnalytics(
+        payload => {
+          if (!mounted) return;
+          setAnalytics(payload);
+          const pending = payload.leadInsights?.followUp.pending ?? 0;
+          if (pending !== lastAlertPendingRef.current) {
+            notifyLeadAlerts({ pendingFollowUps: pending, hotLeads: 0 });
+            lastAlertPendingRef.current = pending;
+          }
+          setLoading(false);
+        },
+        error => {
+          console.warn('Realtime bot analytics failed', error);
         }
-      } finally {
-        setLoading(false);
-      }
+      ) ?? null;
+
+    if (!unsub) {
+      const load = async () => {
+        setLoading(true);
+        try {
+          const payload = await fetchBotAnalytics();
+          if (!mounted) return;
+          setAnalytics(payload);
+        } finally {
+          if (mounted) setLoading(false);
+        }
+      };
+      void load();
+    }
+
+    return () => {
+      mounted = false;
+      unsub?.();
     };
-    load();
   }, []);
 
   useEffect(() => {
@@ -75,7 +92,7 @@ export const BotAnalyticsScreen: React.FC = () => {
       if (mounted) setOutboundStats(stats);
     };
     load();
-    const interval = setInterval(load, 60000);
+    const interval = setInterval(load, 15000);
     return () => {
       mounted = false;
       clearInterval(interval);
@@ -222,34 +239,6 @@ export const BotAnalyticsScreen: React.FC = () => {
                 data={leadInsights.conversionTrend.map(point => ({ x: point.label, y: point.value }))}
               />
             </VictoryChart>
-          </View>
-
-          <View style={styles.row}>
-            <View style={[styles.card, styles.rowCard]}>
-              <SectionHeader title="Lead Tiers" />
-              <VictoryBar
-                data={leadInsights.leadTiers.map(point => ({ x: point.label.toUpperCase(), y: point.value }))}
-                style={{
-                  data: {
-                    fill: ({ datum }) =>
-                      datum.x === 'HOT' ? colors.success : datum.x === 'WARM' ? colors.warning : colors.danger
-                  }
-                }}
-              />
-            </View>
-            <View style={[styles.card, styles.rowCard]}>
-              <SectionHeader title="Sentiment Mix" />
-              <VictoryBar
-                horizontal
-                data={leadInsights.sentimentBuckets.map(point => ({ x: point.label, y: point.value }))}
-                style={{
-                  data: {
-                    fill: ({ datum }) =>
-                      datum.x === 'Positive' ? colors.success : datum.x === 'Neutral' ? colors.subtext : colors.danger
-                  }
-                }}
-              />
-            </View>
           </View>
 
           <View style={styles.row}>

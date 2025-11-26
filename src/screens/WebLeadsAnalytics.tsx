@@ -3,7 +3,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-nat
 import { VictoryArea, VictoryChart, VictoryTheme } from 'victory-native';
 import { colors } from '@constants/colors';
 import { DMCard } from '@components/DMCard';
-import { WebLeadStats, fetchWebLeadStats } from '@services/analytics';
+import { WebLeadStats, fetchWebLeadStats, subscribeWebLeadStats } from '@services/analytics';
 
 const buildAreaSeries = (count: number) =>
   Array.from({ length: 7 }).map((_, index) => ({
@@ -17,18 +17,31 @@ export const WebLeadsAnalyticsScreen: React.FC = () => {
 
   useEffect(() => {
     let mounted = true;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const payload = await fetchWebLeadStats();
-        if (mounted) setStats(payload);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    };
-    load();
+    const unsub =
+      subscribeWebLeadStats(
+        payload => {
+          if (mounted) setStats(payload);
+          if (mounted) setLoading(false);
+        },
+        error => console.warn('Realtime web lead stats failed', error)
+      ) ?? null;
+
+    if (!unsub) {
+      const load = async () => {
+        setLoading(true);
+        try {
+          const payload = await fetchWebLeadStats();
+          if (mounted) setStats(payload);
+        } finally {
+          if (mounted) setLoading(false);
+        }
+      };
+      load();
+    }
+
     return () => {
       mounted = false;
+      unsub?.();
     };
   }, []);
 

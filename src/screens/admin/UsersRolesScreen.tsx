@@ -10,7 +10,7 @@ const roles: Array<'Owner' | 'Admin' | 'Agent' | 'Viewer'> = ['Owner', 'Admin', 
 export const UsersRolesScreen: React.FC = () => {
   const { orgId } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
-  const [invite, setInvite] = useState({ uid: '', role: 'Agent' as const });
+  const [invite, setInvite] = useState<{ uid: string; role: (typeof roles)[number] }>({ uid: '', role: 'Agent' });
   const [loading, setLoading] = useState(false);
 
   const refresh = () => {

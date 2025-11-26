@@ -11,6 +11,7 @@ export type CRMData = {
   companyName: string;
   email: string;
   phone: string;
+  orgId?: string;
   instagram?: string;
   facebook?: string;
   linkedin?: string;

@@ -22,7 +22,15 @@ type ScheduledPost = {
   targetDate: string;
 };
 
-type PlatformPublisher = (input: { caption: string; imageUrls: string[] }) => Promise<{ remoteId?: string }>;
+export interface SocialAccounts {
+  facebook?: { accessToken: string; pageId: string; pageName?: string };
+  instagram?: { accessToken: string; accountId: string; username?: string };
+  linkedin?: { accessToken: string; urn: string };
+  twitter?: { accessToken: string; accessSecret: string };
+  [key: string]: any;
+}
+
+type PlatformPublisher = (input: { caption: string; imageUrls: string[]; credentials?: SocialAccounts }) => Promise<{ remoteId?: string }>;
 
 const platformPublishers: Record<string, PlatformPublisher> = {
   instagram: publishToInstagram,
@@ -77,9 +85,15 @@ export class SocialPostingService {
 
       const publisher = platformPublishers[post.platform] ?? publishToTwitter;
       try {
+        // Fetch user credentials
+        const userDoc = await firestore.collection('users').doc(post.userId).get();
+        const userData = userDoc.data();
+        const socialAccounts = userData?.socialAccounts as SocialAccounts | undefined;
+
         const response = await this.publishWithRetry(publisher, {
           caption: [post.caption, post.hashtags].filter(Boolean).join('\n\n'),
           imageUrls: post.imageUrls,
+          credentials: socialAccounts,
         });
         await scheduledPostsCollection.doc(post.id).update({
           status: 'posted',

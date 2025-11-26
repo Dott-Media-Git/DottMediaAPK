@@ -265,6 +265,9 @@ export const signOutUser = async () => {
   await firebaseSignOut(auth);
 };
 
+export const realtimeDb = db;
+export const isFirebaseEnabled = useFirebase;
+
 export const observeAuthState = (
   handler: (user: AuthUser | null) => void
 ): (() => void) => {

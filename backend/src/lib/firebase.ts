@@ -37,12 +37,36 @@ const envCredentials: ServiceAccount = {
 
 const credentialSource = serviceAccount ?? envCredentials;
 
-const app = admin.apps.length
-  ? admin.app()
-  : admin.initializeApp({
+let app: admin.app.App;
+
+try {
+  app = admin.apps.length
+    ? admin.app()
+    : admin.initializeApp({
       credential: admin.credential.cert(credentialSource),
       projectId: credentialSource.projectId ?? credentialSource.project_id,
     });
+} catch (error) {
+  if (process.env.ALLOW_MOCK_AUTH === 'true') {
+    console.warn('Firebase initialization failed, using mock app due to ALLOW_MOCK_AUTH');
+    // Create a dummy app object that satisfies the type but might throw on usage
+    // We cast to any to avoid complex mocking of the entire Firebase App interface
+    app = {
+      firestore: () => ({
+        collection: () => ({
+          doc: () => ({
+            collection: () => ({}),
+            get: () => Promise.resolve({ exists: false, data: () => ({}) }),
+            set: () => Promise.resolve(),
+          }),
+        }),
+        runTransaction: () => Promise.resolve(),
+      }),
+    } as any;
+  } else {
+    throw error;
+  }
+}
 
 export const firebaseApp = app;
 export const firestore = app.firestore();

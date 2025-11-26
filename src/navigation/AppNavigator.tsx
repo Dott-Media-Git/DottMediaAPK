@@ -12,6 +12,7 @@ import { TouchableOpacity, View, Text, StyleSheet } from 'react-native';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useAssistant } from '@context/AssistantContext';
+import { ChatInterface } from '@components/ChatInterface';
 import { LoginScreen, AuthStackParamList } from '@screens/LoginScreen';
 import { SignupScreen } from '@screens/SignupScreen';
 import { PasswordResetScreen } from '@screens/PasswordResetScreen';
@@ -76,9 +77,12 @@ const AdminNavigator = () => (
   </AdminStack.Navigator>
 );
 
+import { OutreachScreen } from '@screens/OutreachScreen';
+
 const drawerScreens = [
   { name: 'Dashboard', component: DashboardScreen, icon: 'stats-chart-outline' },
   { name: 'BotAnalytics', label: 'Bot Analytics', component: BotAnalyticsScreen, icon: 'pulse-outline' },
+  { name: 'Outreach', label: 'Outreach Manager', component: OutreachScreen, icon: 'paper-plane-outline' },
   { name: 'Inbound', component: InboundAnalyticsScreen, icon: 'chatbubble-ellipses-outline' },
   { name: 'Engagement', component: EngagementAnalyticsScreen, icon: 'flash-outline' },
   { name: 'FollowUps', label: 'Follow-ups', component: FollowUpsAnalyticsScreen, icon: 'refresh-outline' },
@@ -97,32 +101,32 @@ const DrawerNavigator = () => {
   const inactiveColor = isDarkTheme ? colors.subtext : colors.text;
   const labelColor = isDarkTheme ? colors.subtext : colors.text;
   return (
-  <Drawer.Navigator
-    drawerContent={props => <CustomDrawerContent {...props} />}
-    screenOptions={({ navigation }) => ({
-      headerStyle: { backgroundColor: colors.background },
-      headerTintColor: colors.text,
-      sceneContainerStyle: { backgroundColor: colors.background },
-      drawerStyle: { backgroundColor: colors.backgroundAlt, width: 260 },
-      drawerInactiveTintColor: inactiveColor,
-      drawerActiveTintColor: colors.accent,
-      drawerLabelStyle: { color: labelColor },
-      headerLeft: () => (
-        <TouchableOpacity style={styles.menuButton} onPress={() => navigation.toggleDrawer()}>
-          <Ionicons name="menu-outline" size={24} color={colors.text} />
-        </TouchableOpacity>
-      )
-    })}
-  >
-    {drawerScreens.map(screen => (
-      <Drawer.Screen
-        key={screen.name}
-        name={screen.name}
-        component={screen.component}
-        options={{ title: screen.label ?? screen.name }}
-      />
-    ))}
-  </Drawer.Navigator>
+    <Drawer.Navigator
+      drawerContent={props => <CustomDrawerContent {...props} />}
+      screenOptions={({ navigation }) => ({
+        headerStyle: { backgroundColor: colors.background },
+        headerTintColor: colors.text,
+        sceneContainerStyle: { backgroundColor: colors.background },
+        drawerStyle: { backgroundColor: colors.backgroundAlt, width: 260 },
+        drawerInactiveTintColor: inactiveColor,
+        drawerActiveTintColor: colors.accent,
+        drawerLabelStyle: { color: labelColor },
+        headerLeft: () => (
+          <TouchableOpacity style={styles.menuButton} onPress={() => navigation.toggleDrawer()}>
+            <Ionicons name="menu-outline" size={24} color={colors.text} />
+          </TouchableOpacity>
+        )
+      })}
+    >
+      {drawerScreens.map(screen => (
+        <Drawer.Screen
+          key={screen.name}
+          name={screen.name}
+          component={screen.component}
+          options={{ title: screen.label ?? screen.name }}
+        />
+      ))}
+    </Drawer.Navigator>
   );
 };
 
@@ -179,6 +183,7 @@ export const AppNavigator: React.FC = () => {
           <RootStack.Screen name="Main" component={DrawerNavigator} />
         )}
       </RootStack.Navigator>
+      {isAuthenticated && !needsSubscription && !needsOnboarding && <ChatInterface />}
     </NavigationContainer>
   );
 };

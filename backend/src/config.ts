@@ -3,15 +3,27 @@ import 'dotenv/config';
 const required = <T extends Record<string, unknown>>(obj: T) => {
   Object.entries(obj).forEach(([key, value]) => {
     if (value === undefined || value === null || value === '') {
-      throw new Error(`Missing required env var: ${key}`);
+      if (process.env.ALLOW_MOCK_AUTH === 'true') {
+        console.warn(`Missing required env var: ${key} (Allowed due to ALLOW_MOCK_AUTH)`);
+        // @ts-ignore
+        obj[key] = 'mock-value';
+      } else {
+        throw new Error(`Missing required env var: ${key}`);
+      }
     }
   });
   return obj as { [K in keyof T]: NonNullable<T[K]> };
 };
 
+console.log('Loading config. ALLOW_MOCK_AUTH:', process.env.ALLOW_MOCK_AUTH);
+
 const metaVerifyToken = process.env.META_VERIFY_TOKEN ?? process.env.VERIFY_TOKEN;
 if (!metaVerifyToken) {
-  throw new Error('Missing required env var: META_VERIFY_TOKEN or VERIFY_TOKEN');
+  if (process.env.ALLOW_MOCK_AUTH === 'true') {
+    console.warn('Missing required env var: META_VERIFY_TOKEN or VERIFY_TOKEN (Allowed due to ALLOW_MOCK_AUTH)');
+  } else {
+    throw new Error('Missing required env var: META_VERIFY_TOKEN or VERIFY_TOKEN');
+  }
 }
 
 export const config = {

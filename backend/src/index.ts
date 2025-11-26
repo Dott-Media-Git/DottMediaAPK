@@ -33,7 +33,11 @@ import { NotificationDispatcher } from './packages/services/notificationDispatch
 import stripeRoutes from './routes/stripeRoutes';
 
 const notificationDispatcher = new NotificationDispatcher();
-notificationDispatcher.start();
+if (config.security.allowMockAuth) {
+  console.warn('Skipping NotificationDispatcher in mock mode');
+} else {
+  notificationDispatcher.start();
+}
 
 const app = express();
 
@@ -86,6 +90,12 @@ app.use((err: HttpError, _req: Request, res: Response, _next: NextFunction) => {
   res.status(status).json({ message });
 });
 
-app.listen(config.port, () => {
-  console.log(`Dott Media backend running on :${config.port}`);
-});
+export { app };
+
+import { fileURLToPath } from 'url';
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  app.listen(config.port, () => {
+    console.log(`Dott Media backend running on :${config.port}`);
+  });
+}

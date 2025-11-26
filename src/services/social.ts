@@ -32,3 +32,8 @@ export const schedulePost = async (payload: any) => {
 export const fetchSocialHistory = async () => {
   return authedFetch('/api/social/history');
 };
+
+export const saveSocialCredentials = async (userId: string, credentials: any) => {
+  const body = JSON.stringify({ userId, credentials });
+  return authedFetch('/api/social/credentials', { method: 'POST', body });
+};
