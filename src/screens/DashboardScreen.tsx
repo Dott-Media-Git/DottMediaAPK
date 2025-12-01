@@ -97,11 +97,6 @@ export const DashboardScreen: React.FC = () => {
     { label: 'Conversions', value: analytics.conversions },
     { label: 'Feedback', value: `${analytics.feedbackScore}/5` }
   ];
-  const jobWidgets = [
-    { label: 'Active automations', value: analytics.jobBreakdown.active, tone: colors.success },
-    { label: 'Queued', value: analytics.jobBreakdown.queued, tone: colors.warning },
-    { label: 'Attention needed', value: analytics.jobBreakdown.failed, tone: colors.danger }
-  ];
 
   useEffect(() => {
     let isMounted = true;
@@ -295,17 +290,6 @@ export const DashboardScreen: React.FC = () => {
           ))}
         </View>
       </LinearGradient>
-        <View style={styles.kpiRow}>
-          {jobWidgets.map((widget, index) => (
-            <View
-              key={widget.label}
-              style={[styles.kpiItem, index === jobWidgets.length - 1 && styles.kpiItemLast]}
-          >
-            <Text style={[styles.kpiLabel, { color: widget.tone }]}>{widget.label}</Text>
-            <Text style={styles.kpiValue}>{widget.value}</Text>
-          </View>
-          ))}
-        </View>
         <DMCard title="Outbound Pipeline" subtitle="Prospecting + booking overview">
           <View style={styles.outboundGrid}>
             {outboundMetrics.map((metric, index) => (

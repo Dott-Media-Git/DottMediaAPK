@@ -9,6 +9,9 @@ import { ThemeProvider, useThemeMode } from '@context/ThemeContext';
 import { AppNavigator } from '@navigation/AppNavigator';
 import { colors } from '@constants/colors';
 import { FloatingAssistant } from '@components/FloatingAssistant';
+import { useEffect } from 'react';
+import { useFonts } from 'expo-font';
+import Ionicons from '@expo/vector-icons/Ionicons';
 
 const RootView: React.FC = () => {
   const { state } = useAuth();
@@ -30,6 +33,16 @@ const RootView: React.FC = () => {
 };
 
 export default function App() {
+  const [fontsLoaded] = useFonts(Ionicons.font);
+
+  useEffect(() => {
+    // Ensure icon font is registered on web; prevents missing glyph boxes.
+    Ionicons.loadFont();
+  }, []);
+
+  if (!fontsLoaded) {
+    return null;
+  }
   return (
     <ThemeProvider>
       <AuthProvider>
