@@ -51,10 +51,8 @@ function injectReactNativeOptions(podfileContents) {
   optionsMap['fabric_enabled'] = 'false';
   optionsMap['hermes_enabled'] = 'false';
   optionsMap['new_arch_enabled'] = 'false';
-  optionsMap['yoga_version'] = "'1.14.0'";
-  optionsMap['yoga_path'] = "'../node_modules/react-native/ReactCommon/yoga'";
 
-  const priorityOrder = ['path', 'fabric_enabled', 'hermes_enabled', 'new_arch_enabled', 'yoga_version', 'yoga_path'];
+  const priorityOrder = ['path', 'fabric_enabled', 'hermes_enabled', 'new_arch_enabled'];
   const orderedKeys = [
     ...priorityOrder,
     ...seenOrder.filter((k) => !priorityOrder.includes(k)),

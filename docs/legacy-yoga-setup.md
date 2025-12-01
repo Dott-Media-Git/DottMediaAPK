@@ -27,9 +27,7 @@ Rewrite the `use_react_native!` call to:
 use_react_native!(
   :path => config[:reactNativePath],
   :fabric_enabled => false,
-  :hermes_enabled => false,
-  :yoga_version => '1.14.0',
-  :yoga_path => '../node_modules/react-native/ReactCommon/yoga'
+  :hermes_enabled => false
 )
 ```
 Also ensure:
