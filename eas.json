@@ -1,0 +1,26 @@
+{
+  "cli": {
+    "version": ">= 16.28.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EAS_SKIP_AUTO_FINGERPRINT": "1",
+        "EAS_FORCE_NPM_REINSTALL": "1",
+        "EXPO_NO_LEGACY_YOGA": "0"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
