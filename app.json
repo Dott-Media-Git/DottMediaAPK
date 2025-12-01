@@ -19,7 +19,11 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dottmedia.dottmediaapk",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -33,16 +37,20 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./app.plugin.js",
       [
-        "expo-notifications",
+        "expo-build-properties",
         {
-          "icon": "./assets/notification-icon.png"
+          "ios": {
+            "deploymentTarget": "15.1",
+            "useFrameworks": "static"
+          }
         }
       ]
     ],
     "extra": {
       "eas": {
-        "projectId": "00000000-0000-0000-0000-000000000000"
+        "projectId": "2c1c654b-a235-4e12-886f-34020bc6de28"
       }
     }
   }
