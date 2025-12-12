@@ -98,15 +98,24 @@ export class AssistantService {
 
       const message = completion.choices[0].message;
 
-      // If the model wants to call a tool, we return a structured response for the frontend to handle
+      // If the model wants to call a tool, return a structured response for the frontend to handle
       if (message.tool_calls && message.tool_calls.length > 0) {
         const toolCall = message.tool_calls[0];
-        return {
-          type: 'action',
-          action: toolCall.function.name,
-          params: JSON.parse(toolCall.function.arguments),
-          text: "I'm taking care of that for you.",
-        };
+        if (toolCall.type === 'function' && toolCall.function?.name) {
+          let params: unknown = {};
+          try {
+            params = JSON.parse(toolCall.function.arguments || '{}');
+          } catch (parseError) {
+            console.error('Failed to parse tool arguments', parseError);
+          }
+
+          return {
+            type: 'action',
+            action: toolCall.function.name,
+            params,
+            text: "I'm taking care of that for you.",
+          };
+        }
       }
 
       return {

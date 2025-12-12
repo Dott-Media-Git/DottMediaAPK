@@ -1,5 +1,6 @@
 import admin from 'firebase-admin';
 import { firestore } from '../../lib/firebase';
+import { config } from '../../config';
 import { publishToInstagram } from './socialPlatforms/instagramPublisher';
 import { publishToFacebook } from './socialPlatforms/facebookPublisher';
 import { publishToLinkedIn } from './socialPlatforms/linkedinPublisher';
@@ -30,7 +31,8 @@ export interface SocialAccounts {
   [key: string]: any;
 }
 
-type PlatformPublisher = (input: { caption: string; imageUrls: string[]; credentials?: SocialAccounts }) => Promise<{ remoteId?: string }>;
+type PublishPayload = { caption: string; imageUrls: string[]; credentials?: SocialAccounts };
+type PlatformPublisher = (input: PublishPayload) => Promise<{ remoteId?: string }>;
 
 const platformPublishers: Record<string, PlatformPublisher> = {
   instagram: publishToInstagram,
@@ -88,13 +90,15 @@ export class SocialPostingService {
         // Fetch user credentials
         const userDoc = await firestore.collection('users').doc(post.userId).get();
         const userData = userDoc.data();
-        const socialAccounts = userData?.socialAccounts as SocialAccounts | undefined;
+        const socialAccounts = this.mergeWithDefaults(userData?.socialAccounts as SocialAccounts | undefined);
 
-        const response = await this.publishWithRetry(publisher, {
+        const payload: PublishPayload = {
           caption: [post.caption, post.hashtags].filter(Boolean).join('\n\n'),
           imageUrls: post.imageUrls,
           credentials: socialAccounts,
-        });
+        };
+
+        const response = await this.publishWithRetry(publisher, payload);
         await scheduledPostsCollection.doc(post.id).update({
           status: 'posted',
           postedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -170,7 +174,7 @@ export class SocialPostingService {
     });
   }
 
-  private async publishWithRetry(publisher: PlatformPublisher, payload: { caption: string; imageUrls: string[] }) {
+  private async publishWithRetry(publisher: PlatformPublisher, payload: PublishPayload) {
     const attempts = 2;
     let lastError: Error | null = null;
     for (let i = 0; i < attempts; i += 1) {
@@ -182,6 +186,23 @@ export class SocialPostingService {
       }
     }
     throw lastError ?? new Error('publish_failed');
+  }
+
+  private mergeWithDefaults(userAccounts?: SocialAccounts): SocialAccounts {
+    const defaults: SocialAccounts = {};
+    if (config.channels.facebook.pageId && config.channels.facebook.pageToken) {
+      defaults.facebook = { accessToken: config.channels.facebook.pageToken, pageId: config.channels.facebook.pageId };
+    }
+    if (config.channels.instagram.businessId && config.channels.instagram.accessToken) {
+      defaults.instagram = { accessToken: config.channels.instagram.accessToken, accountId: config.channels.instagram.businessId };
+    }
+    if (config.linkedin.accessToken && config.linkedin.organizationId) {
+      defaults.linkedin = {
+        accessToken: config.linkedin.accessToken,
+        urn: `urn:li:organization:${config.linkedin.organizationId}`,
+      };
+    }
+    return { ...defaults, ...(userAccounts ?? {}) };
   }
 }
 
