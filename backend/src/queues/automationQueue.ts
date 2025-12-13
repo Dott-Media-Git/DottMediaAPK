@@ -13,13 +13,26 @@ const redisOptions: RedisOptions = {
   enableReadyCheck: false,
 };
 
-const connection = new IORedis(config.redisUrl, redisOptions);
+const createQueue = () => {
+  if (config.security.allowMockAuth) {
+    console.warn('[automationQueue] mock mode enabled, skipping Redis queue connection');
+    return {
+      add: async () => {
+        console.info('[automationQueue] job skipped in mock mode');
+        return { id: 'mock-job' } as any;
+      },
+    } as unknown as Queue<JobData>;
+  }
 
-export const automationQueue = new Queue<JobData>('automation', {
-  connection,
-  defaultJobOptions: {
-    removeOnComplete: true,
-    attempts: 3,
-    backoff: { type: 'exponential', delay: 5000 },
-  },
-});
+  const connection = new IORedis(config.redisUrl, redisOptions);
+  return new Queue<JobData>('automation', {
+    connection,
+    defaultJobOptions: {
+      removeOnComplete: true,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+    },
+  });
+};
+
+export const automationQueue = createQueue();

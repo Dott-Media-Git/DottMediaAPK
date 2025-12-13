@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import fsSync from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -30,7 +31,22 @@ async function walk(dir) {
   );
 }
 
-function rewriteImports(source) {
+function resolveRelativeTarget(filePath, specifier) {
+  const base = path.resolve(path.dirname(filePath), specifier);
+  const fileCandidate = `${base}.js`;
+  if (fsSync.existsSync(fileCandidate)) {
+    return `${specifier}.js`;
+  }
+  if (fsSync.existsSync(base) && fsSync.statSync(base).isDirectory()) {
+    const indexCandidate = path.join(base, 'index.js');
+    if (fsSync.existsSync(indexCandidate)) {
+      return `${specifier}/index.js`;
+    }
+  }
+  return null;
+}
+
+function rewriteImports(source, filePath) {
   let modified = false;
   let content = source;
 
@@ -47,8 +63,12 @@ function rewriteImports(source) {
       if (skipExtRegex.test(specifier)) {
         return match;
       }
+      const rewritten = resolveRelativeTarget(filePath, specifier);
+      if (!rewritten) {
+        return match;
+      }
       modified = true;
-      return `${prefix}${specifier}.js${quote}${suffix}`;
+      return `${prefix}${rewritten}${quote}${suffix}`;
     }));
 
   patterns.forEach(pattern => replaceWith(pattern));
@@ -58,7 +78,7 @@ function rewriteImports(source) {
 
 async function processFile(filePath) {
   const original = await fs.readFile(filePath, 'utf8');
-  const { content, modified } = rewriteImports(original);
+  const { content, modified } = rewriteImports(original, filePath);
   if (modified) {
     await fs.writeFile(filePath, content, 'utf8');
     processedFiles.push(path.relative(distDir, filePath));

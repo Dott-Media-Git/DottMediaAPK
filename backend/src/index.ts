@@ -19,9 +19,6 @@ import schedulerRoutes from './routes/schedulerRoutes';
 import offerRoutes from './routes/offerRoutes';
 import knowledgeRoutes from './routes/knowledgeRoutes';
 import botRoutes from './routes/botRoutes';
-import './workers/automationWorker';
-import './jobs/prospectJob';
-import './jobs/followupJob';
 import webhookReplyRoutes from './routes/webhookReplyRoutes';
 import inboundWebhookRoutes from './routes/inboundWebhookRoutes';
 import engagementWebhookRoutes from './routes/engagementWebhookRoutes';
@@ -31,6 +28,24 @@ import contentRoutes from './routes/contentRoutes';
 import socialRoutes from './routes/socialRoutes';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher';
 import stripeRoutes from './routes/stripeRoutes';
+
+const initializeAutomation = async () => {
+  try {
+    await Promise.all([
+      import('./workers/automationWorker.js'),
+      import('./jobs/prospectJob.js'),
+      import('./jobs/followupJob.js'),
+    ]);
+  } catch (error) {
+    console.error('Failed to initialize automation background jobs', error);
+  }
+};
+
+if (config.security.allowMockAuth) {
+  console.warn('Skipping automation workers in mock mode');
+} else {
+  void initializeAutomation();
+}
 
 const notificationDispatcher = new NotificationDispatcher();
 if (config.security.allowMockAuth) {
