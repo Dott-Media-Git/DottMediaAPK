@@ -2,11 +2,25 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 
 const algorithm = 'aes-256-gcm';
 
+const mockKey = Buffer.from('dott-media-mock-key-32-bytes!!##');
+
 export const getEncryptionKey = () => {
   const keyB64 = process.env.ENCRYPTION_KEY;
-  if (!keyB64) throw new Error('Missing ENCRYPTION_KEY env for vault operations');
+  if (!keyB64) {
+    if (process.env.ALLOW_MOCK_AUTH === 'true') {
+      console.warn('[vaultCrypto] ENCRYPTION_KEY missing, using mock key');
+      return mockKey;
+    }
+    throw new Error('Missing ENCRYPTION_KEY env for vault operations');
+  }
   const buf = Buffer.from(keyB64, 'base64');
-  if (buf.length !== 32) throw new Error('ENCRYPTION_KEY must be 32 bytes (base64)');
+  if (buf.length !== 32) {
+    if (process.env.ALLOW_MOCK_AUTH === 'true') {
+      console.warn('[vaultCrypto] ENCRYPTION_KEY invalid length, using mock key');
+      return mockKey;
+    }
+    throw new Error('ENCRYPTION_KEY must be 32 bytes (base64)');
+  }
   return buf;
 };
 
