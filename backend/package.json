@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "build": "tsc",
+    "build": "tsc && node scripts/fix-esm-extensions.mjs",
     "worker": "tsx src/workers/automationWorker.ts",
     "test": "tsx src/tests/runTests.ts",
     "seed": "tsx scripts/seedAdmin.ts"
