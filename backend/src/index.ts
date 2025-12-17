@@ -26,6 +26,7 @@ import webWidgetRoutes from './routes/webWidgetRoutes';
 import adminRoutes from './routes/adminRoutes';
 import contentRoutes from './routes/contentRoutes';
 import socialRoutes from './routes/socialRoutes';
+import metaWebhookRoutes from './routes/metaWebhookRoutes';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher';
 import stripeRoutes from './routes/stripeRoutes';
 
@@ -71,6 +72,7 @@ app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
 app.use('/', inboundWebhookRoutes);
 app.use('/', engagementWebhookRoutes);
+app.use('/', metaWebhookRoutes);
 app.use('/', webWidgetRoutes);
 app.use('/', whatsappRoutes);
 app.use('/', facebookRoutes);
