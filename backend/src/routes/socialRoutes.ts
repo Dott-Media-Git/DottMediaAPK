@@ -4,6 +4,7 @@ import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService';
 import { socialPostingService } from '../packages/services/socialPostingService';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService';
+import { autoPostService } from '../services/autoPostService';
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -19,6 +20,12 @@ const scheduleSchema = z.object({
   timesPerDay: z.number().int().min(1).max(5),
 });
 
+const autoPostSchema = z.object({
+  platforms: z.array(z.enum(['instagram', 'facebook', 'linkedin', 'twitter', 'x', 'threads', 'tiktok'])).min(1).optional(),
+  prompt: z.string().optional(),
+  businessType: z.string().optional(),
+});
+
 router.post('/posts/schedule', requireFirebase, async (req, res, next) => {
   try {
     const payload = scheduleSchema.parse(req.body);
@@ -28,6 +35,29 @@ router.post('/posts/schedule', requireFirebase, async (req, res, next) => {
     }
     const result = await socialSchedulingService.schedulePosts(payload);
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+
+    const payload = autoPostSchema.parse(req.body ?? {});
+    const userId = authUser.uid;
+
+    // Ensure a job exists and capture prompt/businessType updates if provided.
+    await autoPostService.start({
+      userId,
+      platforms: payload.platforms,
+      prompt: payload.prompt,
+      businessType: payload.businessType,
+    });
+
+    const result = await autoPostService.runForUser(userId);
+    res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }
@@ -79,7 +109,7 @@ router.post('/social/credentials', requireFirebase, async (req, res, next) => {
     }
 
     // Import firestore dynamically or from lib to avoid circular deps if any
-    const { firestore } = await import('../lib/firebase');
+    const { firestore } = await import('../db/firestore');
 
     await firestore.collection('users').doc(payload.userId).set(
       { socialAccounts: payload.credentials },
