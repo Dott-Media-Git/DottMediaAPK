@@ -27,8 +27,11 @@ import adminRoutes from './routes/adminRoutes';
 import contentRoutes from './routes/contentRoutes';
 import socialRoutes from './routes/socialRoutes';
 import metaWebhookRoutes from './routes/metaWebhookRoutes';
+import authRoutes from './routes/authRoutes';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher';
 import stripeRoutes from './routes/stripeRoutes';
+import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
+import { autoPostService } from './services/autoPostService';
 
 const initializeAutomation = async () => {
   try {
@@ -36,6 +39,7 @@ const initializeAutomation = async () => {
       import('./workers/automationWorker.js'),
       import('./jobs/prospectJob.js'),
       import('./jobs/followupJob.js'),
+      import('./jobs/autoPostJob.js'),
     ]);
   } catch (error) {
     console.error('Failed to initialize automation background jobs', error);
@@ -92,7 +96,22 @@ app.use('/api', assistantRoutes);
 app.use('/api', analyticsRoutes);
 app.use('/api', contentRoutes);
 app.use('/api', socialRoutes);
+app.use('/api', authRoutes);
 app.use('/', adminRoutes);
+
+// Direct autopost endpoint to ensure availability (mirrors socialRoutes autopost handler)
+app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const { platforms, prompt, businessType } = req.body ?? {};
+    await autoPostService.start({ userId: authUser.uid, platforms, prompt, businessType });
+    const result = await autoPostService.runForUser(authUser.uid);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.use((req, _res, next) => {
   next(createHttpError(404, `Route ${req.path} not found`));
