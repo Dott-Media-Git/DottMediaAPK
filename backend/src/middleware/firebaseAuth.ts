@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import createHttpError from 'http-errors';
 import admin from 'firebase-admin';
-import { firebaseApp } from '../lib/firebase';
+import { firebaseApp } from '../db/firestore';
 import { config } from '../config';
 
 export interface AuthedRequest extends Request {
@@ -23,6 +23,9 @@ export async function requireFirebase(req: Request, _res: Response, next: NextFu
     return next();
   }
   try {
+    if (!firebaseApp) {
+      return next(createHttpError(503, 'Firebase auth is not initialized'));
+    }
     const decoded = await firebaseApp.auth().verifyIdToken(token);
     (req as AuthedRequest).authUser = decoded;
     return next();
