@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import axios from 'axios';
+import admin from 'firebase-admin';
 import {
   generateReply,
   replyToFacebookComment,
@@ -11,6 +12,7 @@ import {
 } from '../services/autoReplyService.js';
 import fs from 'fs';
 import path from 'path';
+import { firestore } from '../db/firestore.js';
 
 const router = Router();
 const verifyToken = process.env.META_VERIFY_TOKEN ?? process.env.VERIFY_TOKEN;
@@ -25,6 +27,24 @@ const logEvent = (message: string, payload?: unknown) => {
     fs.appendFileSync(logFile, line);
   } catch {
     // ignore file logging failures
+  }
+};
+
+const saveInbound = async (event: {
+  platform: 'instagram' | 'facebook';
+  type: 'comment' | 'dm';
+  senderId?: string;
+  text?: string;
+  commentId?: string;
+  raw?: unknown;
+}) => {
+  try {
+    await firestore.collection('messages').add({
+      ...event,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('Failed to persist inbound webhook event', (err as Error).message);
   }
 };
 
@@ -59,12 +79,17 @@ router.post('/meta/webhook', async (req, res) => {
           logEvent('IG comment event', { commentId, fromId, text });
           if (!commentId || !text) continue;
           if (igBusinessId && fromId && fromId === igBusinessId) continue; // avoid replying to self
-          const reply = await generateReply(text, 'instagram');
-          await replyToInstagramComment(commentId, reply);
-          await likeInstagramComment(commentId).catch(err => console.warn('IG comment like failed', err));
-          if (fromId) {
-            const dmFollowUp = `${reply}\n\nWant a quick demo? I can send the link.`;
-            await replyToInstagramMessage(fromId, dmFollowUp).catch(err => console.warn('IG DM follow-up failed', err));
+          try {
+            void saveInbound({ platform: 'instagram', type: 'comment', senderId: fromId, text, commentId, raw: change });
+            const reply = await generateReply(text, 'instagram');
+            await replyToInstagramComment(commentId, reply);
+            await likeInstagramComment(commentId).catch(err => console.warn('IG comment like failed', err));
+            if (fromId) {
+              const dmFollowUp = `${reply}\n\nWant a quick demo? I can send the link.`;
+              await replyToInstagramMessage(fromId, dmFollowUp).catch(err => console.warn('IG DM follow-up failed', err));
+            }
+          } catch (err) {
+            logEvent('IG comment handler error', { commentId, error: (err as Error).message });
           }
         }
 
@@ -77,8 +102,13 @@ router.post('/meta/webhook', async (req, res) => {
             logEvent('IG message (changes)', { senderId, text });
             if (!senderId || !text) continue;
             if (igBusinessId && senderId === igBusinessId) continue; // avoid replying to self
-            const reply = await generateReply(text, 'instagram');
-            await replyToInstagramMessage(senderId, reply);
+            try {
+              void saveInbound({ platform: 'instagram', type: 'dm', senderId, text, raw: msg });
+              const reply = await generateReply(text, 'instagram');
+              await replyToInstagramMessage(senderId, reply);
+            } catch (err) {
+              logEvent('IG message handler error', { senderId, error: (err as Error).message });
+            }
           }
         }
 
@@ -91,12 +121,17 @@ router.post('/meta/webhook', async (req, res) => {
           logEvent('FB feed event', { item, commentId, fromId, message });
           if (item === 'comment' && commentId && message) {
             if (pageId && fromId && fromId === pageId) continue; // avoid replying to self
-            const reply = await generateReply(message, 'facebook');
-            await replyToFacebookComment(commentId, reply);
-            await likeFacebookComment(commentId).catch(err => console.warn('FB comment like failed', err));
-            if (fromId) {
-              const dmFollowUp = `${reply}\n\nHappy to send a quick AI Sales Agent demo link—want it?`;
-              await replyToFacebookMessage(fromId, dmFollowUp).catch(err => console.warn('FB DM follow-up failed', err));
+            try {
+              void saveInbound({ platform: 'facebook', type: 'comment', senderId: fromId, text: message, commentId, raw: change });
+              const reply = await generateReply(message, 'facebook');
+              await replyToFacebookComment(commentId, reply);
+              await likeFacebookComment(commentId).catch(err => console.warn('FB comment like failed', err));
+              if (fromId) {
+                const dmFollowUp = `${reply}\n\nHappy to send a quick AI Sales Agent demo linkƒ?"want it?`;
+                await replyToFacebookMessage(fromId, dmFollowUp).catch(err => console.warn('FB DM follow-up failed', err));
+              }
+            } catch (err) {
+              logEvent('FB comment handler error', { commentId, error: (err as Error).message });
             }
           }
         }
@@ -114,11 +149,22 @@ router.post('/meta/webhook', async (req, res) => {
           if (pageId && senderId === pageId) continue;
           if (igBusinessId && senderId === igBusinessId) continue;
 
-          const reply = await generateReply(message, body.object === 'instagram' ? 'instagram' : 'facebook');
-          if (body.object === 'instagram') {
-            await replyToInstagramMessage(senderId, reply);
-          } else {
-            await replyToFacebookMessage(senderId, reply);
+          try {
+            void saveInbound({
+              platform: body.object === 'instagram' ? 'instagram' : 'facebook',
+              type: 'dm',
+              senderId,
+              text: message,
+              raw: event,
+            });
+            const reply = await generateReply(message, body.object === 'instagram' ? 'instagram' : 'facebook');
+            if (body.object === 'instagram') {
+              await replyToInstagramMessage(senderId, reply);
+            } else {
+              await replyToFacebookMessage(senderId, reply);
+            }
+          } catch (err) {
+            logEvent('DM handler error', { senderId, error: (err as Error).message });
           }
         }
       }
