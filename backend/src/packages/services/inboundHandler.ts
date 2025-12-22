@@ -1,6 +1,7 @@
 import admin from 'firebase-admin';
 import OpenAI from 'openai';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore';
+import { config } from '../../config.js';
 import { classifyIntentText, IntentClassification } from '../brain/nlu/intentClassifier';
 import { ReplyClassification } from '../brain/nlu/replyClassifier';
 import { LeadService } from './leadService';
@@ -25,12 +26,12 @@ export class InboundHandler {
   private leadService = new LeadService();
   private qualificationAgent = new QualificationAgent();
   private messenger = new OutboundMessenger();
-  private aiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  private aiClient = new OpenAI({ apiKey: config.openAI.apiKey });
 
   async handle(payload: InboundPayload) {
     const classification = await classifyIntentText(payload.text);
     const replyClassification = toReplyClassification(classification);
-    await this.logMessage(payload, classification);
+    const messageRef = await this.logMessage(payload, classification);
 
     let lead = null;
     let leadCreated = false;
@@ -61,13 +62,16 @@ export class InboundHandler {
     const reply = await this.composeReply(payload, classification, lead?.name);
 
     if (payload.channel === 'web') {
+      await this.updateReplyStatus(messageRef, 'sent');
       return { reply, leadCreated };
     }
 
     try {
       await this.messenger.send(payload.channel as any, payload.userId, reply);
+      await this.updateReplyStatus(messageRef, 'sent');
     } catch (error) {
       console.error('Failed to send inbound reply', error);
+      await this.updateReplyStatus(messageRef, 'failed', (error as Error).message);
     }
     return { reply, leadCreated };
   }
@@ -78,7 +82,7 @@ You are Dotti from Dott Media, responding on ${payload.channel}.
 Message: """${payload.text}"""
 Intent: ${classification.intent}
 Name: ${leadName ?? payload.name ?? 'there'}
-Keep reply under 3 sentences, friendly, and mention Dott Media's AI automation.
+Goal: move them toward buying or booking a demo of the Dott Media AI Sales Agent. Keep it friendly, concise (<=3 sentences), give a clear CTA (book a demo or get the Sales Agent), and offer a link or next step.
 `.trim();
 
     try {
@@ -101,19 +105,48 @@ Keep reply under 3 sentences, friendly, and mention Dott Media's AI automation.
   private fallbackReply(channel: string) {
     return channel === 'web'
       ? 'Thanks for reaching out to Dott Media! A strategist will follow up shortly.'
-      : 'Appreciate the message! We’ll send over AI automation details shortly.';
+      : "Appreciate the message! We'll send over AI automation details shortly.";
   }
 
   private async logMessage(payload: InboundPayload, classification: Awaited<ReturnType<typeof classifyIntentText>>) {
-    await messagesCollection.add({
+    const entry: Record<string, unknown> = {
       channel: payload.channel,
       userId: payload.userId,
       text: payload.text,
       direction: 'inbound',
       classification,
-      metadata: payload.metadata,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+      replyStatus: 'pending',
+    };
+    if (payload.metadata !== undefined) {
+      entry.metadata = payload.metadata;
+    }
+    try {
+      return await messagesCollection.add(entry);
+    } catch (error) {
+      console.warn('Failed to persist inbound message', (error as Error).message);
+      return null;
+    }
+  }
+
+  private async updateReplyStatus(
+    ref: admin.firestore.DocumentReference<admin.firestore.DocumentData> | null,
+    status: 'sent' | 'failed',
+    error?: string,
+  ) {
+    if (!ref) return;
+    const update: Record<string, unknown> = {
+      replyStatus: status,
+      replyAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (error) {
+      update.replyError = error;
+    }
+    try {
+      await ref.update(update);
+    } catch (err) {
+      console.warn('Failed to update reply status', (err as Error).message);
+    }
   }
 }
 

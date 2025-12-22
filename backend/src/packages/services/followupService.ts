@@ -1,6 +1,7 @@
 import admin from 'firebase-admin';
 import OpenAI from 'openai';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore';
+import { config } from '../../config.js';
 import { incrementFollowupAnalytics } from '../../services/analyticsService';
 import { OutboundMessenger } from '../../services/outboundMessenger';
 
@@ -19,7 +20,7 @@ type LeadDoc = {
 
 export class FollowupService {
   private messenger = new OutboundMessenger();
-  private aiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  private aiClient = new OpenAI({ apiKey: config.openAI.apiKey });
 
   async runDailyFollowups() {
     const staleLeads = await this.fetchStaleLeads();
