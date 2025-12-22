@@ -13,10 +13,11 @@ export interface Prospect {
   email?: string;
   phone?: string;
   profileUrl?: string;
+  latestMediaId?: string;
   channel: ProspectChannel;
   score: number;
   createdAt: number;
-  status?: 'new' | 'contacted' | 'converted' | 'replied' | 'not_interested';
+  status?: 'new' | 'contacted' | 'converted' | 'replied' | 'not_interested' | 'skipped';
   lastContactedAt?: number;
   lastReplyAt?: number;
   lastMessagePreview?: string;
