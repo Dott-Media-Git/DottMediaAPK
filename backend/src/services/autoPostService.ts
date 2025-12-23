@@ -127,7 +127,7 @@ export class AutoPostService {
     const intervalHours = job.intervalHours && job.intervalHours > 0 ? job.intervalHours : this.defaultIntervalHours;
     const basePrompt =
       job.prompt ??
-      'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in an executive suite; friendly humanoid robot assisting a diverse team, natural expressions, premium interior finishes, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.';
+      'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in an executive suite; friendly humanoid robot wearing a tie and glasses, assisting a diverse team, natural expressions, premium interior finishes, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.';
     let runPrompt = this.buildVisualPrompt(basePrompt);
     const businessType = job.businessType ?? 'AI CRM + automation agency';
     const recentImages = this.getRecentImageHistory(job);
@@ -341,6 +341,7 @@ export class AutoPostService {
       'calm, confident expressions',
       'tidy workspace with notebooks and coffee',
       'modern devices and a sleek tablet',
+      'robot dressed with a tie and glasses',
     ];
     const pick = (items: string[]) => items[Math.floor(Math.random() * items.length)];
     const ref = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
