@@ -127,7 +127,7 @@ export class AutoPostService {
     const intervalHours = job.intervalHours && job.intervalHours > 0 ? job.intervalHours : this.defaultIntervalHours;
     const basePrompt =
       job.prompt ??
-      'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in a modern office; friendly humanoid robot assisting a diverse team, natural expressions, warm daylight, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.';
+      'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in an executive suite; friendly humanoid robot assisting a diverse team, natural expressions, premium interior finishes, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.';
     let runPrompt = this.buildVisualPrompt(basePrompt);
     const businessType = job.businessType ?? 'AI CRM + automation agency';
     const recentImages = this.getRecentImageHistory(job);
@@ -282,15 +282,16 @@ export class AutoPostService {
   }
 
   private buildVisualPrompt(basePrompt: string) {
+    const sceneContext = this.getSceneContext();
     const scenes = [
-      'team huddle around a glass whiteboard',
-      'client consultation at a sleek desk',
-      'robot guiding a product demo on a wall screen',
-      'sales standup in a bright open-plan office',
-      'strategy session in a glass conference room',
-      'robot assisting a marketer with campaign analytics',
-      'customer success check-in with a laptop dashboard',
-      'team reviewing lead pipeline on a large display',
+      'strategy session in a high-rise executive suite',
+      'client consultation in a private boardroom suite',
+      'robot guiding a product demo in a premium sales suite',
+      'team huddle around a glass table in a skyline suite',
+      'customer success check-in in a luxury meeting suite',
+      'robot assisting a marketer in a modern executive suite',
+      'lead pipeline review in a glass-walled suite',
+      'sales standup in a refined conference suite',
     ];
     const interactions = [
       'robot pointing at a funnel chart while people discuss',
@@ -303,13 +304,13 @@ export class AutoPostService {
       'robot and team reviewing KPIs together',
     ];
     const settings = [
-      'modern office with city skyline windows',
-      'warm coworking space with plants and natural light',
-      'clean tech studio with neutral tones and glass',
-      'executive boardroom with soft daylight',
-      'startup workspace with minimal decor',
-      'lounge-style meeting area with soft seating',
-      'bright studio office with branded accents',
+      'executive suite with city skyline windows',
+      'luxury boardroom with soft daylight',
+      'premium client suite with warm neutral tones',
+      'glass-walled executive lounge with refined decor',
+      'high-end conference suite with minimal accents',
+      'private strategy suite with modern finishes',
+      'suite-style meeting space with soft seating',
     ];
     const compositions = [
       'wide establishing shot',
@@ -343,9 +344,14 @@ export class AutoPostService {
     ];
     const pick = (items: string[]) => items[Math.floor(Math.random() * items.length)];
     const ref = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-    return `${basePrompt} Scene: ${pick(scenes)}. Interaction: ${pick(interactions)}. Setting: ${pick(settings)}. Composition: ${pick(
+    return `${basePrompt} Context: ${sceneContext}. Scene: ${pick(scenes)}. Interaction: ${pick(interactions)}. Setting: ${pick(settings)}. Composition: ${pick(
       compositions,
     )}. Lighting: ${pick(lighting)}. Palette: ${pick(palettes)}. Details: ${pick(details)}. Ref ${ref}.`;
+  }
+
+  private getSceneContext() {
+    const raw = process.env.AUTOPOST_SCENE_CONTEXT?.trim();
+    return raw && raw.length > 0 ? raw : 'executive suite';
   }
 }
 
