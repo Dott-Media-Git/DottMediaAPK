@@ -95,6 +95,14 @@ const resolveHomeCountry = () =>
   process.env.DEFAULT_COUNTRY ??
   'Uganda';
 
+export const resolveDiscoveryLimit = () => {
+  const perChannelCap = Number(process.env.OUTBOUND_DAILY_CAP_PER_CHANNEL ?? 20);
+  const channelCount = 3;
+  const defaultLimit = perChannelCap * channelCount * 2;
+  const configured = Number(process.env.OUTBOUND_DISCOVERY_LIMIT ?? defaultLimit);
+  return Math.max(10, Math.min(configured, 200));
+};
+
 async function getCachedTargets(maxAgeDays: number): Promise<TargetProfile | null> {
   if (maxAgeDays <= 0) return null;
   const snap = await targetsDoc.get();
