@@ -118,7 +118,7 @@ export class AutoPostService {
     const intervalHours = job.intervalHours && job.intervalHours > 0 ? job.intervalHours : this.defaultIntervalHours;
     const basePrompt =
       job.prompt ??
-      'Design a bold DOTT-MEDIA AI SALES BOT poster that highlights our autonomous outreach + follow-up assistant; futuristic sales desk, energized glow, human + AI collaboration, clean sans typography, high-contrast hero visual.';
+      'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in a modern office; friendly humanoid robot assisting a diverse team, natural expressions, warm daylight, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.';
     const runPrompt = `${basePrompt} ${this.uniqueDescriptor()}`;
     const businessType = job.businessType ?? 'AI CRM + automation agency';
 
