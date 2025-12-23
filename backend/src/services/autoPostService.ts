@@ -119,7 +119,7 @@ export class AutoPostService {
     const basePrompt =
       job.prompt ??
       'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in a modern office; friendly humanoid robot assisting a diverse team, natural expressions, warm daylight, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.';
-    const runPrompt = `${basePrompt} ${this.uniqueDescriptor()}`;
+    const runPrompt = this.buildVisualPrompt(basePrompt);
     const businessType = job.businessType ?? 'AI CRM + automation agency';
 
     let generated: GeneratedContent;
@@ -218,33 +218,71 @@ export class AutoPostService {
     return `${this.fallbackImageBase}&t=${Date.now()}`;
   }
 
-  private uniqueDescriptor() {
-    const colors = ['electric blue', 'neon pink', 'mint', 'amber', 'violet', 'teal'];
-    const motifs = [
-      'holographic grids',
-      'isometric dashboards',
-      'abstract neon lines',
-      'gradient liquid shapes',
-      'floating UI cards',
-      'soft glow lighting',
-      '3D sales funnel icons',
-      'CRM widgets hovering',
+  private buildVisualPrompt(basePrompt: string) {
+    const scenes = [
+      'team huddle around a glass whiteboard',
+      'client consultation at a sleek desk',
+      'robot guiding a product demo on a wall screen',
+      'sales standup in a bright open-plan office',
+      'strategy session in a glass conference room',
+      'robot assisting a marketer with campaign analytics',
+      'customer success check-in with a laptop dashboard',
+      'team reviewing lead pipeline on a large display',
     ];
-    const style = [
-      'cinematic lighting',
-      'studio shot',
-      'futuristic minimal',
-      'bold contrast',
-      'clean tech aesthetic',
-      'premium SaaS feel',
-      'vibrant social-first look',
+    const interactions = [
+      'robot pointing at a funnel chart while people discuss',
+      'robot handing a tablet to a team member',
+      'robot and human shaking hands in agreement',
+      'robot highlighting insights on a floating UI panel',
+      'robot taking notes while the team presents',
+      'robot collaborating on a shared screen',
+      'robot guiding a live demo with subtle gestures',
+      'robot and team reviewing KPIs together',
     ];
-    const orientations = ['1:1 square', '4:5 portrait', '16:9 widescreen'];
-    const color = colors[Math.floor(Math.random() * colors.length)];
-    const motif = motifs[Math.floor(Math.random() * motifs.length)];
-    const vibe = style[Math.floor(Math.random() * style.length)];
-    const orientation = orientations[Math.floor(Math.random() * orientations.length)];
-    return `Palette: ${color}. Visual: ${motif}. Style: ${vibe}. Orientation: ${orientation}. Ref ${Date.now()}.`;
+    const settings = [
+      'modern office with city skyline windows',
+      'warm coworking space with plants and natural light',
+      'clean tech studio with neutral tones and glass',
+      'executive boardroom with soft daylight',
+      'startup workspace with minimal decor',
+      'lounge-style meeting area with soft seating',
+      'bright studio office with branded accents',
+    ];
+    const compositions = [
+      'wide establishing shot',
+      'eye-level candid shot',
+      'over-the-shoulder view toward the screen',
+      'three-quarter angle with depth of field',
+      'medium shot focused on faces and gestures',
+      'close-up on the robot and one collaborator',
+    ];
+    const lighting = [
+      'morning sunlight with soft shadows',
+      'golden hour glow',
+      'diffused daylight, clean and natural',
+      'soft studio lighting with gentle highlights',
+      'cool daylight balanced with warm accents',
+    ];
+    const palettes = [
+      'warm neutrals with teal accents',
+      'soft gray with amber highlights',
+      'clean white with cobalt blue accents',
+      'muted charcoal with mint highlights',
+      'light sand tones with subtle navy',
+    ];
+    const details = [
+      'subtle holographic UI overlays',
+      'minimalistic charts on screens',
+      'clean glass surfaces with reflections',
+      'calm, confident expressions',
+      'tidy workspace with notebooks and coffee',
+      'modern devices and a sleek tablet',
+    ];
+    const pick = (items: string[]) => items[Math.floor(Math.random() * items.length)];
+    const ref = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    return `${basePrompt} Scene: ${pick(scenes)}. Interaction: ${pick(interactions)}. Setting: ${pick(settings)}. Composition: ${pick(
+      compositions,
+    )}. Lighting: ${pick(lighting)}. Palette: ${pick(palettes)}. Details: ${pick(details)}. Ref ${ref}.`;
   }
 }
 
