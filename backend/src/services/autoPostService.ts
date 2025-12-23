@@ -134,7 +134,7 @@ export class AutoPostService {
     const recentSet = new Set(recentImages);
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
 
-    let generated: GeneratedContent;
+    let generated: GeneratedContent | null = null;
     for (let attempt = 0; attempt < maxImageAttempts; attempt += 1) {
       try {
         generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1 });
@@ -155,11 +155,12 @@ export class AutoPostService {
 
     const credentials = await this.resolveCredentials(userId);
     const results: PostResult[] = [];
-    const imageUrls = this.resolveImageUrls(generated.images ?? [], recentSet);
+    const finalGenerated = generated;
+    const imageUrls = this.resolveImageUrls(finalGenerated.images ?? [], recentSet);
 
     for (const platform of job.platforms ?? []) {
       const publisher = platformPublishers[platform] ?? publishToTwitter;
-      const caption = this.captionForPlatform(platform, generated, runPrompt);
+      const caption = this.captionForPlatform(platform, finalGenerated, runPrompt);
       try {
         const response = await publisher({ caption, imageUrls, credentials });
         results.push({ platform, status: 'posted', remoteId: response?.remoteId ?? null });
