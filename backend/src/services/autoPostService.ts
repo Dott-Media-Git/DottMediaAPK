@@ -17,6 +17,7 @@ type AutoPostJob = {
   nextRun?: admin.firestore.Timestamp;
   lastRunAt?: admin.firestore.Timestamp;
   active?: boolean;
+  recentImageUrls?: string[];
 };
 
 type PostResult = { platform: string; status: 'posted' | 'failed'; remoteId?: string | null; error?: string };
@@ -41,6 +42,14 @@ export class AutoPostService {
   private defaultIntervalHours = Math.max(Number(process.env.AUTOPOST_INTERVAL_MINUTES ?? 180) / 60, 0.05);
   private fallbackImageBase =
     'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1200&q=80';
+  private fallbackImagePool = [
+    'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1525182008055-f88b95ff7980?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1485217988980-11786ced9454?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1521737604893-c6c1b7af0515?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1529333166437-7750a6dd5a70?auto=format&fit=crop&w=1200&q=80',
+  ];
 
   async start(payload: { userId: string; platforms?: string[]; prompt?: string; businessType?: string }) {
     const platforms = payload.platforms?.length ? payload.platforms : ['instagram', 'facebook', 'linkedin'];
@@ -119,24 +128,38 @@ export class AutoPostService {
     const basePrompt =
       job.prompt ??
       'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in a modern office; friendly humanoid robot assisting a diverse team, natural expressions, warm daylight, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.';
-    const runPrompt = this.buildVisualPrompt(basePrompt);
+    let runPrompt = this.buildVisualPrompt(basePrompt);
     const businessType = job.businessType ?? 'AI CRM + automation agency';
+    const recentImages = this.getRecentImageHistory(job);
+    const recentSet = new Set(recentImages);
+    const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
 
     let generated: GeneratedContent;
-    try {
-      generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1 });
-    } catch (error) {
-      console.error('[autopost] generation failed', error);
-      throw error;
+    for (let attempt = 0; attempt < maxImageAttempts; attempt += 1) {
+      try {
+        generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1 });
+      } catch (error) {
+        console.error('[autopost] generation failed', error);
+        throw error;
+      }
+      const fresh = this.selectFreshImages(generated.images ?? [], recentSet);
+      if (fresh.length) {
+        generated.images = fresh;
+        break;
+      }
+      runPrompt = this.buildVisualPrompt(basePrompt);
+    }
+    if (!generated) {
+      throw new Error('Autopost content generation failed');
     }
 
     const credentials = await this.resolveCredentials(userId);
     const results: PostResult[] = [];
+    const imageUrls = this.resolveImageUrls(generated.images ?? [], recentSet);
 
     for (const platform of job.platforms ?? []) {
       const publisher = platformPublishers[platform] ?? publishToTwitter;
       const caption = this.captionForPlatform(platform, generated, runPrompt);
-      const imageUrls = (generated.images?.length ? generated.images : [this.fallbackImageUrl()]).filter(Boolean);
       try {
         const response = await publisher({ caption, imageUrls, credentials });
         results.push({ platform, status: 'posted', remoteId: response?.remoteId ?? null });
@@ -147,6 +170,7 @@ export class AutoPostService {
 
     const nextRunDate = new Date();
     nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
+    const nextRecentImages = this.mergeRecentImages(recentImages, imageUrls);
 
     await autopostCollection.doc(userId).set(
       {
@@ -154,6 +178,7 @@ export class AutoPostService {
         lastResult: results,
         nextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
         active: job.active !== false,
+        recentImageUrls: nextRecentImages,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true },
@@ -165,6 +190,7 @@ export class AutoPostService {
         lastRunAt: admin.firestore.Timestamp.now(),
         nextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
         active: job.active !== false,
+        recentImageUrls: nextRecentImages,
       });
     }
 
@@ -216,6 +242,42 @@ export class AutoPostService {
   private fallbackImageUrl() {
     // Ensure a fresh image URL each run to avoid caching
     return `${this.fallbackImageBase}&t=${Date.now()}`;
+  }
+
+  private getRecentImageHistory(job: AutoPostJob): string[] {
+    if (!Array.isArray(job.recentImageUrls)) return [];
+    return job.recentImageUrls.filter(Boolean);
+  }
+
+  private selectFreshImages(images: string[], recent: Set<string>) {
+    return images.filter(url => url && !recent.has(url));
+  }
+
+  private resolveImageUrls(images: string[], recent: Set<string>) {
+    const fresh = this.selectFreshImages(images, recent);
+    if (fresh.length) return fresh;
+    const fallback = this.pickFallbackImage(recent);
+    return fallback ? [fallback] : images;
+  }
+
+  private mergeRecentImages(existing: string[], used: string[]) {
+    const maxHistory = Math.max(Number(process.env.AUTOPOST_IMAGE_HISTORY ?? 12), 3);
+    const next = [...used, ...existing].filter(Boolean);
+    const seen = new Set<string>();
+    const unique = next.filter(url => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+    return unique.slice(0, maxHistory);
+  }
+
+  private pickFallbackImage(recent: Set<string>) {
+    const pool = this.fallbackImagePool.filter(url => !recent.has(url));
+    const pickFrom = pool.length ? pool : this.fallbackImagePool;
+    if (!pickFrom.length) return this.fallbackImageUrl();
+    const chosen = pickFrom[Math.floor(Math.random() * pickFrom.length)];
+    return `${chosen}&t=${Date.now()}`;
   }
 
   private buildVisualPrompt(basePrompt: string) {
