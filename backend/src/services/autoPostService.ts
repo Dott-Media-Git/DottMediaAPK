@@ -145,7 +145,7 @@ export class AutoPostService {
         console.error('[autopost] generation failed', error);
       }
       const fresh = this.selectFreshImages(generated?.images ?? [], recentSet);
-      if (fresh.length) {
+      if (fresh.length && generated) {
         generated.images = fresh;
         break;
       }
