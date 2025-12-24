@@ -135,14 +135,16 @@ export class AutoPostService {
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
 
     let generated: GeneratedContent | null = null;
+    let generationError: Error | null = null;
     for (let attempt = 0; attempt < maxImageAttempts; attempt += 1) {
       try {
         generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1 });
+        generationError = null;
       } catch (error) {
+        generationError = error as Error;
         console.error('[autopost] generation failed', error);
-        throw error;
       }
-      const fresh = this.selectFreshImages(generated.images ?? [], recentSet);
+      const fresh = this.selectFreshImages(generated?.images ?? [], recentSet);
       if (fresh.length) {
         generated.images = fresh;
         break;
@@ -150,7 +152,17 @@ export class AutoPostService {
       runPrompt = this.buildVisualPrompt(basePrompt);
     }
     if (!generated) {
-      throw new Error('Autopost content generation failed');
+      if (generationError) {
+        console.warn('[autopost] using fallback content after generation failures');
+      }
+      generated = {
+        images: [],
+        caption_instagram: '',
+        caption_linkedin: '',
+        caption_x: '',
+        hashtags_instagram: '',
+        hashtags_generic: '',
+      };
     }
 
     const credentials = await this.resolveCredentials(userId);
