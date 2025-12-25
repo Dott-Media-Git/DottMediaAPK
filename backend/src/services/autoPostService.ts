@@ -18,6 +18,10 @@ type AutoPostJob = {
   lastRunAt?: admin.firestore.Timestamp;
   active?: boolean;
   recentImageUrls?: string[];
+  fallbackCaption?: string;
+  fallbackHashtags?: string;
+  recentCaptions?: string[];
+  requireAiImages?: boolean;
 };
 
 type PostResult = { platform: string; status: 'posted' | 'failed'; remoteId?: string | null; error?: string };
@@ -48,6 +52,17 @@ export class AutoPostService {
     'https://images.unsplash.com/photo-1525182008055-f88b95ff7980?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80',
     'https://images.unsplash.com/photo-1485217988980-11786ced9454?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80',
     'https://images.unsplash.com/photo-1529333166437-7750a6dd5a70?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80',
+  ];
+  private defaultFallbackCaption =
+    'Meet the Dott Media AI Sales Bot helping businesses convert leads into customers. Want a quick demo? DM us to get started.';
+  private defaultFallbackHashtags =
+    'DottMedia, AISalesBot, SalesAutomation, LeadGeneration, BusinessGrowth, CRM, MarketingAutomation, SalesPipeline, CustomerSuccess, AI, Automation, SmallBusiness, DigitalMarketing, B2B, Productivity';
+  private fallbackCaptionVariants = [
+    'DM us for a quick demo.',
+    'Book a 15-minute walkthrough.',
+    'Want the demo link? Send a message.',
+    "Ready to grow? Let's talk.",
+    'Ask for a quick demo today.',
   ];
 
   async start(payload: { userId: string; platforms?: string[]; prompt?: string; businessType?: string }) {
@@ -127,10 +142,12 @@ export class AutoPostService {
     const basePrompt =
       job.prompt ??
       'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in an executive suite; friendly humanoid robot wearing a tie and glasses, assisting a diverse team, natural expressions, premium interior finishes, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.';
-    let runPrompt = this.buildVisualPrompt(basePrompt);
+    const styledPrompt = this.applyNeonPreference(basePrompt);
+    let runPrompt = this.buildVisualPrompt(styledPrompt);
     const businessType = job.businessType ?? 'AI CRM + automation agency';
     const recentImages = this.getRecentImageHistory(job);
     const recentSet = new Set(recentImages);
+    const requireAiImages = this.requireAiImages(job);
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
 
     let generated: GeneratedContent | null = null;
@@ -167,14 +184,46 @@ export class AutoPostService {
     const credentials = await this.resolveCredentials(userId);
     const results: PostResult[] = [];
     const finalGenerated = generated;
-    const imageUrls = this.resolveImageUrls(finalGenerated.images ?? [], recentSet);
+    const imageUrls = this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages);
+    const fallbackCopy = this.buildFallbackCopy(job);
+    const recentCaptions = this.getRecentCaptionHistory(job);
+    const captionHistory = new Set(recentCaptions);
+    const usedCaptions: string[] = [];
+
+    if (requireAiImages && imageUrls.length === 0) {
+      const nextRunDate = new Date();
+      nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
+      const failed = (job.platforms ?? []).map(platform => ({
+        platform,
+        status: 'failed' as const,
+        error: 'ai_image_generation_failed',
+      }));
+      await autopostCollection.doc(userId).set(
+        {
+          lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastResult: failed,
+          nextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+          active: job.active !== false,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return {
+        posted: 0,
+        failed,
+        nextRun: nextRunDate.toISOString(),
+      };
+    }
 
     for (const platform of job.platforms ?? []) {
       const publisher = platformPublishers[platform] ?? publishToTwitter;
-      const caption = this.captionForPlatform(platform, finalGenerated, runPrompt);
+      const rawCaption = this.captionForPlatform(platform, finalGenerated, fallbackCopy);
+      const { caption, signature } = this.ensureCaptionVariety(platform, rawCaption, captionHistory);
       try {
         const response = await publisher({ caption, imageUrls, credentials });
         results.push({ platform, status: 'posted', remoteId: response?.remoteId ?? null });
+        usedCaptions.push(signature);
+        captionHistory.add(signature);
       } catch (error) {
         results.push({ platform, status: 'failed', error: (error as Error).message });
       }
@@ -183,6 +232,7 @@ export class AutoPostService {
     const nextRunDate = new Date();
     nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
     const nextRecentImages = this.mergeRecentImages(recentImages, imageUrls);
+    const nextRecentCaptions = this.mergeRecentCaptions(recentCaptions, usedCaptions);
 
     await autopostCollection.doc(userId).set(
       {
@@ -191,6 +241,7 @@ export class AutoPostService {
         nextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
         active: job.active !== false,
         recentImageUrls: nextRecentImages,
+        recentCaptions: nextRecentCaptions,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true },
@@ -203,6 +254,7 @@ export class AutoPostService {
         nextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
         active: job.active !== false,
         recentImageUrls: nextRecentImages,
+        recentCaptions: nextRecentCaptions,
       });
     }
 
@@ -237,18 +289,59 @@ export class AutoPostService {
     return defaults;
   }
 
-  private captionForPlatform(platform: string, content: GeneratedContent, fallbackPrompt: string) {
+  private captionForPlatform(
+    platform: string,
+    content: GeneratedContent,
+    fallbackCopy: { caption: string; hashtags: string },
+  ) {
     const captions: Record<string, string> = {
-      instagram: [content.caption_instagram, content.hashtags_instagram].filter(Boolean).join('\n\n'),
-      threads: [content.caption_instagram, content.hashtags_instagram].filter(Boolean).join('\n\n'),
-      tiktok: [content.caption_instagram, content.hashtags_instagram].filter(Boolean).join('\n\n'),
-      facebook: [content.caption_linkedin, content.hashtags_generic].filter(Boolean).join('\n\n'),
-      linkedin: [content.caption_linkedin, content.hashtags_generic].filter(Boolean).join('\n\n'),
-      twitter: [content.caption_x, content.hashtags_generic].filter(Boolean).join(' '),
-      x: [content.caption_x, content.hashtags_generic].filter(Boolean).join(' '),
+      instagram: content.caption_instagram,
+      threads: content.caption_instagram,
+      tiktok: content.caption_instagram,
+      facebook: content.caption_linkedin,
+      linkedin: content.caption_linkedin,
+      twitter: content.caption_x,
+      x: content.caption_x,
     };
-    const chosen = captions[platform] ?? content.caption_linkedin ?? content.caption_instagram;
-    return chosen?.trim() || `${fallbackPrompt} #ai #automation`;
+    const chosen = (captions[platform] ?? content.caption_linkedin ?? content.caption_instagram ?? '').trim();
+    const fallbackCaption = fallbackCopy.caption.trim();
+    const caption = chosen.length ? chosen : fallbackCaption;
+    const hasHashtags = /#[A-Za-z0-9_]+/.test(caption);
+    const sourceHashtags =
+      platform === 'instagram' || platform === 'threads' || platform === 'tiktok'
+        ? content.hashtags_instagram
+        : content.hashtags_generic;
+    const hashtags = hasHashtags ? '' : this.formatHashtags(sourceHashtags ?? fallbackCopy.hashtags);
+    if (platform === 'twitter' || platform === 'x') {
+      return [caption, hashtags].filter(Boolean).join(' ');
+    }
+    return [caption, hashtags].filter(Boolean).join('\n\n');
+  }
+
+  private buildFallbackCopy(job: AutoPostJob) {
+    const caption = job.fallbackCaption?.trim() || this.defaultFallbackCaption;
+    const hashtags = job.fallbackHashtags?.trim() || this.defaultFallbackHashtags;
+    return { caption, hashtags };
+  }
+
+  private formatHashtags(raw?: string) {
+    if (!raw) return '';
+    const tokens = raw
+      .split(/[,\\n]/g)
+      .map(token => token.trim())
+      .filter(Boolean)
+      .flatMap(token => token.split(/\\s+/).filter(Boolean))
+      .map(token => token.replace(/^#+/, '').replace(/[^A-Za-z0-9_]/g, ''))
+      .filter(Boolean);
+    if (!tokens.length) return '';
+    const seen = new Set<string>();
+    const unique = tokens.filter(token => {
+      const key = token.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return unique.slice(0, 25).map(token => `#${token}`).join(' ');
   }
 
   private fallbackImageUrl() {
@@ -261,13 +354,19 @@ export class AutoPostService {
     return job.recentImageUrls.filter(Boolean);
   }
 
+  private getRecentCaptionHistory(job: AutoPostJob): string[] {
+    if (!Array.isArray(job.recentCaptions)) return [];
+    return job.recentCaptions.filter(Boolean);
+  }
+
   private selectFreshImages(images: string[], recent: Set<string>) {
     return images.filter(url => url && !recent.has(url));
   }
 
-  private resolveImageUrls(images: string[], recent: Set<string>) {
+  private resolveImageUrls(images: string[], recent: Set<string>, requireAiImages: boolean) {
     const fresh = this.selectFreshImages(images, recent);
     if (fresh.length) return fresh;
+    if (requireAiImages) return [];
     const fallback = this.pickFallbackImage(recent);
     return fallback ? [fallback] : images;
   }
@@ -284,6 +383,18 @@ export class AutoPostService {
     return unique.slice(0, maxHistory);
   }
 
+  private mergeRecentCaptions(existing: string[], used: string[]) {
+    const maxHistory = Math.max(Number(process.env.AUTOPOST_CAPTION_HISTORY ?? 12), 3);
+    const next = [...used, ...existing].filter(Boolean);
+    const seen = new Set<string>();
+    const unique = next.filter(value => {
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+    return unique.slice(0, maxHistory);
+  }
+
   private pickFallbackImage(recent: Set<string>) {
     const pool = this.fallbackImagePool.filter(url => !recent.has(url));
     const pickFrom = pool.length ? pool : this.fallbackImagePool;
@@ -294,6 +405,7 @@ export class AutoPostService {
 
   private buildVisualPrompt(basePrompt: string) {
     const sceneContext = this.getSceneContext();
+    const style = this.getVisualStyle(basePrompt);
     const scenes = [
       'strategy session in a high-rise executive suite',
       'client consultation in a private boardroom suite',
@@ -354,16 +466,132 @@ export class AutoPostService {
       'modern devices and a sleek tablet',
       'robot dressed with a tie and glasses',
     ];
+    const neonLighting = [
+      'neon glow with high-contrast shadows',
+      'magenta and cyan rim lighting',
+      'futuristic neon ambience with light haze',
+      'vivid neon highlights with soft bloom',
+    ];
+    const neonPalettes = [
+      'magenta and cyan neon with deep charcoal',
+      'electric blue and pink neon accents',
+      'neon teal and violet against dark glass',
+      'high-contrast neon gradients with glossy blacks',
+    ];
+    const neonDetails = [
+      'glowing holographic UI overlays',
+      'neon edge lighting on glass surfaces',
+      'reflective floors with neon streaks',
+      'futuristic neon signage accents',
+      'robot dressed with a tie and glasses',
+    ];
+    const subtleNeonLighting = [
+      'soft ambient glow with minimal neon highlights',
+      'gentle neon rim lighting with balanced shadows',
+      'subtle neon accents with clean studio lighting',
+      'light haze with restrained neon bloom',
+    ];
+    const subtleNeonPalettes = [
+      'neutral tones with faint cyan accents',
+      'soft charcoal with muted neon teal',
+      'warm neutrals with minimal magenta glow',
+      'clean white with subtle neon edge lighting',
+    ];
+    const subtleNeonDetails = [
+      'light holographic UI overlays',
+      'subtle neon accents on glass edges',
+      'soft reflections with minimal neon streaks',
+      'restrained neon signage accents',
+      'robot dressed with a tie and glasses',
+    ];
     const pick = (items: string[]) => items[Math.floor(Math.random() * items.length)];
+    const pickLighting =
+      style === 'neon'
+        ? pick(neonLighting)
+        : style === 'neon-subtle'
+          ? pick(subtleNeonLighting)
+          : pick(lighting);
+    const pickPalette =
+      style === 'neon'
+        ? pick(neonPalettes)
+        : style === 'neon-subtle'
+          ? pick(subtleNeonPalettes)
+          : pick(palettes);
+    const pickDetail =
+      style === 'neon'
+        ? pick(neonDetails)
+        : style === 'neon-subtle'
+          ? pick(subtleNeonDetails)
+          : pick(details);
     const ref = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     return `${basePrompt} Context: ${sceneContext}. Scene: ${pick(scenes)}. Interaction: ${pick(interactions)}. Setting: ${pick(settings)}. Composition: ${pick(
       compositions,
-    )}. Lighting: ${pick(lighting)}. Palette: ${pick(palettes)}. Details: ${pick(details)}. Ref ${ref}.`;
+    )}. Lighting: ${pickLighting}. Palette: ${pickPalette}. Details: ${pickDetail}. Ref ${ref}.`;
   }
 
   private getSceneContext() {
     const raw = process.env.AUTOPOST_SCENE_CONTEXT?.trim();
     return raw && raw.length > 0 ? raw : 'executive suite';
+  }
+
+  private applyNeonPreference(basePrompt: string) {
+    const forceNeon = (process.env.AUTOPOST_FORCE_NEON ?? 'true').toLowerCase() !== 'false';
+    if (!forceNeon) return basePrompt;
+    const lower = basePrompt.toLowerCase();
+    if (lower.includes('neon') || lower.includes('cyberpunk')) {
+      return basePrompt;
+    }
+    return `${basePrompt} Neon lighting with magenta and cyan accents, futuristic glow, glossy reflections.`;
+  }
+
+  private getVisualStyle(basePrompt: string) {
+    const lower = basePrompt.toLowerCase();
+    if (lower.includes('subtle neon') || lower.includes('minimal neon') || lower.includes('soft neon')) {
+      return 'neon-subtle';
+    }
+    return lower.includes('neon') || lower.includes('cyberpunk') ? 'neon' : 'default';
+  }
+
+  private requireAiImages(job: AutoPostJob) {
+    if (typeof job.requireAiImages === 'boolean') return job.requireAiImages;
+    const flag = process.env.AUTOPOST_REQUIRE_AI_IMAGES?.toLowerCase();
+    if (flag === 'false') return false;
+    return true;
+  }
+
+  private ensureCaptionVariety(platform: string, caption: string, history: Set<string>) {
+    const signature = this.buildCaptionSignature(platform, caption);
+    if (!history.has(signature)) {
+      return { caption, signature };
+    }
+    for (const variant of this.fallbackCaptionVariants) {
+      const candidate = this.appendCaptionSuffix(caption, variant, platform);
+      const candidateSignature = this.buildCaptionSignature(platform, candidate);
+      if (!history.has(candidateSignature)) {
+        return { caption: candidate, signature: candidateSignature };
+      }
+    }
+    return { caption, signature };
+  }
+
+  private appendCaptionSuffix(caption: string, suffix: string, platform: string) {
+    const joiner = platform === 'twitter' || platform === 'x' ? ' ' : '\n\n';
+    const hashtagMatch = caption.match(/\s(#[A-Za-z0-9_]+)/);
+    if (!hashtagMatch || hashtagMatch.index === undefined) {
+      return `${caption}${joiner}${suffix}`.trim();
+    }
+    const idx = hashtagMatch.index;
+    if (idx <= 0) {
+      return `${caption}${joiner}${suffix}`.trim();
+    }
+    const head = caption.slice(0, idx).trim();
+    const tail = caption.slice(idx).trim();
+    return [head, suffix, tail].filter(Boolean).join(joiner).trim();
+  }
+
+  private buildCaptionSignature(platform: string, caption: string) {
+    const normalized = caption.toLowerCase().replace(/\s+/g, ' ').trim();
+    return `${platform}:${normalized}`;
   }
 }
 
