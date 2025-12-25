@@ -8,6 +8,7 @@ export type GeneratedContent = {
   caption_x: string;
   hashtags_instagram: string;
   hashtags_generic: string;
+  image_error?: string;
 };
 
 type GenerationParams = {
@@ -26,7 +27,8 @@ const DEFAULT_OUTPUT: GeneratedContent = {
 };
 
 export class ContentGenerationService {
-  private client = new OpenAI({ apiKey: config.openAI.apiKey });
+  private client = new OpenAI({ apiKey: config.openAI.apiKey, timeout: 120000 });
+  private lastImageError: string | null = null;
 
   async generateContent(params: GenerationParams): Promise<GeneratedContent> {
     const result: GeneratedContent = { ...DEFAULT_OUTPUT };
@@ -36,23 +38,44 @@ export class ContentGenerationService {
 
     result.images = images;
     Object.assign(result, captions);
+    if (!result.images.length && this.lastImageError) {
+      result.image_error = this.lastImageError;
+    }
     return result;
   }
 
   private async generateImages(params: GenerationParams, imageCount: number): Promise<string[]> {
-    try {
-      const response = await this.client.images.generate({
-        model: 'gpt-image-1',
-        prompt: `${params.prompt}. Stylize for ${params.businessType} social media campaign.`,
-        size: '1024x1024',
-        n: imageCount,
-      });
-      const data = response.data ?? [];
-      return data.map(item => item.url).filter((url): url is string => Boolean(url));
-    } catch (error) {
-      console.error('Image generation failed', error);
-      return [];
+    const model = 'dall-e-3';
+    const count = Math.min(imageCount, 1); // DALL-E 3 supports a single image per request
+    this.lastImageError = null;
+    const prompt = `${params.prompt}. Stylize for ${params.businessType} social media campaign.`;
+    const attempts = Math.max(Number(process.env.OPENAI_IMAGE_ATTEMPTS ?? 2), 1);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const response = await this.client.images.generate({
+          model,
+          prompt,
+          size: '1024x1024',
+          n: count,
+          response_format: 'url',
+        });
+        const data = response.data ?? [];
+        const urls = data.map(item => item.url).filter((url): url is string => Boolean(url));
+        if (urls.length) return urls;
+        this.lastImageError = 'OpenAI returned no image URL.';
+      } catch (error: any) {
+        const message =
+          error?.response?.data?.error?.message ??
+          error?.message ??
+          'OpenAI image generation failed';
+        this.lastImageError = message;
+        console.error('Image generation failed', message);
+        if (attempt < attempts - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+      }
     }
+    return [];
   }
 
   private async generateCaptions(params: GenerationParams) {
