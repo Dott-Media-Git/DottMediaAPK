@@ -1,5 +1,5 @@
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore';
 import { config } from '../../config';
 import { publishToInstagram } from './socialPlatforms/instagramPublisher';
 import { publishToFacebook } from './socialPlatforms/facebookPublisher';
@@ -45,6 +45,20 @@ const platformPublishers: Record<string, PlatformPublisher> = {
 };
 
 export class SocialPostingService {
+  private isMissingIndexError(error: unknown) {
+    const err = error as { code?: number; message?: string; details?: string };
+    const message = `${err?.message ?? ''} ${err?.details ?? ''}`.toLowerCase();
+    return err?.code === 9 && message.includes('index');
+  }
+
+  private toSeconds(value: any) {
+    if (!value) return 0;
+    if (typeof value.seconds === 'number') return value.seconds;
+    if (typeof value._seconds === 'number') return value._seconds;
+    if (typeof value.toDate === 'function') return Math.floor(value.toDate().getTime() / 1000);
+    return 0;
+  }
+
   async runQueue(limit = 25) {
     const now = admin.firestore.Timestamp.now();
     const pendingSnap = await scheduledPostsCollection
@@ -132,12 +146,26 @@ export class SocialPostingService {
   }
 
   async getHistory(userId: string, limit = 100) {
-    const snap = await scheduledPostsCollection
-      .where('userId', '==', userId)
-      .orderBy('createdAt', 'desc')
-      .limit(limit)
-      .get();
+    let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+    try {
+      snap = await scheduledPostsCollection
+        .where('userId', '==', userId)
+        .orderBy('createdAt', 'desc')
+        .limit(limit)
+        .get();
+    } catch (error) {
+      if (!this.isMissingIndexError(error)) throw error;
+      snap = await scheduledPostsCollection
+        .where('userId', '==', userId)
+        .limit(limit)
+        .get();
+    }
     const posts = snap.docs.map(doc => ({ id: doc.id, ...(doc.data() as Record<string, unknown>) }));
+    posts.sort((a: any, b: any) => {
+      const aScore = this.toSeconds(a.createdAt) || this.toSeconds(a.postedAt) || this.toSeconds(a.scheduledFor);
+      const bScore = this.toSeconds(b.createdAt) || this.toSeconds(b.postedAt) || this.toSeconds(b.scheduledFor);
+      return bScore - aScore;
+    });
     const summary = posts.reduce(
       (acc, post: any) => {
         acc.perPlatform[post.platform] = (acc.perPlatform[post.platform] ?? 0) + 1;

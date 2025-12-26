@@ -1,5 +1,5 @@
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore';
 
 const dailyCollection = firestore.collection('analytics').doc('socialDaily').collection('user');
 
@@ -10,6 +10,12 @@ type IncrementPayload = {
 };
 
 export class SocialAnalyticsService {
+  private isMissingIndexError(error: unknown) {
+    const err = error as { code?: number; message?: string; details?: string };
+    const message = `${err?.message ?? ''} ${err?.details ?? ''}`.toLowerCase();
+    return err?.code === 9 && message.includes('index');
+  }
+
   async incrementDaily(payload: IncrementPayload) {
     const date = new Date().toISOString().slice(0, 10);
     const docRef = dailyCollection.doc(`${payload.userId}_${date}`);
@@ -33,8 +39,16 @@ export class SocialAnalyticsService {
   }
 
   async getDailySummary(userId: string, limit = 14) {
-    const snap = await dailyCollection.where('userId', '==', userId).orderBy('date', 'desc').limit(limit).get();
-    return snap.docs.map(doc => doc.data());
+    let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+    try {
+      snap = await dailyCollection.where('userId', '==', userId).orderBy('date', 'desc').limit(limit).get();
+    } catch (error) {
+      if (!this.isMissingIndexError(error)) throw error;
+      snap = await dailyCollection.where('userId', '==', userId).limit(limit).get();
+    }
+    const rows = snap.docs.map(doc => doc.data());
+    rows.sort((a: any, b: any) => `${b?.date ?? ''}`.localeCompare(`${a?.date ?? ''}`));
+    return rows;
   }
 }
 
