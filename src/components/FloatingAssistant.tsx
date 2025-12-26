@@ -24,9 +24,11 @@ type Message = {
 };
 
 const quickPrompts = [
+  'What plan am I on?',
+  'Which channels are connected?',
+  'Is my billing active?',
   'How is my performance this week?',
-  'What should I check next?',
-  'Give me tips to boost conversions.'
+  'What should I check next?'
 ];
 
 export const FloatingAssistant: React.FC = () => {
@@ -46,15 +48,30 @@ export const FloatingAssistant: React.FC = () => {
 
   const canDisplay = hydrated && enabled && Boolean(state.user);
 
-  const context = useMemo(
-    () => ({
+  const context = useMemo(() => {
+    const connectedChannels = [
+      state.crmData?.instagram ? 'instagram' : null,
+      state.crmData?.facebook ? 'facebook' : null,
+      state.crmData?.linkedin ? 'linkedin' : null
+    ].filter(Boolean) as string[];
+    return {
       userId: state.user?.uid ?? 'guest',
       company: state.crmData?.companyName,
       analytics: state.crmData?.analytics,
+      subscriptionStatus: state.subscriptionStatus,
+      connectedChannels,
       currentScreen
-    }),
-    [state.user?.uid, state.crmData?.companyName, state.crmData?.analytics, currentScreen]
-  );
+    };
+  }, [
+    state.user?.uid,
+    state.crmData?.companyName,
+    state.crmData?.analytics,
+    state.crmData?.instagram,
+    state.crmData?.facebook,
+    state.crmData?.linkedin,
+    state.subscriptionStatus,
+    currentScreen
+  ]);
 
   const handleOpen = () => setOpen(true);
   const handleClose = () => setOpen(false);
@@ -146,20 +163,22 @@ export const FloatingAssistant: React.FC = () => {
           </KeyboardAvoidingView>
         </View>
       ) : null}
-      <TouchableOpacity
-        style={[
-          styles.fab,
-          {
-            bottom: 24 + insets.bottom,
-            shadowColor: '#000'
-          }
-        ]}
-        onPress={handleOpen}
-        accessibilityRole="button"
-        accessibilityLabel="Open AI assistant"
-      >
-        <Ionicons name="sparkles-outline" size={26} color={colors.background} />
-      </TouchableOpacity>
+      {!open ? (
+        <TouchableOpacity
+          style={[
+            styles.fab,
+            {
+              bottom: 24 + insets.bottom,
+              shadowColor: '#000'
+            }
+          ]}
+          onPress={handleOpen}
+          accessibilityRole="button"
+          accessibilityLabel="Open AI assistant"
+        >
+          <Ionicons name="sparkles-outline" size={26} color={colors.background} />
+        </TouchableOpacity>
+      ) : null}
     </>
   );
 };

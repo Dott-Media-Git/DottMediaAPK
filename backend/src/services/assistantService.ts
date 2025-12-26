@@ -6,6 +6,8 @@ const openai = new OpenAI({ apiKey: config.openAI.apiKey });
 type AssistantContext = {
   company?: string;
   currentScreen?: string;
+  subscriptionStatus?: string;
+  connectedChannels?: string[];
   analytics?: {
     leads?: number;
     engagement?: number;
@@ -76,6 +78,8 @@ export class AssistantService {
       'Keep answers conversational, professional, and concise (under 3 sentences unless detailed analysis is asked).',
       context.company ? `User Company: ${context.company}` : '',
       context.currentScreen ? `User is currently viewing: ${context.currentScreen}` : '',
+      context.subscriptionStatus ? `Subscription status: ${context.subscriptionStatus}` : '',
+      context.connectedChannels?.length ? `Connected channels: ${context.connectedChannels.join(', ')}` : 'Connected channels: none listed',
       context.analytics
         ? `Current Snapshot: Leads=${context.analytics.leads ?? 'n/a'}, Engagement=${context.analytics.engagement ?? 'n/a'}%, Conversions=${context.analytics.conversions ?? 'n/a'}, Feedback=${context.analytics.feedbackScore ?? 'n/a'}/5`
         : '',

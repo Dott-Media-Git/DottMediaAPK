@@ -7,6 +7,8 @@ type AssistantContextPayload = {
   company?: string;
   analytics?: CRMAnalytics;
   currentScreen?: string;
+  subscriptionStatus?: string;
+  connectedChannels?: string[];
 };
 
 const buildLocalResponse = (question: string, context: AssistantContextPayload) => {
@@ -14,6 +16,10 @@ const buildLocalResponse = (question: string, context: AssistantContextPayload) 
   const performanceLine = metrics
     ? `Here is the latest snapshot: leads ${metrics.leads}, engagement ${metrics.engagement}%, conversions ${metrics.conversions} and customer feedback ${metrics.feedbackScore}/5.`
     : 'I will keep an eye on your metrics once data is available.';
+
+  const channels = context.connectedChannels?.length ? context.connectedChannels.join(', ') : 'none linked yet';
+  const plan = context.subscriptionStatus ? context.subscriptionStatus.toUpperCase() : 'unknown';
+  const summary = `Plan: ${plan}. Connected channels: ${channels}.`;
 
   let guidance = 'Tap Dashboard for trends or Controls to tweak automation settings.';
   if (context.currentScreen === 'Dashboard') {
@@ -24,7 +30,7 @@ const buildLocalResponse = (question: string, context: AssistantContextPayload) 
     guidance = 'You can reach support here; head back to Dashboard anytime for KPI insights.';
   }
 
-  return `${performanceLine} ${guidance} ${question ? "Let's revisit that question once I'm connected." : ''}`.trim();
+  return `${performanceLine} ${summary} ${guidance} ${question ? "Let's revisit that question once I'm connected." : ''}`.trim();
 };
 
 const buildApiUrl = (path: string) => {
@@ -63,7 +69,9 @@ export const askAssistant = async (question: string, context: AssistantContextPa
         context: {
           company: context.company,
           currentScreen: context.currentScreen,
-          analytics: context.analytics
+          analytics: context.analytics,
+          subscriptionStatus: context.subscriptionStatus,
+          connectedChannels: context.connectedChannels
         }
       })
     });
@@ -77,7 +85,15 @@ export const askAssistant = async (question: string, context: AssistantContextPa
       throw new Error('Assistant API returned no answer');
     }
 
-    return data.answer as string;
+    if (typeof data.answer === 'string') {
+      return data.answer;
+    }
+
+    if (typeof data.answer === 'object' && typeof data.answer.text === 'string') {
+      return data.answer.text;
+    }
+
+    throw new Error('Assistant API returned an unsupported answer format');
   } catch (error) {
     console.warn('Assistant request failed, falling back locally', error);
     return buildLocalResponse(question, context);

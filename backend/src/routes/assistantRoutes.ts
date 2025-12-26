@@ -12,6 +12,8 @@ const BodySchema = z.object({
     .object({
       company: z.string().optional(),
       currentScreen: z.string().optional(),
+      subscriptionStatus: z.string().optional(),
+      connectedChannels: z.array(z.string()).optional(),
       analytics: z
         .object({
           leads: z.number().optional(),
