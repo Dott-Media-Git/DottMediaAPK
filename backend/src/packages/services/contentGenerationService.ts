@@ -80,6 +80,9 @@ export class ContentGenerationService {
 
   private async generateCaptions(params: GenerationParams) {
     const systemPrompt = `You create high-performing social media copy for Instagram, LinkedIn, and Twitter.
+Focus on the product/services and outcomes, not the image scene.
+Avoid describing clothing, suits, ties, executive suites, or photography/lighting.
+Emphasize real services like CRM, social media marketing, lead generation, outreach automation, analytics, AI automation, and appointment booking.
 Return JSON with keys:
 caption_instagram, caption_linkedin, caption_x, hashtags_instagram (comma separated), hashtags_generic (comma separated 15-25 hashtags).`;
 
@@ -91,7 +94,7 @@ caption_instagram, caption_linkedin, caption_x, hashtags_instagram (comma separa
         { role: 'system', content: systemPrompt },
         {
           role: 'user',
-          content: `Prompt: ${params.prompt}\nBusiness type: ${params.businessType}\nTone: energetic, helpful, growth-minded.`,
+          content: `Prompt: ${params.prompt}\nBusiness type: ${params.businessType}\nServices: CRM, social media marketing, lead generation, outreach automation, analytics, AI automation, appointment booking, auto-replies.\nTone: energetic, helpful, growth-minded.`,
         },
       ],
     });
