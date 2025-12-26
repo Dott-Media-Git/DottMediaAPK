@@ -1,17 +1,16 @@
 import 'react-native-gesture-handler';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StatusBar, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import * as Font from 'expo-font';
+import { Ionicons } from '@expo/vector-icons';
 import { AuthProvider, useAuth } from '@context/AuthContext';
 import { AssistantProvider } from '@context/AssistantContext';
 import { ThemeProvider, useThemeMode } from '@context/ThemeContext';
 import { AppNavigator } from '@navigation/AppNavigator';
 import { colors } from '@constants/colors';
 import { FloatingAssistant } from '@components/FloatingAssistant';
-import { useEffect } from 'react';
-import { useFonts } from 'expo-font';
-import Ionicons from '@expo/vector-icons/Ionicons';
 
 const RootView: React.FC = () => {
   const { state } = useAuth();
@@ -33,15 +32,33 @@ const RootView: React.FC = () => {
 };
 
 export default function App() {
-  const [fontsLoaded] = useFonts(Ionicons.font);
+  const [fontsReady, setFontsReady] = useState(false);
 
   useEffect(() => {
-    // Ensure icon font is registered on web; prevents missing glyph boxes.
-    Ionicons.loadFont();
+    let isMounted = true;
+    const finalize = () => {
+      if (isMounted) {
+        setFontsReady(true);
+      }
+    };
+    const timeoutId = setTimeout(finalize, 1500);
+
+    Font.loadAsync(Ionicons.font)
+      .then(finalize)
+      .catch(() => finalize());
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+    };
   }, []);
 
-  if (!fontsLoaded) {
-    return null;
+  if (!fontsReady) {
+    return (
+      <View style={styles.fontLoader}>
+        <ActivityIndicator size="large" color={colors.accent} />
+      </View>
+    );
   }
   return (
     <ThemeProvider>
@@ -64,5 +81,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: colors.overlay
+  },
+  fontLoader: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background
   }
 });

@@ -1,16 +1,28 @@
-import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text } from 'react-native';
+import React, { useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DMButton } from '@components/DMButton';
 import { DMCard } from '@components/DMCard';
 import { colors } from '@constants/colors';
 import { useThemeMode } from '@context/ThemeContext';
+import { useAssistant } from '@context/AssistantContext';
 
 const SUPPORT_WHATSAPP_URL = 'https://wa.me/2348130000000';
 
 export const SupportScreen: React.FC = () => {
   const { mode, toggleMode } = useThemeMode();
+  const { enabled: assistantEnabled, toggleAssistant } = useAssistant();
+  const [assistantSwitchLoading, setAssistantSwitchLoading] = useState(false);
+
+  const handleAssistantToggle = async (value: boolean) => {
+    setAssistantSwitchLoading(true);
+    try {
+      await toggleAssistant(value);
+    } finally {
+      setAssistantSwitchLoading(false);
+    }
+  };
 
   const openWhatsApp = async () => {
     try {
@@ -38,6 +50,19 @@ export const SupportScreen: React.FC = () => {
       <DMCard title="Theme">
         <Text style={styles.cardText}>Toggle between light and dark workspaces whenever you like.</Text>
         <DMButton title={mode === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'} onPress={toggleMode} />
+      </DMCard>
+      <DMCard title="Assistant overlay" subtitle="Toggle the floating help bubble">
+        <View style={styles.row}>
+          <Text style={styles.statusLabel}>{assistantEnabled ? 'Assistant On' : 'Assistant Off'}</Text>
+          <Switch
+            value={assistantEnabled}
+            onValueChange={handleAssistantToggle}
+            thumbColor={colors.text}
+            trackColor={{ false: colors.border, true: colors.accent }}
+            disabled={assistantSwitchLoading}
+          />
+        </View>
+        <Text style={styles.cardText}>Disable this if you prefer a distraction-free workspace.</Text>
       </DMCard>
       <DMCard title="WhatsApp Business">
         <Text style={styles.cardText}>Chat with us for onboarding questions or live campaign tweaks.</Text>
@@ -86,5 +111,16 @@ const styles = StyleSheet.create({
   cardText: {
     color: colors.subtext,
     marginBottom: 8
+  },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6
+  },
+  statusLabel: {
+    color: colors.text,
+    fontWeight: '600',
+    fontSize: 16
   }
 });
