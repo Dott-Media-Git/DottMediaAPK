@@ -1,40 +1,46 @@
 import React, { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View, RefreshControl } from 'react-native';
 import { colors } from '@constants/colors';
-import { fetchSocialHistory } from '@services/social';
-
-type SocialPost = {
-  id: string;
-  platform: string;
-  status: string;
-  scheduledFor?: { seconds: number };
-  postedAt?: { seconds: number };
-  errorMessage?: string;
-};
+import { useAuth } from '@context/AuthContext';
+import { fetchSocialHistory, type SocialHistory, type SocialPost } from '@services/social';
 
 export const PostingHistoryScreen: React.FC = () => {
-  const [history, setHistory] = useState<{ posts: SocialPost[]; summary: any; daily: any[] }>({
+  const { state } = useAuth();
+  const [history, setHistory] = useState<SocialHistory>({
     posts: [],
     summary: { perPlatform: {}, byStatus: {} },
     daily: [],
   });
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = async () => {
-    setRefreshing(true);
+  const load = async (options?: { silent?: boolean }) => {
+    if (!state.user) return;
+    if (!options?.silent) {
+      setRefreshing(true);
+    }
     try {
       const payload = await fetchSocialHistory();
       setHistory(payload);
     } catch (error) {
       console.warn('Failed to load history', error);
     } finally {
-      setRefreshing(false);
+      if (!options?.silent) {
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
     load();
-  }, []);
+  }, [state.user?.uid]);
+
+  useEffect(() => {
+    if (!state.user) return;
+    const interval = setInterval(() => {
+      load({ silent: true }).catch(() => undefined);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [state.user?.uid]);
 
   const grouped = {
     pending: history.posts.filter(post => post.status === 'pending'),
@@ -47,7 +53,7 @@ export const PostingHistoryScreen: React.FC = () => {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load()} />}
     >
       <View style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>Posts by Status</Text>

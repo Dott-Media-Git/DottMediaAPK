@@ -2,6 +2,7 @@ import admin from 'firebase-admin';
 import { firestore } from '../db/firestore.js';
 import { config } from '../config.js';
 import { contentGenerationService, GeneratedContent } from '../packages/services/contentGenerationService.js';
+import { socialAnalyticsService } from '../packages/services/socialAnalyticsService.js';
 import { SocialAccounts } from '../packages/services/socialPostingService.js';
 import { publishToInstagram } from '../packages/services/socialPlatforms/instagramPublisher.js';
 import { publishToFacebook } from '../packages/services/socialPlatforms/facebookPublisher.js';
@@ -25,8 +26,16 @@ type AutoPostJob = {
 };
 
 type PostResult = { platform: string; status: 'posted' | 'failed'; remoteId?: string | null; error?: string };
+type HistoryEntry = {
+  platform: string;
+  status: 'posted' | 'failed';
+  caption: string;
+  remoteId?: string | null;
+  errorMessage?: string;
+};
 
 const autopostCollection = firestore.collection('autopostJobs');
+const scheduledPostsCollection = firestore.collection('scheduledPosts');
 
 const platformPublishers: Record<string, (input: { caption: string; imageUrls: string[]; credentials?: SocialAccounts }) => Promise<{ remoteId?: string }>> =
   {
@@ -189,6 +198,7 @@ export class AutoPostService {
     const recentCaptions = this.getRecentCaptionHistory(job);
     const captionHistory = new Set(recentCaptions);
     const usedCaptions: string[] = [];
+    const historyEntries: HistoryEntry[] = [];
 
     if (requireAiImages && imageUrls.length === 0) {
       const nextRunDate = new Date();
@@ -224,8 +234,11 @@ export class AutoPostService {
         results.push({ platform, status: 'posted', remoteId: response?.remoteId ?? null });
         usedCaptions.push(signature);
         captionHistory.add(signature);
+        historyEntries.push({ platform, status: 'posted', caption, remoteId: response?.remoteId ?? null });
       } catch (error) {
-        results.push({ platform, status: 'failed', error: (error as Error).message });
+        const errorMessage = (error as Error).message ?? 'publish_failed';
+        results.push({ platform, status: 'failed', error: errorMessage });
+        historyEntries.push({ platform, status: 'failed', caption, errorMessage });
       }
     }
 
@@ -247,6 +260,8 @@ export class AutoPostService {
       { merge: true },
     );
 
+    await this.recordHistory(userId, historyEntries, imageUrls);
+
     if (this.useMemory) {
       this.memoryStore.set(userId, {
         ...job,
@@ -263,6 +278,45 @@ export class AutoPostService {
       failed: results.filter(result => result.status === 'failed'),
       nextRun: nextRunDate.toISOString(),
     };
+  }
+
+  private async recordHistory(userId: string, entries: HistoryEntry[], imageUrls: string[]) {
+    if (!entries.length) return;
+    const targetDate = new Date().toISOString().slice(0, 10);
+    const scheduledFor = admin.firestore.Timestamp.now();
+    try {
+      const batch = firestore.batch();
+      entries.forEach(entry => {
+        const ref = scheduledPostsCollection.doc();
+        batch.set(ref, {
+          userId,
+          platform: entry.platform,
+          caption: entry.caption,
+          hashtags: '',
+          imageUrls,
+          scheduledFor,
+          targetDate,
+          status: entry.status,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          postedAt: entry.status === 'posted' ? admin.firestore.FieldValue.serverTimestamp() : null,
+          errorMessage: entry.errorMessage ?? null,
+          remoteId: entry.remoteId ?? null,
+          source: 'autopost',
+        });
+      });
+      await batch.commit();
+      await Promise.all(
+        entries.map(entry =>
+          socialAnalyticsService.incrementDaily({
+            userId,
+            platform: entry.platform,
+            status: entry.status,
+          }),
+        ),
+      );
+    } catch (error) {
+      console.warn('[autopost] failed to record history', error);
+    }
   }
 
   private async resolveCredentials(userId: string): Promise<SocialAccounts> {

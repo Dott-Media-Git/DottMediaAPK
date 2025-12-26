@@ -5,6 +5,7 @@ import { socialSchedulingService } from '../packages/services/socialSchedulingSe
 import { socialPostingService } from '../packages/services/socialPostingService';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService';
 import { autoPostService } from '../services/autoPostService';
+import { firestore } from '../db/firestore';
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -78,13 +79,20 @@ router.get('/social/runQueue', async (req, res, next) => {
 router.get('/social/history', requireFirebase, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
-    const userId = (req.query.userId as string) ?? authUser?.uid;
-    if (!userId || authUser?.uid !== userId) {
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+
+    const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
+    const userDoc = await firestore.collection('users').doc(authUser.uid).get();
+    const historyUserId = (userDoc.data()?.historyUserId as string | undefined)?.trim();
+
+    if (requestedUserId && requestedUserId !== authUser.uid && requestedUserId !== historyUserId) {
       return res.status(403).json({ message: 'Forbidden' });
     }
+
+    const userId = requestedUserId || historyUserId || authUser.uid;
     const history = await socialPostingService.getHistory(userId);
     const daily = await socialAnalyticsService.getDailySummary(userId);
-    res.json({ ...history, daily });
+    res.json({ ...history, daily, userId });
   } catch (error) {
     next(error);
   }
