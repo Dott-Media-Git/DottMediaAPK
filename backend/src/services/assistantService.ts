@@ -1,9 +1,12 @@
 import OpenAI from 'openai';
 import { config } from '../config';
+import { AnalyticsService } from './analyticsService';
 
 const openai = new OpenAI({ apiKey: config.openAI.apiKey });
+const analyticsService = new AnalyticsService();
 
 type AssistantContext = {
+  userId?: string;
   company?: string;
   currentScreen?: string;
   subscriptionStatus?: string;
@@ -17,7 +20,80 @@ type AssistantContext = {
 };
 
 export class AssistantService {
+  private shouldProvideWeeklySummary(question: string) {
+    const normalized = question.toLowerCase();
+    const weekMention = /\b(week|weekly|this week|last week)\b/.test(normalized);
+    const metricMention = /\b(performance|summary|stats|kpi|metrics|engagement|leads|conversions)\b/.test(normalized);
+    return weekMention && metricMention;
+  }
+
+  private computeAverage(values: number[]) {
+    if (!values.length) return 0;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }
+
+  private formatDelta(label: string, current: number, previous: number, unit: string) {
+    const diff = current - previous;
+    const absDiff = Math.abs(diff);
+    const roundedCurrent = Number.isInteger(current) ? current : Number(current.toFixed(1));
+    const formattedCurrent = unit ? `${roundedCurrent}${unit}` : `${roundedCurrent}`;
+    if (previous === 0) {
+      if (current === 0) {
+        return `${label} flat at ${formattedCurrent}`;
+      }
+      return `${label} up from 0 to ${formattedCurrent}`;
+    }
+    if (diff > 0) {
+      return `${label} up ${Number(absDiff.toFixed(1))}${unit} (now ${formattedCurrent})`;
+    }
+    if (diff < 0) {
+      return `${label} down ${Number(absDiff.toFixed(1))}${unit} (now ${formattedCurrent})`;
+    }
+    return `${label} flat at ${formattedCurrent}`;
+  }
+
+  private async buildWeeklySummary(userId: string) {
+    const summary = await analyticsService.getSummary(userId);
+    const history = Array.isArray(summary.history) ? summary.history : [];
+    if (!history.length) {
+      return "I don't have live analytics yet. Once activity starts, I'll summarize weekly performance here.";
+    }
+
+    const sorted = [...history].sort((a, b) => a.date.localeCompare(b.date));
+    const last7 = sorted.slice(-7);
+    const prev7 = sorted.slice(-14, -7);
+
+    const current = {
+      leads: Math.round(last7.reduce((sum, day) => sum + day.leads, 0)),
+      engagement: Number(this.computeAverage(last7.map(day => day.engagement)).toFixed(1)),
+      conversions: Math.round(last7.reduce((sum, day) => sum + day.conversions, 0)),
+    };
+
+    if (!prev7.length) {
+      return `This week so far: engagement ${current.engagement}%, leads ${current.leads}, conversions ${current.conversions}. I need at least one full prior week to compare trends.`;
+    }
+
+    const previous = {
+      leads: Math.round(prev7.reduce((sum, day) => sum + day.leads, 0)),
+      engagement: Number(this.computeAverage(prev7.map(day => day.engagement)).toFixed(1)),
+      conversions: Math.round(prev7.reduce((sum, day) => sum + day.conversions, 0)),
+    };
+
+    const engagementLine = this.formatDelta('Engagement', current.engagement, previous.engagement, '%');
+    const leadsLine = this.formatDelta('Leads', current.leads, previous.leads, '');
+    const conversionsLine = this.formatDelta('Conversions', current.conversions, previous.conversions, '');
+    return `Weekly performance: ${engagementLine}. ${leadsLine}. ${conversionsLine}.`;
+  }
+
   async answer(question: string, context: AssistantContext) {
+    if (context.userId && this.shouldProvideWeeklySummary(question)) {
+      try {
+        return { type: 'text', text: await this.buildWeeklySummary(context.userId) };
+      } catch (error) {
+        console.error('Weekly summary failed', error);
+      }
+    }
+
     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       {
         type: 'function',
@@ -111,6 +187,10 @@ export class AssistantService {
             params = JSON.parse(toolCall.function.arguments || '{}');
           } catch (parseError) {
             console.error('Failed to parse tool arguments', parseError);
+          }
+
+          if (toolCall.function.name === 'get_insights' && context.userId) {
+            return { type: 'text', text: await this.buildWeeklySummary(context.userId) };
           }
 
           return {

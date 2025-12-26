@@ -33,7 +33,10 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
     if (!authUser) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
-    const answer = await assistant.answer(parsed.question, parsed.context ?? {});
+    const answer = await assistant.answer(parsed.question, {
+      ...(parsed.context ?? {}),
+      userId: authUser.uid,
+    });
     res.json({ answer });
   } catch (err) {
     next(err);
