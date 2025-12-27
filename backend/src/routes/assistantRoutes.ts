@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
+import { firestore } from '../db/firestore';
 import { AssistantService } from '../services/assistantService';
 
 const router = Router();
@@ -33,9 +34,12 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
     if (!authUser) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
+    const userDoc = await firestore.collection('users').doc(authUser.uid).get();
+    const historyUserId = (userDoc.data()?.historyUserId as string | undefined)?.trim();
+    const effectiveUserId = historyUserId || authUser.uid;
     const answer = await assistant.answer(parsed.question, {
       ...(parsed.context ?? {}),
-      userId: authUser.uid,
+      userId: effectiveUserId,
     });
     res.json({ answer });
   } catch (err) {
