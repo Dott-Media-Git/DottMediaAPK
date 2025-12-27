@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation } from '@react-navigation/native';
 import { sendChatQuery } from '@services/chatService';
+import { navigationRef } from '@navigation/navigationRef';
 import { useAuth } from './AuthContext';
 
 type Message = {
@@ -28,7 +28,6 @@ const AssistantContext = createContext<AssistantContextValue | undefined>(undefi
 
 export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { state: authState } = useAuth();
-  const navigation = useNavigation<any>();
   const [enabled, setEnabled] = useState(true);
   const [hydrated, setHydrated] = useState(false);
   const [currentScreen, setCurrentScreen] = useState<string>();
@@ -59,13 +58,17 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const handleToolCall = (action: string, params: any) => {
     console.log('Executing tool:', action, params);
     if (action === 'navigate') {
-      try {
-        navigation.navigate(params.screen);
-        return `Navigated to ${params.screen}`;
-      } catch (error) {
-        console.warn('Navigation failed', error);
-        return 'Failed to navigate.';
+      if (navigationRef.isReady()) {
+        try {
+          navigationRef.navigate(params.screen as never);
+          return `Navigated to ${params.screen}`;
+        } catch (error) {
+          console.warn('Navigation failed', error);
+          return 'Failed to navigate.';
+        }
       }
+      console.warn('Navigation not ready yet');
+      return 'Unable to navigate right now.';
     }
     if (action === 'get_insights') {
       // In a real app, we would query the analytics service here.
@@ -81,10 +84,17 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setIsTyping(true);
 
     try {
+      const connectedChannels = [
+        authState.crmData?.instagram ? 'instagram' : null,
+        authState.crmData?.facebook ? 'facebook' : null,
+        authState.crmData?.linkedin ? 'linkedin' : null
+      ].filter(Boolean) as string[];
       const context = {
         currentScreen,
         company: authState.crmData?.companyName,
         analytics: authState.crmData?.analytics,
+        subscriptionStatus: authState.subscriptionStatus,
+        connectedChannels
       };
 
       const response = await sendChatQuery(text, context);

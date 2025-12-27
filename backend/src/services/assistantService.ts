@@ -1,9 +1,11 @@
 import OpenAI from 'openai';
 import { config } from '../config';
 import { AnalyticsService } from './analyticsService';
+import { SocialAnalyticsService } from '../packages/services/socialAnalyticsService';
 
 const openai = new OpenAI({ apiKey: config.openAI.apiKey });
 const analyticsService = new AnalyticsService();
+const socialAnalyticsService = new SocialAnalyticsService();
 
 type AssistantContext = {
   userId?: string;
@@ -53,36 +55,90 @@ export class AssistantService {
   }
 
   private async buildWeeklySummary(userId: string) {
-    const summary = await analyticsService.getSummary(userId);
+    const [summary, socialRows] = await Promise.all([
+      analyticsService.getSummary(userId),
+      socialAnalyticsService.getDailySummary(userId, 14),
+    ]);
+
     const history = Array.isArray(summary.history) ? summary.history : [];
-    if (!history.length) {
-      return "I don't have live analytics yet. Once activity starts, I'll summarize weekly performance here.";
-    }
+    const analyticsSorted = [...history].sort((a, b) => a.date.localeCompare(b.date));
+    const last7 = analyticsSorted.slice(-7);
+    const prev7 = analyticsSorted.slice(-14, -7);
 
-    const sorted = [...history].sort((a, b) => a.date.localeCompare(b.date));
-    const last7 = sorted.slice(-7);
-    const prev7 = sorted.slice(-14, -7);
+    const analyticsTotals = {
+      leads: last7.reduce((sum, day) => sum + day.leads, 0),
+      engagement: last7.reduce((sum, day) => sum + day.engagement, 0),
+      conversions: last7.reduce((sum, day) => sum + day.conversions, 0),
+    };
+    const hasAnalyticsData = last7.length > 0 && (analyticsTotals.leads > 0 || analyticsTotals.engagement > 0 || analyticsTotals.conversions > 0);
 
-    const current = {
-      leads: Math.round(last7.reduce((sum, day) => sum + day.leads, 0)),
-      engagement: Number(this.computeAverage(last7.map(day => day.engagement)).toFixed(1)),
-      conversions: Math.round(last7.reduce((sum, day) => sum + day.conversions, 0)),
+    const analyticsLine = hasAnalyticsData
+      ? (() => {
+          const current = {
+            leads: Math.round(analyticsTotals.leads),
+            engagement: Number(this.computeAverage(last7.map(day => day.engagement)).toFixed(1)),
+            conversions: Math.round(analyticsTotals.conversions),
+          };
+          if (!prev7.length) {
+            return `This week so far: engagement ${current.engagement}%, leads ${current.leads}, conversions ${current.conversions}.`;
+          }
+          const previous = {
+            leads: Math.round(prev7.reduce((sum, day) => sum + day.leads, 0)),
+            engagement: Number(this.computeAverage(prev7.map(day => day.engagement)).toFixed(1)),
+            conversions: Math.round(prev7.reduce((sum, day) => sum + day.conversions, 0)),
+          };
+          const engagementLine = this.formatDelta('Engagement', current.engagement, previous.engagement, '%');
+          const leadsLine = this.formatDelta('Leads', current.leads, previous.leads, '');
+          const conversionsLine = this.formatDelta('Conversions', current.conversions, previous.conversions, '');
+          return `Weekly performance: ${engagementLine}. ${leadsLine}. ${conversionsLine}.`;
+        })()
+      : null;
+
+    const socialSorted = [...(socialRows ?? [])].sort((a: any, b: any) => `${a?.date ?? ''}`.localeCompare(`${b?.date ?? ''}`));
+    const socialLast7 = socialSorted.slice(-7);
+    const socialPrev7 = socialSorted.slice(-14, -7);
+
+    const sumSocial = (rows: Array<Record<string, unknown>>, key: string) =>
+      rows.reduce((sum, row) => sum + Number(row[key] ?? 0), 0);
+
+    const socialCurrent = {
+      attempted: sumSocial(socialLast7, 'postsAttempted'),
+      posted: sumSocial(socialLast7, 'postsPosted'),
+      failed: sumSocial(socialLast7, 'postsFailed'),
+      skipped: sumSocial(socialLast7, 'postsSkipped'),
+    };
+    const socialPrevious = {
+      attempted: sumSocial(socialPrev7, 'postsAttempted'),
+      posted: sumSocial(socialPrev7, 'postsPosted'),
+      failed: sumSocial(socialPrev7, 'postsFailed'),
+      skipped: sumSocial(socialPrev7, 'postsSkipped'),
     };
 
-    if (!prev7.length) {
-      return `This week so far: engagement ${current.engagement}%, leads ${current.leads}, conversions ${current.conversions}. I need at least one full prior week to compare trends.`;
+    const hasSocialData =
+      socialCurrent.attempted + socialCurrent.posted + socialCurrent.failed + socialCurrent.skipped > 0 ||
+      socialPrevious.attempted + socialPrevious.posted + socialPrevious.failed + socialPrevious.skipped > 0;
+
+    const socialLine = hasSocialData
+      ? (() => {
+          if (!socialPrev7.length) {
+            return `Social activity this week: ${socialCurrent.posted} posts published, ${socialCurrent.failed} failed, ${socialCurrent.skipped} skipped.`;
+          }
+          const postedLine = this.formatDelta('Posts', socialCurrent.posted, socialPrevious.posted, '');
+          const failedLine = this.formatDelta('Failures', socialCurrent.failed, socialPrevious.failed, '');
+          return `Social activity: ${postedLine}. ${failedLine}.`;
+        })()
+      : null;
+
+    const lines = [analyticsLine, socialLine].filter(Boolean) as string[];
+    if (!lines.length) {
+      return 'No live activity yet this week. Once posts or automations run, I will summarize performance here.';
     }
-
-    const previous = {
-      leads: Math.round(prev7.reduce((sum, day) => sum + day.leads, 0)),
-      engagement: Number(this.computeAverage(prev7.map(day => day.engagement)).toFixed(1)),
-      conversions: Math.round(prev7.reduce((sum, day) => sum + day.conversions, 0)),
-    };
-
-    const engagementLine = this.formatDelta('Engagement', current.engagement, previous.engagement, '%');
-    const leadsLine = this.formatDelta('Leads', current.leads, previous.leads, '');
-    const conversionsLine = this.formatDelta('Conversions', current.conversions, previous.conversions, '');
-    return `Weekly performance: ${engagementLine}. ${leadsLine}. ${conversionsLine}.`;
+    if (!hasAnalyticsData && socialLine) {
+      lines.unshift('No CRM performance data yet.');
+    } else if (hasAnalyticsData && !prev7.length) {
+      lines.push('I need at least one full prior week to compare trends.');
+    }
+    return lines.join(' ');
   }
 
   async answer(question: string, context: AssistantContext) {
