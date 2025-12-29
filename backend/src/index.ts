@@ -28,6 +28,7 @@ import contentRoutes from './routes/contentRoutes';
 import socialRoutes from './routes/socialRoutes';
 import metaWebhookRoutes from './routes/metaWebhookRoutes';
 import authRoutes from './routes/authRoutes';
+import youtubeIntegrationRoutes from './routes/youtubeIntegrationRoutes';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher';
 import stripeRoutes from './routes/stripeRoutes';
 import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
@@ -40,6 +41,7 @@ const initializeAutomation = async () => {
       import('./jobs/prospectJob.js'),
       import('./jobs/followupJob.js'),
       import('./jobs/autoPostJob.js'),
+      import('./workers/youtubeWorker.js'),
     ]);
   } catch (error) {
     console.error('Failed to initialize automation background jobs', error);
@@ -97,6 +99,7 @@ app.use('/api', analyticsRoutes);
 app.use('/api', contentRoutes);
 app.use('/api', socialRoutes);
 app.use('/api', authRoutes);
+app.use('/', youtubeIntegrationRoutes);
 app.use('/', adminRoutes);
 
 // Direct autopost endpoint to ensure availability (mirrors socialRoutes autopost handler)
@@ -104,8 +107,33 @@ app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
-    const { platforms, prompt, businessType } = req.body ?? {};
-    await autoPostService.start({ userId: authUser.uid, platforms, prompt, businessType });
+    const {
+      platforms,
+      prompt,
+      businessType,
+      videoUrl,
+      videoUrls,
+      videoTitle,
+      youtubePrivacyStatus,
+      youtubeVideoUrl,
+      youtubeVideoUrls,
+      tiktokVideoUrl,
+      tiktokVideoUrls,
+    } = req.body ?? {};
+    await autoPostService.start({
+      userId: authUser.uid,
+      platforms,
+      prompt,
+      businessType,
+      videoUrl,
+      videoUrls,
+      videoTitle,
+      youtubePrivacyStatus,
+      youtubeVideoUrl,
+      youtubeVideoUrls,
+      tiktokVideoUrl,
+      tiktokVideoUrls,
+    });
     const result = await autoPostService.runForUser(authUser.uid);
     res.json({ ok: true, ...result });
   } catch (error) {

@@ -8,6 +8,9 @@ import { publishToInstagram } from '../packages/services/socialPlatforms/instagr
 import { publishToFacebook } from '../packages/services/socialPlatforms/facebookPublisher.js';
 import { publishToLinkedIn } from '../packages/services/socialPlatforms/linkedinPublisher.js';
 import { publishToTwitter } from '../packages/services/socialPlatforms/twitterPublisher.js';
+import { publishToYouTube } from '../packages/services/socialPlatforms/youtubePublisher.js';
+import { publishToTikTok } from '../packages/services/socialPlatforms/tiktokPublisher.js';
+import { getYouTubeIntegrationSecrets } from './socialIntegrationService.js';
 
 type AutoPostJob = {
   userId: string;
@@ -23,6 +26,17 @@ type AutoPostJob = {
   fallbackHashtags?: string;
   recentCaptions?: string[];
   requireAiImages?: boolean;
+  videoUrl?: string;
+  videoUrls?: string[];
+  videoTitle?: string;
+  youtubePrivacyStatus?: 'private' | 'public' | 'unlisted';
+  videoCursor?: number;
+  youtubeVideoUrl?: string;
+  youtubeVideoUrls?: string[];
+  youtubeVideoCursor?: number;
+  tiktokVideoUrl?: string;
+  tiktokVideoUrls?: string[];
+  tiktokVideoCursor?: number;
 };
 
 type PostResult = { platform: string; status: 'posted' | 'failed'; remoteId?: string | null; error?: string };
@@ -32,21 +46,33 @@ type HistoryEntry = {
   caption: string;
   remoteId?: string | null;
   errorMessage?: string;
+  videoUrl?: string;
+  videoTitle?: string;
 };
 
 const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 
-const platformPublishers: Record<string, (input: { caption: string; imageUrls: string[]; credentials?: SocialAccounts }) => Promise<{ remoteId?: string }>> =
-  {
-    instagram: publishToInstagram,
-    threads: publishToInstagram,
-    tiktok: publishToInstagram,
-    facebook: publishToFacebook,
-    linkedin: publishToLinkedIn,
-    twitter: publishToTwitter,
-    x: publishToTwitter,
-  };
+const platformPublishers: Record<
+  string,
+  (input: {
+    caption: string;
+    imageUrls: string[];
+    videoUrl?: string;
+    videoTitle?: string;
+    privacyStatus?: 'private' | 'public' | 'unlisted';
+    credentials?: SocialAccounts;
+  }) => Promise<{ remoteId?: string }>
+> = {
+  instagram: publishToInstagram,
+  threads: publishToInstagram,
+  tiktok: publishToTikTok,
+  facebook: publishToFacebook,
+  linkedin: publishToLinkedIn,
+  twitter: publishToTwitter,
+  youtube: publishToYouTube,
+  x: publishToTwitter,
+};
 
 export class AutoPostService {
   private memoryStore = new Map<string, AutoPostJob>();
@@ -74,7 +100,20 @@ export class AutoPostService {
     'Ask for a quick demo today.',
   ];
 
-  async start(payload: { userId: string; platforms?: string[]; prompt?: string; businessType?: string }) {
+  async start(payload: {
+    userId: string;
+    platforms?: string[];
+    prompt?: string;
+    businessType?: string;
+    videoUrl?: string;
+    videoUrls?: string[];
+    videoTitle?: string;
+    youtubePrivacyStatus?: 'private' | 'public' | 'unlisted';
+    youtubeVideoUrl?: string;
+    youtubeVideoUrls?: string[];
+    tiktokVideoUrl?: string;
+    tiktokVideoUrls?: string[];
+  }) {
     const platforms = payload.platforms?.length ? payload.platforms : ['instagram', 'facebook', 'linkedin'];
     const now = new Date();
     await autopostCollection.doc(payload.userId).set(
@@ -83,6 +122,18 @@ export class AutoPostService {
         platforms,
         ...(payload.prompt ? { prompt: payload.prompt } : {}),
         ...(payload.businessType ? { businessType: payload.businessType } : {}),
+        ...(payload.videoUrl ? { videoUrl: payload.videoUrl } : {}),
+        ...(payload.videoUrls && payload.videoUrls.length ? { videoUrls: payload.videoUrls, videoCursor: 0 } : {}),
+        ...(payload.videoTitle ? { videoTitle: payload.videoTitle } : {}),
+        ...(payload.youtubePrivacyStatus ? { youtubePrivacyStatus: payload.youtubePrivacyStatus } : {}),
+        ...(payload.youtubeVideoUrl ? { youtubeVideoUrl: payload.youtubeVideoUrl } : {}),
+        ...(payload.youtubeVideoUrls && payload.youtubeVideoUrls.length
+          ? { youtubeVideoUrls: payload.youtubeVideoUrls, youtubeVideoCursor: 0 }
+          : {}),
+        ...(payload.tiktokVideoUrl ? { tiktokVideoUrl: payload.tiktokVideoUrl } : {}),
+        ...(payload.tiktokVideoUrls && payload.tiktokVideoUrls.length
+          ? { tiktokVideoUrls: payload.tiktokVideoUrls, tiktokVideoCursor: 0 }
+          : {}),
         intervalHours: this.defaultIntervalHours,
         nextRun: admin.firestore.Timestamp.fromDate(now),
         active: true,
@@ -96,6 +147,17 @@ export class AutoPostService {
         platforms,
         prompt: payload.prompt ?? undefined,
         businessType: payload.businessType ?? undefined,
+        videoUrl: payload.videoUrl ?? undefined,
+        videoUrls: payload.videoUrls ?? undefined,
+        videoCursor: payload.videoUrls && payload.videoUrls.length ? 0 : undefined,
+        videoTitle: payload.videoTitle ?? undefined,
+        youtubePrivacyStatus: payload.youtubePrivacyStatus ?? undefined,
+        youtubeVideoUrl: payload.youtubeVideoUrl ?? undefined,
+        youtubeVideoUrls: payload.youtubeVideoUrls ?? undefined,
+        youtubeVideoCursor: payload.youtubeVideoUrls && payload.youtubeVideoUrls.length ? 0 : undefined,
+        tiktokVideoUrl: payload.tiktokVideoUrl ?? undefined,
+        tiktokVideoUrls: payload.tiktokVideoUrls ?? undefined,
+        tiktokVideoCursor: payload.tiktokVideoUrls && payload.tiktokVideoUrls.length ? 0 : undefined,
         intervalHours: this.defaultIntervalHours,
         nextRun: admin.firestore.Timestamp.fromDate(now),
         active: true,
@@ -148,6 +210,8 @@ export class AutoPostService {
 
   private async executeJob(userId: string, job: AutoPostJob) {
     const intervalHours = job.intervalHours && job.intervalHours > 0 ? job.intervalHours : this.defaultIntervalHours;
+    const platforms = job.platforms ?? [];
+    const videoPlatforms = new Set(['youtube', 'tiktok']);
     const basePrompt =
       job.prompt ??
       'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in an executive suite; friendly humanoid robot wearing a tie and glasses, assisting a diverse team, natural expressions, premium interior finishes, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.';
@@ -156,7 +220,8 @@ export class AutoPostService {
     const businessType = job.businessType ?? 'AI CRM + automation agency';
     const recentImages = this.getRecentImageHistory(job);
     const recentSet = new Set(recentImages);
-    const requireAiImages = this.requireAiImages(job);
+    const needsImages = platforms.some(platform => !videoPlatforms.has(platform));
+    const requireAiImages = needsImages ? this.requireAiImages(job) : false;
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
 
     let generated: GeneratedContent | null = null;
@@ -193,7 +258,10 @@ export class AutoPostService {
     const credentials = await this.resolveCredentials(userId);
     const results: PostResult[] = [];
     const finalGenerated = generated;
-    const imageUrls = this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages);
+    const imageUrls = needsImages ? this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages) : [];
+    const genericVideoSelection = this.selectNextGenericVideo(job);
+    const cursorUpdates: Partial<Pick<AutoPostJob, 'videoCursor' | 'youtubeVideoCursor' | 'tiktokVideoCursor'>> = {};
+    let usedGenericVideo = false;
     const fallbackCopy = this.buildFallbackCopy(job);
     const recentCaptions = this.getRecentCaptionHistory(job);
     const captionHistory = new Set(recentCaptions);
@@ -203,7 +271,7 @@ export class AutoPostService {
     if (requireAiImages && imageUrls.length === 0) {
       const nextRunDate = new Date();
       nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
-      const failed = (job.platforms ?? []).map(platform => ({
+      const failed = platforms.map(platform => ({
         platform,
         status: 'failed' as const,
         error: 'ai_image_generation_failed',
@@ -225,20 +293,63 @@ export class AutoPostService {
       };
     }
 
-    for (const platform of job.platforms ?? []) {
+    for (const platform of platforms) {
       const publisher = platformPublishers[platform] ?? publishToTwitter;
       const rawCaption = this.captionForPlatform(platform, finalGenerated, fallbackCopy);
       const { caption, signature } = this.ensureCaptionVariety(platform, rawCaption, captionHistory);
+      const isVideoPlatform = videoPlatforms.has(platform);
+      let videoUrl: string | undefined;
+      let videoTitle: string | undefined;
+      const privacyStatus = platform === 'youtube' ? job.youtubePrivacyStatus : undefined;
+
+      if (isVideoPlatform) {
+        const platformSelection = this.selectNextVideo(job, platform as 'youtube' | 'tiktok');
+        if (platformSelection.videoUrl) {
+          videoUrl = platformSelection.videoUrl;
+          if (platform === 'youtube' && typeof platformSelection.nextCursor === 'number') {
+            cursorUpdates.youtubeVideoCursor = platformSelection.nextCursor;
+          }
+          if (platform === 'tiktok' && typeof platformSelection.nextCursor === 'number') {
+            cursorUpdates.tiktokVideoCursor = platformSelection.nextCursor;
+          }
+        } else if (genericVideoSelection.videoUrl) {
+          videoUrl = genericVideoSelection.videoUrl;
+          usedGenericVideo = true;
+        }
+        videoTitle = platform === 'youtube' ? job.videoTitle?.trim() : undefined;
+      }
+
+      if (isVideoPlatform && !videoUrl) {
+        const errorMessage = platform === 'youtube' ? 'Missing YouTube video URL' : 'Missing TikTok video URL';
+        results.push({ platform, status: 'failed', error: errorMessage });
+        historyEntries.push({ platform, status: 'failed', caption, errorMessage });
+        continue;
+      }
+
       try {
-        const response = await publisher({ caption, imageUrls, credentials });
+        const response = await publisher({
+          caption,
+          imageUrls: isVideoPlatform ? [] : imageUrls,
+          videoUrl,
+          videoTitle,
+          privacyStatus,
+          credentials,
+        });
         results.push({ platform, status: 'posted', remoteId: response?.remoteId ?? null });
         usedCaptions.push(signature);
         captionHistory.add(signature);
-        historyEntries.push({ platform, status: 'posted', caption, remoteId: response?.remoteId ?? null });
+        historyEntries.push({
+          platform,
+          status: 'posted',
+          caption,
+          remoteId: response?.remoteId ?? null,
+          videoUrl,
+          videoTitle,
+        });
       } catch (error) {
         const errorMessage = (error as Error).message ?? 'publish_failed';
         results.push({ platform, status: 'failed', error: errorMessage });
-        historyEntries.push({ platform, status: 'failed', caption, errorMessage });
+        historyEntries.push({ platform, status: 'failed', caption, errorMessage, videoUrl, videoTitle });
       }
     }
 
@@ -246,6 +357,10 @@ export class AutoPostService {
     nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
     const nextRecentImages = this.mergeRecentImages(recentImages, imageUrls);
     const nextRecentCaptions = this.mergeRecentCaptions(recentCaptions, usedCaptions);
+
+    if (usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number') {
+      cursorUpdates.videoCursor = genericVideoSelection.nextCursor;
+    }
 
     await autopostCollection.doc(userId).set(
       {
@@ -255,6 +370,7 @@ export class AutoPostService {
         active: job.active !== false,
         recentImageUrls: nextRecentImages,
         recentCaptions: nextRecentCaptions,
+        ...cursorUpdates,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true },
@@ -270,6 +386,11 @@ export class AutoPostService {
         active: job.active !== false,
         recentImageUrls: nextRecentImages,
         recentCaptions: nextRecentCaptions,
+        videoCursor: usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number' ? genericVideoSelection.nextCursor : job.videoCursor,
+        youtubeVideoCursor:
+          typeof cursorUpdates.youtubeVideoCursor === 'number' ? cursorUpdates.youtubeVideoCursor : job.youtubeVideoCursor,
+        tiktokVideoCursor:
+          typeof cursorUpdates.tiktokVideoCursor === 'number' ? cursorUpdates.tiktokVideoCursor : job.tiktokVideoCursor,
       });
     }
 
@@ -288,12 +409,12 @@ export class AutoPostService {
       const batch = firestore.batch();
       entries.forEach(entry => {
         const ref = scheduledPostsCollection.doc();
-        batch.set(ref, {
+        const payload: Record<string, unknown> = {
           userId,
           platform: entry.platform,
           caption: entry.caption,
           hashtags: '',
-          imageUrls,
+          imageUrls: entry.platform === 'youtube' ? [] : imageUrls,
           scheduledFor,
           targetDate,
           status: entry.status,
@@ -302,7 +423,14 @@ export class AutoPostService {
           errorMessage: entry.errorMessage ?? null,
           remoteId: entry.remoteId ?? null,
           source: 'autopost',
-        });
+        };
+        if (entry.videoUrl) {
+          payload.videoUrl = entry.videoUrl;
+        }
+        if (entry.videoTitle) {
+          payload.videoTitle = entry.videoTitle;
+        }
+        batch.set(ref, payload);
       });
       await batch.commit();
       await Promise.all(
@@ -323,7 +451,17 @@ export class AutoPostService {
     const defaults = this.defaultSocialAccounts();
     const userDoc = await firestore.collection('users').doc(userId).get();
     const userAccounts = (userDoc.data()?.socialAccounts as SocialAccounts | undefined) ?? {};
-    return { ...defaults, ...userAccounts };
+    const merged: SocialAccounts = { ...defaults, ...userAccounts };
+    const youtubeIntegration = await getYouTubeIntegrationSecrets(userId);
+    if (youtubeIntegration) {
+      merged.youtube = {
+        refreshToken: youtubeIntegration.refreshToken,
+        accessToken: youtubeIntegration.accessToken,
+        privacyStatus: youtubeIntegration.privacyStatus,
+        channelId: youtubeIntegration.channelId ?? undefined,
+      };
+    }
+    return merged;
   }
 
   private defaultSocialAccounts(): SocialAccounts {
@@ -338,6 +476,14 @@ export class AutoPostService {
       defaults.linkedin = {
         accessToken: config.linkedin.accessToken,
         urn: `urn:li:organization:${config.linkedin.organizationId}`,
+      };
+    }
+    if (config.tiktok.accessToken && config.tiktok.openId) {
+      defaults.tiktok = {
+        accessToken: config.tiktok.accessToken,
+        openId: config.tiktok.openId,
+        clientKey: config.tiktok.clientKey || undefined,
+        clientSecret: config.tiktok.clientSecret || undefined,
       };
     }
     return defaults;
@@ -356,6 +502,7 @@ export class AutoPostService {
       linkedin: content.caption_linkedin,
       twitter: content.caption_x,
       x: content.caption_x,
+      youtube: content.caption_linkedin,
     };
     const chosen = (captions[platform] ?? content.caption_linkedin ?? content.caption_instagram ?? '').trim();
     const fallbackCaption = fallbackCopy.caption.trim();
@@ -646,6 +793,40 @@ export class AutoPostService {
   private buildCaptionSignature(platform: string, caption: string) {
     const normalized = caption.toLowerCase().replace(/\s+/g, ' ').trim();
     return `${platform}:${normalized}`;
+  }
+
+  private selectNextVideo(job: AutoPostJob, platform: 'youtube' | 'tiktok') {
+    const list =
+      platform === 'youtube'
+        ? (job.youtubeVideoUrls ?? []).map(url => url.trim()).filter(Boolean)
+        : (job.tiktokVideoUrls ?? []).map(url => url.trim()).filter(Boolean);
+    const single = platform === 'youtube' ? job.youtubeVideoUrl?.trim() : job.tiktokVideoUrl?.trim();
+    const cursor =
+      platform === 'youtube'
+        ? Number.isFinite(job.youtubeVideoCursor)
+          ? (job.youtubeVideoCursor as number)
+          : 0
+        : Number.isFinite(job.tiktokVideoCursor)
+          ? (job.tiktokVideoCursor as number)
+          : 0;
+    if (!list.length) {
+      return { videoUrl: single, nextCursor: undefined };
+    }
+    const index = ((cursor % list.length) + list.length) % list.length;
+    const nextCursor = (index + 1) % list.length;
+    return { videoUrl: list[index], nextCursor };
+  }
+
+  private selectNextGenericVideo(job: AutoPostJob) {
+    const list = (job.videoUrls ?? []).map(url => url.trim()).filter(Boolean);
+    if (!list.length) {
+      const single = job.videoUrl?.trim();
+      return { videoUrl: single, nextCursor: undefined };
+    }
+    const cursor = Number.isFinite(job.videoCursor) ? (job.videoCursor as number) : 0;
+    const index = ((cursor % list.length) + list.length) % list.length;
+    const nextCursor = (index + 1) % list.length;
+    return { videoUrl: list[index], nextCursor };
   }
 }
 

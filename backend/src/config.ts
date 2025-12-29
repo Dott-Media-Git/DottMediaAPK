@@ -55,6 +55,17 @@ export const config = {
     accessToken: process.env.LINKEDIN_ACCESS_TOKEN,
     organizationId: process.env.LINKEDIN_ORGANIZATION_ID,
   }),
+  tiktok: {
+    accessToken: process.env.TIKTOK_ACCESS_TOKEN ?? '',
+    openId: process.env.TIKTOK_OPEN_ID ?? '',
+    clientKey: process.env.TIKTOK_CLIENT_KEY ?? '',
+    clientSecret: process.env.TIKTOK_CLIENT_SECRET ?? '',
+  },
+  youtube: {
+    clientId: process.env.YOUTUBE_CLIENT_ID ?? process.env.GOOGLE_OAUTH_CLIENT_ID ?? '',
+    clientSecret: process.env.YOUTUBE_CLIENT_SECRET ?? process.env.GOOGLE_OAUTH_CLIENT_SECRET ?? '',
+    redirectUri: process.env.YOUTUBE_REDIRECT_URI ?? process.env.GOOGLE_OAUTH_REDIRECT_URI ?? '',
+  },
   whatsapp: {
     token: process.env.WHATSAPP_TOKEN ?? '',
     verifyToken: process.env.VERIFY_TOKEN ?? metaVerifyToken ?? '',

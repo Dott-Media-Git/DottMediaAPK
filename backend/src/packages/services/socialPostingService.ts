@@ -5,7 +5,10 @@ import { publishToInstagram } from './socialPlatforms/instagramPublisher';
 import { publishToFacebook } from './socialPlatforms/facebookPublisher';
 import { publishToLinkedIn } from './socialPlatforms/linkedinPublisher';
 import { publishToTwitter } from './socialPlatforms/twitterPublisher';
+import { publishToTikTok } from './socialPlatforms/tiktokPublisher';
+import { publishToYouTube } from './socialPlatforms/youtubePublisher';
 import { socialAnalyticsService } from './socialAnalyticsService';
+import { getYouTubeIntegrationSecrets } from '../../services/socialIntegrationService';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
@@ -20,6 +23,8 @@ type ScheduledPost = {
   caption: string;
   hashtags?: string;
   imageUrls: string[];
+  videoUrl?: string;
+  videoTitle?: string;
   targetDate: string;
 };
 
@@ -28,10 +33,33 @@ export interface SocialAccounts {
   instagram?: { accessToken: string; accountId: string; username?: string };
   linkedin?: { accessToken: string; urn: string };
   twitter?: { accessToken: string; accessSecret: string };
+  tiktok?: {
+    accessToken: string;
+    openId: string;
+    refreshToken?: string;
+    clientKey?: string;
+    clientSecret?: string;
+  };
+  youtube?: {
+    refreshToken: string;
+    accessToken?: string;
+    clientId?: string;
+    clientSecret?: string;
+    redirectUri?: string;
+    privacyStatus?: 'private' | 'public' | 'unlisted';
+    channelId?: string;
+  };
   [key: string]: any;
 }
 
-type PublishPayload = { caption: string; imageUrls: string[]; credentials?: SocialAccounts };
+type PublishPayload = {
+  caption: string;
+  imageUrls: string[];
+  videoUrl?: string;
+  videoTitle?: string;
+  privacyStatus?: 'private' | 'public' | 'unlisted';
+  credentials?: SocialAccounts;
+};
 type PlatformPublisher = (input: PublishPayload) => Promise<{ remoteId?: string }>;
 
 const platformPublishers: Record<string, PlatformPublisher> = {
@@ -39,9 +67,10 @@ const platformPublishers: Record<string, PlatformPublisher> = {
   facebook: publishToFacebook,
   linkedin: publishToLinkedIn,
   twitter: publishToTwitter,
+  youtube: publishToYouTube,
   x: publishToTwitter,
   threads: publishToInstagram,
-  tiktok: publishToInstagram,
+  tiktok: publishToTikTok,
 };
 
 export class SocialPostingService {
@@ -77,6 +106,8 @@ export class SocialPostingService {
         caption: data.caption as string,
         hashtags: (data.hashtags as string) ?? '',
         imageUrls: (data.imageUrls as string[]) ?? [],
+        videoUrl: (data.videoUrl as string | undefined) ?? undefined,
+        videoTitle: (data.videoTitle as string | undefined) ?? undefined,
         targetDate: (data.targetDate as string) ?? new Date().toISOString().slice(0, 10),
       };
     });
@@ -99,16 +130,45 @@ export class SocialPostingService {
         continue;
       }
 
-      const publisher = platformPublishers[post.platform] ?? publishToTwitter;
       try {
         // Fetch user credentials
         const userDoc = await firestore.collection('users').doc(post.userId).get();
         const userData = userDoc.data();
         const socialAccounts = this.mergeWithDefaults(userData?.socialAccounts as SocialAccounts | undefined);
+        if (post.platform === 'youtube') {
+          const youtubeIntegration = await getYouTubeIntegrationSecrets(post.userId);
+          if (youtubeIntegration) {
+            socialAccounts.youtube = {
+              refreshToken: youtubeIntegration.refreshToken,
+              accessToken: youtubeIntegration.accessToken,
+              privacyStatus: youtubeIntegration.privacyStatus,
+              channelId: youtubeIntegration.channelId ?? undefined,
+            };
+          }
+        }
 
+        if ((post.platform === 'youtube' || post.platform === 'tiktok') && !post.videoUrl) {
+          await scheduledPostsCollection.doc(post.id).update({
+            status: 'failed',
+            errorMessage: post.platform === 'youtube' ? 'Missing YouTube video URL' : 'Missing TikTok video URL',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          await this.log(
+            post,
+            'failed',
+            undefined,
+            post.platform === 'youtube' ? 'Missing YouTube video URL' : 'Missing TikTok video URL',
+          );
+          await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'failed' });
+          continue;
+        }
+
+        const publisher = platformPublishers[post.platform] ?? publishToTwitter;
         const payload: PublishPayload = {
           caption: [post.caption, post.hashtags].filter(Boolean).join('\n\n'),
           imageUrls: post.imageUrls,
+          videoUrl: post.videoUrl,
+          videoTitle: post.videoTitle,
           credentials: socialAccounts,
         };
 
@@ -228,6 +288,14 @@ export class SocialPostingService {
       defaults.linkedin = {
         accessToken: config.linkedin.accessToken,
         urn: `urn:li:organization:${config.linkedin.organizationId}`,
+      };
+    }
+    if (config.tiktok.accessToken && config.tiktok.openId) {
+      defaults.tiktok = {
+        accessToken: config.tiktok.accessToken,
+        openId: config.tiktok.openId,
+        clientKey: config.tiktok.clientKey || undefined,
+        clientSecret: config.tiktok.clientSecret || undefined,
       };
     }
     return { ...defaults, ...(userAccounts ?? {}) };

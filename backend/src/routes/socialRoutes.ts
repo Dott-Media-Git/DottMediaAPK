@@ -11,21 +11,82 @@ const CRON_SECRET = process.env.CRON_SECRET;
 
 const router = Router();
 
-const scheduleSchema = z.object({
-  userId: z.string().min(1),
-  platforms: z.array(z.enum(['instagram', 'facebook', 'linkedin', 'twitter', 'x', 'threads', 'tiktok'])).min(1),
-  images: z.array(z.string().min(1)).min(1),
-  caption: z.string().min(4),
-  hashtags: z.string().optional(),
-  scheduledFor: z.string(),
-  timesPerDay: z.number().int().min(1).max(5),
-});
+const scheduleSchema = z
+  .object({
+    userId: z.string().min(1),
+    platforms: z.array(z.enum(['instagram', 'facebook', 'linkedin', 'twitter', 'x', 'threads', 'tiktok', 'youtube'])).min(1),
+    images: z.array(z.string().min(1)).optional(),
+    videoUrl: z.string().url().optional(),
+    youtubeVideoUrl: z.string().url().optional(),
+    tiktokVideoUrl: z.string().url().optional(),
+    videoTitle: z.string().min(1).optional(),
+    caption: z.string().min(4),
+    hashtags: z.string().optional(),
+    scheduledFor: z.string(),
+    timesPerDay: z.number().int().min(1).max(5),
+  })
+  .superRefine((data, ctx) => {
+    const hasYoutube = data.platforms.includes('youtube');
+    const hasTikTok = data.platforms.includes('tiktok');
+    const hasImagePlatform = data.platforms.some(platform => platform !== 'youtube' && platform !== 'tiktok');
+    if (hasImagePlatform && (!data.images || data.images.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['images'],
+        message: 'Images are required for the selected platforms.',
+      });
+    }
+    if (hasYoutube && !(data.youtubeVideoUrl || data.videoUrl)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['videoUrl'],
+        message: 'YouTube video URL is required.',
+      });
+    }
+    if (hasTikTok && !(data.tiktokVideoUrl || data.videoUrl)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['videoUrl'],
+        message: 'TikTok video URL is required.',
+      });
+    }
+  });
 
-const autoPostSchema = z.object({
-  platforms: z.array(z.enum(['instagram', 'facebook', 'linkedin', 'twitter', 'x', 'threads', 'tiktok'])).min(1).optional(),
-  prompt: z.string().optional(),
-  businessType: z.string().optional(),
-});
+const autoPostSchema = z
+  .object({
+    platforms: z.array(z.enum(['instagram', 'facebook', 'linkedin', 'twitter', 'x', 'threads', 'tiktok', 'youtube'])).min(1).optional(),
+    prompt: z.string().optional(),
+    businessType: z.string().optional(),
+    videoUrl: z.string().url().optional(),
+    videoUrls: z.array(z.string().url()).optional(),
+    videoTitle: z.string().min(1).optional(),
+    youtubePrivacyStatus: z.enum(['private', 'public', 'unlisted']).optional(),
+    youtubeVideoUrl: z.string().url().optional(),
+    youtubeVideoUrls: z.array(z.string().url()).optional(),
+    tiktokVideoUrl: z.string().url().optional(),
+    tiktokVideoUrls: z.array(z.string().url()).optional(),
+  })
+  .superRefine((data, ctx) => {
+    const platforms = data.platforms ?? [];
+    const hasYoutube = platforms.includes('youtube');
+    const hasTikTok = platforms.includes('tiktok');
+    const youtubeHasVideo = Boolean(data.youtubeVideoUrl) || Boolean(data.youtubeVideoUrls?.length) || Boolean(data.videoUrl) || Boolean(data.videoUrls?.length);
+    const tiktokHasVideo = Boolean(data.tiktokVideoUrl) || Boolean(data.tiktokVideoUrls?.length) || Boolean(data.videoUrl) || Boolean(data.videoUrls?.length);
+    if (hasYoutube && !youtubeHasVideo) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['youtubeVideoUrl'],
+        message: 'YouTube video URL is required.',
+      });
+    }
+    if (hasTikTok && !tiktokHasVideo) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['tiktokVideoUrl'],
+        message: 'TikTok video URL is required.',
+      });
+    }
+  });
 
 router.post('/posts/schedule', requireFirebase, async (req, res, next) => {
   try {
@@ -55,6 +116,14 @@ router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
       platforms: payload.platforms,
       prompt: payload.prompt,
       businessType: payload.businessType,
+      videoUrl: payload.videoUrl,
+      videoUrls: payload.videoUrls,
+      videoTitle: payload.videoTitle,
+      youtubePrivacyStatus: payload.youtubePrivacyStatus,
+      youtubeVideoUrl: payload.youtubeVideoUrl,
+      youtubeVideoUrls: payload.youtubeVideoUrls,
+      tiktokVideoUrl: payload.tiktokVideoUrl,
+      tiktokVideoUrls: payload.tiktokVideoUrls,
     });
 
     const result = await autoPostService.runForUser(userId);
@@ -105,6 +174,26 @@ const credentialsSchema = z.object({
     instagram: z.object({ accessToken: z.string(), accountId: z.string(), username: z.string().optional() }).optional(),
     linkedin: z.object({ accessToken: z.string(), urn: z.string() }).optional(),
     twitter: z.object({ accessToken: z.string(), accessSecret: z.string() }).optional(),
+    tiktok: z
+      .object({
+        accessToken: z.string(),
+        openId: z.string(),
+        refreshToken: z.string().optional(),
+        clientKey: z.string().optional(),
+        clientSecret: z.string().optional(),
+      })
+      .optional(),
+    youtube: z
+      .object({
+        refreshToken: z.string(),
+        accessToken: z.string().optional(),
+        clientId: z.string().optional(),
+        clientSecret: z.string().optional(),
+        redirectUri: z.string().optional(),
+        privacyStatus: z.enum(['private', 'public', 'unlisted']).optional(),
+        channelId: z.string().optional(),
+      })
+      .optional(),
   }),
 });
 

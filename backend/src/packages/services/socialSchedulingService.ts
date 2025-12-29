@@ -1,13 +1,17 @@
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
 
 export type SchedulePayload = {
   userId: string;
-  platforms: Array<'instagram' | 'facebook' | 'linkedin' | 'twitter' | 'x' | 'threads' | 'tiktok'>;
-  images: string[];
+  platforms: Array<'instagram' | 'facebook' | 'linkedin' | 'twitter' | 'x' | 'threads' | 'tiktok' | 'youtube'>;
+  images?: string[];
+  videoUrl?: string;
+  youtubeVideoUrl?: string;
+  tiktokVideoUrl?: string;
+  videoTitle?: string;
   caption: string;
   hashtags?: string;
   scheduledFor: string;
@@ -17,6 +21,20 @@ export type SchedulePayload = {
 export class SocialSchedulingService {
   async schedulePosts(payload: SchedulePayload) {
     if (!payload.platforms.length) throw new Error('At least one platform is required');
+    const hasYoutube = payload.platforms.includes('youtube');
+    const hasTikTok = payload.platforms.includes('tiktok');
+    const hasImagePlatform = payload.platforms.some(platform => platform !== 'youtube' && platform !== 'tiktok');
+    const youtubeUrl = payload.youtubeVideoUrl ?? payload.videoUrl;
+    const tiktokUrl = payload.tiktokVideoUrl ?? payload.videoUrl;
+    if (hasYoutube && !youtubeUrl) {
+      throw new Error('YouTube requires a videoUrl');
+    }
+    if (hasTikTok && !tiktokUrl) {
+      throw new Error('TikTok requires a videoUrl');
+    }
+    if (hasImagePlatform && (!payload.images || payload.images.length === 0)) {
+      throw new Error('Images are required for the selected platforms');
+    }
     const timesPerDay = Math.min(Math.max(payload.timesPerDay, 1), 5);
     const scheduledDate = new Date(payload.scheduledFor);
     if (Number.isNaN(scheduledDate.getTime())) throw new Error('Invalid scheduledFor date');
@@ -55,10 +73,19 @@ export class SocialSchedulingService {
 
     const batch = firestore.batch();
     docsToCreate.forEach(doc => {
+      const isVideoPlatform = doc.platform === 'youtube' || doc.platform === 'tiktok';
+      const videoUrl =
+        doc.platform === 'youtube'
+          ? payload.youtubeVideoUrl ?? payload.videoUrl ?? null
+          : doc.platform === 'tiktok'
+            ? payload.tiktokVideoUrl ?? payload.videoUrl ?? null
+            : null;
       batch.set(scheduledPostsCollection.doc(doc.id), {
         userId: payload.userId,
         platform: doc.platform,
-        imageUrls: payload.images ?? [],
+        imageUrls: isVideoPlatform ? [] : payload.images ?? [],
+        videoUrl,
+        videoTitle: payload.videoTitle ?? null,
         caption: payload.caption,
         hashtags: payload.hashtags ?? '',
         scheduledFor: admin.firestore.Timestamp.fromDate(doc.scheduledFor),
