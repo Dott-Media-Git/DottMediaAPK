@@ -45,6 +45,12 @@ export type YouTubeJobData =
       payload: YouTubeSoraPayload;
     };
 
+export type YouTubeJobRecord = {
+  id: string;
+  userId?: string;
+  [key: string]: unknown;
+};
+
 const youtubeJobsCollection = firestore.collection('youtubeJobs');
 
 export const enqueueYouTubeUpload = async (userId: string, payload: YouTubeUploadPayload) => {
@@ -100,8 +106,8 @@ export const updateYouTubeJob = async (jobId: string, data: Record<string, unkno
   );
 };
 
-export const getYouTubeJobStatus = async (jobId: string) => {
+export const getYouTubeJobStatus = async (jobId: string): Promise<YouTubeJobRecord | null> => {
   const snap = await youtubeJobsCollection.doc(jobId).get();
   if (!snap.exists) return null;
-  return { id: snap.id, ...(snap.data() as Record<string, unknown>) };
+  return { id: snap.id, ...(snap.data() as Record<string, unknown>) } as YouTubeJobRecord;
 };
