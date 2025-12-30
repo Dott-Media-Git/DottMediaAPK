@@ -145,13 +145,22 @@ app.use((req, _res, next) => {
   next(createHttpError(404, `Route ${req.path} not found`));
 });
 
-app.use((err: HttpError, _req: Request, res: Response, _next: NextFunction) => {
+app.use((err: HttpError, req: Request, res: Response, _next: NextFunction) => {
   const status = err.status ?? 500;
   const message = status === 500 ? 'Internal server error' : err.message;
+  const debugEnabled = process.env.DEBUG_ERRORS === 'true';
+  const debugToken = process.env.DEBUG_ERRORS_TOKEN;
+  const debugRequested = ['1', 'true', 'yes'].includes((req.header('x-debug') ?? '').toLowerCase());
+  const debugAuthorized = !debugToken || req.header('x-debug-token') === debugToken;
+  const payload: Record<string, unknown> = { message };
   if (status === 500) {
     console.error(err);
+    if (debugEnabled && debugRequested && debugAuthorized) {
+      payload.details = err.message ?? 'unknown_error';
+      payload.name = err.name ?? 'Error';
+    }
   }
-  res.status(status).json({ message });
+  res.status(status).json(payload);
 });
 
 export { app };
