@@ -7,6 +7,12 @@ type PublishInput = {
   credentials?: SocialAccounts;
 };
 
+type ReelPublishInput = {
+  caption: string;
+  videoUrl?: string;
+  credentials?: SocialAccounts;
+};
+
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPTS ?? 15), 3);
 const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_MS ?? 2000), 1000);
@@ -61,6 +67,54 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
   } catch (error: any) {
     console.error('Instagram publish error:', error.response?.data || error.message);
     throw new Error(error.response?.data?.error?.message || 'Instagram publish failed');
+  }
+}
+
+export async function publishToInstagramReel(input: ReelPublishInput): Promise<{ remoteId?: string }> {
+  const { credentials } = input;
+  if (!credentials?.instagram) {
+    throw new Error('Missing Instagram credentials');
+  }
+  if (!input.videoUrl) {
+    throw new Error('Instagram Reels requires a video URL');
+  }
+
+  const { accessToken, accountId } = credentials.instagram;
+  const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
+
+  try {
+    const createMediaResponse = await axios.post(`${baseUrl}/media`, {
+      media_type: 'REELS',
+      video_url: input.videoUrl,
+      caption: input.caption,
+      access_token: accessToken,
+    });
+
+    const creationId = createMediaResponse.data.id;
+    if (!creationId) {
+      throw new Error('Failed to create Instagram Reels container');
+    }
+
+    const isReady = await waitForMediaReady(creationId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
+    if (!isReady) {
+      throw new Error('Reels container not ready for publishing');
+    }
+
+    const publishedId = await publishWithRetry({
+      baseUrl,
+      creationId,
+      accessToken,
+      retries: PUBLISH_RETRIES,
+      retryDelayMs: PUBLISH_RETRY_DELAY_MS,
+    });
+
+    if (publishedId) {
+      return { remoteId: publishedId };
+    }
+    throw new Error('No ID returned from Instagram Reels publish');
+  } catch (error: any) {
+    console.error('Instagram Reels publish error:', error.response?.data || error.message);
+    throw new Error(error.response?.data?.error?.message || 'Instagram Reels publish failed');
   }
 }
 

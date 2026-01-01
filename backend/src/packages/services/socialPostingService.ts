@@ -1,14 +1,14 @@
 import admin from 'firebase-admin';
 import { firestore } from '../../db/firestore';
 import { config } from '../../config';
-import { publishToInstagram } from './socialPlatforms/instagramPublisher';
+import { publishToInstagram, publishToInstagramReel } from './socialPlatforms/instagramPublisher';
 import { publishToFacebook } from './socialPlatforms/facebookPublisher';
 import { publishToLinkedIn } from './socialPlatforms/linkedinPublisher';
 import { publishToTwitter } from './socialPlatforms/twitterPublisher';
 import { publishToTikTok } from './socialPlatforms/tiktokPublisher';
 import { publishToYouTube } from './socialPlatforms/youtubePublisher';
 import { socialAnalyticsService } from './socialAnalyticsService';
-import { getYouTubeIntegrationSecrets } from '../../services/socialIntegrationService';
+import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from '../../services/socialIntegrationService';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
@@ -64,6 +64,7 @@ type PlatformPublisher = (input: PublishPayload) => Promise<{ remoteId?: string 
 
 const platformPublishers: Record<string, PlatformPublisher> = {
   instagram: publishToInstagram,
+  instagram_reels: publishToInstagramReel,
   facebook: publishToFacebook,
   linkedin: publishToLinkedIn,
   twitter: publishToTwitter,
@@ -146,18 +147,37 @@ export class SocialPostingService {
             };
           }
         }
+        if (post.platform === 'tiktok') {
+          const tiktokIntegration = await getTikTokIntegrationSecrets(post.userId);
+          if (tiktokIntegration) {
+            socialAccounts.tiktok = {
+              accessToken: tiktokIntegration.accessToken,
+              refreshToken: tiktokIntegration.refreshToken,
+              openId: tiktokIntegration.openId ?? undefined,
+            };
+          }
+        }
 
-        if ((post.platform === 'youtube' || post.platform === 'tiktok') && !post.videoUrl) {
+        if ((post.platform === 'youtube' || post.platform === 'tiktok' || post.platform === 'instagram_reels') && !post.videoUrl) {
           await scheduledPostsCollection.doc(post.id).update({
             status: 'failed',
-            errorMessage: post.platform === 'youtube' ? 'Missing YouTube video URL' : 'Missing TikTok video URL',
+            errorMessage:
+              post.platform === 'youtube'
+                ? 'Missing YouTube video URL'
+                : post.platform === 'tiktok'
+                  ? 'Missing TikTok video URL'
+                  : 'Missing Instagram Reels video URL',
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
           await this.log(
             post,
             'failed',
             undefined,
-            post.platform === 'youtube' ? 'Missing YouTube video URL' : 'Missing TikTok video URL',
+            post.platform === 'youtube'
+              ? 'Missing YouTube video URL'
+              : post.platform === 'tiktok'
+                ? 'Missing TikTok video URL'
+                : 'Missing Instagram Reels video URL',
           );
           await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'failed' });
           continue;

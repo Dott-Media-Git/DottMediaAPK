@@ -11,6 +11,7 @@ type PublishInput = {
   videoUrl?: string;
   videoTitle?: string;
   privacyStatus?: YoutubePrivacyStatus;
+  tags?: string[];
   credentials?: SocialAccounts;
 };
 
@@ -60,6 +61,7 @@ export async function publishToYouTube(input: PublishInput): Promise<{ remoteId?
       snippet: {
         title,
         description,
+        tags: input.tags?.length ? input.tags : undefined,
       },
       status: {
         privacyStatus,

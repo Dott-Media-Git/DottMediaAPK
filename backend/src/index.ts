@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import createHttpError, { HttpError } from 'http-errors';
+import fs from 'fs';
+import path from 'path';
 import { config } from './config';
 import automationRoutes from './routes/automationRoutes';
 import assistantRoutes from './routes/assistantRoutes';
@@ -29,6 +31,9 @@ import socialRoutes from './routes/socialRoutes';
 import metaWebhookRoutes from './routes/metaWebhookRoutes';
 import authRoutes from './routes/authRoutes';
 import youtubeIntegrationRoutes from './routes/youtubeIntegrationRoutes';
+import tiktokIntegrationRoutes from './routes/tiktokIntegrationRoutes';
+import instagramReelsSoraRoutes from './routes/instagramReelsSoraRoutes';
+import publicMediaRoutes from './routes/publicMediaRoutes';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher';
 import stripeRoutes from './routes/stripeRoutes';
 import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
@@ -74,6 +79,17 @@ app.use(
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('combined'));
 
+const fallbackDir = process.env.AUTOPOST_FALLBACK_DIR?.trim();
+if (fallbackDir) {
+  const resolved = path.resolve(fallbackDir);
+  if (fs.existsSync(resolved)) {
+    app.use('/public/fallback-images', express.static(resolved));
+    console.info(`[autopost] fallback image directory enabled (${resolved}).`);
+  } else {
+    console.warn(`[autopost] fallback image directory not found (${resolved}).`);
+  }
+}
+
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
 app.use('/', inboundWebhookRoutes);
@@ -100,6 +116,9 @@ app.use('/api', contentRoutes);
 app.use('/api', socialRoutes);
 app.use('/api', authRoutes);
 app.use('/', youtubeIntegrationRoutes);
+app.use('/', tiktokIntegrationRoutes);
+app.use('/', instagramReelsSoraRoutes);
+app.use('/', publicMediaRoutes);
 app.use('/', adminRoutes);
 
 // Direct autopost endpoint to ensure availability (mirrors socialRoutes autopost handler)
@@ -117,10 +136,14 @@ app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
       youtubePrivacyStatus,
       youtubeVideoUrl,
       youtubeVideoUrls,
+      youtubeShorts,
       tiktokVideoUrl,
       tiktokVideoUrls,
+      instagramReelsVideoUrl,
+      instagramReelsVideoUrls,
+      reelsIntervalHours,
     } = req.body ?? {};
-    await autoPostService.start({
+    const result = await autoPostService.start({
       userId: authUser.uid,
       platforms,
       prompt,
@@ -131,10 +154,13 @@ app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
       youtubePrivacyStatus,
       youtubeVideoUrl,
       youtubeVideoUrls,
+      youtubeShorts,
       tiktokVideoUrl,
       tiktokVideoUrls,
+      instagramReelsVideoUrl,
+      instagramReelsVideoUrls,
+      reelsIntervalHours,
     });
-    const result = await autoPostService.runForUser(authUser.uid);
     res.json({ ok: true, ...result });
   } catch (error) {
     next(error);

@@ -6,11 +6,12 @@ const socialLimitsCollection = firestore.collection('socialLimits');
 
 export type SchedulePayload = {
   userId: string;
-  platforms: Array<'instagram' | 'facebook' | 'linkedin' | 'twitter' | 'x' | 'threads' | 'tiktok' | 'youtube'>;
+  platforms: Array<'instagram' | 'instagram_reels' | 'facebook' | 'linkedin' | 'twitter' | 'x' | 'threads' | 'tiktok' | 'youtube'>;
   images?: string[];
   videoUrl?: string;
   youtubeVideoUrl?: string;
   tiktokVideoUrl?: string;
+  instagramReelsVideoUrl?: string;
   videoTitle?: string;
   caption: string;
   hashtags?: string;
@@ -23,14 +24,21 @@ export class SocialSchedulingService {
     if (!payload.platforms.length) throw new Error('At least one platform is required');
     const hasYoutube = payload.platforms.includes('youtube');
     const hasTikTok = payload.platforms.includes('tiktok');
-    const hasImagePlatform = payload.platforms.some(platform => platform !== 'youtube' && platform !== 'tiktok');
+    const hasReels = payload.platforms.includes('instagram_reels');
+    const hasImagePlatform = payload.platforms.some(
+      platform => platform !== 'youtube' && platform !== 'tiktok' && platform !== 'instagram_reels',
+    );
     const youtubeUrl = payload.youtubeVideoUrl ?? payload.videoUrl;
     const tiktokUrl = payload.tiktokVideoUrl ?? payload.videoUrl;
+    const reelsUrl = payload.instagramReelsVideoUrl ?? null;
     if (hasYoutube && !youtubeUrl) {
       throw new Error('YouTube requires a videoUrl');
     }
     if (hasTikTok && !tiktokUrl) {
       throw new Error('TikTok requires a videoUrl');
+    }
+    if (hasReels && !reelsUrl) {
+      throw new Error('Instagram Reels requires a videoUrl');
     }
     if (hasImagePlatform && (!payload.images || payload.images.length === 0)) {
       throw new Error('Images are required for the selected platforms');
@@ -73,12 +81,14 @@ export class SocialSchedulingService {
 
     const batch = firestore.batch();
     docsToCreate.forEach(doc => {
-      const isVideoPlatform = doc.platform === 'youtube' || doc.platform === 'tiktok';
+      const isVideoPlatform = doc.platform === 'youtube' || doc.platform === 'tiktok' || doc.platform === 'instagram_reels';
       const videoUrl =
         doc.platform === 'youtube'
           ? payload.youtubeVideoUrl ?? payload.videoUrl ?? null
           : doc.platform === 'tiktok'
             ? payload.tiktokVideoUrl ?? payload.videoUrl ?? null
+            : doc.platform === 'instagram_reels'
+              ? payload.instagramReelsVideoUrl ?? null
             : null;
       batch.set(scheduledPostsCollection.doc(doc.id), {
         userId: payload.userId,

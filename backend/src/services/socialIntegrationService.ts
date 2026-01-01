@@ -23,6 +23,21 @@ export type YouTubeIntegrationRecord = {
   updatedAt?: admin.firestore.Timestamp;
 };
 
+export type TikTokIntegrationRecord = {
+  userId: string;
+  provider: 'tiktok';
+  accessTokenEncrypted: EncryptedField;
+  refreshTokenEncrypted?: EncryptedField;
+  accessTokenExpiresAt?: number | null;
+  refreshTokenExpiresAt?: number | null;
+  openId?: string | null;
+  scope?: string | null;
+  refreshTokenRevealPending?: boolean;
+  refreshTokenRevealedAt?: admin.firestore.Timestamp | null;
+  createdAt?: admin.firestore.Timestamp;
+  updatedAt?: admin.firestore.Timestamp;
+};
+
 type YouTubeIntegrationInput = {
   refreshToken: string;
   accessToken?: string;
@@ -30,6 +45,16 @@ type YouTubeIntegrationInput = {
   channelId?: string | null;
   channelTitle?: string | null;
   privacyStatus?: 'private' | 'public' | 'unlisted';
+  revealToken?: boolean;
+};
+
+type TikTokIntegrationInput = {
+  accessToken: string;
+  refreshToken?: string;
+  accessTokenExpiresAt?: number | null;
+  refreshTokenExpiresAt?: number | null;
+  openId?: string | null;
+  scope?: string | null;
   revealToken?: boolean;
 };
 
@@ -56,7 +81,8 @@ const fromEncrypted = (payload: EncryptedField): string => {
   );
 };
 
-const docIdFor = (userId: string) => `${userId}_youtube`;
+const docIdForProvider = (userId: string, provider: string) => `${userId}_${provider}`;
+const docIdFor = (userId: string) => docIdForProvider(userId, 'youtube');
 
 export async function upsertYouTubeIntegration(userId: string, payload: YouTubeIntegrationInput) {
   const ref = integrationsCollection.doc(docIdFor(userId));
@@ -182,4 +208,117 @@ export async function updateYouTubeIntegrationDefaults(
     update.privacyStatus = payload.privacyStatus;
   }
   await ref.set(update, { merge: true });
+}
+
+const docIdForTikTok = (userId: string) => docIdForProvider(userId, 'tiktok');
+
+export async function upsertTikTokIntegration(userId: string, payload: TikTokIntegrationInput) {
+  const ref = integrationsCollection.doc(docIdForTikTok(userId));
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const snap = await ref.get();
+  const update: Record<string, unknown> = {
+    userId,
+    provider: 'tiktok',
+    updatedAt: now,
+  };
+
+  if (!snap.exists) {
+    update.createdAt = now;
+  }
+
+  update.accessTokenEncrypted = toEncrypted(payload.accessToken);
+  if (payload.refreshToken) {
+    update.refreshTokenEncrypted = toEncrypted(payload.refreshToken);
+  }
+  if (typeof payload.accessTokenExpiresAt === 'number') {
+    update.accessTokenExpiresAt = payload.accessTokenExpiresAt;
+  }
+  if (typeof payload.refreshTokenExpiresAt === 'number') {
+    update.refreshTokenExpiresAt = payload.refreshTokenExpiresAt;
+  }
+  if (payload.openId !== undefined) update.openId = payload.openId;
+  if (payload.scope !== undefined) update.scope = payload.scope;
+  if (payload.revealToken === true) {
+    update.refreshTokenRevealPending = true;
+    update.refreshTokenRevealedAt = null;
+  }
+  if (payload.revealToken === false) {
+    update.refreshTokenRevealPending = false;
+  }
+
+  await ref.set(update, { merge: true });
+  return { id: ref.id };
+}
+
+export async function updateTikTokAccessToken(
+  userId: string,
+  data: { accessToken: string; accessTokenExpiresAt?: number | null },
+) {
+  const ref = integrationsCollection.doc(docIdForTikTok(userId));
+  const update: Record<string, unknown> = {
+    accessTokenEncrypted: toEncrypted(data.accessToken),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  if (typeof data.accessTokenExpiresAt === 'number') {
+    update.accessTokenExpiresAt = data.accessTokenExpiresAt;
+  }
+  await ref.set(update, { merge: true });
+}
+
+export async function getTikTokIntegration(userId: string) {
+  const ref = integrationsCollection.doc(docIdForTikTok(userId));
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const data = snap.data() as TikTokIntegrationRecord;
+  return {
+    userId,
+    provider: 'tiktok' as const,
+    openId: data.openId ?? null,
+    scope: data.scope ?? null,
+    connected: Boolean(data.accessTokenEncrypted),
+    refreshTokenRevealPending: Boolean(data.refreshTokenRevealPending),
+    updatedAt: data.updatedAt?.toDate?.().toISOString?.() ?? null,
+  };
+}
+
+export async function getTikTokIntegrationSecrets(userId: string) {
+  const ref = integrationsCollection.doc(docIdForTikTok(userId));
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const data = snap.data() as TikTokIntegrationRecord;
+  if (!data.accessTokenEncrypted) return null;
+  return {
+    userId,
+    accessToken: fromEncrypted(data.accessTokenEncrypted),
+    refreshToken: data.refreshTokenEncrypted ? fromEncrypted(data.refreshTokenEncrypted) : undefined,
+    accessTokenExpiresAt: data.accessTokenExpiresAt ?? null,
+    refreshTokenExpiresAt: data.refreshTokenExpiresAt ?? null,
+    openId: data.openId ?? null,
+    scope: data.scope ?? null,
+  };
+}
+
+export async function revealTikTokRefreshToken(userId: string) {
+  const ref = integrationsCollection.doc(docIdForTikTok(userId));
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const data = snap.data() as TikTokIntegrationRecord;
+  if (!data.refreshTokenEncrypted || !data.refreshTokenRevealPending) {
+    return { revealed: false };
+  }
+  const refreshToken = fromEncrypted(data.refreshTokenEncrypted);
+  await ref.set(
+    {
+      refreshTokenRevealPending: false,
+      refreshTokenRevealedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+  return { revealed: true, refreshToken };
+}
+
+export async function disconnectTikTok(userId: string) {
+  const ref = integrationsCollection.doc(docIdForTikTok(userId));
+  await ref.delete();
 }

@@ -14,11 +14,12 @@ const router = Router();
 const scheduleSchema = z
   .object({
     userId: z.string().min(1),
-    platforms: z.array(z.enum(['instagram', 'facebook', 'linkedin', 'twitter', 'x', 'threads', 'tiktok', 'youtube'])).min(1),
+    platforms: z.array(z.enum(['instagram', 'instagram_reels', 'facebook', 'linkedin', 'twitter', 'x', 'threads', 'tiktok', 'youtube'])).min(1),
     images: z.array(z.string().min(1)).optional(),
     videoUrl: z.string().url().optional(),
     youtubeVideoUrl: z.string().url().optional(),
     tiktokVideoUrl: z.string().url().optional(),
+    instagramReelsVideoUrl: z.string().url().optional(),
     videoTitle: z.string().min(1).optional(),
     caption: z.string().min(4),
     hashtags: z.string().optional(),
@@ -28,7 +29,10 @@ const scheduleSchema = z
   .superRefine((data, ctx) => {
     const hasYoutube = data.platforms.includes('youtube');
     const hasTikTok = data.platforms.includes('tiktok');
-    const hasImagePlatform = data.platforms.some(platform => platform !== 'youtube' && platform !== 'tiktok');
+    const hasReels = data.platforms.includes('instagram_reels');
+    const hasImagePlatform = data.platforms.some(
+      platform => platform !== 'youtube' && platform !== 'tiktok' && platform !== 'instagram_reels',
+    );
     if (hasImagePlatform && (!data.images || data.images.length === 0)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -50,11 +54,21 @@ const scheduleSchema = z
         message: 'TikTok video URL is required.',
       });
     }
+    if (hasReels && !data.instagramReelsVideoUrl) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['instagramReelsVideoUrl'],
+        message: 'Instagram Reels video URL is required.',
+      });
+    }
   });
 
 const autoPostSchema = z
   .object({
-    platforms: z.array(z.enum(['instagram', 'facebook', 'linkedin', 'twitter', 'x', 'threads', 'tiktok', 'youtube'])).min(1).optional(),
+    platforms: z
+      .array(z.enum(['instagram', 'instagram_reels', 'facebook', 'linkedin', 'twitter', 'x', 'threads', 'tiktok', 'youtube']))
+      .min(1)
+      .optional(),
     prompt: z.string().optional(),
     businessType: z.string().optional(),
     videoUrl: z.string().url().optional(),
@@ -63,15 +77,25 @@ const autoPostSchema = z
     youtubePrivacyStatus: z.enum(['private', 'public', 'unlisted']).optional(),
     youtubeVideoUrl: z.string().url().optional(),
     youtubeVideoUrls: z.array(z.string().url()).optional(),
+    youtubeShorts: z.boolean().optional(),
     tiktokVideoUrl: z.string().url().optional(),
     tiktokVideoUrls: z.array(z.string().url()).optional(),
+    instagramReelsVideoUrl: z.string().url().optional(),
+    instagramReelsVideoUrls: z.array(z.string().url()).optional(),
+    reelsIntervalHours: z.number().positive().optional(),
   })
   .superRefine((data, ctx) => {
     const platforms = data.platforms ?? [];
     const hasYoutube = platforms.includes('youtube');
     const hasTikTok = platforms.includes('tiktok');
+    const hasReels = platforms.includes('instagram_reels');
     const youtubeHasVideo = Boolean(data.youtubeVideoUrl) || Boolean(data.youtubeVideoUrls?.length) || Boolean(data.videoUrl) || Boolean(data.videoUrls?.length);
     const tiktokHasVideo = Boolean(data.tiktokVideoUrl) || Boolean(data.tiktokVideoUrls?.length) || Boolean(data.videoUrl) || Boolean(data.videoUrls?.length);
+    const reelsHasVideo =
+      Boolean(data.instagramReelsVideoUrl) ||
+      Boolean(data.instagramReelsVideoUrls?.length) ||
+      Boolean(data.videoUrl) ||
+      Boolean(data.videoUrls?.length);
     if (hasYoutube && !youtubeHasVideo) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -84,6 +108,13 @@ const autoPostSchema = z
         code: z.ZodIssueCode.custom,
         path: ['tiktokVideoUrl'],
         message: 'TikTok video URL is required.',
+      });
+    }
+    if (hasReels && !reelsHasVideo) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['instagramReelsVideoUrl'],
+        message: 'Instagram Reels video URL is required (instagramReelsVideoUrl or videoUrl).',
       });
     }
   });
@@ -111,7 +142,7 @@ router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
     const userId = authUser.uid;
 
     // Ensure a job exists and capture prompt/businessType updates if provided.
-    await autoPostService.start({
+    const result = await autoPostService.start({
       userId,
       platforms: payload.platforms,
       prompt: payload.prompt,
@@ -122,11 +153,13 @@ router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
       youtubePrivacyStatus: payload.youtubePrivacyStatus,
       youtubeVideoUrl: payload.youtubeVideoUrl,
       youtubeVideoUrls: payload.youtubeVideoUrls,
+      youtubeShorts: payload.youtubeShorts,
       tiktokVideoUrl: payload.tiktokVideoUrl,
       tiktokVideoUrls: payload.tiktokVideoUrls,
+      instagramReelsVideoUrl: payload.instagramReelsVideoUrl,
+      instagramReelsVideoUrls: payload.instagramReelsVideoUrls,
+      reelsIntervalHours: payload.reelsIntervalHours,
     });
-
-    const result = await autoPostService.runForUser(userId);
     res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
