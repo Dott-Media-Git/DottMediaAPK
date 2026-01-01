@@ -35,7 +35,7 @@ export interface SocialAccounts {
   twitter?: { accessToken: string; accessSecret: string };
   tiktok?: {
     accessToken: string;
-    openId: string;
+    openId?: string;
     refreshToken?: string;
     clientKey?: string;
     clientSecret?: string;
