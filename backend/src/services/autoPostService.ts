@@ -111,7 +111,9 @@ export class AutoPostService {
     'https://images.unsplash.com/photo-1485217988980-11786ced9454?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80',
     'https://images.unsplash.com/photo-1529333166437-7750a6dd5a70?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80',
   ];
-  private fallbackImagePool = this.loadFallbackImagePool();
+  private getFallbackImagePool() {
+    return this.loadFallbackImagePool();
+  }
   private defaultFallbackCaption =
     'Meet the Dott Media AI Sales Bot helping businesses convert leads into customers. Want a quick demo? DM us to get started.';
   private defaultFallbackHashtags =
@@ -804,7 +806,35 @@ export class AutoPostService {
     return raw.trim().replace(/\/+$/, '');
   }
 
+  private loadFallbackImagesFromDir(dir: string) {
+    const baseUrl = this.getPublicBaseUrl();
+    if (!baseUrl) {
+      console.warn('[autopost] AUTOPOST_FALLBACK_DIR set but BASE_URL is missing; using other fallback sources.');
+      return [];
+    }
+    try {
+      const resolved = path.resolve(dir);
+      const entries = fs.readdirSync(resolved, { withFileTypes: true });
+      const images = entries
+        .filter(entry => entry.isFile())
+        .map(entry => entry.name)
+        .filter(name => /\.(png|jpe?g|webp|gif)$/i.test(name));
+      if (!images.length) {
+        console.warn('[autopost] No fallback images found in AUTOPOST_FALLBACK_DIR; using other fallback sources.');
+        return [];
+      }
+      return images.map(name => `${baseUrl}/public/fallback-images/${encodeURIComponent(name)}`);
+    } catch (error) {
+      console.warn('[autopost] Failed to load fallback images; using other fallback sources.', error);
+      return [];
+    }
+  }
+
   private loadFallbackImagePool() {
+    const dir = process.env.AUTOPOST_FALLBACK_DIR?.trim();
+    const dirUrls = dir ? this.loadFallbackImagesFromDir(dir) : [];
+    if (dirUrls.length) return dirUrls;
+
     const explicitUrls = this.parseFallbackUrls(process.env.AUTOPOST_FALLBACK_URLS);
     if (explicitUrls.length) return explicitUrls;
 
@@ -815,35 +845,13 @@ export class AutoPostService {
         const contents = fs.readFileSync(resolved, 'utf8');
         const fileUrls = this.parseFallbackUrls(contents);
         if (fileUrls.length) return fileUrls;
-        console.warn('[autopost] No URLs found in AUTOPOST_FALLBACK_URLS_FILE; using fallback dir if available.');
+        console.warn('[autopost] No URLs found in AUTOPOST_FALLBACK_URLS_FILE; using default fallback images.');
       } catch (error) {
-        console.warn('[autopost] Failed to load AUTOPOST_FALLBACK_URLS_FILE; using fallback dir if available.', error);
+        console.warn('[autopost] Failed to load AUTOPOST_FALLBACK_URLS_FILE; using default fallback images.', error);
       }
     }
 
-    const dir = process.env.AUTOPOST_FALLBACK_DIR?.trim();
-    if (!dir) return this.defaultFallbackImagePool;
-    const baseUrl = this.getPublicBaseUrl();
-    if (!baseUrl) {
-      console.warn('[autopost] AUTOPOST_FALLBACK_DIR set but BASE_URL is missing; using default fallback images.');
-      return this.defaultFallbackImagePool;
-    }
-    try {
-      const resolved = path.resolve(dir);
-      const entries = fs.readdirSync(resolved, { withFileTypes: true });
-      const images = entries
-        .filter(entry => entry.isFile())
-        .map(entry => entry.name)
-        .filter(name => /\.(png|jpe?g|webp|gif)$/i.test(name));
-      if (!images.length) {
-        console.warn('[autopost] No fallback images found in AUTOPOST_FALLBACK_DIR; using default fallback images.');
-        return this.defaultFallbackImagePool;
-      }
-      return images.map(name => `${baseUrl}/public/fallback-images/${encodeURIComponent(name)}`);
-    } catch (error) {
-      console.warn('[autopost] Failed to load fallback images; using default fallback images.', error);
-      return this.defaultFallbackImagePool;
-    }
+    return this.defaultFallbackImagePool;
   }
 
   private withCacheBuster(url: string) {
@@ -903,8 +911,9 @@ export class AutoPostService {
   }
 
   private pickFallbackImage(recent: Set<string>) {
-    const pool = this.fallbackImagePool.filter(url => !recent.has(url));
-    const pickFrom = pool.length ? pool : this.fallbackImagePool;
+    const poolAll = this.getFallbackImagePool();
+    const pool = poolAll.filter(url => !recent.has(url));
+    const pickFrom = pool.length ? pool : poolAll;
     if (!pickFrom.length) return this.fallbackImageUrl();
     const chosen = pickFrom[Math.floor(Math.random() * pickFrom.length)];
     return this.withCacheBuster(chosen);
