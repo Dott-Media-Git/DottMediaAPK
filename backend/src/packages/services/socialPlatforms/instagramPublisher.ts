@@ -19,6 +19,45 @@ const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_M
 const PUBLISH_RETRIES = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRIES ?? 2), 1);
 const PUBLISH_RETRY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRY_DELAY_MS ?? 3000), 1000);
 
+type InstagramApiError = {
+  message?: string;
+  type?: string;
+  code?: number;
+  error_subcode?: number;
+  error_user_title?: string;
+  error_user_msg?: string;
+  fbtrace_id?: string;
+};
+
+function formatInstagramError(error: any, fallback: string) {
+  const apiError = error?.response?.data?.error as InstagramApiError | undefined;
+  if (!apiError) {
+    return error?.message ?? fallback;
+  }
+  const parts = [
+    apiError.message,
+    apiError.error_user_msg ? `user_msg=${apiError.error_user_msg}` : null,
+    apiError.error_user_title ? `user_title=${apiError.error_user_title}` : null,
+    typeof apiError.code === 'number' ? `code=${apiError.code}` : null,
+    typeof apiError.error_subcode === 'number' ? `subcode=${apiError.error_subcode}` : null,
+    apiError.type ? `type=${apiError.type}` : null,
+    apiError.fbtrace_id ? `trace=${apiError.fbtrace_id}` : null,
+  ].filter(Boolean);
+  return parts.join(' | ') || fallback;
+}
+
+function logInstagramError(label: string, error: any) {
+  if (error?.response?.data) {
+    console.error(label, error.response.data);
+    return;
+  }
+  if (error?.message) {
+    console.error(label, error.message);
+    return;
+  }
+  console.error(label, String(error ?? 'unknown_error'));
+}
+
 export async function publishToInstagram(input: PublishInput): Promise<{ remoteId?: string }> {
   const { credentials } = input;
   if (!credentials?.instagram) {
@@ -65,8 +104,8 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
     }
     throw new Error('No ID returned from Instagram publish');
   } catch (error: any) {
-    console.error('Instagram publish error:', error.response?.data || error.message);
-    throw new Error(error.response?.data?.error?.message || 'Instagram publish failed');
+    logInstagramError('Instagram publish error:', error);
+    throw new Error(formatInstagramError(error, 'Instagram publish failed'));
   }
 }
 
@@ -113,8 +152,8 @@ export async function publishToInstagramReel(input: ReelPublishInput): Promise<{
     }
     throw new Error('No ID returned from Instagram Reels publish');
   } catch (error: any) {
-    console.error('Instagram Reels publish error:', error.response?.data || error.message);
-    throw new Error(error.response?.data?.error?.message || 'Instagram Reels publish failed');
+    logInstagramError('Instagram Reels publish error:', error);
+    throw new Error(formatInstagramError(error, 'Instagram Reels publish failed'));
   }
 }
 
@@ -126,11 +165,18 @@ async function waitForMediaReady(
 ) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const statusResp = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${creationId}`, {
-      params: { fields: 'status_code', access_token: accessToken },
+      params: { fields: 'status_code,status', access_token: accessToken },
     });
     const status = statusResp.data?.status_code;
     if (status === 'FINISHED') return true;
-    if (status === 'ERROR') return false;
+    if (status === 'ERROR') {
+      const statusInfo = statusResp.data?.status ?? {};
+      const detail = typeof statusInfo === 'object' ? JSON.stringify(statusInfo) : String(statusInfo ?? '');
+      if (detail && detail !== '{}' && detail !== 'null') {
+        throw new Error(`Instagram media container error: ${detail}`);
+      }
+      return false;
+    }
     await new Promise(resolve => setTimeout(resolve, delayMs));
   }
   return false;
