@@ -1,3 +1,5 @@
 node_modules
 node_modules
 .codex-local.json
+.expo/
+.firebase/
