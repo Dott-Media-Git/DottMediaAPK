@@ -28,7 +28,7 @@ router.get('/public/fallback-images/manifest', (_req, res) => {
 });
 
 router.get('/public/fallback-videos/manifest', (_req, res) => {
-  const fallbackDir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim();
+  const fallbackDir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim() || './public/fallback-videos';
   if (!fallbackDir) {
     res.status(404).json({ ok: false, error: 'AUTOPOST_FALLBACK_VIDEO_DIR not set.' });
     return;

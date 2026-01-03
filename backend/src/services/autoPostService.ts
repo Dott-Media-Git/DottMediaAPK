@@ -499,11 +499,7 @@ export class AutoPostService {
       const tags = platform === 'youtube' && enableYouTubeShorts ? ['shorts'] : undefined;
 
       if (isVideoPlatform) {
-        const platformSelection = this.selectNextVideo(
-          job,
-          platform as VideoPlatform,
-          platform === 'instagram_reels' ? fallbackVideoPool : [],
-        );
+        const platformSelection = this.selectNextVideo(job, platform as VideoPlatform, fallbackVideoPool);
         if (platformSelection.videoUrl) {
           videoUrl = platformSelection.videoUrl;
           if (platform === 'youtube' && typeof platformSelection.nextCursor === 'number') {
@@ -894,7 +890,7 @@ export class AutoPostService {
   }
 
   private loadFallbackVideoPool() {
-    const dir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim();
+    const dir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim() || './public/fallback-videos';
     const dirUrls = dir ? this.loadFallbackVideosFromDir(dir) : [];
     if (dirUrls.length) return dirUrls;
 

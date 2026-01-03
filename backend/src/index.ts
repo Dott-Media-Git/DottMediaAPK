@@ -90,7 +90,7 @@ if (fallbackDir) {
   }
 }
 
-const fallbackVideoDir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim();
+const fallbackVideoDir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim() || './public/fallback-videos';
 if (fallbackVideoDir) {
   const resolved = path.resolve(fallbackVideoDir);
   if (fs.existsSync(resolved)) {
