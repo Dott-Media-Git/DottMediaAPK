@@ -493,12 +493,13 @@ export class AutoPostService {
         platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
       const { caption, signature } = this.ensureCaptionVariety(platform, shortsCaption, captionHistory);
       const isVideoPlatform = videoPlatforms.has(platform as VideoPlatform);
+      const supportsVideo = isVideoPlatform || platform === 'facebook' || platform === 'linkedin';
       let videoUrl: string | undefined;
       let videoTitle: string | undefined;
       const privacyStatus = platform === 'youtube' ? job.youtubePrivacyStatus : undefined;
       const tags = platform === 'youtube' && enableYouTubeShorts ? ['shorts'] : undefined;
 
-      if (isVideoPlatform) {
+      if (supportsVideo && isVideoPlatform) {
         const platformSelection = this.selectNextVideo(job, platform as VideoPlatform, fallbackVideoPool);
         if (platformSelection.videoUrl) {
           videoUrl = platformSelection.videoUrl;
@@ -519,6 +520,9 @@ export class AutoPostService {
         if (platform === 'youtube' && enableYouTubeShorts && videoTitle) {
           videoTitle = this.ensureShortsTitle(videoTitle);
         }
+      } else if (supportsVideo && genericVideoSelection.videoUrl) {
+        videoUrl = genericVideoSelection.videoUrl;
+        usedGenericVideo = true;
       }
 
       if (isVideoPlatform && !videoUrl) {
@@ -536,7 +540,7 @@ export class AutoPostService {
       try {
         const response = await publisher({
           caption,
-          imageUrls: isVideoPlatform ? [] : imageUrls,
+          imageUrls: videoUrl ? [] : imageUrls,
           videoUrl,
           videoTitle,
           privacyStatus,

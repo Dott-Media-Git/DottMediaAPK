@@ -4,6 +4,7 @@ import { SocialAccounts } from '../socialPostingService';
 type PublishInput = {
   caption: string;
   imageUrls: string[];
+  videoUrl?: string;
   credentials?: SocialAccounts;
 };
 
@@ -18,7 +19,13 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
 
   try {
     let response;
-    if (input.imageUrls && input.imageUrls.length > 0) {
+    if (input.videoUrl) {
+      response = await axios.post(`${baseUrl}/videos`, {
+        file_url: input.videoUrl,
+        description: input.caption,
+        access_token: accessToken,
+      });
+    } else if (input.imageUrls && input.imageUrls.length > 0) {
       // Post photo
       response = await axios.post(`${baseUrl}/photos`, {
         url: input.imageUrls[0],
