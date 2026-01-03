@@ -739,7 +739,8 @@ export class AutoPostService {
       platform === 'instagram' || platform === 'instagram_reels' || platform === 'threads' || platform === 'tiktok'
         ? content.hashtags_instagram
         : content.hashtags_generic;
-    const hashtags = hasHashtags ? '' : this.formatHashtags(sourceHashtags ?? fallbackCopy.hashtags);
+    const resolvedHashtags = sourceHashtags?.trim() ? sourceHashtags : fallbackCopy.hashtags;
+    const hashtags = hasHashtags ? '' : this.formatHashtags(resolvedHashtags);
     if (platform === 'twitter' || platform === 'x') {
       return [caption, hashtags].filter(Boolean).join(' ');
     }
