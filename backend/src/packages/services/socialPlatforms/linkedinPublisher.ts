@@ -10,6 +10,7 @@ type PublishInput = {
 
 const LINKEDIN_API = 'https://api.linkedin.com/v2';
 const REQUEST_TIMEOUT_MS = 120000;
+const ALLOW_PERSON_FALLBACK = process.env.LINKEDIN_ALLOW_PERSON_FALLBACK === 'true';
 
 const getContentType = (url: string, isVideo: boolean) => {
   const lower = url.toLowerCase();
@@ -52,12 +53,8 @@ const resolveAuthorUrn = async (raw: string | undefined, accessToken: string) =>
   const trimmed = raw?.trim() ?? '';
   if (trimmed && trimmed.startsWith('urn:li:')) return trimmed;
   if (trimmed && /^\d+$/.test(trimmed)) return `urn:li:organization:${trimmed}`;
-  return await fetchPersonUrn(accessToken);
-};
-
-const isAuthorError = (error: any) => {
-  const message = `${error?.response?.data?.message ?? error?.message ?? ''}`.toLowerCase();
-  return message.includes('author');
+  if (ALLOW_PERSON_FALLBACK) return await fetchPersonUrn(accessToken);
+  return '';
 };
 
 const registerUpload = async (accessToken: string, owner: string, recipe: string) => {
@@ -145,7 +142,9 @@ export async function publishToLinkedIn(input: PublishInput): Promise<{ remoteId
     throw new Error('Missing LinkedIn credentials');
   }
 
-  const authorUrn = await resolveAuthorUrn(account.urn, account.accessToken);
+  const fallbackAuthor =
+    process.env.LINKEDIN_AUTHOR_URN?.trim() || process.env.LINKEDIN_ORGANIZATION_ID?.trim() || '';
+  const authorUrn = await resolveAuthorUrn(account.urn || fallbackAuthor, account.accessToken);
   if (!authorUrn) {
     throw new Error('Missing LinkedIn author URN');
   }
@@ -166,33 +165,13 @@ export async function publishToLinkedIn(input: PublishInput): Promise<{ remoteId
       throw new Error('LinkedIn upload registration failed');
     }
     await uploadMedia(upload.uploadUrl, mediaUrl, contentType);
-    let postId: string | undefined;
-    try {
-      postId = await createUgcPost(
-        account.accessToken,
-        authorUrn,
-        input.caption,
-        isVideo ? 'VIDEO' : 'IMAGE',
-        upload.asset,
-      );
-    } catch (error: any) {
-      if (isAuthorError(error) && !authorUrn.startsWith('urn:li:person:')) {
-        const personUrn = await fetchPersonUrn(account.accessToken);
-        if (personUrn) {
-          postId = await createUgcPost(
-            account.accessToken,
-            personUrn,
-            input.caption,
-            isVideo ? 'VIDEO' : 'IMAGE',
-            upload.asset,
-          );
-        } else {
-          throw error;
-        }
-      } else {
-        throw error;
-      }
-    }
+    const postId = await createUgcPost(
+      account.accessToken,
+      authorUrn,
+      input.caption,
+      isVideo ? 'VIDEO' : 'IMAGE',
+      upload.asset,
+    );
     return { remoteId: postId ?? `li_${Date.now()}` };
   } catch (error: any) {
     console.error('LinkedIn publish error:', error.response?.data || error.message);
