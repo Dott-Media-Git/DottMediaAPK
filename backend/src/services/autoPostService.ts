@@ -115,7 +115,7 @@ export class AutoPostService {
     return this.loadFallbackImagePool();
   }
   private defaultFallbackCaption =
-    'Meet the Dott Media AI Sales Bot helping businesses convert leads into customers. Want a quick demo? DM us to get started.';
+    "Meet Dott Media's AI Sales Bot - your always-on growth partner for CRM, social media, lead gen, and outreach automation ✨📈. Want a quick demo? DM us and let's build your pipeline 🚀🤝.";
   private defaultFallbackHashtags =
     'DottMedia, AISalesBot, SalesAutomation, LeadGeneration, BusinessGrowth, CRM, MarketingAutomation, SalesPipeline, CustomerSuccess, AI, Automation, SmallBusiness, DigitalMarketing, B2B, Productivity, AIAutomation, AIForBusiness, AIAnalytics, AIMarketing, AIStrategy, AICRM, AIProductivity, AITools, MachineLearning, GenerativeAI';
   private fallbackCaptionVariants = [
