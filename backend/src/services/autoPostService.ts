@@ -114,6 +114,9 @@ export class AutoPostService {
   private getFallbackImagePool() {
     return this.loadFallbackImagePool();
   }
+  private getFallbackVideoPool() {
+    return this.loadFallbackVideoPool();
+  }
   private defaultFallbackCaption =
     "Meet Dott Media's AI Sales Bot - your always-on growth partner for CRM, social media, lead gen, and outreach automation. \u{1F680} Want a quick demo? DM us and let's build your pipeline. \u{1F916}\u2728";
   private defaultFallbackHashtags =
@@ -444,7 +447,10 @@ export class AutoPostService {
     const results: PostResult[] = [];
     const finalGenerated = generated;
     const imageUrls = needsImages ? this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages) : [];
-    const genericVideoSelection = useGenericVideoFallback ? this.selectNextGenericVideo(job) : { videoUrl: undefined, nextCursor: undefined };
+    const fallbackVideoPool = this.getFallbackVideoPool();
+    const genericVideoSelection = useGenericVideoFallback
+      ? this.selectNextGenericVideo(job, fallbackVideoPool)
+      : { videoUrl: undefined, nextCursor: undefined };
     const cursorUpdates: Partial<
       Pick<AutoPostJob, 'videoCursor' | 'youtubeVideoCursor' | 'tiktokVideoCursor' | 'reelsVideoCursor'>
     > = {};
@@ -493,7 +499,11 @@ export class AutoPostService {
       const tags = platform === 'youtube' && enableYouTubeShorts ? ['shorts'] : undefined;
 
       if (isVideoPlatform) {
-        const platformSelection = this.selectNextVideo(job, platform as VideoPlatform);
+        const platformSelection = this.selectNextVideo(
+          job,
+          platform as VideoPlatform,
+          platform === 'instagram_reels' ? fallbackVideoPool : [],
+        );
         if (platformSelection.videoUrl) {
           videoUrl = platformSelection.videoUrl;
           if (platform === 'youtube' && typeof platformSelection.nextCursor === 'number') {
@@ -835,6 +845,30 @@ export class AutoPostService {
     }
   }
 
+  private loadFallbackVideosFromDir(dir: string) {
+    const baseUrl = this.getPublicBaseUrl();
+    if (!baseUrl) {
+      console.warn('[autopost] AUTOPOST_FALLBACK_VIDEO_DIR set but BASE_URL is missing; using other fallback sources.');
+      return [];
+    }
+    try {
+      const resolved = path.resolve(dir);
+      const entries = fs.readdirSync(resolved, { withFileTypes: true });
+      const videos = entries
+        .filter(entry => entry.isFile())
+        .map(entry => entry.name)
+        .filter(name => /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(name));
+      if (!videos.length) {
+        console.warn('[autopost] No fallback videos found in AUTOPOST_FALLBACK_VIDEO_DIR; using other fallback sources.');
+        return [];
+      }
+      return videos.map(name => `${baseUrl}/public/fallback-videos/${encodeURIComponent(name)}`);
+    } catch (error) {
+      console.warn('[autopost] Failed to load fallback videos; using other fallback sources.', error);
+      return [];
+    }
+  }
+
   private loadFallbackImagePool() {
     const dir = process.env.AUTOPOST_FALLBACK_DIR?.trim();
     const dirUrls = dir ? this.loadFallbackImagesFromDir(dir) : [];
@@ -857,6 +891,30 @@ export class AutoPostService {
     }
 
     return this.defaultFallbackImagePool;
+  }
+
+  private loadFallbackVideoPool() {
+    const dir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim();
+    const dirUrls = dir ? this.loadFallbackVideosFromDir(dir) : [];
+    if (dirUrls.length) return dirUrls;
+
+    const explicitUrls = this.parseFallbackUrls(process.env.AUTOPOST_FALLBACK_VIDEO_URLS);
+    if (explicitUrls.length) return explicitUrls;
+
+    const urlsFile = process.env.AUTOPOST_FALLBACK_VIDEO_URLS_FILE?.trim();
+    if (urlsFile) {
+      try {
+        const resolved = path.resolve(urlsFile);
+        const contents = fs.readFileSync(resolved, 'utf8');
+        const fileUrls = this.parseFallbackUrls(contents);
+        if (fileUrls.length) return fileUrls;
+        console.warn('[autopost] No URLs found in AUTOPOST_FALLBACK_VIDEO_URLS_FILE; using empty fallback videos.');
+      } catch (error) {
+        console.warn('[autopost] Failed to load AUTOPOST_FALLBACK_VIDEO_URLS_FILE; using empty fallback videos.', error);
+      }
+    }
+
+    return [];
   }
 
   private withCacheBuster(url: string) {
@@ -1115,7 +1173,7 @@ export class AutoPostService {
     return `${platform}:${normalized}`;
   }
 
-  private selectNextVideo(job: AutoPostJob, platform: VideoPlatform) {
+  private selectNextVideo(job: AutoPostJob, platform: VideoPlatform, fallbackVideos: string[] = []) {
     const list =
       platform === 'youtube'
         ? (job.youtubeVideoUrls ?? []).map(url => url.trim()).filter(Boolean)
@@ -1141,18 +1199,35 @@ export class AutoPostService {
             ? (job.reelsVideoCursor as number)
             : 0;
     if (!list.length) {
-      return { videoUrl: single, nextCursor: undefined };
+      if (single) {
+        return { videoUrl: single, nextCursor: undefined };
+      }
+      if (!fallbackVideos.length) {
+        return { videoUrl: undefined, nextCursor: undefined };
+      }
+      const index = ((cursor % fallbackVideos.length) + fallbackVideos.length) % fallbackVideos.length;
+      const nextCursor = (index + 1) % fallbackVideos.length;
+      return { videoUrl: fallbackVideos[index], nextCursor };
     }
     const index = ((cursor % list.length) + list.length) % list.length;
     const nextCursor = (index + 1) % list.length;
     return { videoUrl: list[index], nextCursor };
   }
 
-  private selectNextGenericVideo(job: AutoPostJob) {
+  private selectNextGenericVideo(job: AutoPostJob, fallbackVideos: string[] = []) {
     const list = (job.videoUrls ?? []).map(url => url.trim()).filter(Boolean);
     if (!list.length) {
       const single = job.videoUrl?.trim();
-      return { videoUrl: single, nextCursor: undefined };
+      if (single) {
+        return { videoUrl: single, nextCursor: undefined };
+      }
+      if (!fallbackVideos.length) {
+        return { videoUrl: undefined, nextCursor: undefined };
+      }
+      const cursor = Number.isFinite(job.videoCursor) ? (job.videoCursor as number) : 0;
+      const index = ((cursor % fallbackVideos.length) + fallbackVideos.length) % fallbackVideos.length;
+      const nextCursor = (index + 1) % fallbackVideos.length;
+      return { videoUrl: fallbackVideos[index], nextCursor };
     }
     const cursor = Number.isFinite(job.videoCursor) ? (job.videoCursor as number) : 0;
     const index = ((cursor % list.length) + list.length) % list.length;

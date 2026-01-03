@@ -27,4 +27,23 @@ router.get('/public/fallback-images/manifest', (_req, res) => {
   res.json({ ok: true, count: files.length, files });
 });
 
+router.get('/public/fallback-videos/manifest', (_req, res) => {
+  const fallbackDir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim();
+  if (!fallbackDir) {
+    res.status(404).json({ ok: false, error: 'AUTOPOST_FALLBACK_VIDEO_DIR not set.' });
+    return;
+  }
+  const resolved = path.resolve(fallbackDir);
+  if (!fs.existsSync(resolved)) {
+    res.status(404).json({ ok: false, error: 'Fallback video directory not found.', dir: resolved });
+    return;
+  }
+  const files = fs
+    .readdirSync(resolved, { withFileTypes: true })
+    .filter(entry => entry.isFile())
+    .map(entry => entry.name)
+    .filter(name => /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(name));
+  res.json({ ok: true, count: files.length, files });
+});
+
 export default router;

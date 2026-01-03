@@ -90,6 +90,17 @@ if (fallbackDir) {
   }
 }
 
+const fallbackVideoDir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim();
+if (fallbackVideoDir) {
+  const resolved = path.resolve(fallbackVideoDir);
+  if (fs.existsSync(resolved)) {
+    app.use('/public/fallback-videos', express.static(resolved));
+    console.info(`[autopost] fallback video directory enabled (${resolved}).`);
+  } else {
+    console.warn(`[autopost] fallback video directory not found (${resolved}).`);
+  }
+}
+
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
 app.use('/', inboundWebhookRoutes);
