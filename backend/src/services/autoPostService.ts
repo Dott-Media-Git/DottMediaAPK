@@ -115,7 +115,7 @@ export class AutoPostService {
     return this.loadFallbackImagePool();
   }
   private defaultFallbackCaption =
-    "Meet Dott Media's AI Sales Bot - your always-on growth partner for CRM, social media, lead gen, and outreach automation ✨📈. Want a quick demo? DM us and let's build your pipeline 🚀🤝.";
+    "Meet Dott Media's AI Sales Bot - your always-on growth partner for CRM, social media, lead gen, and outreach automation. \u{1F680} Want a quick demo? DM us and let's build your pipeline. \u{1F916}\u2728";
   private defaultFallbackHashtags =
     'DottMedia, AISalesBot, SalesAutomation, LeadGeneration, BusinessGrowth, CRM, MarketingAutomation, SalesPipeline, CustomerSuccess, AI, Automation, SmallBusiness, DigitalMarketing, B2B, Productivity, AIAutomation, AIForBusiness, AIAnalytics, AIMarketing, AIStrategy, AICRM, AIProductivity, AITools, MachineLearning, GenerativeAI';
   private fallbackCaptionVariants = [
@@ -750,17 +750,20 @@ export class AutoPostService {
 
   private buildFallbackCopy(job: AutoPostJob) {
     const caption = job.fallbackCaption?.trim() || this.defaultFallbackCaption;
-    const hashtags = job.fallbackHashtags?.trim() || this.defaultFallbackHashtags;
+    let hashtags = job.fallbackHashtags?.trim() || this.defaultFallbackHashtags;
+    if (!this.formatHashtags(hashtags)) {
+      hashtags = this.defaultFallbackHashtags;
+    }
     return { caption, hashtags };
   }
 
   private formatHashtags(raw?: string) {
     if (!raw) return '';
     const tokens = raw
-      .split(/[,\\n]/g)
+      .split(/[,\n]/g)
       .map(token => token.trim())
       .filter(Boolean)
-      .flatMap(token => token.split(/\\s+/).filter(Boolean))
+      .flatMap(token => token.split(/\s+/).filter(Boolean))
       .map(token => token.replace(/^#+/, '').replace(/[^A-Za-z0-9_]/g, ''))
       .filter(Boolean);
     if (!tokens.length) return '';
