@@ -1,65 +1,36 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DMButton } from '@components/DMButton';
 import { DMCard } from '@components/DMCard';
 import { colors } from '@constants/colors';
 import { useThemeMode } from '@context/ThemeContext';
 import { useAssistant } from '@context/AssistantContext';
+import { useI18n } from '@context/I18nContext';
+import { LOCALE_FLAGS, LOCALE_LABELS, SUPPORTED_LOCALES, type Locale } from '@constants/i18n';
+import { getIdToken } from '@services/firebase';
+import { env } from '@services/env';
 
 const SUPPORT_WHATSAPP_URL = 'https://wa.me/2348130000000';
-const NATIONALITY_STORAGE_KEY = '@dott/nationality';
-const NATIONALITY_OPTIONS = [
-  'Global',
-  'Kenyan',
-  'Nigerian',
-  'South African',
-  'Ghanaian',
-  'Ethiopian',
-  'Ugandan',
-  'Egyptian',
-  'American',
-  'British',
-  'Canadian',
-  'German',
-  'French',
-  'Spanish',
-  'Italian',
-  'UAE',
-  'Saudi',
-  'Indian',
-  'Pakistani',
-  'Brazilian',
-];
+const LANGUAGE_OPTIONS: Array<{ value: Locale; label: string; flag: string }> = SUPPORTED_LOCALES.map(locale => ({
+  value: locale,
+  label: LOCALE_LABELS[locale],
+  flag: LOCALE_FLAGS[locale]
+}));
 
 export const SupportScreen: React.FC = () => {
   const { mode, toggleMode } = useThemeMode();
   const { enabled: assistantEnabled, toggleAssistant } = useAssistant();
+  const { locale, setLocale, t } = useI18n();
   const [assistantSwitchLoading, setAssistantSwitchLoading] = useState(false);
-  const [nationality, setNationality] = useState('Global');
   const [menuOpen, setMenuOpen] = useState(false);
+  const currentLabel = `${LOCALE_FLAGS[locale]} ${LOCALE_LABELS[locale]}`;
 
-  useEffect(() => {
-    AsyncStorage.getItem(NATIONALITY_STORAGE_KEY)
-      .then(value => {
-        if (value) {
-          setNationality(value);
-        }
-      })
-      .catch(() => undefined);
-  }, []);
-
-  const handleSelectNationality = async (value: string) => {
-    setNationality(value);
+  const handleSelectLocale = async (value: Locale) => {
+    await setLocale(value);
     setMenuOpen(false);
-    try {
-      await AsyncStorage.setItem(NATIONALITY_STORAGE_KEY, value);
-    } catch (error) {
-      console.warn('Failed to save nationality preference', error);
-    }
   };
 
   const handleAssistantToggle = async (value: boolean) => {
@@ -71,16 +42,37 @@ export const SupportScreen: React.FC = () => {
     }
   };
 
+  const handleCopyIdToken = async () => {
+    try {
+      const token = await getIdToken();
+      if (!token) {
+        Alert.alert(t('Token unavailable'), t('Sign in again to generate a fresh token.'));
+        return;
+      }
+      const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+      if (clipboard?.writeText) {
+        await clipboard.writeText(token);
+        Alert.alert(t('Copied'), t('Firebase ID token copied to clipboard.'));
+      } else {
+        console.log('Firebase ID token:', token);
+        Alert.alert(t('Token ready'), t('Token printed to console.'));
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert(t('Unable to fetch token'), t('Please try again.'));
+    }
+  };
+
   const openWhatsApp = async () => {
     try {
       const supported = await Linking.canOpenURL(SUPPORT_WHATSAPP_URL);
       if (supported) {
         await Linking.openURL(SUPPORT_WHATSAPP_URL);
       } else {
-        Alert.alert('WhatsApp not available', 'Please install WhatsApp or contact support via email.');
+        Alert.alert(t('WhatsApp not available'), t('Please install WhatsApp or contact support via email.'));
       }
     } catch (error) {
-      Alert.alert('Unable to open WhatsApp', 'Please try again later.');
+      Alert.alert(t('Unable to open WhatsApp'), t('Please try again later.'));
       console.error(error);
     }
   };
@@ -88,19 +80,22 @@ export const SupportScreen: React.FC = () => {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.hero}>
-        <Text style={styles.badge}>Support</Text>
-        <Text style={styles.title}>Ops team on standby</Text>
+        <Text style={styles.badge}>{t('Support')}</Text>
+        <Text style={styles.title}>{t('Ops team on standby')}</Text>
         <Text style={styles.subtitle}>
-          Same neon vibe you see on dott-media.com, now backing live WhatsApp and knowledge base support.
+          {t('Same neon vibe you see on dott-media.com, now backing live WhatsApp and knowledge base support.')}
         </Text>
       </LinearGradient>
-      <DMCard title="Theme">
-        <Text style={styles.cardText}>Toggle between light and dark workspaces whenever you like.</Text>
-        <DMButton title={mode === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'} onPress={toggleMode} />
+      <DMCard title={t('Theme')}>
+        <Text style={styles.cardText}>{t('Toggle between light and dark workspaces whenever you like.')}</Text>
+        <DMButton
+          title={mode === 'dark' ? t('Switch to Light Mode') : t('Switch to Dark Mode')}
+          onPress={toggleMode}
+        />
       </DMCard>
-      <DMCard title="Assistant overlay" subtitle="Toggle the floating help bubble">
+      <DMCard title={t('Assistant overlay')} subtitle={t('Toggle the floating help bubble')}>
         <View style={styles.row}>
-          <Text style={styles.statusLabel}>{assistantEnabled ? 'Assistant On' : 'Assistant Off'}</Text>
+          <Text style={styles.statusLabel}>{assistantEnabled ? t('Assistant On') : t('Assistant Off')}</Text>
           <Switch
             value={assistantEnabled}
             onValueChange={handleAssistantToggle}
@@ -109,50 +104,65 @@ export const SupportScreen: React.FC = () => {
             disabled={assistantSwitchLoading}
           />
         </View>
-        <Text style={styles.cardText}>Disable this if you prefer a distraction-free workspace.</Text>
+        <Text style={styles.cardText}>{t('Disable this if you prefer a distraction-free workspace.')}</Text>
       </DMCard>
-      <DMCard title="Nationality" subtitle="Personalize the app without restricting access">
+      {env.debugTools ? (
+        <DMCard title={t('Debug tools')} subtitle={t('Temporary utilities for support')}>
+          <Text style={styles.cardText}>
+            {t('Copy your Firebase ID token to share with support.')}
+          </Text>
+          <DMButton title={t('Copy Firebase ID token')} onPress={handleCopyIdToken} />
+        </DMCard>
+      ) : null}
+      <DMCard title={t('Language')} subtitle={t('Select your language')}>
         <TouchableOpacity style={styles.selectButton} onPress={() => setMenuOpen(true)}>
           <View>
-            <Text style={styles.selectLabel}>Current: {nationality}</Text>
-            <Text style={styles.cardText}>Choose your nationality to tailor support.</Text>
+            <Text style={styles.selectLabel}>
+              {t('Current: {{value}}', { value: currentLabel })}
+            </Text>
+            <Text style={styles.cardText}>{t('Choose your language to personalize the app.')}</Text>
           </View>
           <Ionicons name="chevron-down" size={18} color={colors.subtext} />
         </TouchableOpacity>
       </DMCard>
-      <DMCard title="WhatsApp Business">
-        <Text style={styles.cardText}>Chat with us for onboarding questions or live campaign tweaks.</Text>
-        <DMButton title="Chat on WhatsApp" onPress={openWhatsApp} />
+      <DMCard title={t('WhatsApp Business')}>
+        <Text style={styles.cardText}>{t('Chat with us for onboarding questions or live campaign tweaks.')}</Text>
+        <DMButton title={t('Chat on WhatsApp')} onPress={openWhatsApp} />
       </DMCard>
-      <DMCard title="Resources">
-        <Text style={styles.cardText}>- Automation knowledge base (coming soon)</Text>
-        <Text style={styles.cardText}>- AI chatbot assistant (beta)</Text>
+      <DMCard title={t('Resources')}>
+        <Text style={styles.cardText}>{t('- Automation knowledge base (coming soon)')}</Text>
+        <Text style={styles.cardText}>{t('- AI chatbot assistant (beta)')}</Text>
       </DMCard>
       <Modal visible={menuOpen} transparent animationType="fade">
         <Pressable style={styles.modalBackdrop} onPress={() => setMenuOpen(false)}>
           <Pressable style={styles.modalCard} onPress={() => undefined}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select your nationality</Text>
+              <Text style={styles.modalTitle}>{t('Select your language')}</Text>
               <TouchableOpacity onPress={() => setMenuOpen(false)} style={styles.modalClose}>
                 <Ionicons name="close" size={18} color={colors.text} />
               </TouchableOpacity>
             </View>
             <ScrollView style={styles.modalList}>
-              {NATIONALITY_OPTIONS.map(option => {
-                const active = option === nationality;
+              {LANGUAGE_OPTIONS.map(option => {
+                const active = option.value === locale;
                 return (
                   <TouchableOpacity
-                    key={option}
+                    key={option.value}
                     style={[styles.modalOption, active && styles.modalOptionActive]}
-                    onPress={() => handleSelectNationality(option)}
+                    onPress={() => handleSelectLocale(option.value)}
                   >
-                    <Text style={[styles.modalOptionText, active && styles.modalOptionTextActive]}>{option}</Text>
+                    <View style={styles.modalOptionLabel}>
+                      <Text style={styles.modalOptionFlag}>{option.flag}</Text>
+                      <Text style={[styles.modalOptionText, active && styles.modalOptionTextActive]}>
+                        {option.label}
+                      </Text>
+                    </View>
                     {active ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
                   </TouchableOpacity>
                 );
               })}
             </ScrollView>
-            <Text style={styles.modalFooter}>This only customizes your experience. It never limits access.</Text>
+            <Text style={styles.modalFooter}>{t('This only changes text. It never limits access.')}</Text>
           </Pressable>
         </Pressable>
       </Modal>
@@ -280,6 +290,14 @@ const styles = StyleSheet.create({
   modalOptionTextActive: {
     color: colors.accent,
     fontWeight: '700'
+  },
+  modalOptionLabel: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  modalOptionFlag: {
+    marginRight: 10,
+    fontSize: 16
   },
   modalFooter: {
     color: colors.subtext,

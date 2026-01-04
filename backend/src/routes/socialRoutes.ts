@@ -30,9 +30,12 @@ const scheduleSchema = z
     const hasYoutube = data.platforms.includes('youtube');
     const hasTikTok = data.platforms.includes('tiktok');
     const hasReels = data.platforms.includes('instagram_reels');
-    const hasImagePlatform = data.platforms.some(
-      platform => platform !== 'youtube' && platform !== 'tiktok' && platform !== 'instagram_reels',
-    );
+    const videoCapable = new Set(['facebook', 'linkedin']);
+    const hasImagePlatform = data.platforms.some(platform => {
+      if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels') return false;
+      if (videoCapable.has(platform) && data.videoUrl) return false;
+      return true;
+    });
     if (hasImagePlatform && (!data.images || data.images.length === 0)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

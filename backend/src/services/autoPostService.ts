@@ -287,10 +287,37 @@ export class AutoPostService {
     }
 
     // Query only by nextRun to avoid composite index requirement, then filter active in memory.
-    const [standardSnap, reelsSnap] = await Promise.all([
+    const [standardSnap, reelsSnap, missingReelsSnap] = await Promise.all([
       autopostCollection.where('nextRun', '<=', now).get(),
       autopostCollection.where('reelsNextRun', '<=', now).get(),
+      autopostCollection.where('reelsNextRun', '==', null).get(),
     ]);
+    if (!missingReelsSnap.empty) {
+      const selfHealWrites = missingReelsSnap.docs.map(doc => {
+        const data = doc.data() as AutoPostJob;
+        if (data.active === false) return null;
+        const hasReelsConfig = Boolean(
+          data.reelsVideoUrl ||
+            (data.reelsVideoUrls && data.reelsVideoUrls.length) ||
+            data.reelsIntervalHours ||
+            data.reelsLastRunAt ||
+            data.reelsLastResult
+        );
+        if (!hasReelsConfig) return null;
+        const reelsIntervalHours = data.reelsIntervalHours ?? this.defaultReelsIntervalHours;
+        return autopostCollection.doc(doc.id).set(
+          {
+            reelsIntervalHours,
+            reelsNextRun: now,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }).filter(Boolean) as Array<Promise<FirebaseFirestore.WriteResult>>;
+      if (selfHealWrites.length) {
+        await Promise.all(selfHealWrites);
+      }
+    }
     if (standardSnap.empty && reelsSnap.empty) return { processed: 0 };
     let processed = 0;
     const results = new Map<
@@ -408,7 +435,16 @@ export class AutoPostService {
     const businessType = job.businessType ?? 'AI CRM + automation agency';
     const recentImages = this.getRecentImageHistory(job);
     const recentSet = new Set(recentImages);
-    const needsImages = platforms.some(platform => !videoPlatforms.has(platform as VideoPlatform));
+    const fallbackVideoPool = this.getFallbackVideoPool();
+    const genericVideoSelection = useGenericVideoFallback
+      ? this.selectNextGenericVideo(job, fallbackVideoPool)
+      : { videoUrl: undefined, nextCursor: undefined };
+    const hasGenericVideo = Boolean(genericVideoSelection.videoUrl);
+    const needsImages = platforms.some(platform => {
+      if (videoPlatforms.has(platform as VideoPlatform)) return false;
+      if ((platform === 'facebook' || platform === 'linkedin') && hasGenericVideo) return false;
+      return true;
+    });
     const requireAiImages = needsImages ? this.requireAiImages(job) : false;
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
 
@@ -447,10 +483,6 @@ export class AutoPostService {
     const results: PostResult[] = [];
     const finalGenerated = generated;
     const imageUrls = needsImages ? this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages) : [];
-    const fallbackVideoPool = this.getFallbackVideoPool();
-    const genericVideoSelection = useGenericVideoFallback
-      ? this.selectNextGenericVideo(job, fallbackVideoPool)
-      : { videoUrl: undefined, nextCursor: undefined };
     const cursorUpdates: Partial<
       Pick<AutoPostJob, 'videoCursor' | 'youtubeVideoCursor' | 'tiktokVideoCursor' | 'reelsVideoCursor'>
     > = {};
@@ -559,7 +591,51 @@ export class AutoPostService {
           videoTitle,
         });
       } catch (error) {
-        const errorMessage = (error as Error).message ?? 'publish_failed';
+        let retryError = error as Error;
+        if (platform === 'instagram_reels') {
+          const retryCursor =
+            typeof cursorUpdates.reelsVideoCursor === 'number'
+              ? cursorUpdates.reelsVideoCursor
+              : job.reelsVideoCursor;
+          if (typeof retryCursor === 'number') {
+            const retrySelection = this.selectNextVideo(
+              { ...job, reelsVideoCursor: retryCursor },
+              'instagram_reels',
+              fallbackVideoPool,
+            );
+            if (retrySelection.videoUrl && retrySelection.videoUrl !== videoUrl) {
+              try {
+                const retryResponse = await publisher({
+                  caption,
+                  imageUrls: [],
+                  videoUrl: retrySelection.videoUrl,
+                  videoTitle,
+                  privacyStatus,
+                  tags,
+                  credentials,
+                });
+                if (typeof retrySelection.nextCursor === 'number') {
+                  cursorUpdates.reelsVideoCursor = retrySelection.nextCursor;
+                }
+                results.push({ platform, status: 'posted', remoteId: retryResponse?.remoteId ?? null });
+                usedCaptions.push(signature);
+                captionHistory.add(signature);
+                historyEntries.push({
+                  platform,
+                  status: 'posted',
+                  caption,
+                  remoteId: retryResponse?.remoteId ?? null,
+                  videoUrl: retrySelection.videoUrl,
+                  videoTitle,
+                });
+                continue;
+              } catch (retry) {
+                retryError = retry as Error;
+              }
+            }
+          }
+        }
+        const errorMessage = retryError?.message ?? 'publish_failed';
         results.push({ platform, status: 'failed', error: errorMessage });
         historyEntries.push({ platform, status: 'failed', caption, errorMessage, videoUrl, videoTitle });
       }

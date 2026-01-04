@@ -25,9 +25,12 @@ export class SocialSchedulingService {
     const hasYoutube = payload.platforms.includes('youtube');
     const hasTikTok = payload.platforms.includes('tiktok');
     const hasReels = payload.platforms.includes('instagram_reels');
-    const hasImagePlatform = payload.platforms.some(
-      platform => platform !== 'youtube' && platform !== 'tiktok' && platform !== 'instagram_reels',
-    );
+    const videoCapable = new Set(['facebook', 'linkedin']);
+    const hasImagePlatform = payload.platforms.some(platform => {
+      if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels') return false;
+      if (videoCapable.has(platform) && payload.videoUrl) return false;
+      return true;
+    });
     const youtubeUrl = payload.youtubeVideoUrl ?? payload.videoUrl;
     const tiktokUrl = payload.tiktokVideoUrl ?? payload.videoUrl;
     const reelsUrl = payload.instagramReelsVideoUrl ?? null;
@@ -81,7 +84,11 @@ export class SocialSchedulingService {
 
     const batch = firestore.batch();
     docsToCreate.forEach(doc => {
-      const isVideoPlatform = doc.platform === 'youtube' || doc.platform === 'tiktok' || doc.platform === 'instagram_reels';
+      const isVideoPlatform =
+        doc.platform === 'youtube' ||
+        doc.platform === 'tiktok' ||
+        doc.platform === 'instagram_reels' ||
+        ((doc.platform === 'facebook' || doc.platform === 'linkedin') && Boolean(payload.videoUrl));
       const videoUrl =
         doc.platform === 'youtube'
           ? payload.youtubeVideoUrl ?? payload.videoUrl ?? null
@@ -89,7 +96,9 @@ export class SocialSchedulingService {
             ? payload.tiktokVideoUrl ?? payload.videoUrl ?? null
             : doc.platform === 'instagram_reels'
               ? payload.instagramReelsVideoUrl ?? null
-            : null;
+              : (doc.platform === 'facebook' || doc.platform === 'linkedin')
+                ? payload.videoUrl ?? null
+                : null;
       batch.set(scheduledPostsCollection.doc(doc.id), {
         userId: payload.userId,
         platform: doc.platform,
