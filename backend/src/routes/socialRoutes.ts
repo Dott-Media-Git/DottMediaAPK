@@ -6,6 +6,8 @@ import { socialPostingService } from '../packages/services/socialPostingService'
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService';
 import { autoPostService } from '../services/autoPostService';
 import { firestore } from '../db/firestore';
+import { config } from '../config';
+import { getTikTokIntegration, getYouTubeIntegration } from '../services/socialIntegrationService';
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -198,6 +200,39 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
     const history = await socialPostingService.getHistory(userId);
     const daily = await socialAnalyticsService.getDailySummary(userId);
     res.json({ ...history, daily, userId });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/social/status', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+
+    const userDoc = await firestore.collection('users').doc(authUser.uid).get();
+    const accounts = (userDoc.data()?.socialAccounts as Record<string, any> | undefined) ?? {};
+    const youtube = await getYouTubeIntegration(authUser.uid);
+    const tiktok = await getTikTokIntegration(authUser.uid);
+
+    const status = {
+      facebook:
+        Boolean(accounts.facebook?.accessToken && accounts.facebook?.pageId) ||
+        Boolean(config.channels.facebook.pageToken && config.channels.facebook.pageId),
+      instagram:
+        Boolean(accounts.instagram?.accessToken && accounts.instagram?.accountId) ||
+        Boolean(config.channels.instagram.accessToken && config.channels.instagram.businessId),
+      linkedin:
+        Boolean(accounts.linkedin?.accessToken && accounts.linkedin?.urn) ||
+        Boolean(config.linkedin.accessToken && config.linkedin.organizationId),
+      twitter: Boolean(accounts.twitter?.accessToken && accounts.twitter?.accessSecret),
+      youtube: Boolean(youtube?.connected),
+      tiktok:
+        Boolean(tiktok?.connected) ||
+        Boolean(config.tiktok.accessToken && config.tiktok.openId),
+    };
+
+    res.json({ status });
   } catch (error) {
     next(error);
   }

@@ -6,7 +6,7 @@ import { colors } from '@constants/colors';
 
 import { useAuth } from '@context/AuthContext';
 import { isFirebaseEnabled, realtimeDb } from '@services/firebase';
-import { saveSocialCredentials } from '@services/social';
+import { fetchSocialStatus, saveSocialCredentials, type SocialConnectionStatus } from '@services/social';
 import { useI18n } from '@context/I18nContext';
 import {
   fetchYouTubeConfig,
@@ -73,6 +73,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
   const { state, orgId } = useAuth();
   const { t } = useI18n();
   const [socialAccounts, setSocialAccounts] = useState<Record<string, any>>({});
+  const [socialStatus, setSocialStatus] = useState<SocialConnectionStatus | null>(null);
   const [expandedPlatform, setExpandedPlatform] = useState<PlatformKey | null>(null);
   const [savingPlatform, setSavingPlatform] = useState<PlatformKey | null>(null);
   const [drafts, setDrafts] = useState<Record<ManualPlatform, Record<string, string>>>(EMPTY_DRAFTS);
@@ -139,6 +140,19 @@ export const AccountIntegrationsScreen: React.FC = () => {
     }
   };
 
+  const loadSocialStatus = async () => {
+    if (!state.user) {
+      setSocialStatus(null);
+      return;
+    }
+    try {
+      const response = await fetchSocialStatus();
+      setSocialStatus(response.status ?? null);
+    } catch (error) {
+      console.warn('Failed to load social status', error);
+    }
+  };
+
   useEffect(() => {
     void loadYouTube();
     void loadTikTok();
@@ -146,6 +160,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
 
   useEffect(() => {
     void loadSocialAccounts();
+    void loadSocialStatus();
   }, [state.user?.uid]);
 
   const handleConnect = async () => {
@@ -356,6 +371,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
       setSocialAccounts(nextAccounts);
       setDrafts(prev => ({ ...prev, [platform]: { ...EMPTY_DRAFTS[platform] } }));
       setExpandedPlatform(null);
+      await loadSocialStatus();
       Alert.alert(t('Success'), t('Credentials saved.'));
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Failed to save credentials.'));
@@ -374,6 +390,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
       await saveSocialCredentials(state.user.uid, pruned);
       setSocialAccounts(pruned);
       setExpandedPlatform(null);
+      await loadSocialStatus();
       Alert.alert(t('Success'), t('Disconnected.'));
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Failed to disconnect.'));
@@ -457,7 +474,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
               ? youtubeConnected
               : platform === 'tiktok'
                 ? tiktokConnected
-                : isManualConnected(manualPlatform);
+                : (socialStatus?.[manualPlatform] ?? isManualConnected(manualPlatform));
           const isExpanded = expandedPlatform === platform;
           const missing =
             platform === 'youtube'
@@ -469,7 +486,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
           return (
             <View key={platform} style={styles.integrationCard}>
               <View style={styles.integrationHeader}>
-                <View>
+                <View style={styles.integrationInfo}>
                   <Text style={styles.integrationTitle}>{PLATFORM_LABELS[platform]}</Text>
                   <View style={styles.integrationStatusRow}>
                     <Text style={styles.statusLabel}>{t('Status')}</Text>
@@ -489,10 +506,17 @@ export const AccountIntegrationsScreen: React.FC = () => {
                   <DMButton
                     title={t('Disconnect')}
                     onPress={() => handleDisconnectPress(platform)}
+                    style={styles.headerButton}
+                    size="compact"
                     disabled={isSaving || (platform === 'youtube' && youtubeLoading) || (platform === 'tiktok' && tiktokLoading)}
                   />
                 ) : (
-                  <DMButton title={t('Connect')} onPress={() => togglePlatform(platform)} />
+                  <DMButton
+                    title={t('Connect')}
+                    onPress={() => togglePlatform(platform)}
+                    style={styles.headerButton}
+                    size="compact"
+                  />
                 )}
               </View>
 
@@ -801,11 +825,18 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 12,
   },
+  integrationInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
   integrationTitle: {
     color: colors.text,
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 6,
+  },
+  headerButton: {
+    alignSelf: 'flex-start',
   },
   integrationStatusRow: {
     flexDirection: 'row',
