@@ -199,6 +199,11 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
     const userId = requestedUserId || historyUserId || authUser.uid;
     const history = await socialPostingService.getHistory(userId);
     const daily = await socialAnalyticsService.getDailySummary(userId);
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
     res.json({ ...history, daily, userId });
   } catch (error) {
     next(error);

@@ -83,8 +83,18 @@ export type SocialConnectionStatus = {
   youtube: boolean;
 };
 
-export const fetchSocialHistory = async (): Promise<SocialHistory> => {
-  return authedFetch('/api/social/history');
+export const fetchSocialHistory = async (options?: {
+  userId?: string;
+  noCache?: boolean;
+}): Promise<SocialHistory & { userId?: string }> => {
+  const params = new URLSearchParams();
+  if (options?.userId) params.set('userId', options.userId);
+  if (options?.noCache) params.set('ts', Date.now().toString());
+  const query = params.toString();
+  return authedFetch(`/api/social/history${query ? `?${query}` : ''}`, {
+    cache: options?.noCache ? 'no-store' : 'default',
+    headers: options?.noCache ? { 'Cache-Control': 'no-cache' } : undefined,
+  });
 };
 
 export const fetchSocialStatus = async (): Promise<{ status: SocialConnectionStatus }> => {
