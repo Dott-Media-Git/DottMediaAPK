@@ -22,6 +22,13 @@ const isVideoPost = (post: SocialPost) => {
   return platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels';
 };
 
+const isImagePost = (post: SocialPost) => {
+  if (isVideoPost(post)) return false;
+  const imageUrls = (post as SocialPost & { imageUrls?: string[] }).imageUrls;
+  if (Array.isArray(imageUrls)) return imageUrls.length > 0;
+  return true;
+};
+
 export const PostingHistoryScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
@@ -81,6 +88,7 @@ export const PostingHistoryScreen: React.FC = () => {
   );
 
   const videoPostsToday = useMemo(() => postedToday.filter(isVideoPost), [postedToday]);
+  const imagePostsToday = useMemo(() => postedToday.filter(isImagePost), [postedToday]);
 
   const pendingPosts = useMemo(
     () => history.posts.filter(post => post.status === 'pending'),
@@ -125,6 +133,20 @@ export const PostingHistoryScreen: React.FC = () => {
     });
     return points;
   }, [videoPostsToday, today]);
+
+  const imageFrequencySeries = useMemo(() => {
+    if (imagePostsToday.length === 0) return [];
+    const sorted = [...imagePostsToday].sort((a, b) => (getPostSeconds(a) ?? 0) - (getPostSeconds(b) ?? 0));
+    const points: Array<{ x: Date; y: number }> = [{ x: new Date(today), y: 0 }];
+    let cumulative = 0;
+    sorted.forEach(post => {
+      const seconds = getPostSeconds(post);
+      if (!seconds) return;
+      cumulative += 1;
+      points.push({ x: new Date(seconds * 1000), y: cumulative });
+    });
+    return points;
+  }, [imagePostsToday, today]);
 
   const platformCards = [
     { key: 'facebook', label: t('Facebook'), color: colors.accentMuted, count: platformSummary.facebook ?? 0 },
@@ -185,6 +207,10 @@ export const PostingHistoryScreen: React.FC = () => {
             <View style={[styles.legendDot, { backgroundColor: colors.success }]} />
             <Text style={styles.legendText}>{t('Videos')}</Text>
           </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: colors.warning }]} />
+            <Text style={styles.legendText}>{t('Images')}</Text>
+          </View>
         </View>
         {frequencySeries.length > 0 ? (
           <View style={styles.chartWrapper}>
@@ -232,6 +258,19 @@ export const PostingHistoryScreen: React.FC = () => {
                     data={videoFrequencySeries}
                     size={3}
                     style={{ data: { fill: colors.success } }}
+                  />
+                </>
+              ) : null}
+              {imageFrequencySeries.length > 0 ? (
+                <>
+                  <VictoryLine
+                    data={imageFrequencySeries}
+                    style={{ data: { stroke: colors.warning, strokeWidth: 3 } }}
+                  />
+                  <VictoryScatter
+                    data={imageFrequencySeries}
+                    size={3}
+                    style={{ data: { fill: colors.warning } }}
                   />
                 </>
               ) : null}
