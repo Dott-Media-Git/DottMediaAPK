@@ -16,6 +16,12 @@ const getTimestampSeconds = (timestamp?: { seconds?: number; _seconds?: number }
 const getPostSeconds = (post: SocialPost) =>
   getTimestampSeconds((post.postedAt ?? post.createdAt ?? post.scheduledFor) as { seconds?: number; _seconds?: number });
 
+const isVideoPost = (post: SocialPost) => {
+  if (post.videoUrl) return true;
+  const platform = post.platform?.toLowerCase();
+  return platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels';
+};
+
 export const PostingHistoryScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
@@ -74,6 +80,8 @@ export const PostingHistoryScreen: React.FC = () => {
     [history.posts, todaySeconds],
   );
 
+  const videoPostsToday = useMemo(() => postedToday.filter(isVideoPost), [postedToday]);
+
   const pendingPosts = useMemo(
     () => history.posts.filter(post => post.status === 'pending'),
     [history.posts],
@@ -103,6 +111,20 @@ export const PostingHistoryScreen: React.FC = () => {
     });
     return points;
   }, [postedToday, today]);
+
+  const videoFrequencySeries = useMemo(() => {
+    if (videoPostsToday.length === 0) return [];
+    const sorted = [...videoPostsToday].sort((a, b) => (getPostSeconds(a) ?? 0) - (getPostSeconds(b) ?? 0));
+    const points: Array<{ x: Date; y: number }> = [{ x: new Date(today), y: 0 }];
+    let cumulative = 0;
+    sorted.forEach(post => {
+      const seconds = getPostSeconds(post);
+      if (!seconds) return;
+      cumulative += 1;
+      points.push({ x: new Date(seconds * 1000), y: cumulative });
+    });
+    return points;
+  }, [videoPostsToday, today]);
 
   const platformCards = [
     { key: 'facebook', label: t('Facebook'), color: colors.accentMuted, count: platformSummary.facebook ?? 0 },
@@ -141,12 +163,28 @@ export const PostingHistoryScreen: React.FC = () => {
             </View>
           ))}
         </View>
+        <View style={styles.videoSummaryRow}>
+          <View style={[styles.platformDot, { backgroundColor: colors.success }]} />
+          <Text style={styles.videoSummaryText}>
+            {t('Videos posted today: {{count}}', { count: videoPostsToday.length })}
+          </Text>
+        </View>
       </View>
 
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>{t('Posting Frequency')}</Text>
           <Text style={styles.cardSubtitle}>{t('Live today')}</Text>
+        </View>
+        <View style={styles.legendRow}>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: colors.accent }]} />
+            <Text style={styles.legendText}>{t('All posts')}</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: colors.success }]} />
+            <Text style={styles.legendText}>{t('Videos')}</Text>
+          </View>
         </View>
         {frequencySeries.length > 0 ? (
           <View style={styles.chartWrapper}>
@@ -184,6 +222,19 @@ export const PostingHistoryScreen: React.FC = () => {
                 size={3}
                 style={{ data: { fill: colors.accentSecondary } }}
               />
+              {videoFrequencySeries.length > 0 ? (
+                <>
+                  <VictoryLine
+                    data={videoFrequencySeries}
+                    style={{ data: { stroke: colors.success, strokeWidth: 3 } }}
+                  />
+                  <VictoryScatter
+                    data={videoFrequencySeries}
+                    size={3}
+                    style={{ data: { fill: colors.success } }}
+                  />
+                </>
+              ) : null}
             </VictoryChart>
           </View>
         ) : (
@@ -265,6 +316,29 @@ const styles = StyleSheet.create({
   },
   platformLabel: { color: colors.subtext, fontSize: 12, fontWeight: '600' },
   platformCount: { color: colors.text, fontSize: 22, fontWeight: '700', marginTop: 10 },
+  videoSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  videoSummaryText: { color: colors.subtext, fontSize: 12, fontWeight: '600' },
+  legendRow: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 10,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  legendText: { color: colors.subtext, fontSize: 12, fontWeight: '600' },
   chartWrapper: {
     borderRadius: 12,
     overflow: 'hidden',
