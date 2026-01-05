@@ -227,6 +227,7 @@ export class SocialPostingService {
 
   async getHistory(userId: string, limit = 100) {
     let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
+    const fallbackLimit = Math.min(Math.max(limit * 5, limit), 500);
     try {
       snap = await scheduledPostsCollection
         .where('userId', '==', userId)
@@ -237,7 +238,7 @@ export class SocialPostingService {
       if (!this.isMissingIndexError(error)) throw error;
       snap = await scheduledPostsCollection
         .where('userId', '==', userId)
-        .limit(limit)
+        .limit(fallbackLimit)
         .get();
     }
     const posts = snap.docs.map(doc => ({ id: doc.id, ...(doc.data() as Record<string, unknown>) }));
@@ -246,7 +247,8 @@ export class SocialPostingService {
       const bScore = this.toSeconds(b.createdAt) || this.toSeconds(b.postedAt) || this.toSeconds(b.scheduledFor);
       return bScore - aScore;
     });
-    const summary = posts.reduce(
+    const trimmed = posts.slice(0, limit);
+    const summary = trimmed.reduce(
       (acc, post: any) => {
         acc.perPlatform[post.platform] = (acc.perPlatform[post.platform] ?? 0) + 1;
         acc.byStatus[post.status] = (acc.byStatus[post.status] ?? 0) + 1;
@@ -254,7 +256,7 @@ export class SocialPostingService {
       },
       { perPlatform: {} as Record<string, number>, byStatus: {} as Record<string, number> },
     );
-    return { posts, summary };
+    return { posts: trimmed, summary };
   }
 
   private async buildCounts(entries: Array<{ userId: string; targetDate: string }>) {
