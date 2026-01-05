@@ -29,6 +29,22 @@ const isImagePost = (post: SocialPost) => {
   return true;
 };
 
+const buildCumulativeSeries = (posts: SocialPost[], start: Date, end: Date, zeroLine = false) => {
+  if (posts.length === 0) {
+    return zeroLine ? [{ x: start, y: 0 }, { x: end, y: 0 }] : [];
+  }
+  const sorted = [...posts].sort((a, b) => (getPostSeconds(a) ?? 0) - (getPostSeconds(b) ?? 0));
+  const points: Array<{ x: Date; y: number }> = [{ x: start, y: 0 }];
+  let cumulative = 0;
+  sorted.forEach(post => {
+    const seconds = getPostSeconds(post);
+    if (!seconds) return;
+    cumulative += 1;
+    points.push({ x: new Date(seconds * 1000), y: cumulative });
+  });
+  return points;
+};
+
 export const PostingHistoryScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
@@ -76,6 +92,7 @@ export const PostingHistoryScreen: React.FC = () => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todaySeconds = Math.floor(today.getTime() / 1000);
+  const now = new Date();
 
   const postedToday = useMemo(
     () =>
@@ -106,47 +123,20 @@ export const PostingHistoryScreen: React.FC = () => {
     return counts;
   }, [postedToday]);
 
-  const frequencySeries = useMemo(() => {
-    if (postedToday.length === 0) return [];
-    const sorted = [...postedToday].sort((a, b) => (getPostSeconds(a) ?? 0) - (getPostSeconds(b) ?? 0));
-    const points: Array<{ x: Date; y: number }> = [{ x: new Date(today), y: 0 }];
-    let cumulative = 0;
-    sorted.forEach(post => {
-      const seconds = getPostSeconds(post);
-      if (!seconds) return;
-      cumulative += 1;
-      points.push({ x: new Date(seconds * 1000), y: cumulative });
-    });
-    return points;
-  }, [postedToday, today]);
+  const frequencySeries = useMemo(
+    () => buildCumulativeSeries(postedToday, new Date(today), now),
+    [postedToday, today, now],
+  );
 
-  const videoFrequencySeries = useMemo(() => {
-    if (videoPostsToday.length === 0) return [];
-    const sorted = [...videoPostsToday].sort((a, b) => (getPostSeconds(a) ?? 0) - (getPostSeconds(b) ?? 0));
-    const points: Array<{ x: Date; y: number }> = [{ x: new Date(today), y: 0 }];
-    let cumulative = 0;
-    sorted.forEach(post => {
-      const seconds = getPostSeconds(post);
-      if (!seconds) return;
-      cumulative += 1;
-      points.push({ x: new Date(seconds * 1000), y: cumulative });
-    });
-    return points;
-  }, [videoPostsToday, today]);
+  const videoFrequencySeries = useMemo(
+    () => buildCumulativeSeries(videoPostsToday, new Date(today), now, true),
+    [videoPostsToday, today, now],
+  );
 
-  const imageFrequencySeries = useMemo(() => {
-    if (imagePostsToday.length === 0) return [];
-    const sorted = [...imagePostsToday].sort((a, b) => (getPostSeconds(a) ?? 0) - (getPostSeconds(b) ?? 0));
-    const points: Array<{ x: Date; y: number }> = [{ x: new Date(today), y: 0 }];
-    let cumulative = 0;
-    sorted.forEach(post => {
-      const seconds = getPostSeconds(post);
-      if (!seconds) return;
-      cumulative += 1;
-      points.push({ x: new Date(seconds * 1000), y: cumulative });
-    });
-    return points;
-  }, [imagePostsToday, today]);
+  const imageFrequencySeries = useMemo(
+    () => buildCumulativeSeries(imagePostsToday, new Date(today), now, true),
+    [imagePostsToday, today, now],
+  );
 
   const platformCards = [
     { key: 'facebook', label: t('Facebook'), color: colors.accentMuted, count: platformSummary.facebook ?? 0 },
