@@ -8,7 +8,7 @@
     "android": "cross-env NODE_OPTIONS=--openssl-legacy-provider expo run:android",
     "ios": "cross-env NODE_OPTIONS=--openssl-legacy-provider expo run:ios",
     "web": "cross-env NODE_OPTIONS=--openssl-legacy-provider expo start --web",
-    "build:web": "node --openssl-legacy-provider --max-old-space-size=4096 ./node_modules/expo/bin/cli export --platform web",
+    "build:web": "node --openssl-legacy-provider --max-old-space-size=4096 ./node_modules/expo/bin/cli export --platform web && node scripts/copy-help-docs.js",
     "postinstall": "patch-package",
     "lint": "eslint . --ext .ts,.tsx",
     "generate-checklists": "node scripts/generate-checklists.js"

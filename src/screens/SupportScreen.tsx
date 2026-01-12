@@ -40,7 +40,11 @@ export const SupportScreen: React.FC = () => {
   const [menuOpen, setMenuOpen] = useState(false);
   const currentLabel = `${LOCALE_FLAGS[locale]} ${LOCALE_LABELS[locale]}`;
   const isMainAccount = (state.user?.email ?? '').toLowerCase() === 'brasioxirin@gmail.com';
-  const helpDocBaseUrl = env.apiUrl ? `${env.apiUrl.replace(/\/$/, '')}/public/help` : '';
+  const helpDocBaseUrl = env.helpDocsUrl
+    ? env.helpDocsUrl.replace(/\/$/, '')
+    : env.apiUrl
+      ? `${env.apiUrl.replace(/\/$/, '')}/public/help`
+      : '';
 
   const handleSelectLocale = async (value: Locale) => {
     await setLocale(value);
