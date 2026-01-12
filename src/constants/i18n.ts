@@ -1,4 +1,4 @@
-export const SUPPORTED_LOCALES = ["en", "fr", "es", "pt", "de", "it", "sw", "ar", "zh"] as const;
+﻿export const SUPPORTED_LOCALES = ["en", "fr", "es", "pt", "de", "it", "sw", "ar", "zh"] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 export const LOCALE_LABELS: Record<Locale, string> = {
@@ -30,6 +30,18 @@ type TranslationParams = Record<string, string | number>;
 const TRANSLATIONS: Record<Locale, Record<string, string>> = {
   "en": {},
   "fr": {
+    "Help documents": "Documents d'aide",
+    "Instagram onboarding": "Onboarding Instagram",
+    "Facebook onboarding": "Onboarding Facebook",
+    "LinkedIn onboarding": "Onboarding LinkedIn",
+    "X onboarding": "Onboarding X",
+    "TikTok onboarding": "Onboarding TikTok",
+    "YouTube onboarding": "Onboarding YouTube",
+    "Threads onboarding": "Onboarding Threads",
+    "WhatsApp onboarding": "Onboarding WhatsApp",
+    "Open PDF": "Ouvrir le PDF",
+    "Missing API URL for help documents.": "URL d'API manquante pour les documents d'aide.",
+    "Unable to open document": "Impossible d'ouvrir le document",
     "$1000 one-time installation": "1\u00a0000\u00a0$ d'installation unique",
     "$199 / month": "199$/mois",
     "- AI chatbot assistant (beta)": "- Assistant chatbot IA (b\u00eata)",
@@ -531,6 +543,18 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     "{{value}} vs prior day": "{{value}} par rapport \u00e0 la veille"
   },
   "es": {
+    "Help documents": "Documentos de ayuda",
+    "Instagram onboarding": "Onboarding de Instagram",
+    "Facebook onboarding": "Onboarding de Facebook",
+    "LinkedIn onboarding": "Onboarding de LinkedIn",
+    "X onboarding": "Onboarding de X",
+    "TikTok onboarding": "Onboarding de TikTok",
+    "YouTube onboarding": "Onboarding de YouTube",
+    "Threads onboarding": "Onboarding de Threads",
+    "WhatsApp onboarding": "Onboarding de WhatsApp",
+    "Open PDF": "Abrir PDF",
+    "Missing API URL for help documents.": "Falta la URL de la API para los documentos de ayuda.",
+    "Unable to open document": "No se puede abrir el documento",
     "$1000 one-time installation": "$1000 instalaci\u00f3n \u00fanica",
     "$199 / month": "$199 / mes",
     "- AI chatbot assistant (beta)": "- Asistente de chatbot de IA (beta)",
@@ -1032,6 +1056,18 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     "{{value}} vs prior day": "{{value}} frente al d\u00eda anterior"
   },
   "pt": {
+    "Help documents": "Documentos de ajuda",
+    "Instagram onboarding": "Onboarding do Instagram",
+    "Facebook onboarding": "Onboarding do Facebook",
+    "LinkedIn onboarding": "Onboarding do LinkedIn",
+    "X onboarding": "Onboarding do X",
+    "TikTok onboarding": "Onboarding do TikTok",
+    "YouTube onboarding": "Onboarding do YouTube",
+    "Threads onboarding": "Onboarding do Threads",
+    "WhatsApp onboarding": "Onboarding do WhatsApp",
+    "Open PDF": "Abrir PDF",
+    "Missing API URL for help documents.": "URL da API ausente para documentos de ajuda.",
+    "Unable to open document": "Não foi possível abrir o documento",
     "$1000 one-time installation": "Instala\u00e7\u00e3o \u00fanica de US$ 1.000",
     "$199 / month": "$ 199 / m\u00eas",
     "- AI chatbot assistant (beta)": "- Assistente de chatbot AI (beta)",
@@ -1533,6 +1569,18 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     "{{value}} vs prior day": "{{value}} vs dia anterior"
   },
   "de": {
+    "Help documents": "Hilfedokumente",
+    "Instagram onboarding": "Instagram-Onboarding",
+    "Facebook onboarding": "Facebook-Onboarding",
+    "LinkedIn onboarding": "LinkedIn-Onboarding",
+    "X onboarding": "X-Onboarding",
+    "TikTok onboarding": "TikTok-Onboarding",
+    "YouTube onboarding": "YouTube-Onboarding",
+    "Threads onboarding": "Threads-Onboarding",
+    "WhatsApp onboarding": "WhatsApp-Onboarding",
+    "Open PDF": "PDF öffnen",
+    "Missing API URL for help documents.": "API-URL für Hilfedokumente fehlt.",
+    "Unable to open document": "Dokument konnte nicht geöffnet werden",
     "$1000 one-time installation": "1.000 $ einmalige Installation",
     "$199 / month": "199 $/Monat",
     "- AI chatbot assistant (beta)": "- KI-Chatbot-Assistent (Beta)",
@@ -2034,6 +2082,18 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     "{{value}} vs prior day": "{{value}} im Vergleich zum Vortag"
   },
   "it": {
+    "Help documents": "Documenti di aiuto",
+    "Instagram onboarding": "Onboarding Instagram",
+    "Facebook onboarding": "Onboarding Facebook",
+    "LinkedIn onboarding": "Onboarding LinkedIn",
+    "X onboarding": "Onboarding X",
+    "TikTok onboarding": "Onboarding TikTok",
+    "YouTube onboarding": "Onboarding YouTube",
+    "Threads onboarding": "Onboarding Threads",
+    "WhatsApp onboarding": "Onboarding WhatsApp",
+    "Open PDF": "Apri PDF",
+    "Missing API URL for help documents.": "URL API mancante per i documenti di aiuto.",
+    "Unable to open document": "Impossibile aprire il documento",
     "$1000 one-time installation": "Installazione una tantum da $ 1000",
     "$199 / month": "$ 199 / mese",
     "- AI chatbot assistant (beta)": "- Assistente chatbot AI (beta)",
@@ -2535,6 +2595,18 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     "{{value}} vs prior day": "{{value}} rispetto al giorno precedente"
   },
   "sw": {
+    "Help documents": "Nyaraka za msaada",
+    "Instagram onboarding": "Mwongozo wa kuanza wa Instagram",
+    "Facebook onboarding": "Mwongozo wa kuanza wa Facebook",
+    "LinkedIn onboarding": "Mwongozo wa kuanza wa LinkedIn",
+    "X onboarding": "Mwongozo wa kuanza wa X",
+    "TikTok onboarding": "Mwongozo wa kuanza wa TikTok",
+    "YouTube onboarding": "Mwongozo wa kuanza wa YouTube",
+    "Threads onboarding": "Mwongozo wa kuanza wa Threads",
+    "WhatsApp onboarding": "Mwongozo wa kuanza wa WhatsApp",
+    "Open PDF": "Fungua PDF",
+    "Missing API URL for help documents.": "URL ya API ya nyaraka za msaada haipo.",
+    "Unable to open document": "Imeshindwa kufungua waraka",
     "$1000 one-time installation": "$1000 usakinishaji wa mara moja",
     "$199 / month": "$ 199 / mwezi",
     "- AI chatbot assistant (beta)": "- Msaidizi wa mazungumzo ya AI (beta)",
@@ -3036,6 +3108,18 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     "{{value}} vs prior day": "{{value}} ikilinganishwa na siku iliyotangulia"
   },
   "ar": {
+    "Help documents": "مستندات المساعدة",
+    "Instagram onboarding": "دليل إعداد إنستغرام",
+    "Facebook onboarding": "دليل إعداد فيسبوك",
+    "LinkedIn onboarding": "دليل إعداد لينكدإن",
+    "X onboarding": "دليل إعداد إكس",
+    "TikTok onboarding": "دليل إعداد تيك توك",
+    "YouTube onboarding": "دليل إعداد يوتيوب",
+    "Threads onboarding": "دليل إعداد ثريدز",
+    "WhatsApp onboarding": "دليل إعداد واتساب",
+    "Open PDF": "افتح ملف PDF",
+    "Missing API URL for help documents.": "عنوان URL لواجهة برمجة التطبيقات لمستندات المساعدة مفقود.",
+    "Unable to open document": "تعذر فتح المستند",
     "$1000 one-time installation": "1000 \u062f\u0648\u0644\u0627\u0631 \u0627\u0644\u062a\u062b\u0628\u064a\u062a \u0644\u0645\u0631\u0629 \u0648\u0627\u062d\u062f\u0629",
     "$199 / month": "199 \u062f\u0648\u0644\u0627\u0631\u064b\u0627 \u0634\u0647\u0631\u064a\u064b\u0627",
     "- AI chatbot assistant (beta)": "- \u0645\u0633\u0627\u0639\u062f chatbot AI (\u062a\u062c\u0631\u064a\u0628\u064a)",
@@ -3537,6 +3621,18 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     "{{value}} vs prior day": "{{value}} \u0645\u0642\u0627\u0628\u0644 \u0627\u0644\u064a\u0648\u0645 \u0627\u0644\u0633\u0627\u0628\u0642"
   },
   "zh": {
+    "Help documents": "帮助文档",
+    "Instagram onboarding": "Instagram 入门指南",
+    "Facebook onboarding": "Facebook 入门指南",
+    "LinkedIn onboarding": "LinkedIn 入门指南",
+    "X onboarding": "X 入门指南",
+    "TikTok onboarding": "TikTok 入门指南",
+    "YouTube onboarding": "YouTube 入门指南",
+    "Threads onboarding": "Threads 入门指南",
+    "WhatsApp onboarding": "WhatsApp 入门指南",
+    "Open PDF": "打开 PDF",
+    "Missing API URL for help documents.": "帮助文档的 API URL 缺失。",
+    "Unable to open document": "无法打开文档",
     "$1000 one-time installation": "\u4e00\u6b21\u6027\u5b89\u88c5 1000 \u7f8e\u5143",
     "$199 / month": "199 \u7f8e\u5143/\u6708",
     "- AI chatbot assistant (beta)": "- AI\u804a\u5929\u673a\u5668\u4eba\u52a9\u624b\uff08\u6d4b\u8bd5\u7248\uff09",
@@ -4052,3 +4148,4 @@ export const translate = (locale: Locale, key: string, params?: TranslationParam
   const template = translationsForLocale[key] ?? key;
   return interpolate(template, params);
 };
+

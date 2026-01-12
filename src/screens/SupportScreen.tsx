@@ -9,6 +9,7 @@ import { colors } from '@constants/colors';
 import { useThemeMode } from '@context/ThemeContext';
 import { useAssistant } from '@context/AssistantContext';
 import { useI18n } from '@context/I18nContext';
+import { useAuth } from '@context/AuthContext';
 import { LOCALE_FLAGS, LOCALE_LABELS, SUPPORTED_LOCALES, type Locale } from '@constants/i18n';
 import { getIdToken } from '@services/firebase';
 import { env } from '@services/env';
@@ -19,14 +20,27 @@ const LANGUAGE_OPTIONS: Array<{ value: Locale; label: string; flag: string }> = 
   label: LOCALE_LABELS[locale],
   flag: LOCALE_FLAGS[locale]
 }));
+const HELP_DOCS = [
+  { key: 'instagram', titleKey: 'Instagram onboarding', file: 'instagram-onboarding.pdf' },
+  { key: 'facebook', titleKey: 'Facebook onboarding', file: 'facebook-onboarding.pdf' },
+  { key: 'linkedin', titleKey: 'LinkedIn onboarding', file: 'linkedin-onboarding.pdf' },
+  { key: 'x', titleKey: 'X onboarding', file: 'x-onboarding.pdf' },
+  { key: 'tiktok', titleKey: 'TikTok onboarding', file: 'tiktok-onboarding.pdf' },
+  { key: 'youtube', titleKey: 'YouTube onboarding', file: 'youtube-onboarding.pdf' },
+  { key: 'threads', titleKey: 'Threads onboarding', file: 'threads-onboarding.pdf' },
+  { key: 'whatsapp', titleKey: 'WhatsApp onboarding', file: 'whatsapp-onboarding.pdf' },
+];
 
 export const SupportScreen: React.FC = () => {
+  const { state } = useAuth();
   const { mode, toggleMode } = useThemeMode();
   const { enabled: assistantEnabled, toggleAssistant } = useAssistant();
   const { locale, setLocale, t } = useI18n();
   const [assistantSwitchLoading, setAssistantSwitchLoading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const currentLabel = `${LOCALE_FLAGS[locale]} ${LOCALE_LABELS[locale]}`;
+  const isMainAccount = (state.user?.email ?? '').toLowerCase() === 'brasioxirin@gmail.com';
+  const helpDocBaseUrl = env.apiUrl ? `${env.apiUrl.replace(/\/$/, '')}/public/help` : '';
 
   const handleSelectLocale = async (value: Locale) => {
     await setLocale(value);
@@ -77,6 +91,25 @@ export const SupportScreen: React.FC = () => {
     }
   };
 
+  const openHelpDoc = async (file: string) => {
+    if (!helpDocBaseUrl) {
+      Alert.alert(t('Error'), t('Missing API URL for help documents.'));
+      return;
+    }
+    const helpDocUrl = `${helpDocBaseUrl}/${file}`;
+    try {
+      const supported = await Linking.canOpenURL(helpDocUrl);
+      if (supported) {
+        await Linking.openURL(helpDocUrl);
+      } else {
+        Alert.alert(t('Unable to open document'), t('Please try again later.'));
+      }
+    } catch (error) {
+      Alert.alert(t('Unable to open document'), t('Please try again later.'));
+      console.error(error);
+    }
+  };
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.hero}>
@@ -106,7 +139,7 @@ export const SupportScreen: React.FC = () => {
         </View>
         <Text style={styles.cardText}>{t('Disable this if you prefer a distraction-free workspace.')}</Text>
       </DMCard>
-      {env.debugTools ? (
+      {env.debugTools && isMainAccount ? (
         <DMCard title={t('Debug tools')} subtitle={t('Temporary utilities for support')}>
           <Text style={styles.cardText}>
             {t('Copy your Firebase ID token to share with support.')}
@@ -132,6 +165,14 @@ export const SupportScreen: React.FC = () => {
       <DMCard title={t('Resources')}>
         <Text style={styles.cardText}>{t('- Automation knowledge base (coming soon)')}</Text>
         <Text style={styles.cardText}>{t('- AI chatbot assistant (beta)')}</Text>
+      </DMCard>
+      <DMCard title={t('Help documents')}>
+        {HELP_DOCS.map(doc => (
+          <View key={doc.key} style={styles.helpDocItem}>
+            <Text style={styles.cardText}>{t(doc.titleKey)}</Text>
+            <DMButton title={t('Open PDF')} onPress={() => openHelpDoc(doc.file)} />
+          </View>
+        ))}
       </DMCard>
       <Modal visible={menuOpen} transparent animationType="fade">
         <Pressable style={styles.modalBackdrop} onPress={() => setMenuOpen(false)}>
@@ -205,6 +246,15 @@ const styles = StyleSheet.create({
   cardText: {
     color: colors.subtext,
     marginBottom: 8
+  },
+  helpDocItem: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    gap: 8
   },
   selectButton: {
     flexDirection: 'row',

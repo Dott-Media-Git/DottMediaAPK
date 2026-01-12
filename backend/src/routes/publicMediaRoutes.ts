@@ -1,8 +1,19 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 
 const router = Router();
+
+const helpDir = process.env.HELP_DOCS_DIR?.trim() || './public/help';
+if (helpDir) {
+  const resolved = path.resolve(helpDir);
+  if (fs.existsSync(resolved)) {
+    router.use('/public/help', express.static(resolved));
+    console.info(`[help] help docs directory enabled (${resolved}).`);
+  } else {
+    console.warn(`[help] help docs directory not found (${resolved}).`);
+  }
+}
 
 router.get('/public/media/health', (_req, res) => {
   res.json({ ok: true });

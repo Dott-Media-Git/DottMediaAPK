@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { load } from 'cheerio';
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore';
 import { extractKeywords } from '../utils/nlp';
+import { helpDocIndex } from './helpDocsIndex';
 
 export type KnowledgeResource = {
   id: string;
@@ -12,6 +13,13 @@ export type KnowledgeResource = {
   summary: string;
   tags: string[];
   createdAt: admin.firestore.Timestamp;
+};
+
+type KnowledgeSnippetSource = {
+  title: string;
+  summary: string;
+  url?: string;
+  tags?: string[];
 };
 
 const knowledgeCollection = firestore.collection('knowledge_base');
@@ -76,10 +84,26 @@ export class KnowledgeBaseService {
     const snapshot = await knowledgeCollection.orderBy('createdAt', 'desc').limit(75).get();
     const cleanQuery = query.toLowerCase();
     const keywords = extractKeywords(cleanQuery, 6);
-    const scored = snapshot.docs
-      .map(doc => doc.data() as KnowledgeResource)
+    const firestoreResources: KnowledgeSnippetSource[] = snapshot.docs.map(doc => {
+      const resource = doc.data() as KnowledgeResource;
+      return {
+        title: resource.title,
+        summary: resource.summary,
+        url: resource.url,
+        tags: resource.tags ?? [],
+      };
+    });
+    const helpResources: KnowledgeSnippetSource[] = helpDocIndex.map(doc => ({
+      title: doc.title,
+      summary: doc.summary,
+      url: doc.url,
+      tags: doc.tags,
+    }));
+    const resources = [...firestoreResources, ...helpResources];
+    const scored = resources
       .map(resource => {
-        const haystack = `${resource.title} ${resource.summary} ${resource.tags?.join(' ') ?? ''}`.toLowerCase();
+        const tags = resource.tags ?? [];
+        const haystack = `${resource.title} ${resource.summary} ${tags.join(' ')}`.toLowerCase();
         const score =
           keywords.reduce((acc, keyword) => (haystack.includes(keyword) ? acc + 2 : acc), 0) + (haystack.includes(cleanQuery) ? 4 : 0);
         return { resource, score };

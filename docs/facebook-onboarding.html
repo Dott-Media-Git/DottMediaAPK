@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Facebook Page Connection Onboarding - Dott Media</title>
+    <style>
+      :root {
+        --ink: #1f1b2d;
+        --muted: #5b5668;
+        --accent: #6d3bff;
+        --accent-soft: #f4f1ff;
+        --accent-strong: #ff37b6;
+        --border: #e4dff2;
+        --panel: #fbf9ff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        background: #f6f3ff;
+        color: var(--ink);
+        font-family: "Palatino Linotype", "Book Antiqua", Palatino, serif;
+      }
+
+      @page {
+        size: A4;
+        margin: 16mm;
+      }
+
+      @media print {
+        body {
+          background: #ffffff;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+
+        .page {
+          margin: 0;
+          border: none;
+          box-shadow: none;
+        }
+      }
+
+      .page {
+        max-width: 920px;
+        margin: 24px auto;
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 20px 45px rgba(60, 30, 120, 0.08);
+      }
+
+      .letterhead {
+        display: flex;
+        gap: 24px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 28px 36px 20px 36px;
+        background: linear-gradient(135deg, rgba(255, 55, 182, 0.14), rgba(109, 59, 255, 0.08));
+      }
+
+      .brand {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+
+      .brand img {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+      }
+
+      .brand-name {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+      }
+
+      .brand-tagline {
+        font-size: 14px;
+        color: var(--muted);
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+      }
+
+      .doc-meta {
+        text-align: right;
+      }
+
+      .doc-title {
+        font-family: "Optima", "Segoe UI", sans-serif;
+        font-size: 20px;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+
+      .doc-subtitle {
+        font-size: 14px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+
+      .doc-date {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .accent-bar {
+        height: 6px;
+        background: linear-gradient(90deg, var(--accent-strong), var(--accent));
+      }
+
+      main {
+        padding: 32px 36px 24px 36px;
+      }
+
+      h2 {
+        font-family: "Optima", "Segoe UI", sans-serif;
+        font-size: 18px;
+        margin: 0 0 12px 0;
+      }
+
+      p {
+        margin: 0 0 12px 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px 18px;
+        margin-bottom: 18px;
+      }
+
+      .columns {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 18px;
+      }
+
+      ul,
+      ol {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      li + li {
+        margin-top: 6px;
+      }
+
+      .tag {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        text-align: left;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      th {
+        color: var(--ink);
+        font-weight: 700;
+        background: rgba(109, 59, 255, 0.06);
+      }
+
+      code {
+        font-family: "Courier New", Courier, monospace;
+        font-size: 13px;
+        background: #f2efff;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+
+      .code-block {
+        background: #1f1b2d;
+        color: #f7f5ff;
+        padding: 14px;
+        border-radius: 12px;
+        font-family: "Courier New", Courier, monospace;
+        font-size: 13px;
+        overflow-x: auto;
+        margin: 10px 0 0 0;
+      }
+
+      footer {
+        border-top: 1px solid var(--border);
+        padding: 18px 36px 24px 36px;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        background: #faf8ff;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .footer-strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="letterhead">
+        <div class="brand">
+          <img src="../assets/logo.png" alt="Dott Media logo" />
+          <div>
+            <div class="brand-name">Dott-Media</div>
+            <div class="brand-tagline">AI-Powered Digital Solutions</div>
+          </div>
+        </div>
+        <div class="doc-meta">
+          <div class="doc-title">Facebook Page Connection Onboarding</div>
+          <div class="doc-subtitle">Client account setup checklist</div>
+          <div class="doc-date">Date: __________________</div>
+        </div>
+      </header>
+      <div class="accent-bar"></div>
+
+      <main>
+        <div class="panel">
+          <h2>Overview</h2>
+          <p>
+            This onboarding guide explains what is required to connect a client Facebook Page to
+            the Dott Media platform for publishing, analytics, and automated engagement.
+          </p>
+          <span class="tag">Estimated time: 20-40 minutes</span>
+        </div>
+
+        <div class="columns">
+          <div class="panel">
+            <h2>Account prerequisites</h2>
+            <ul>
+              <li>Facebook Page (not a personal profile).</li>
+              <li>Admin or full control of the Page in Meta Business Manager.</li>
+              <li>Page has no restrictions and is verified for publishing.</li>
+              <li>Two-factor authentication enabled for Page admins.</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h2>Technical prerequisites</h2>
+            <ul>
+              <li>Meta Developer app with Graph API and Webhooks enabled.</li>
+              <li>App status is Live.</li>
+              <li>Advanced Access approved for required permissions.</li>
+              <li>Webhook verify token configured.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Required permissions</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Permission</th>
+                <th>Why it is needed</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>pages_show_list</code></td>
+                <td>List Pages owned by the user.</td>
+              </tr>
+              <tr>
+                <td><code>pages_read_engagement</code></td>
+                <td>Read Page engagement and insights.</td>
+              </tr>
+              <tr>
+                <td><code>pages_manage_posts</code></td>
+                <td>Publish posts to the Page.</td>
+              </tr>
+              <tr>
+                <td><code>pages_manage_engagement</code></td>
+                <td>Reply to comments and manage engagement.</td>
+              </tr>
+              <tr>
+                <td><code>pages_manage_metadata</code></td>
+                <td>Subscribe the Page to webhooks.</td>
+              </tr>
+              <tr>
+                <td><code>pages_messaging</code></td>
+                <td>Send and reply to Page messages.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <h2>Connection steps</h2>
+          <ol>
+            <li>Confirm the Page is active and the client is an admin in Business Manager.</li>
+            <li>Enable Graph API + Webhooks in the Meta app.</li>
+            <li>Request Advanced Access for the permissions listed above.</li>
+            <li>Generate a user access token and exchange it for a long-lived token.</li>
+            <li>Fetch the Page access token and Page ID:</li>
+          </ol>
+          <div class="code-block">
+GET /me/accounts?fields=id,name,access_token
+          </div>
+          <ol start="6">
+            <li>Save the Page access token and Page ID in Dott Media.</li>
+          </ol>
+        </div>
+
+        <div class="panel">
+          <h2>Data we store per user</h2>
+          <ul>
+            <li>Facebook Page access token.</li>
+            <li>Facebook Page ID.</li>
+            <li>Optional Page name for display.</li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h2>Verification checklist</h2>
+          <ul>
+            <li>Facebook status shows Connected in the Integrations screen.</li>
+            <li>Test post succeeds.</li>
+            <li>Comment reply and Page DM reply work.</li>
+            <li>Engagement metrics appear in analytics.</li>
+          </ul>
+        </div>
+      </main>
+
+      <footer>
+        <div>
+          <div class="footer-strong">Dott-Media AI-Powered Digital Solutions</div>
+          <div>Facebook Page Connection Onboarding</div>
+        </div>
+        <div>
+          <div class="footer-strong">Contact</div>
+          <div>+256-775067216</div>
+          <div>info@dott-media.org</div>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>

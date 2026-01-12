@@ -2,10 +2,14 @@ import OpenAI from 'openai';
 import { config } from '../config';
 import { AnalyticsService } from './analyticsService';
 import { SocialAnalyticsService } from '../packages/services/socialAnalyticsService';
+import { AssistantStrategyService } from './assistantStrategyService';
+import { KnowledgeBaseService } from './knowledgeBaseService';
 
 const openai = new OpenAI({ apiKey: config.openAI.apiKey });
 const analyticsService = new AnalyticsService();
 const socialAnalyticsService = new SocialAnalyticsService();
+const strategyService = new AssistantStrategyService();
+const knowledgeBase = new KnowledgeBaseService();
 
 const extractOpenAIError = (error: unknown) => {
   const err = error as {
@@ -93,6 +97,7 @@ const LOCALE_RESPONSE_LANGUAGE: Record<string, string> = {
 
 type AssistantContext = {
   userId?: string;
+  userEmail?: string;
   company?: string;
   currentScreen?: string;
   subscriptionStatus?: string;
@@ -160,6 +165,32 @@ export class AssistantService {
       (ruWeekMention && ruMetricMention) ||
       (koWeekMention && koMetricMention)
     );
+  }
+
+  private shouldDraftStrategy(question: string) {
+    const normalized = question.toLowerCase();
+    return /\b(strategy|marketing plan|growth plan|campaign plan|strategy plan|go to market|g2m)\b/.test(normalized);
+  }
+
+  private shouldApplyStrategy(question: string) {
+    const normalized = question.toLowerCase();
+    const approve = /\b(approve|accept|apply|implement|go ahead|activate|start)\b/.test(normalized);
+    const mentionsStrategy = /\b(strategy|plan)\b/.test(normalized);
+    const hasId = /strat-[a-z0-9]{6}/i.test(normalized);
+    return approve && (mentionsStrategy || hasId);
+  }
+
+  private extractStrategyId(question: string) {
+    const match = question.match(/strat-[a-z0-9]{6}/i);
+    return match ? match[0].toUpperCase() : undefined;
+  }
+
+  private shouldSendMonthlyReport(question: string) {
+    const normalized = question.toLowerCase();
+    const hasReport = /\b(report|summary|recap)\b/.test(normalized);
+    const hasMonthly = /\b(month|monthly)\b/.test(normalized);
+    const hasEmail = /\b(email|send)\b/.test(normalized);
+    return (hasReport && hasMonthly) || (hasReport && hasEmail);
   }
 
   private resolveLocale(value?: string): Locale {
@@ -551,6 +582,43 @@ export class AssistantService {
   async answer(question: string, context: AssistantContext) {
     const locale = this.resolveLocale(context.locale);
 
+    if (context.userId && this.shouldSendMonthlyReport(question)) {
+      try {
+        const result = await strategyService.sendMonthlyReport({
+          userId: context.userId,
+          email: context.userEmail ?? null,
+          company: context.company,
+        });
+        return { type: 'text', text: result.message };
+      } catch (error) {
+        console.error('Monthly report failed', error);
+      }
+    }
+
+    if (context.userId && this.shouldApplyStrategy(question)) {
+      try {
+        const strategyId = this.extractStrategyId(question);
+        const result = await strategyService.applyStrategy(context.userId, strategyId);
+        return { type: 'text', text: result.message };
+      } catch (error) {
+        console.error('Strategy apply failed', error);
+      }
+    }
+
+    if (context.userId && this.shouldDraftStrategy(question)) {
+      try {
+        const result = await strategyService.draftStrategy({
+          userId: context.userId,
+          question,
+          company: context.company,
+          connectedChannels: context.connectedChannels,
+        });
+        return { type: 'text', text: result.message };
+      } catch (error) {
+        console.error('Strategy draft failed', error);
+      }
+    }
+
     if (context.userId && this.shouldProvideWeeklySummary(question)) {
       try {
         return { type: 'text', text: await this.buildWeeklySummary(context.userId, locale) };
@@ -613,11 +681,25 @@ export class AssistantService {
     ];
 
     const responseLanguage = LOCALE_RESPONSE_LANGUAGE[locale] ?? 'English';
+    let knowledge: Array<{ title: string; summary: string; url?: string }> = [];
+    try {
+      knowledge = await knowledgeBase.getRelevantSnippets(question, 3);
+    } catch (error) {
+      console.warn('Failed to load knowledge snippets', (error as Error).message);
+    }
+    const knowledgeBlock =
+      knowledge.length > 0
+        ? `Relevant knowledge:\n${knowledge
+            .map((entry, index) => `${index + 1}. ${entry.title}: ${entry.summary}${entry.url ? ` (Source: ${entry.url})` : ''}`)
+            .join('\n')}`
+        : '';
 
     const systemPrompt = [
       'You are Dotti, an AI sales agent and assistant inside the Dott Media CRM mobile app.',
       'Your goal is to help the user manage their marketing automation, analyze data, and navigate the app.',
       'You have access to tools to control the app. Use them when the user asks to go somewhere or needs specific data.',
+      'You can draft marketing strategies based on performance, ask for approval, and then implement them.',
+      'You can email a monthly performance report to the user when requested.',
       'Keep answers conversational, professional, and concise (under 3 sentences unless detailed analysis is asked).',
       `Respond in ${responseLanguage}.`,
       context.company ? `User Company: ${context.company}` : '',
@@ -627,6 +709,7 @@ export class AssistantService {
       context.analytics
         ? `Current Snapshot: Leads=${context.analytics.leads ?? 'n/a'}, Engagement=${context.analytics.engagement ?? 'n/a'}%, Conversions=${context.analytics.conversions ?? 'n/a'}, Feedback=${context.analytics.feedbackScore ?? 'n/a'}/5`
         : '',
+      knowledgeBlock,
     ]
       .filter(Boolean)
       .join('\n');
