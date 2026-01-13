@@ -14,7 +14,10 @@ fs.mkdirSync(destDir, { recursive: true });
 
 const files = fs
   .readdirSync(sourceDir)
-  .filter((name) => name.toLowerCase().endsWith('.pdf'));
+  .filter((name) => {
+    const lower = name.toLowerCase();
+    return lower.endsWith('.pdf') || lower.endsWith('.html');
+  });
 
 if (!files.length) {
   console.warn('No PDF help docs found to copy.');

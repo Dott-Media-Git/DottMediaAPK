@@ -21,14 +21,14 @@ const LANGUAGE_OPTIONS: Array<{ value: Locale; label: string; flag: string }> = 
   flag: LOCALE_FLAGS[locale]
 }));
 const HELP_DOCS = [
-  { key: 'instagram', titleKey: 'Instagram onboarding', file: 'instagram-onboarding.pdf' },
-  { key: 'facebook', titleKey: 'Facebook onboarding', file: 'facebook-onboarding.pdf' },
-  { key: 'linkedin', titleKey: 'LinkedIn onboarding', file: 'linkedin-onboarding.pdf' },
-  { key: 'x', titleKey: 'X onboarding', file: 'x-onboarding.pdf' },
-  { key: 'tiktok', titleKey: 'TikTok onboarding', file: 'tiktok-onboarding.pdf' },
-  { key: 'youtube', titleKey: 'YouTube onboarding', file: 'youtube-onboarding.pdf' },
-  { key: 'threads', titleKey: 'Threads onboarding', file: 'threads-onboarding.pdf' },
-  { key: 'whatsapp', titleKey: 'WhatsApp onboarding', file: 'whatsapp-onboarding.pdf' },
+  { key: 'instagram', titleKey: 'Instagram onboarding', file: 'instagram-onboarding.html' },
+  { key: 'facebook', titleKey: 'Facebook onboarding', file: 'facebook-onboarding.html' },
+  { key: 'linkedin', titleKey: 'LinkedIn onboarding', file: 'linkedin-onboarding.html' },
+  { key: 'x', titleKey: 'X onboarding', file: 'x-onboarding.html' },
+  { key: 'tiktok', titleKey: 'TikTok onboarding', file: 'tiktok-onboarding.html' },
+  { key: 'youtube', titleKey: 'YouTube onboarding', file: 'youtube-onboarding.html' },
+  { key: 'threads', titleKey: 'Threads onboarding', file: 'threads-onboarding.html' },
+  { key: 'whatsapp', titleKey: 'WhatsApp onboarding', file: 'whatsapp-onboarding.html' },
 ];
 
 export const SupportScreen: React.FC = () => {
@@ -174,7 +174,7 @@ export const SupportScreen: React.FC = () => {
         {HELP_DOCS.map(doc => (
           <View key={doc.key} style={styles.helpDocItem}>
             <Text style={styles.cardText}>{t(doc.titleKey)}</Text>
-            <DMButton title={t('Open PDF')} onPress={() => openHelpDoc(doc.file)} />
+            <DMButton title={t('Open page')} onPress={() => openHelpDoc(doc.file)} />
           </View>
         ))}
       </DMCard>
