@@ -8,6 +8,8 @@ import { autoPostService } from '../services/autoPostService';
 import { firestore } from '../db/firestore';
 import { config } from '../config';
 import { getTikTokIntegration, getYouTubeIntegration } from '../services/socialIntegrationService';
+import { resolveFacebookPageId, resolveInstagramAccountId } from '../services/socialAccountResolver';
+import { canUsePrimarySocialDefaults } from '../utils/socialAccess';
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -216,25 +218,27 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
 
     const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-    const accounts = (userDoc.data()?.socialAccounts as Record<string, any> | undefined) ?? {};
+    const userData = userDoc.data() as { email?: string | null; socialAccounts?: Record<string, any> } | undefined;
+    const accounts = userData?.socialAccounts ?? {};
+    const allowDefaults = canUsePrimarySocialDefaults(userData);
     const youtube = await getYouTubeIntegration(authUser.uid);
     const tiktok = await getTikTokIntegration(authUser.uid);
 
     const status = {
       facebook:
         Boolean(accounts.facebook?.accessToken && accounts.facebook?.pageId) ||
-        Boolean(config.channels.facebook.pageToken && config.channels.facebook.pageId),
+        (allowDefaults && Boolean(config.channels.facebook.pageToken && config.channels.facebook.pageId)),
       instagram:
         Boolean(accounts.instagram?.accessToken && accounts.instagram?.accountId) ||
-        Boolean(config.channels.instagram.accessToken && config.channels.instagram.businessId),
+        (allowDefaults && Boolean(config.channels.instagram.accessToken && config.channels.instagram.businessId)),
       linkedin:
         Boolean(accounts.linkedin?.accessToken && accounts.linkedin?.urn) ||
-        Boolean(config.linkedin.accessToken && config.linkedin.organizationId),
+        (allowDefaults && Boolean(config.linkedin.accessToken && config.linkedin.organizationId)),
       twitter: Boolean(accounts.twitter?.accessToken && accounts.twitter?.accessSecret),
       youtube: Boolean(youtube?.connected),
       tiktok:
         Boolean(tiktok?.connected) ||
-        Boolean(config.tiktok.accessToken && config.tiktok.openId),
+        (allowDefaults && Boolean(config.tiktok.accessToken && config.tiktok.openId)),
     };
 
     res.json({ status });
@@ -246,8 +250,8 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
 const credentialsSchema = z.object({
   userId: z.string().min(1),
   credentials: z.object({
-    facebook: z.object({ accessToken: z.string(), pageId: z.string(), pageName: z.string().optional() }).optional(),
-    instagram: z.object({ accessToken: z.string(), accountId: z.string(), username: z.string().optional() }).optional(),
+    facebook: z.object({ accessToken: z.string(), pageId: z.string().optional(), pageName: z.string().optional() }).optional(),
+    instagram: z.object({ accessToken: z.string(), accountId: z.string().optional(), username: z.string().optional() }).optional(),
     linkedin: z.object({ accessToken: z.string(), urn: z.string() }).optional(),
     twitter: z.object({ accessToken: z.string(), accessSecret: z.string() }).optional(),
     tiktok: z
@@ -281,8 +285,41 @@ router.post('/social/credentials', requireFirebase, async (req, res, next) => {
       return res.status(403).json({ message: 'Forbidden' });
     }
 
-    // Import firestore dynamically or from lib to avoid circular deps if any
-    const { firestore } = await import('../db/firestore');
+    if (payload.credentials.facebook) {
+      const pageId = payload.credentials.facebook.pageId?.trim() ?? '';
+      if (!pageId) {
+        const resolved = await resolveFacebookPageId(payload.credentials.facebook.accessToken);
+        if (resolved?.pageId) {
+          payload.credentials.facebook.pageId = resolved.pageId;
+          if (!payload.credentials.facebook.pageName && resolved.pageName) {
+            payload.credentials.facebook.pageName = resolved.pageName;
+          }
+        }
+      }
+      if (!payload.credentials.facebook.pageId?.trim()) {
+        return res.status(400).json({
+          message: 'Facebook pageId is required. Connect a Facebook Page or provide pageId.',
+        });
+      }
+    }
+
+    if (payload.credentials.instagram) {
+      const accountId = payload.credentials.instagram.accountId?.trim() ?? '';
+      if (!accountId) {
+        const resolved = await resolveInstagramAccountId(payload.credentials.instagram.accessToken);
+        if (resolved?.accountId) {
+          payload.credentials.instagram.accountId = resolved.accountId;
+          if (!payload.credentials.instagram.username && resolved.username) {
+            payload.credentials.instagram.username = resolved.username;
+          }
+        }
+      }
+      if (!payload.credentials.instagram.accountId?.trim()) {
+        return res.status(400).json({
+          message: 'Instagram accountId is required. Connect an Instagram Business account or provide accountId.',
+        });
+      }
+    }
 
     await firestore.collection('users').doc(payload.userId).set(
       { socialAccounts: payload.credentials },

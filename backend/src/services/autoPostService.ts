@@ -13,6 +13,7 @@ import { publishToTwitter } from '../packages/services/socialPlatforms/twitterPu
 import { publishToYouTube } from '../packages/services/socialPlatforms/youtubePublisher.js';
 import { publishToTikTok } from '../packages/services/socialPlatforms/tiktokPublisher.js';
 import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from './socialIntegrationService.js';
+import { canUsePrimarySocialDefaults } from '../utils/socialAccess.js';
 
 type AutoPostJob = {
   userId: string;
@@ -752,9 +753,11 @@ export class AutoPostService {
   }
 
   private async resolveCredentials(userId: string): Promise<SocialAccounts> {
-    const defaults = this.defaultSocialAccounts();
     const userDoc = await firestore.collection('users').doc(userId).get();
-    const userAccounts = (userDoc.data()?.socialAccounts as SocialAccounts | undefined) ?? {};
+    const userData = userDoc.data() as { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
+    const allowDefaults = canUsePrimarySocialDefaults(userData);
+    const defaults = this.defaultSocialAccounts(allowDefaults);
+    const userAccounts = (userData?.socialAccounts as SocialAccounts | undefined) ?? {};
     const merged: SocialAccounts = { ...defaults, ...userAccounts };
     const youtubeIntegration = await getYouTubeIntegrationSecrets(userId);
     if (youtubeIntegration) {
@@ -776,21 +779,21 @@ export class AutoPostService {
     return merged;
   }
 
-  private defaultSocialAccounts(): SocialAccounts {
+  private defaultSocialAccounts(allowDefaults: boolean): SocialAccounts {
     const defaults: SocialAccounts = {};
-    if (config.channels.facebook.pageId && config.channels.facebook.pageToken) {
+    if (allowDefaults && config.channels.facebook.pageId && config.channels.facebook.pageToken) {
       defaults.facebook = { accessToken: config.channels.facebook.pageToken, pageId: config.channels.facebook.pageId };
     }
-    if (config.channels.instagram.businessId && config.channels.instagram.accessToken) {
+    if (allowDefaults && config.channels.instagram.businessId && config.channels.instagram.accessToken) {
       defaults.instagram = { accessToken: config.channels.instagram.accessToken, accountId: config.channels.instagram.businessId };
     }
-    if (config.linkedin.accessToken && config.linkedin.organizationId) {
+    if (allowDefaults && config.linkedin.accessToken && config.linkedin.organizationId) {
       defaults.linkedin = {
         accessToken: config.linkedin.accessToken,
         urn: `urn:li:organization:${config.linkedin.organizationId}`,
       };
     }
-    if (config.tiktok.accessToken && config.tiktok.openId) {
+    if (allowDefaults && config.tiktok.accessToken && config.tiktok.openId) {
       defaults.tiktok = {
         accessToken: config.tiktok.accessToken,
         openId: config.tiktok.openId,
