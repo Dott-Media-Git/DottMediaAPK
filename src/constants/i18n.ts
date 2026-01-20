@@ -31,6 +31,7 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
   "en": {},
   "fr": {
     "Help documents": "Documents d'aide",
+    "Select a platform": "Sélectionner une plateforme",
     "Instagram onboarding": "Onboarding Instagram",
     "Facebook onboarding": "Onboarding Facebook",
     "LinkedIn onboarding": "Onboarding LinkedIn",
@@ -544,6 +545,7 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
   },
   "es": {
     "Help documents": "Documentos de ayuda",
+    "Select a platform": "Selecciona una plataforma",
     "Instagram onboarding": "Onboarding de Instagram",
     "Facebook onboarding": "Onboarding de Facebook",
     "LinkedIn onboarding": "Onboarding de LinkedIn",
@@ -1057,6 +1059,7 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
   },
   "pt": {
     "Help documents": "Documentos de ajuda",
+    "Select a platform": "Selecione uma plataforma",
     "Instagram onboarding": "Onboarding do Instagram",
     "Facebook onboarding": "Onboarding do Facebook",
     "LinkedIn onboarding": "Onboarding do LinkedIn",
@@ -1570,6 +1573,7 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
   },
   "de": {
     "Help documents": "Hilfedokumente",
+    "Select a platform": "Plattform auswählen",
     "Instagram onboarding": "Instagram-Onboarding",
     "Facebook onboarding": "Facebook-Onboarding",
     "LinkedIn onboarding": "LinkedIn-Onboarding",
@@ -2083,6 +2087,7 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
   },
   "it": {
     "Help documents": "Documenti di aiuto",
+    "Select a platform": "Seleziona una piattaforma",
     "Instagram onboarding": "Onboarding Instagram",
     "Facebook onboarding": "Onboarding Facebook",
     "LinkedIn onboarding": "Onboarding LinkedIn",
@@ -2596,6 +2601,7 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
   },
   "sw": {
     "Help documents": "Nyaraka za msaada",
+    "Select a platform": "Chagua jukwaa",
     "Instagram onboarding": "Mwongozo wa kuanza wa Instagram",
     "Facebook onboarding": "Mwongozo wa kuanza wa Facebook",
     "LinkedIn onboarding": "Mwongozo wa kuanza wa LinkedIn",
@@ -3109,6 +3115,7 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
   },
   "ar": {
     "Help documents": "مستندات المساعدة",
+    "Select a platform": "اختر منصة",
     "Instagram onboarding": "دليل إعداد إنستغرام",
     "Facebook onboarding": "دليل إعداد فيسبوك",
     "LinkedIn onboarding": "دليل إعداد لينكدإن",
@@ -3622,6 +3629,7 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
   },
   "zh": {
     "Help documents": "帮助文档",
+    "Select a platform": "选择平台",
     "Instagram onboarding": "Instagram 入门指南",
     "Facebook onboarding": "Facebook 入门指南",
     "LinkedIn onboarding": "LinkedIn 入门指南",

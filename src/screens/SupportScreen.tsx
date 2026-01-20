@@ -38,7 +38,10 @@ export const SupportScreen: React.FC = () => {
   const { locale, setLocale, t } = useI18n();
   const [assistantSwitchLoading, setAssistantSwitchLoading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [helpMenuOpen, setHelpMenuOpen] = useState(false);
+  const [selectedHelpDoc, setSelectedHelpDoc] = useState<(typeof HELP_DOCS)[number] | null>(null);
   const currentLabel = `${LOCALE_FLAGS[locale]} ${LOCALE_LABELS[locale]}`;
+  const helpDocLabel = selectedHelpDoc ? t(selectedHelpDoc.titleKey) : t('Select a platform');
   const isMainAccount = (state.user?.email ?? '').toLowerCase() === 'brasioxirin@gmail.com';
   const helpDocBaseUrl = env.helpDocsUrl
     ? env.helpDocsUrl.replace(/\/$/, '')
@@ -49,6 +52,12 @@ export const SupportScreen: React.FC = () => {
   const handleSelectLocale = async (value: Locale) => {
     await setLocale(value);
     setMenuOpen(false);
+  };
+
+  const handleSelectHelpDoc = async (doc: (typeof HELP_DOCS)[number]) => {
+    setSelectedHelpDoc(doc);
+    setHelpMenuOpen(false);
+    await openHelpDoc(doc.file);
   };
 
   const handleAssistantToggle = async (value: boolean) => {
@@ -171,12 +180,12 @@ export const SupportScreen: React.FC = () => {
         <Text style={styles.cardText}>{t('- AI chatbot assistant (beta)')}</Text>
       </DMCard>
       <DMCard title={t('Help documents')}>
-        {HELP_DOCS.map(doc => (
-          <View key={doc.key} style={styles.helpDocItem}>
-            <Text style={styles.cardText}>{t(doc.titleKey)}</Text>
-            <DMButton title={t('Open page')} onPress={() => openHelpDoc(doc.file)} />
+        <TouchableOpacity style={styles.selectButton} onPress={() => setHelpMenuOpen(true)}>
+          <View>
+            <Text style={styles.selectLabel}>{helpDocLabel}</Text>
           </View>
-        ))}
+          <Ionicons name="chevron-down" size={18} color={colors.subtext} />
+        </TouchableOpacity>
       </DMCard>
       <Modal visible={menuOpen} transparent animationType="fade">
         <Pressable style={styles.modalBackdrop} onPress={() => setMenuOpen(false)}>
@@ -208,6 +217,37 @@ export const SupportScreen: React.FC = () => {
               })}
             </ScrollView>
             <Text style={styles.modalFooter}>{t('This only changes text. It never limits access.')}</Text>
+          </Pressable>
+        </Pressable>
+      </Modal>
+      <Modal visible={helpMenuOpen} transparent animationType="fade">
+        <Pressable style={styles.modalBackdrop} onPress={() => setHelpMenuOpen(false)}>
+          <Pressable style={styles.modalCard} onPress={() => undefined}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{t('Help documents')}</Text>
+              <TouchableOpacity onPress={() => setHelpMenuOpen(false)} style={styles.modalClose}>
+                <Ionicons name="close" size={18} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalList}>
+              {HELP_DOCS.map(doc => {
+                const active = doc.key === selectedHelpDoc?.key;
+                return (
+                  <TouchableOpacity
+                    key={doc.key}
+                    style={[styles.modalOption, active && styles.modalOptionActive]}
+                    onPress={() => handleSelectHelpDoc(doc)}
+                  >
+                    <View style={styles.modalOptionLabel}>
+                      <Text style={[styles.modalOptionText, active && styles.modalOptionTextActive]}>
+                        {t(doc.titleKey)}
+                      </Text>
+                    </View>
+                    {active ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
@@ -250,15 +290,6 @@ const styles = StyleSheet.create({
   cardText: {
     color: colors.subtext,
     marginBottom: 8
-  },
-  helpDocItem: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.backgroundAlt,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    gap: 8
   },
   selectButton: {
     flexDirection: 'row',

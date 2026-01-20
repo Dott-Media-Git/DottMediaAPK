@@ -208,6 +208,19 @@
         margin: 10px 0 0 0;
       }
 
+            table {
+        table-layout: fixed;
+      }
+
+      th,
+      td {
+        word-break: break-word;
+      }
+
+      code {
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
       footer {
         border-top: 1px solid var(--border);
         padding: 18px 36px 24px 36px;
@@ -230,7 +243,7 @@
     <div class="page">
       <header class="letterhead">
         <div class="brand">
-          <img src="../assets/logo.png" alt="Dott Media logo" />
+          <img src="logo.png" alt="Dott Media logo" />
           <div>
             <div class="brand-name">Dott-Media</div>
             <div class="brand-tagline">AI-Powered Digital Solutions</div>
@@ -354,3 +367,4 @@ GET https://api.linkedin.com/v2/organizationAcls?q=roleAssignee&amp;role=ADMINIS
     </div>
   </body>
 </html>
+

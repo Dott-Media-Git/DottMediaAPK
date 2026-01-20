@@ -28,4 +28,9 @@ files.forEach((file) => {
   fs.copyFileSync(path.join(sourceDir, file), path.join(destDir, file));
 });
 
+const logoSource = path.join(root, 'assets', 'logo.png');
+if (fs.existsSync(logoSource)) {
+  fs.copyFileSync(logoSource, path.join(destDir, 'logo.png'));
+}
+
 console.log(`Copied ${files.length} help docs to ${destDir}`);
