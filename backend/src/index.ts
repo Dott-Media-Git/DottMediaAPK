@@ -67,6 +67,7 @@ if (config.security.allowMockAuth) {
 }
 
 const app = express();
+const startedAt = new Date().toISOString();
 
 app.use('/stripe/webhook', express.raw({ type: 'application/json' }), stripeRoutes);
 
@@ -102,6 +103,24 @@ if (fallbackVideoDir) {
 }
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
+app.get('/version', (_req, res) => {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    Pragma: 'no-cache',
+    Expires: '0',
+  });
+  res.json({
+    ok: true,
+    startedAt,
+    commit:
+      process.env.RENDER_GIT_COMMIT ??
+      process.env.GIT_COMMIT ??
+      process.env.SOURCE_VERSION ??
+      null,
+    serviceId: process.env.RENDER_SERVICE_ID ?? null,
+    serviceName: process.env.RENDER_SERVICE_NAME ?? null,
+  });
+});
 
 app.use('/', inboundWebhookRoutes);
 app.use('/', engagementWebhookRoutes);
