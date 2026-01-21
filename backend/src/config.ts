@@ -60,6 +60,7 @@ export const config = {
     openId: process.env.TIKTOK_OPEN_ID ?? '',
     clientKey: process.env.TIKTOK_CLIENT_KEY ?? '',
     clientSecret: process.env.TIKTOK_CLIENT_SECRET ?? '',
+    redirectUri: process.env.TIKTOK_REDIRECT_URI ?? '',
   },
   youtube: {
     clientId: process.env.YOUTUBE_CLIENT_ID ?? process.env.GOOGLE_OAUTH_CLIENT_ID ?? '',
@@ -101,7 +102,7 @@ export const config = {
     allowMockAuth: process.env.ALLOW_MOCK_AUTH === 'true',
   },
   widget: required({
-    sharedSecret: process.env.WIDGET_SHARED_SECRET,
+    sharedSecret: process.env.WIDGET_SHARED_SECRET ?? metaVerifyToken,
   }),
   followUps: {
     enableAuto: process.env.ENABLE_AUTO_FOLLOWUPS !== 'false',
