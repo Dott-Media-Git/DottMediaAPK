@@ -1,4 +1,15 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+
+const runningOnRender =
+  process.env.RENDER === 'true' ||
+  !!process.env.RENDER_SERVICE_ID ||
+  !!process.env.RENDER_SERVICE_NAME ||
+  !!process.env.RENDER_INSTANCE_ID ||
+  !!process.env.RENDER_EXTERNAL_HOSTNAME;
+
+if (!runningOnRender && process.env.NODE_ENV !== 'production') {
+  dotenv.config();
+}
 
 const required = <T extends Record<string, unknown>>(obj: T) => {
   Object.entries(obj).forEach(([key, value]) => {
