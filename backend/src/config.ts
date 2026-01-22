@@ -28,9 +28,7 @@ if (!metaVerifyToken) {
 
 const openAIKey = process.env.OPENAI_API_KEY ?? process.env.OPENAI_KEY ?? process.env.OPENAI_API_TOKEN ?? '';
 
-const isProductionRuntime =
-  process.env.NODE_ENV === 'production' || process.env.RENDER === 'true' || !!process.env.RENDER_SERVICE_ID;
-const redisUrl = process.env.REDIS_URL ?? (isProductionRuntime ? '' : 'redis://127.0.0.1:6379');
+const redisUrl = process.env.REDIS_URL ?? '';
 
 export const config = {
   port: Number(process.env.PORT ?? 4000),
