@@ -266,6 +266,10 @@ if (process.env.SKIP_REDIS === 'true' || !config.redisUrl) {
       console.log(`[youtube] job ${job.id} completed`);
     });
 
+    youtubeWorker.on('error', err => {
+      console.warn('[youtube] worker error', err);
+    });
+
     youtubeWorker.on('failed', async (job, err) => {
       console.error(`[youtube] job ${job?.id} failed:`, err);
       captureException(err, { jobId: job?.id, queue: 'youtube' });

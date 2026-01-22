@@ -29,7 +29,7 @@ const createQueue = () => {
     connection.on('error', error => {
       console.warn('[automationQueue] Redis connection error', error);
     });
-    return new Queue<JobData>('automation', {
+    const queue = new Queue<JobData>('automation', {
       connection,
       defaultJobOptions: {
         removeOnComplete: true,
@@ -37,6 +37,10 @@ const createQueue = () => {
         backoff: { type: 'exponential', delay: 5000 },
       },
     });
+    queue.on('error', error => {
+      console.warn('[automationQueue] queue error', error);
+    });
+    return queue;
   } catch (error) {
     console.warn('[automationQueue] Redis unavailable, falling back to no-op queue', error);
     return {

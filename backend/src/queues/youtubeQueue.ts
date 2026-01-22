@@ -24,7 +24,7 @@ const createQueue = () => {
     connection.on('error', error => {
       console.warn('[youtubeQueue] Redis connection error', error);
     });
-    return new Queue<YouTubeJobData>('youtube', {
+    const queue = new Queue<YouTubeJobData>('youtube', {
       connection,
       defaultJobOptions: {
         removeOnComplete: true,
@@ -32,6 +32,10 @@ const createQueue = () => {
         backoff: { type: 'exponential', delay: 5000 },
       },
     });
+    queue.on('error', error => {
+      console.warn('[youtubeQueue] queue error', error);
+    });
+    return queue;
   } catch (error) {
     console.warn('[youtubeQueue] Redis unavailable, falling back to no-op queue', error);
     return {

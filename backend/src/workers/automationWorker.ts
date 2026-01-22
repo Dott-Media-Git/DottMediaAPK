@@ -34,6 +34,10 @@ if (process.env.SKIP_REDIS === 'true' || !config.redisUrl) {
       console.log(`[automation] job ${job.id} completed`);
     });
 
+    automationWorker.on('error', err => {
+      console.warn('[automation] worker error', err);
+    });
+
     automationWorker.on('failed', (job, err) => {
       console.error(`[automation] job ${job?.id} failed:`, err);
       captureException(err, { jobId: job?.id, queue: 'automation' });
