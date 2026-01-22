@@ -28,6 +28,8 @@ if (!metaVerifyToken) {
 
 const openAIKey = process.env.OPENAI_API_KEY ?? process.env.OPENAI_KEY ?? process.env.OPENAI_API_TOKEN ?? '';
 
+const redisUrl = process.env.REDIS_URL ?? (process.env.NODE_ENV === 'production' ? '' : 'redis://127.0.0.1:6379');
+
 export const config = {
   port: Number(process.env.PORT ?? 4000),
   make: {
@@ -79,7 +81,7 @@ export const config = {
     user: process.env.SMTP_USER ?? '',
     pass: process.env.SMTP_PASS ?? '',
   },
-  redisUrl: process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
+  redisUrl,
   sentry: {
     dsn: process.env.SENTRY_DSN,
     environment: process.env.SENTRY_ENV ?? 'local',

@@ -9,11 +9,11 @@ const redisOptions: RedisOptions = {
 };
 
 const createQueue = () => {
-  if (config.security.allowMockAuth || process.env.SKIP_REDIS === 'true') {
-    console.warn('[youtubeQueue] mock mode enabled, skipping Redis queue connection');
+  if (config.security.allowMockAuth || process.env.SKIP_REDIS === 'true' || !config.redisUrl) {
+    console.warn('[youtubeQueue] Redis disabled; queue not started');
     return {
       add: async () => {
-        console.info('[youtubeQueue] job skipped in mock mode');
+        console.info('[youtubeQueue] job skipped (redis disabled)');
         return { id: 'mock-job' } as any;
       },
     } as unknown as Queue<YouTubeJobData>;
@@ -21,6 +21,9 @@ const createQueue = () => {
 
   try {
     const connection = new IORedis(config.redisUrl, redisOptions);
+    connection.on('error', error => {
+      console.warn('[youtubeQueue] Redis connection error', error);
+    });
     return new Queue<YouTubeJobData>('youtube', {
       connection,
       defaultJobOptions: {

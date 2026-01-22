@@ -239,10 +239,15 @@ const handlePublish = async (job: Extract<YouTubeJobData, { type: 'publish' }>) 
 
 let youtubeWorker: Worker | null = null;
 
-if (process.env.SKIP_REDIS === 'true') {
-  console.warn('[youtubeWorker] SKIP_REDIS=true; worker not started');
+if (process.env.SKIP_REDIS === 'true' || !config.redisUrl) {
+  console.warn('[youtubeWorker] Redis disabled; worker not started');
 } else {
   try {
+    const connection = new IORedis(config.redisUrl, redisOptions);
+    connection.on('error', error => {
+      console.warn('[youtubeWorker] Redis connection error', error);
+    });
+
     youtubeWorker = new Worker<YouTubeJobData>(
       'youtube',
       async job => {
@@ -254,7 +259,7 @@ if (process.env.SKIP_REDIS === 'true') {
           await handleUpload(job.data);
         }
       },
-      { connection: new IORedis(config.redisUrl, redisOptions) },
+      { connection },
     );
 
     youtubeWorker.on('completed', job => {
