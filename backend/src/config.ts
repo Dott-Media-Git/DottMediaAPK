@@ -49,12 +49,20 @@ const normalizeRedisUrl = (value: string) => {
   }
 
   const normalized = trimmed.includes('://') ? trimmed : `redis://${trimmed}`;
-  if (!runningOnRender) {
+  const allowLocalRedis = process.env.ALLOW_LOCAL_REDIS === 'true';
+  const hostedPort = process.env.PORT;
+  const hostedRuntime =
+    runningOnRender || process.env.NODE_ENV === 'production' || (!!hostedPort && hostedPort !== '4000');
+  if (!hostedRuntime || allowLocalRedis) {
     return normalized;
   }
 
   try {
     const parsed = new URL(normalized);
+    if (!parsed.hostname) {
+      console.warn('[config] REDIS_URL missing hostname; Redis disabled.');
+      return '';
+    }
     if (isLocalRedisHost(parsed.hostname)) {
       console.warn('[config] REDIS_URL points to localhost on Render; Redis disabled.');
       return '';
