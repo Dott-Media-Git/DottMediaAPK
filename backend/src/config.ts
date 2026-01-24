@@ -39,7 +39,37 @@ if (!metaVerifyToken) {
 
 const openAIKey = process.env.OPENAI_API_KEY ?? process.env.OPENAI_KEY ?? process.env.OPENAI_API_TOKEN ?? '';
 
-const redisUrl = process.env.REDIS_URL ?? '';
+const isLocalRedisHost = (hostname: string) =>
+  hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+
+const normalizeRedisUrl = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const normalized = trimmed.includes('://') ? trimmed : `redis://${trimmed}`;
+  if (!runningOnRender) {
+    return normalized;
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    if (isLocalRedisHost(parsed.hostname)) {
+      console.warn('[config] REDIS_URL points to localhost on Render; Redis disabled.');
+      return '';
+    }
+  } catch (error) {
+    if (normalized.includes('localhost') || normalized.includes('127.0.0.1')) {
+      console.warn('[config] REDIS_URL looks local on Render; Redis disabled.');
+      return '';
+    }
+  }
+
+  return normalized;
+};
+
+const redisUrl = normalizeRedisUrl(process.env.REDIS_URL ?? '');
 
 export const config = {
   port: Number(process.env.PORT ?? 4000),
