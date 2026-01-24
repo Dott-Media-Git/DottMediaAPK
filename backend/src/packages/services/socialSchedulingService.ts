@@ -6,7 +6,19 @@ const socialLimitsCollection = firestore.collection('socialLimits');
 
 export type SchedulePayload = {
   userId: string;
-  platforms: Array<'instagram' | 'instagram_reels' | 'facebook' | 'linkedin' | 'twitter' | 'x' | 'threads' | 'tiktok' | 'youtube'>;
+  platforms: Array<
+    | 'instagram'
+    | 'instagram_reels'
+    | 'instagram_story'
+    | 'facebook'
+    | 'facebook_story'
+    | 'linkedin'
+    | 'twitter'
+    | 'x'
+    | 'threads'
+    | 'tiktok'
+    | 'youtube'
+  >;
   images?: string[];
   videoUrl?: string;
   youtubeVideoUrl?: string;
@@ -25,7 +37,7 @@ export class SocialSchedulingService {
     const hasYoutube = payload.platforms.includes('youtube');
     const hasTikTok = payload.platforms.includes('tiktok');
     const hasReels = payload.platforms.includes('instagram_reels');
-    const videoCapable = new Set(['facebook', 'linkedin']);
+    const videoCapable = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
     const hasImagePlatform = payload.platforms.some(platform => {
       if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels') return false;
       if (videoCapable.has(platform) && payload.videoUrl) return false;
@@ -88,7 +100,11 @@ export class SocialSchedulingService {
         doc.platform === 'youtube' ||
         doc.platform === 'tiktok' ||
         doc.platform === 'instagram_reels' ||
-        ((doc.platform === 'facebook' || doc.platform === 'linkedin') && Boolean(payload.videoUrl));
+        ((doc.platform === 'facebook' ||
+          doc.platform === 'facebook_story' ||
+          doc.platform === 'instagram_story' ||
+          doc.platform === 'linkedin') &&
+          Boolean(payload.videoUrl));
       const videoUrl =
         doc.platform === 'youtube'
           ? payload.youtubeVideoUrl ?? payload.videoUrl ?? null
@@ -96,7 +112,10 @@ export class SocialSchedulingService {
             ? payload.tiktokVideoUrl ?? payload.videoUrl ?? null
             : doc.platform === 'instagram_reels'
               ? payload.instagramReelsVideoUrl ?? null
-              : (doc.platform === 'facebook' || doc.platform === 'linkedin')
+              : (doc.platform === 'facebook' ||
+                  doc.platform === 'facebook_story' ||
+                  doc.platform === 'instagram_story' ||
+                  doc.platform === 'linkedin')
                 ? payload.videoUrl ?? null
                 : null;
       batch.set(scheduledPostsCollection.doc(doc.id), {

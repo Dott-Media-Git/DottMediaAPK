@@ -13,6 +13,13 @@ type ReelPublishInput = {
   credentials?: SocialAccounts;
 };
 
+type StoryPublishInput = {
+  caption?: string;
+  imageUrls: string[];
+  videoUrl?: string;
+  credentials?: SocialAccounts;
+};
+
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPTS ?? 15), 3);
 const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_MS ?? 2000), 1000);
@@ -154,6 +161,56 @@ export async function publishToInstagramReel(input: ReelPublishInput): Promise<{
   } catch (error: any) {
     logInstagramError('Instagram Reels publish error:', error);
     throw new Error(formatInstagramError(error, 'Instagram Reels publish failed'));
+  }
+}
+
+export async function publishToInstagramStory(input: StoryPublishInput): Promise<{ remoteId?: string }> {
+  const { credentials } = input;
+  if (!credentials?.instagram) {
+    throw new Error('Missing Instagram credentials');
+  }
+
+  const { accessToken, accountId } = credentials.instagram;
+  const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
+  const hasVideo = Boolean(input.videoUrl);
+  const mediaUrl = hasVideo ? input.videoUrl : input.imageUrls?.[0];
+
+  if (!mediaUrl) {
+    throw new Error('Instagram Story requires an image or video URL');
+  }
+
+  try {
+    const createMediaResponse = await axios.post(`${baseUrl}/media`, {
+      media_type: 'STORIES',
+      ...(hasVideo ? { video_url: mediaUrl } : { image_url: mediaUrl }),
+      access_token: accessToken,
+    });
+
+    const creationId = createMediaResponse.data.id;
+    if (!creationId) {
+      throw new Error('Failed to create Instagram Story container');
+    }
+
+    const isReady = await waitForMediaReady(creationId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
+    if (!isReady) {
+      throw new Error('Story container not ready for publishing');
+    }
+
+    const publishedId = await publishWithRetry({
+      baseUrl,
+      creationId,
+      accessToken,
+      retries: PUBLISH_RETRIES,
+      retryDelayMs: PUBLISH_RETRY_DELAY_MS,
+    });
+
+    if (publishedId) {
+      return { remoteId: publishedId };
+    }
+    throw new Error('No ID returned from Instagram Story publish');
+  } catch (error: any) {
+    logInstagramError('Instagram Story publish error:', error);
+    throw new Error(formatInstagramError(error, 'Instagram Story publish failed'));
   }
 }
 

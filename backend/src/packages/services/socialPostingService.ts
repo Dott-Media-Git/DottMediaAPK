@@ -1,8 +1,8 @@
 import admin from 'firebase-admin';
 import { firestore } from '../../db/firestore';
 import { config } from '../../config';
-import { publishToInstagram, publishToInstagramReel } from './socialPlatforms/instagramPublisher';
-import { publishToFacebook } from './socialPlatforms/facebookPublisher';
+import { publishToInstagram, publishToInstagramReel, publishToInstagramStory } from './socialPlatforms/instagramPublisher';
+import { publishToFacebook, publishToFacebookStory } from './socialPlatforms/facebookPublisher';
 import { publishToLinkedIn } from './socialPlatforms/linkedinPublisher';
 import { publishToTwitter } from './socialPlatforms/twitterPublisher';
 import { publishToTikTok } from './socialPlatforms/tiktokPublisher';
@@ -66,7 +66,9 @@ type PlatformPublisher = (input: PublishPayload) => Promise<{ remoteId?: string 
 const platformPublishers: Record<string, PlatformPublisher> = {
   instagram: publishToInstagram,
   instagram_reels: publishToInstagramReel,
+  instagram_story: publishToInstagramStory,
   facebook: publishToFacebook,
+  facebook_story: publishToFacebookStory,
   linkedin: publishToLinkedIn,
   twitter: publishToTwitter,
   youtube: publishToYouTube,

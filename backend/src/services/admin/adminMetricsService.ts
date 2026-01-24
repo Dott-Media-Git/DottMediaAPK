@@ -212,7 +212,7 @@ export async function getAdminMetrics(): Promise<AdminMetrics> {
     .map(doc => doc.data() as Record<string, any>)
     .filter(entry => entry.source === 'autopost');
 
-  const autopostPlatforms = ['instagram', 'facebook', 'linkedin'];
+  const autopostPlatforms = ['instagram', 'instagram_story', 'facebook', 'facebook_story', 'linkedin'];
   const autopostSuccessRate: AdminMetrics['autopostSuccessRate'] = {};
 
   autopostPlatforms.forEach(platform => {

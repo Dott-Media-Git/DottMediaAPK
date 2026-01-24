@@ -8,6 +8,8 @@ type PublishInput = {
   credentials?: SocialAccounts;
 };
 
+const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v18.0';
+
 export async function publishToFacebook(input: PublishInput): Promise<{ remoteId?: string }> {
   const { credentials } = input;
   if (!credentials?.facebook) {
@@ -15,7 +17,7 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
   }
 
   const { accessToken, pageId } = credentials.facebook;
-  const baseUrl = `https://graph.facebook.com/v18.0/${pageId}`;
+  const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${pageId}`;
 
   try {
     let response;
@@ -47,5 +49,35 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
   } catch (error: any) {
     console.error('Facebook publish error:', error.response?.data || error.message);
     throw new Error(error.response?.data?.error?.message || 'Facebook publish failed');
+  }
+}
+
+export async function publishToFacebookStory(input: PublishInput): Promise<{ remoteId?: string }> {
+  const { credentials } = input;
+  if (!credentials?.facebook) {
+    throw new Error('Missing Facebook credentials');
+  }
+
+  const { accessToken, pageId } = credentials.facebook;
+  const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${pageId}`;
+  const mediaUrl = input.videoUrl || input.imageUrls?.[0];
+
+  if (!mediaUrl) {
+    throw new Error('Facebook Story requires an image or video URL');
+  }
+
+  try {
+    const payload = {
+      access_token: accessToken,
+      ...(input.videoUrl ? { file_url: mediaUrl } : { image_url: mediaUrl }),
+    };
+    const response = await axios.post(`${baseUrl}/stories`, payload);
+    if (response.data && response.data.id) {
+      return { remoteId: response.data.id };
+    }
+    throw new Error('No ID returned from Facebook Story');
+  } catch (error: any) {
+    console.error('Facebook Story publish error:', error.response?.data || error.message);
+    throw new Error(error.response?.data?.error?.message || 'Facebook Story publish failed');
   }
 }

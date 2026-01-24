@@ -6,8 +6,8 @@ import { config } from '../config.js';
 import { contentGenerationService, GeneratedContent } from '../packages/services/contentGenerationService.js';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService.js';
 import { SocialAccounts } from '../packages/services/socialPostingService.js';
-import { publishToInstagram, publishToInstagramReel } from '../packages/services/socialPlatforms/instagramPublisher.js';
-import { publishToFacebook } from '../packages/services/socialPlatforms/facebookPublisher.js';
+import { publishToInstagram, publishToInstagramReel, publishToInstagramStory } from '../packages/services/socialPlatforms/instagramPublisher.js';
+import { publishToFacebook, publishToFacebookStory } from '../packages/services/socialPlatforms/facebookPublisher.js';
 import { publishToLinkedIn } from '../packages/services/socialPlatforms/linkedinPublisher.js';
 import { publishToTwitter } from '../packages/services/socialPlatforms/twitterPublisher.js';
 import { publishToYouTube } from '../packages/services/socialPlatforms/youtubePublisher.js';
@@ -87,9 +87,11 @@ const platformPublishers: Record<
 > = {
   instagram: publishToInstagram,
   instagram_reels: publishToInstagramReel,
+  instagram_story: publishToInstagramStory,
   threads: publishToInstagram,
   tiktok: publishToTikTok,
   facebook: publishToFacebook,
+  facebook_story: publishToFacebookStory,
   linkedin: publishToLinkedIn,
   twitter: publishToTwitter,
   youtube: publishToYouTube,
@@ -148,9 +150,17 @@ export class AutoPostService {
     instagramReelsVideoUrls?: string[];
     reelsIntervalHours?: number;
   }) {
-    const platforms = (payload.platforms?.length ? payload.platforms : ['instagram', 'facebook', 'linkedin']).filter(
-      platform => platform !== 'instagram_reels',
-    );
+    const basePlatforms = payload.platforms?.length
+      ? payload.platforms
+      : ['instagram', 'instagram_story', 'facebook', 'facebook_story', 'linkedin'];
+    const withStories = new Set(basePlatforms);
+    if (withStories.has('instagram') && !withStories.has('instagram_story')) {
+      withStories.add('instagram_story');
+    }
+    if (withStories.has('facebook') && !withStories.has('facebook_story')) {
+      withStories.add('facebook_story');
+    }
+    const platforms = Array.from(withStories).filter(platform => platform !== 'instagram_reels');
     const now = new Date();
     const reelsEnabled = Boolean(
       payload.instagramReelsVideoUrl ||
@@ -427,6 +437,7 @@ export class AutoPostService {
     const resultField = options.resultField ?? 'lastResult';
     const useGenericVideoFallback = options.useGenericVideoFallback !== false;
     const videoPlatforms = new Set<VideoPlatform>(['youtube', 'tiktok', 'instagram_reels']);
+    const optionalVideoPlatforms = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
     const enableYouTubeShorts = this.useYouTubeShorts(job);
     const basePrompt =
       job.prompt ??
@@ -443,7 +454,7 @@ export class AutoPostService {
     const hasGenericVideo = Boolean(genericVideoSelection.videoUrl);
     const needsImages = platforms.some(platform => {
       if (videoPlatforms.has(platform as VideoPlatform)) return false;
-      if ((platform === 'facebook' || platform === 'linkedin') && hasGenericVideo) return false;
+      if (optionalVideoPlatforms.has(platform) && hasGenericVideo) return false;
       return true;
     });
     const requireAiImages = needsImages ? this.requireAiImages(job) : false;
@@ -526,7 +537,7 @@ export class AutoPostService {
         platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
       const { caption, signature } = this.ensureCaptionVariety(platform, shortsCaption, captionHistory);
       const isVideoPlatform = videoPlatforms.has(platform as VideoPlatform);
-      const supportsVideo = isVideoPlatform || platform === 'facebook' || platform === 'linkedin';
+      const supportsVideo = isVideoPlatform || optionalVideoPlatforms.has(platform);
       let videoUrl: string | undefined;
       let videoTitle: string | undefined;
       const privacyStatus = platform === 'youtube' ? job.youtubePrivacyStatus : undefined;
@@ -812,9 +823,11 @@ export class AutoPostService {
     const captions: Record<string, string> = {
       instagram: content.caption_instagram,
       instagram_reels: content.caption_instagram,
+      instagram_story: content.caption_instagram,
       threads: content.caption_instagram,
       tiktok: content.caption_instagram,
       facebook: content.caption_linkedin,
+      facebook_story: content.caption_instagram,
       linkedin: content.caption_linkedin,
       twitter: content.caption_x,
       x: content.caption_x,
@@ -825,7 +838,12 @@ export class AutoPostService {
     const caption = chosen.length ? chosen : fallbackCaption;
     const hasHashtags = /#[A-Za-z0-9_]+/.test(caption);
     const sourceHashtags =
-      platform === 'instagram' || platform === 'instagram_reels' || platform === 'threads' || platform === 'tiktok'
+      platform === 'instagram' ||
+      platform === 'instagram_reels' ||
+      platform === 'instagram_story' ||
+      platform === 'facebook_story' ||
+      platform === 'threads' ||
+      platform === 'tiktok'
         ? content.hashtags_instagram
         : content.hashtags_generic;
     const formattedSourceHashtags = this.formatHashtags(sourceHashtags);

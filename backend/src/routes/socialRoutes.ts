@@ -18,7 +18,23 @@ const router = Router();
 const scheduleSchema = z
   .object({
     userId: z.string().min(1),
-    platforms: z.array(z.enum(['instagram', 'instagram_reels', 'facebook', 'linkedin', 'twitter', 'x', 'threads', 'tiktok', 'youtube'])).min(1),
+    platforms: z
+      .array(
+        z.enum([
+          'instagram',
+          'instagram_reels',
+          'instagram_story',
+          'facebook',
+          'facebook_story',
+          'linkedin',
+          'twitter',
+          'x',
+          'threads',
+          'tiktok',
+          'youtube',
+        ]),
+      )
+      .min(1),
     images: z.array(z.string().min(1)).optional(),
     videoUrl: z.string().url().optional(),
     youtubeVideoUrl: z.string().url().optional(),
@@ -34,7 +50,7 @@ const scheduleSchema = z
     const hasYoutube = data.platforms.includes('youtube');
     const hasTikTok = data.platforms.includes('tiktok');
     const hasReels = data.platforms.includes('instagram_reels');
-    const videoCapable = new Set(['facebook', 'linkedin']);
+    const videoCapable = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
     const hasImagePlatform = data.platforms.some(platform => {
       if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels') return false;
       if (videoCapable.has(platform) && data.videoUrl) return false;
@@ -73,7 +89,21 @@ const scheduleSchema = z
 const autoPostSchema = z
   .object({
     platforms: z
-      .array(z.enum(['instagram', 'instagram_reels', 'facebook', 'linkedin', 'twitter', 'x', 'threads', 'tiktok', 'youtube']))
+      .array(
+        z.enum([
+          'instagram',
+          'instagram_reels',
+          'instagram_story',
+          'facebook',
+          'facebook_story',
+          'linkedin',
+          'twitter',
+          'x',
+          'threads',
+          'tiktok',
+          'youtube',
+        ]),
+      )
       .min(1)
       .optional(),
     prompt: z.string().optional(),
