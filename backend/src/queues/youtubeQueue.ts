@@ -1,12 +1,7 @@
 import { Queue } from 'bullmq';
-import IORedis, { RedisOptions } from 'ioredis';
 import { config } from '../config';
 import type { YouTubeJobData } from '../services/youtubeUploadService';
-
-const redisOptions: RedisOptions = {
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-};
+import { createRedisConnection } from '../lib/redis';
 
 const createQueue = () => {
   if (config.security.allowMockAuth || process.env.SKIP_REDIS === 'true' || !config.redisUrl) {
@@ -20,10 +15,10 @@ const createQueue = () => {
   }
 
   try {
-    const connection = new IORedis(config.redisUrl, redisOptions);
-    connection.on('error', error => {
-      console.warn('[youtubeQueue] Redis connection error', error);
-    });
+    const connection = createRedisConnection('youtubeQueue');
+    if (!connection) {
+      throw new Error('Redis connection unavailable');
+    }
     const queue = new Queue<YouTubeJobData>('youtube', {
       connection,
       defaultJobOptions: {

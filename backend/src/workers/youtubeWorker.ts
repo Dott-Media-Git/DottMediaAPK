@@ -1,5 +1,5 @@
 import { Worker } from 'bullmq';
-import IORedis, { RedisOptions } from 'ioredis';
+import { createRedisConnection } from '../lib/redis';
 import admin from 'firebase-admin';
 import axios from 'axios';
 import fs from 'fs';
@@ -15,11 +15,6 @@ import {
   type YouTubeJobData,
   type YouTubeUploadPayload,
 } from '../services/youtubeUploadService';
-
-const redisOptions: RedisOptions = {
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-};
 
 const refreshAccessToken = async (refreshToken: string, clientId: string, clientSecret: string) => {
   const params = new URLSearchParams({
@@ -243,10 +238,10 @@ if (process.env.SKIP_REDIS === 'true' || !config.redisUrl) {
   console.warn('[youtubeWorker] Redis disabled; worker not started');
 } else {
   try {
-    const connection = new IORedis(config.redisUrl, redisOptions);
-    connection.on('error', error => {
-      console.warn('[youtubeWorker] Redis connection error', error);
-    });
+    const connection = createRedisConnection('youtubeWorker');
+    if (!connection) {
+      throw new Error('Redis connection unavailable');
+    }
 
     youtubeWorker = new Worker<YouTubeJobData>(
       'youtube',

@@ -1,15 +1,10 @@
 import { Worker } from 'bullmq';
-import IORedis, { RedisOptions } from 'ioredis';
 import { config } from '../config';
 import { AutomationService } from '../services/automationService';
 import { captureException } from '../lib/monitoring';
+import { createRedisConnection } from '../lib/redis';
 
 const service = new AutomationService();
-
-const redisOptions: RedisOptions = {
-  maxRetriesPerRequest: null, // BullMQ requirement for workers
-  enableReadyCheck: false,
-};
 
 let automationWorker: Worker | null = null;
 
@@ -17,10 +12,10 @@ if (process.env.SKIP_REDIS === 'true' || !config.redisUrl) {
   console.warn('[automationWorker] Redis disabled; worker not started');
 } else {
   try {
-    const connection = new IORedis(config.redisUrl, redisOptions);
-    connection.on('error', error => {
-      console.warn('[automationWorker] Redis connection error', error);
-    });
+    const connection = createRedisConnection('automationWorker');
+    if (!connection) {
+      throw new Error('Redis connection unavailable');
+    }
 
     automationWorker = new Worker(
       'automation',

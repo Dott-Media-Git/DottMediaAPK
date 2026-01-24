@@ -1,16 +1,11 @@
 import { Queue } from 'bullmq';
-import IORedis, { RedisOptions } from 'ioredis';
 import { config } from '../config';
 import { ActivationPayload } from '../types/automation';
+import { createRedisConnection } from '../lib/redis';
 
 type JobData = {
   jobId: string;
   payload: ActivationPayload;
-};
-
-const redisOptions: RedisOptions = {
-  maxRetriesPerRequest: null, // required by BullMQ when blocking commands are used
-  enableReadyCheck: false,
 };
 
 const createQueue = () => {
@@ -25,10 +20,10 @@ const createQueue = () => {
   }
 
   try {
-    const connection = new IORedis(config.redisUrl, redisOptions);
-    connection.on('error', error => {
-      console.warn('[automationQueue] Redis connection error', error);
-    });
+    const connection = createRedisConnection('automationQueue');
+    if (!connection) {
+      throw new Error('Redis connection unavailable');
+    }
     const queue = new Queue<JobData>('automation', {
       connection,
       defaultJobOptions: {
