@@ -15,30 +15,35 @@ export async function sendLinkedInMessage(profileUrl: string | undefined, text: 
 
   const recipientUrn = buildRecipientUrn(profileUrl);
   if (!recipientUrn) {
-    throw new Error(`Unable to derive LinkedIn URN from ${profileUrl}`);
+    console.warn(`[linkedin] unable to derive URN from ${profileUrl}; skipping send`);
+    return;
   }
 
   const senderCompany = config.linkedin.organizationId ? `urn:li:organization:${config.linkedin.organizationId}` : undefined;
 
-  await axios.post(
-    LINKEDIN_API_URL,
-    {
-      recipients: [recipientUrn],
-      message: {
-        body: text,
-        subject: 'AI Automation for your team',
+  try {
+    await axios.post(
+      LINKEDIN_API_URL,
+      {
+        recipients: [recipientUrn],
+        message: {
+          body: text,
+          subject: 'AI Automation for your team',
+        },
+        senderCompany,
       },
-      senderCompany,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${config.linkedin.accessToken}`,
-        'Content-Type': 'application/json',
-        'Linkedin-Version': LINKEDIN_VERSION,
-        'X-Restli-Protocol-Version': '2.0.0',
+      {
+        headers: {
+          Authorization: `Bearer ${config.linkedin.accessToken}`,
+          'Content-Type': 'application/json',
+          'Linkedin-Version': LINKEDIN_VERSION,
+          'X-Restli-Protocol-Version': '2.0.0',
+        },
       },
-    },
-  );
+    );
+  } catch (error) {
+    console.warn('[linkedin] send failed; continuing outreach', (error as Error).message);
+  }
 }
 
 function buildRecipientUrn(profileUrl: string) {

@@ -4,9 +4,11 @@ import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
 import { getOrgProfile, updateOrgProfile } from '@services/admin/orgService';
 import { useAuth } from '@context/AuthContext';
+import { useI18n } from '@context/I18nContext';
 
 export const OrgProfileScreen: React.FC = () => {
   const { orgId } = useAuth();
+  const { t } = useI18n();
   const [form, setForm] = useState({ name: '', logoUrl: '', lang: 'en', tz: 'UTC', currency: 'USD' });
   const [saving, setSaving] = useState(false);
 
@@ -22,7 +24,7 @@ export const OrgProfileScreen: React.FC = () => {
           currency: org.locale?.currency ?? 'USD',
         }),
       )
-      .catch(error => Alert.alert('Error', error.message));
+      .catch(error => Alert.alert(t('Error'), error.message));
   }, [orgId]);
 
   const submit = async () => {
@@ -34,19 +36,27 @@ export const OrgProfileScreen: React.FC = () => {
         logoUrl: form.logoUrl,
         locale: { lang: form.lang, tz: form.tz, currency: form.currency },
       });
-      Alert.alert('Saved', 'Organization profile updated');
+      Alert.alert(t('Saved'), t('Organization profile updated'));
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert(t('Error'), error.message);
     } finally {
       setSaving(false);
     }
+  };
+
+  const fieldLabels: Record<keyof typeof form, string> = {
+    name: t('Name'),
+    logoUrl: t('Logo URL'),
+    lang: t('Language'),
+    tz: t('Timezone'),
+    currency: t('Currency')
   };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {(['name', 'logoUrl', 'lang', 'tz', 'currency'] as const).map(field => (
         <View key={field} style={styles.group}>
-          <Text style={styles.label}>{field.toUpperCase()}</Text>
+          <Text style={styles.label}>{fieldLabels[field]}</Text>
           <TextInput
             value={form[field]}
             onChangeText={value => setForm(prev => ({ ...prev, [field]: value }))}
@@ -54,7 +64,7 @@ export const OrgProfileScreen: React.FC = () => {
           />
         </View>
       ))}
-      <DMButton title={saving ? 'Saving...' : 'Save'} onPress={submit} disabled={saving} />
+      <DMButton title={saving ? t('Saving...') : t('Save')} onPress={submit} disabled={saving} />
     </ScrollView>
   );
 };

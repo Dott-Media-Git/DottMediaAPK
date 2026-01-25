@@ -6,11 +6,20 @@
         "outDir": "lib",
         "sourceMap": true,
         "strict": true,
-        "target": "es2017",
-        "esModuleInterop": true
+        "target": "es2019",
+        "esModuleInterop": true,
+        "lib": ["es2019"],
+        "skipLibCheck": true,
+        "types": ["node"],
+        "typeRoots": ["./node_modules/@types"]
     },
     "compileOnSave": true,
     "include": [
         "src"
+    ],
+    "exclude": [
+        "../node_modules",
+        "../node_modules/react-native",
+        "node_modules/react-native"
     ]
 }

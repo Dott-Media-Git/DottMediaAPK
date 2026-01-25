@@ -4,9 +4,11 @@ import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { fetchSettings, updateSettings } from '@services/admin/settingsService';
+import { useI18n } from '@context/I18nContext';
 
 export const BookingKBScreen: React.FC = () => {
   const { orgId } = useAuth();
+  const { t } = useI18n();
   const [booking, setBooking] = useState({ provider: 'google', calendarId: '' });
   const [sources, setSources] = useState<string[]>([]);
 
@@ -17,19 +19,19 @@ export const BookingKBScreen: React.FC = () => {
         setBooking(settings.booking);
         setSources(settings.knowledgeBase?.sources ?? []);
       })
-      .catch(error => Alert.alert('Error', error.message));
+      .catch(error => Alert.alert(t('Error'), error.message));
   }, [orgId]);
 
   const save = async () => {
     if (!orgId) return;
     await updateSettings(orgId, { booking, knowledgeBase: { sources } });
-    Alert.alert('Saved', 'Booking & knowledge settings updated');
+    Alert.alert(t('Saved'), t('Booking & knowledge settings updated'));
   };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.card}>
-        <Text style={styles.label}>Booking Provider</Text>
+        <Text style={styles.label}>{t('Booking Provider')}</Text>
         <View style={styles.row}>
           {(['google', 'calendly'] as const).map(option => (
             <Text
@@ -42,7 +44,7 @@ export const BookingKBScreen: React.FC = () => {
           ))}
         </View>
         <TextInput
-          placeholder="Calendar ID"
+          placeholder={t('Calendar ID')}
           placeholderTextColor={colors.subtext}
           style={styles.input}
           value={booking.calendarId}
@@ -51,7 +53,7 @@ export const BookingKBScreen: React.FC = () => {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.label}>Knowledge Sources</Text>
+        <Text style={styles.label}>{t('Knowledge Sources')}</Text>
         {sources.map((src, idx) => (
           <View key={idx} style={styles.sourceRow}>
             <TextInput
@@ -64,14 +66,14 @@ export const BookingKBScreen: React.FC = () => {
               style={styles.input}
             />
             <Text style={styles.remove} onPress={() => setSources(sources.filter((_, i) => i !== idx))}>
-              Remove
+              {t('Remove')}
             </Text>
           </View>
         ))}
-        <DMButton title="Add Source" onPress={() => setSources([...sources, ''])} style={{ marginTop: 12 }} />
+        <DMButton title={t('Add Source')} onPress={() => setSources([...sources, ''])} style={{ marginTop: 12 }} />
       </View>
 
-      <DMButton title="Save" onPress={save} />
+      <DMButton title={t('Save')} onPress={save} />
     </ScrollView>
   );
 };

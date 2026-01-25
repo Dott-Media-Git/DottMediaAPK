@@ -1,5 +1,6 @@
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore';
+import { resolveAnalyticsScopeKey, type AnalyticsScope } from './analyticsScope';
 
 export type AnalyticsSummary = {
   leads: number;
@@ -32,16 +33,29 @@ const RatingWeights: Record<string, number> = {
   failed: 0.2,
 };
 
-const outboundAnalyticsCollection = firestore.collection('analytics').doc('outbound').collection('daily');
-const outboundSummaryDoc = firestore.collection('analytics').doc('outboundSummary');
-const inboundAnalyticsCollection = firestore.collection('analytics').doc('inbound').collection('daily');
-const inboundSummaryDoc = firestore.collection('analytics').doc('inboundSummary');
-const engagementAnalyticsCollection = firestore.collection('analytics').doc('engagement').collection('daily');
-const engagementSummaryDoc = firestore.collection('analytics').doc('engagementSummary');
-const followupAnalyticsCollection = firestore.collection('analytics').doc('followups').collection('daily');
-const followupSummaryDoc = firestore.collection('analytics').doc('followupsSummary');
-const webLeadAnalyticsCollection = firestore.collection('analytics').doc('webLeads').collection('daily');
-const webLeadSummaryDoc = firestore.collection('analytics').doc('webLeadsSummary');
+const analyticsRoot = (scope?: AnalyticsScope) =>
+  firestore.collection('analytics').doc(resolveAnalyticsScopeKey(scope));
+
+const outboundAnalyticsCollection = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('outboundDaily');
+const outboundSummaryDoc = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('summaries').doc('outbound');
+const inboundAnalyticsCollection = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('inboundDaily');
+const inboundSummaryDoc = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('summaries').doc('inbound');
+const engagementAnalyticsCollection = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('engagementDaily');
+const engagementSummaryDoc = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('summaries').doc('engagement');
+const followupAnalyticsCollection = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('followupsDaily');
+const followupSummaryDoc = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('summaries').doc('followups');
+const webLeadAnalyticsCollection = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('webLeadsDaily');
+const webLeadSummaryDoc = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('summaries').doc('webLeads');
 
 export class AnalyticsService {
   async getSummary(userId: string): Promise<AnalyticsSummary> {
@@ -215,7 +229,12 @@ export type OutboundMetricMetadata = {
   industryBreakdown?: Record<string, number>;
 };
 
-export async function incrementMetric(metric: OutboundMetric, amount = 1, metadata?: OutboundMetricMetadata) {
+export async function incrementMetric(
+  metric: OutboundMetric,
+  amount = 1,
+  metadata?: OutboundMetricMetadata,
+  scope?: AnalyticsScope
+) {
   const update: OutboundAnalyticsUpdate = {};
   if (metric === 'outbound_prospects') update.prospectsFound = amount;
   if (metric === 'outbound_sent') update.messagesSent = amount;
@@ -234,10 +253,10 @@ export async function incrementMetric(metric: OutboundMetric, amount = 1, metada
 
   if (breakdown) update.industryBreakdown = breakdown;
 
-  await incrementOutboundAnalytics(update);
+  await incrementOutboundAnalytics(update, scope);
 }
 
-export async function incrementOutboundAnalytics(update: OutboundAnalyticsUpdate) {
+export async function incrementOutboundAnalytics(update: OutboundAnalyticsUpdate, scope?: AnalyticsScope) {
   if (
     !update.prospectsFound &&
     !update.messagesSent &&
@@ -251,7 +270,7 @@ export async function incrementOutboundAnalytics(update: OutboundAnalyticsUpdate
   }
 
   const date = new Date().toISOString().slice(0, 10);
-  const docRef = outboundAnalyticsCollection.doc(date);
+  const docRef = outboundAnalyticsCollection(scope).doc(date);
 
   await firestore.runTransaction(async tx => {
     const snap = await tx.get(docRef);
@@ -302,7 +321,7 @@ export async function incrementOutboundAnalytics(update: OutboundAnalyticsUpdate
     tx.set(docRef, payload, { merge: true });
   });
 
-  await outboundSummaryDoc.set(
+  await outboundSummaryDoc(scope).set(
     {
       prospectsFound: admin.firestore.FieldValue.increment(update.prospectsFound ?? 0),
       messagesSent: admin.firestore.FieldValue.increment(update.messagesSent ?? 0),
@@ -333,7 +352,7 @@ export type OutboundStats = {
   conversionRate: number;
 };
 
-export async function getOutboundStats(): Promise<OutboundStats> {
+export async function getOutboundStats(scope?: AnalyticsScope): Promise<OutboundStats> {
   if (process.env.ALLOW_MOCK_AUTH === 'true') {
     return {
       prospectsContacted: 1250,
@@ -346,7 +365,7 @@ export async function getOutboundStats(): Promise<OutboundStats> {
   }
 
   try {
-    const doc = await outboundSummaryDoc.get();
+    const doc = await outboundSummaryDoc(scope).get();
     const data = doc.exists
       ? (doc.data() as {
           prospectsFound?: number;
@@ -390,9 +409,9 @@ export type InboundAnalyticsUpdate = {
   sentimentTotal?: number;
 };
 
-export async function incrementInboundAnalytics(update: InboundAnalyticsUpdate) {
+export async function incrementInboundAnalytics(update: InboundAnalyticsUpdate, scope?: AnalyticsScope) {
   if (!update.messages && !update.leads && !update.sentimentTotal) return;
-  await writeDailySummary(inboundAnalyticsCollection, inboundSummaryDoc, {
+  await writeDailySummary(inboundAnalyticsCollection(scope), inboundSummaryDoc(scope), {
     messages: update.messages ?? 0,
     leads: update.leads ?? 0,
     sentimentTotal: update.sentimentTotal ?? 0,
@@ -406,9 +425,9 @@ export type EngagementAnalyticsUpdate = {
   conversions?: number;
 };
 
-export async function incrementEngagementAnalytics(update: EngagementAnalyticsUpdate) {
+export async function incrementEngagementAnalytics(update: EngagementAnalyticsUpdate, scope?: AnalyticsScope) {
   if (!update.commentsDetected && !update.repliesSent && !update.conversions) return;
-  await writeDailySummary(engagementAnalyticsCollection, engagementSummaryDoc, {
+  await writeDailySummary(engagementAnalyticsCollection(scope), engagementSummaryDoc(scope), {
     commentsDetected: update.commentsDetected ?? 0,
     repliesSent: update.repliesSent ?? 0,
     conversions: update.conversions ?? 0,
@@ -421,9 +440,9 @@ export type FollowupAnalyticsUpdate = {
   conversions?: number;
 };
 
-export async function incrementFollowupAnalytics(update: FollowupAnalyticsUpdate) {
+export async function incrementFollowupAnalytics(update: FollowupAnalyticsUpdate, scope?: AnalyticsScope) {
   if (!update.sent && !update.replies && !update.conversions) return;
-  await writeDailySummary(followupAnalyticsCollection, followupSummaryDoc, {
+  await writeDailySummary(followupAnalyticsCollection(scope), followupSummaryDoc(scope), {
     sent: update.sent ?? 0,
     replies: update.replies ?? 0,
     conversions: update.conversions ?? 0,
@@ -435,9 +454,9 @@ export type WebLeadAnalyticsUpdate = {
   messages?: number;
 };
 
-export async function incrementWebLeadAnalytics(update: WebLeadAnalyticsUpdate) {
+export async function incrementWebLeadAnalytics(update: WebLeadAnalyticsUpdate, scope?: AnalyticsScope) {
   if (!update.leads && !update.messages) return;
-  await writeDailySummary(webLeadAnalyticsCollection, webLeadSummaryDoc, {
+  await writeDailySummary(webLeadAnalyticsCollection(scope), webLeadSummaryDoc(scope), {
     leads: update.leads ?? 0,
     messages: update.messages ?? 0,
   });
@@ -475,8 +494,8 @@ export type InboundStats = {
   conversionRate: number;
 };
 
-export async function getInboundStats(): Promise<InboundStats> {
-  const doc = await inboundSummaryDoc.get();
+export async function getInboundStats(scope?: AnalyticsScope): Promise<InboundStats> {
+  const doc = await inboundSummaryDoc(scope).get();
   const data = doc.data() ?? {};
   const messages = Number(data.messages ?? 0);
   const leads = Number(data.leads ?? 0);
@@ -499,8 +518,8 @@ export type EngagementStats = {
   conversionRate: number;
 };
 
-export async function getEngagementStats(): Promise<EngagementStats> {
-  const doc = await engagementSummaryDoc.get();
+export async function getEngagementStats(scope?: AnalyticsScope): Promise<EngagementStats> {
+  const doc = await engagementSummaryDoc(scope).get();
   const data = doc.data() ?? {};
   const comments = Number(data.commentsDetected ?? 0);
   const replies = Number(data.repliesSent ?? 0);
@@ -522,8 +541,8 @@ export type FollowupStats = {
   conversionRate: number;
 };
 
-export async function getFollowupStats(): Promise<FollowupStats> {
-  const doc = await followupSummaryDoc.get();
+export async function getFollowupStats(scope?: AnalyticsScope): Promise<FollowupStats> {
+  const doc = await followupSummaryDoc(scope).get();
   const data = doc.data() ?? {};
   const sent = Number(data.sent ?? 0);
   const replies = Number(data.replies ?? 0);
@@ -543,8 +562,8 @@ export type WebLeadStats = {
   conversionRate: number;
 };
 
-export async function getWebLeadStats(): Promise<WebLeadStats> {
-  const doc = await webLeadSummaryDoc.get();
+export async function getWebLeadStats(scope?: AnalyticsScope): Promise<WebLeadStats> {
+  const doc = await webLeadSummaryDoc(scope).get();
   const data = doc.data() ?? {};
   const leads = Number(data.leads ?? 0);
   const messages = Number(data.messages ?? 0);

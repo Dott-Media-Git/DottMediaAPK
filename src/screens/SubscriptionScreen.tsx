@@ -1,10 +1,11 @@
 import React from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DMButton } from '@components/DMButton';
 import { DMCard } from '@components/DMCard';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
+import { useI18n } from '@context/I18nContext';
 
 const features = [
   'Custom Make.com scenarios provisioned automatically',
@@ -29,48 +30,60 @@ const paymentOptions = [
 
 export const SubscriptionScreen: React.FC = () => {
   const { startSubscription, state } = useAuth();
+  const { t } = useI18n();
 
   const handleAlternatePayment = (method: string) => {
-    Alert.alert(method, 'A Dott Media success manager will send the instructions right away.');
+    Alert.alert(method, t('A Dott Media success manager will send the instructions right away.'));
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.hero}>
-        <Text style={styles.badge}>Activate</Text>
-        <Text style={styles.title}>Dott Media Automation Suite</Text>
-        <Text style={styles.subtitle}>Premium gradients, realtime telemetry, and fully managed AI pipelines.</Text>
+        <Text style={styles.badge}>{t('Activate')}</Text>
+        <Text style={styles.title}>{t('Dott Media Automation Suite')}</Text>
+        <Text style={styles.subtitle}>{t('Premium gradients, realtime telemetry, and fully managed AI pipelines.')}</Text>
       </LinearGradient>
-      <DMCard title="Plan details" subtitle="Everything you need to launch AI-driven campaigns.">
+      <DMCard title={t('Plan details')} subtitle={t('Everything you need to launch AI-driven campaigns.')}>
         {features.map(feature => (
           <View key={feature} style={styles.feature}>
             <Text style={styles.bullet}>-</Text>
-            <Text style={styles.featureText}>{feature}</Text>
+            <Text style={styles.featureText}>{t(feature)}</Text>
           </View>
         ))}
-        <Text style={styles.price}>$599 / month</Text>
-        <DMButton title="Activate via Care Team" onPress={startSubscription} loading={state.loading} />
+        <View style={styles.priceBlock}>
+          <Text style={styles.pricePrimary}>{t('$199 / month')}</Text>
+          <Text style={styles.priceSecondary}>{t('$1000 one-time installation')}</Text>
+        </View>
+        <DMButton title={t('Activate via Care Team')} onPress={startSubscription} loading={state.loading} />
       </DMCard>
-      <DMCard title="Payment options" subtitle="Choose the method that suits your finance stack.">
+      <DMCard title={t('Payment options')} subtitle={t('Choose the method that suits your finance stack.')}>
         {paymentOptions.map(option => (
           <View key={option.label} style={styles.paymentRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.paymentLabel}>{option.label}</Text>
-              <Text style={styles.paymentDescription}>{option.description}</Text>
+              <Text style={styles.paymentLabel}>{t(option.label)}</Text>
+              <Text style={styles.paymentDescription}>{t(option.description)}</Text>
             </View>
-            <DMButton title="Select" style={styles.paymentButton} onPress={() => handleAlternatePayment(option.label)} />
+            <DMButton
+              title={t('Select')}
+              style={styles.paymentButton}
+              onPress={() => handleAlternatePayment(t(option.label))}
+            />
           </View>
         ))}
-        <Text style={styles.helpText}>All transactions are denominated in USD. Need a custom invoice? Tap any option above.</Text>
+        <Text style={styles.helpText}>
+          {t('All transactions are denominated in USD. Need a custom invoice? Tap any option above.')}
+        </Text>
       </DMCard>
-    </View>
+    </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.background
+  },
+  content: {
     padding: 24
   },
   hero: {
@@ -111,11 +124,18 @@ const styles = StyleSheet.create({
     color: colors.subtext,
     flex: 1
   },
-  price: {
-    color: colors.text,
-    fontWeight: '700',
-    fontSize: 22,
+  priceBlock: {
     marginVertical: 16
+  },
+  pricePrimary: {
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: 24
+  },
+  priceSecondary: {
+    color: colors.accentMuted,
+    fontSize: 14,
+    marginTop: 6
   },
   paymentRow: {
     flexDirection: 'row',

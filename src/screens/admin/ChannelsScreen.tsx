@@ -4,11 +4,13 @@ import { colors } from '@constants/colors';
 import { DMButton } from '@components/DMButton';
 import { fetchSettings, connectChannel, disconnectChannel } from '@services/admin/settingsService';
 import { useAuth } from '@context/AuthContext';
+import { useI18n } from '@context/I18nContext';
 
 const channels = ['whatsapp', 'instagram', 'facebook', 'linkedin', 'web'] as const;
 
 export const ChannelsScreen: React.FC = () => {
   const { orgId } = useAuth();
+  const { t } = useI18n();
   const [settings, setSettings] = useState<any>(null);
   const [modal, setModal] = useState<{ channel: string; token: string } | null>(null);
 
@@ -16,7 +18,7 @@ export const ChannelsScreen: React.FC = () => {
     if (!orgId) return;
     fetchSettings(orgId)
       .then(setSettings)
-      .catch(error => Alert.alert('Error', error.message));
+      .catch(error => Alert.alert(t('Error'), error.message));
   }, [orgId]);
 
   const handleConnect = async () => {
@@ -27,7 +29,7 @@ export const ChannelsScreen: React.FC = () => {
       const next = await fetchSettings(orgId);
       setSettings(next);
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert(t('Error'), error.message);
     }
   };
 
@@ -45,15 +47,15 @@ export const ChannelsScreen: React.FC = () => {
           <View key={channel} style={styles.card}>
             <Text style={styles.cardTitle}>{channel.toUpperCase()}</Text>
             <Text style={styles.cardSubtitle}>
-              {connected ? 'Connected' : 'Not connected'}{' '}
-              {settings?.channels?.[channel]?.tokenRef ? '• token stored' : ''}
+              {connected ? t('Connected') : t('Not connected')}{' '}
+              {settings?.channels?.[channel]?.tokenRef ? t('- token stored') : ''}
             </Text>
             <View style={styles.actions}>
               {connected ? (
-                <DMButton title="Disconnect" style={styles.button} onPress={() => handleDisconnect(channel)} />
+                <DMButton title={t('Disconnect')} style={styles.button} onPress={() => handleDisconnect(channel)} />
               ) : (
                 <DMButton
-                  title="Connect"
+                  title={t('Connect')}
                   style={styles.button}
                   onPress={() => setModal({ channel, token: '' })}
                 />
@@ -65,17 +67,17 @@ export const ChannelsScreen: React.FC = () => {
       <Modal visible={!!modal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Connect {modal?.channel.toUpperCase()}</Text>
+            <Text style={styles.modalTitle}>{t('Connect {{channel}}', { channel: modal?.channel.toUpperCase() ?? '' })}</Text>
             <TextInput
               value={modal?.token ?? ''}
               onChangeText={token => setModal(prev => (prev ? { ...prev, token } : prev))}
-              placeholder="Paste access token"
+              placeholder={t('Paste access token')}
               placeholderTextColor={colors.subtext}
               style={styles.input}
             />
-            <DMButton title="Save" onPress={handleConnect} />
+            <DMButton title={t('Save')} onPress={handleConnect} />
             <TouchableOpacity onPress={() => setModal(null)} style={styles.modalCancel}>
-              <Text style={{ color: colors.subtext }}>Cancel</Text>
+              <Text style={{ color: colors.subtext }}>{t('Cancel')}</Text>
             </TouchableOpacity>
           </View>
         </View>

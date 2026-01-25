@@ -1,7 +1,7 @@
 import admin from 'firebase-admin';
 import Stripe from 'stripe';
 import createHttpError from 'http-errors';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore';
 import { OrgDocument, OrgLocale, OrgPlan, OrgSettingsDocument, OrgUserDocument } from '../../types/org';
 import { putSecret, getSecret } from '../secretVaultService';
 import { validateSettingsPatch } from './settingsValidator';

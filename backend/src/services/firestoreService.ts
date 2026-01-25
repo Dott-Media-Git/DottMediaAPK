@@ -1,5 +1,5 @@
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore';
 import { ActivationPayload } from '../types/automation';
 
 const automationsCollection = firestore.collection('automations');

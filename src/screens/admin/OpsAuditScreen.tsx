@@ -5,6 +5,7 @@ import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { runJob, testWebhook } from '@services/admin/opsService';
 import { fetchAuditEvents } from '@services/admin/auditService';
+import { useI18n } from '@context/I18nContext';
 
 const jobs = [
   { type: 'followups', label: 'Run Follow-ups' },
@@ -14,6 +15,7 @@ const jobs = [
 
 export const OpsAuditScreen: React.FC = () => {
   const { orgId } = useAuth();
+  const { t } = useI18n();
   const [audit, setAudit] = useState<any[]>([]);
   const [webhookUrl, setWebhookUrl] = useState('');
 
@@ -21,7 +23,7 @@ export const OpsAuditScreen: React.FC = () => {
     if (!orgId) return;
     fetchAuditEvents(orgId)
       .then(setAudit)
-      .catch(error => Alert.alert('Error', error.message));
+      .catch(error => Alert.alert(t('Error'), error.message));
   };
 
   useEffect(refresh, [orgId]);
@@ -34,35 +36,35 @@ export const OpsAuditScreen: React.FC = () => {
       } else {
         await runJob(orgId, type);
       }
-      Alert.alert('Success', `${type} enqueued`);
+      Alert.alert(t('Success'), t('{{job}} enqueued', { job: type }));
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert(t('Error'), error.message);
     }
   };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.card}>
-        <Text style={styles.title}>Ops Tools</Text>
+        <Text style={styles.title}>{t('Ops Tools')}</Text>
         <TextInput
-          placeholder="Webhook URL"
+          placeholder={t('Webhook URL')}
           placeholderTextColor={colors.subtext}
           value={webhookUrl}
           onChangeText={setWebhookUrl}
           style={styles.input}
         />
         {jobs.map(job => (
-          <DMButton key={job.type} title={job.label} onPress={() => triggerJob(job.type)} style={{ marginTop: 8 }} />
+          <DMButton key={job.type} title={t(job.label)} onPress={() => triggerJob(job.type)} style={{ marginTop: 8 }} />
         ))}
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.title}>Audit Log</Text>
+        <Text style={styles.title}>{t('Audit Log')}</Text>
         {audit.map(event => (
           <View key={event.id} style={styles.auditRow}>
             <Text style={styles.auditAction}>{event.action}</Text>
             <Text style={styles.auditMeta}>
-              {event.uid} • {event.resource}
+              {event.uid} - {event.resource}
             </Text>
           </View>
         ))}

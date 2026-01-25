@@ -15,6 +15,7 @@ const BodySchema = z.object({
       currentScreen: z.string().optional(),
       subscriptionStatus: z.string().optional(),
       connectedChannels: z.array(z.string()).optional(),
+      locale: z.string().max(16).optional(),
       analytics: z
         .object({
           leads: z.number().optional(),
@@ -40,6 +41,7 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
     const answer = await assistant.answer(parsed.question, {
       ...(parsed.context ?? {}),
       userId: effectiveUserId,
+      userEmail: authUser.email,
     });
     res.json({ answer });
   } catch (err) {

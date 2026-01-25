@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { firestore as FirestoreNS } from 'firebase-admin';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore';
 import { classifyReply } from '../packages/brain/nlu/replyClassifier';
 import { ConversionService } from '../packages/services/conversionService';
 import { incrementMetric } from '../services/analyticsService';

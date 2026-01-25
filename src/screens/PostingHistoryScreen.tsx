@@ -115,7 +115,13 @@ export const PostingHistoryScreen: React.FC = () => {
   const platformSummary = useMemo(() => {
     const counts: Record<string, number> = { facebook: 0, instagram: 0, linkedin: 0 };
     postedToday.forEach(post => {
-      const platform = post.platform?.toLowerCase();
+      const rawPlatform = post.platform?.toLowerCase();
+      const platform =
+        rawPlatform === 'instagram_story'
+          ? 'instagram'
+          : rawPlatform === 'facebook_story'
+            ? 'facebook'
+            : rawPlatform;
       if (platform && Object.prototype.hasOwnProperty.call(counts, platform)) {
         counts[platform] += 1;
       }

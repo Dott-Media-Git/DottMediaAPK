@@ -1,5 +1,5 @@
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore';
 import { ConversationRecord } from '../types/bot';
 import { OpenAIService } from './openAIService';
 import { OutboundMessenger } from './outboundMessenger';

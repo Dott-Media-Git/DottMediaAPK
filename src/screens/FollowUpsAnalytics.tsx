@@ -3,24 +3,31 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-nat
 import { VictoryChart, VictoryLine, VictoryTheme } from 'victory-native';
 import { colors } from '@constants/colors';
 import { DMCard } from '@components/DMCard';
-import { FollowupStats, fetchFollowupStats } from '@services/analytics';
-
-const buildSeries = (count: number) =>
-  Array.from({ length: 6 }).map((_, index) => ({
-    label: `Week ${index + 1}`,
-    value: Math.max(0, Math.round(count / 6 + (Math.random() - 0.5) * 8)),
-  }));
+import { FollowupStats, fetchFollowupStats, resolveAnalyticsScopeId } from '@services/analytics';
+import { useI18n } from '@context/I18nContext';
+import { useAuth } from '@context/AuthContext';
 
 export const FollowUpsAnalyticsScreen: React.FC = () => {
+  const { t } = useI18n();
+  const { state } = useAuth();
+  const orgId = (state.user as any)?.orgId ?? state.crmData?.orgId;
+  const analyticsScopeId = useMemo(
+    () => resolveAnalyticsScopeId(state.user?.uid, orgId),
+    [state.user?.uid, orgId]
+  );
   const [stats, setStats] = useState<FollowupStats | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     const load = async () => {
+      if (!state.user) {
+        if (mounted) setStats(null);
+        return;
+      }
       setLoading(true);
       try {
-        const payload = await fetchFollowupStats();
+        const payload = await fetchFollowupStats(state.user.uid, analyticsScopeId);
         if (mounted) setStats(payload);
       } finally {
         if (mounted) setLoading(false);
@@ -30,28 +37,41 @@ export const FollowUpsAnalyticsScreen: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [analyticsScopeId, state.user]);
 
-  const history = useMemo(() => buildSeries(stats?.sent ?? 12), [stats?.sent]);
+  const history = useMemo(
+    () =>
+      stats
+        ? [
+            {
+              label: t('Total'),
+              value: stats.sent
+            }
+          ]
+        : [],
+    [stats, t]
+  );
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <DMCard title="Follow-up Automation" subtitle="Daily retargeting touches">
+      <DMCard title={t('Follow-up Automation')} subtitle={t('Daily retargeting touches')}>
         <View style={styles.grid}>
-          <Stat label="Sends" value={stats?.sent} />
-          <Stat label="Replies" value={stats?.replies} />
-          <Stat label="Conversions" value={stats?.conversions} />
-          <Stat label="Reply rate" value={stats ? `${Math.round(stats.replyRate * 100)}%` : undefined} />
+          <Stat label={t('Sends')} value={stats?.sent} />
+          <Stat label={t('Replies')} value={stats?.replies} />
+          <Stat label={t('Conversions')} value={stats?.conversions} />
+          <Stat label={t('Reply rate')} value={stats ? `${Math.round(stats.replyRate * 100)}%` : undefined} />
           <Stat
-            label="Conversion rate"
+            label={t('Conversion rate')}
             value={stats ? `${Math.round(stats.conversionRate * 100)}%` : undefined}
           />
         </View>
       </DMCard>
 
-      <DMCard title="Weekly follow-ups sent">
+      <DMCard title={t('Follow-up volume')} subtitle={t('Total automated follow-ups')}>
         {loading ? (
           <ActivityIndicator color={colors.accent} />
+        ) : history.length === 0 ? (
+          <Text style={styles.empty}>{t('No follow-up activity yet.')}</Text>
         ) : (
           <VictoryChart theme={VictoryTheme.material} domainPadding={{ x: 12, y: 10 }}>
             <VictoryLine
@@ -65,10 +85,11 @@ export const FollowUpsAnalyticsScreen: React.FC = () => {
         )}
       </DMCard>
 
-      <DMCard title="Playbook tips">
+      <DMCard title={t('Playbook tips')}>
         <Text style={styles.tip}>
-          Dotti automatically re-engages Qualified + DemoOffered leads 7 days after the last response. Increase the
-          conversion rate by personalizing openers with the prospect’s last objection.
+          {t(
+            "Dotti automatically re-engages Qualified + DemoOffered leads 7 days after the last response. Increase the conversion rate by personalizing openers with the prospect's last objection."
+          )}
         </Text>
       </DMCard>
     </ScrollView>
@@ -78,7 +99,7 @@ export const FollowUpsAnalyticsScreen: React.FC = () => {
 const Stat: React.FC<{ label: string; value?: number | string }> = ({ label, value }) => (
   <View style={styles.stat}>
     <Text style={styles.statLabel}>{label}</Text>
-    <Text style={styles.statValue}>{value ?? '—'}</Text>
+    <Text style={styles.statValue}>{value ?? '0'}</Text>
   </View>
 );
 
@@ -112,5 +133,9 @@ const styles = StyleSheet.create({
   tip: {
     color: colors.subtext,
     lineHeight: 20,
+  },
+  empty: {
+    color: colors.subtext,
+    fontStyle: 'italic',
   },
 });

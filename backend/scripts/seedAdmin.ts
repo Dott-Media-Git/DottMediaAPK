@@ -1,4 +1,4 @@
-import { firestore } from '../src/lib/firebase';
+import { firestore } from '../src/db/firestore';
 
 async function seedPlans() {
   const plans = [

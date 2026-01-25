@@ -25,45 +25,55 @@ router.get('/analytics', requireFirebase, async (req, res, next) => {
   }
 });
 
-router.get('/stats/outbound', async (_req, res, next) => {
+router.get('/stats/outbound', requireFirebase, async (req, res, next) => {
   try {
-    const stats = await getOutboundStats();
+    const authUser = (req as AuthedRequest).authUser;
+    const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+    const stats = await getOutboundStats({ userId: authUser?.uid, scopeId });
     res.json({ stats });
   } catch (err) {
     next(err);
   }
 });
 
-router.get('/stats/inbound', async (_req, res, next) => {
+router.get('/stats/inbound', requireFirebase, async (req, res, next) => {
   try {
-    const stats = await getInboundStats();
+    const authUser = (req as AuthedRequest).authUser;
+    const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+    const stats = await getInboundStats({ userId: authUser?.uid, scopeId });
     res.json({ stats });
   } catch (error) {
     next(error);
   }
 });
 
-router.get('/stats/engagement', async (_req, res, next) => {
+router.get('/stats/engagement', requireFirebase, async (req, res, next) => {
   try {
-    const stats = await getEngagementStats();
+    const authUser = (req as AuthedRequest).authUser;
+    const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+    const stats = await getEngagementStats({ userId: authUser?.uid, scopeId });
     res.json({ stats });
   } catch (error) {
     next(error);
   }
 });
 
-router.get('/stats/followups', async (_req, res, next) => {
+router.get('/stats/followups', requireFirebase, async (req, res, next) => {
   try {
-    const stats = await getFollowupStats();
+    const authUser = (req as AuthedRequest).authUser;
+    const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+    const stats = await getFollowupStats({ userId: authUser?.uid, scopeId });
     res.json({ stats });
   } catch (error) {
     next(error);
   }
 });
 
-router.get('/stats/webLeads', async (_req, res, next) => {
+router.get('/stats/webLeads', requireFirebase, async (req, res, next) => {
   try {
-    const stats = await getWebLeadStats();
+    const authUser = (req as AuthedRequest).authUser;
+    const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+    const stats = await getWebLeadStats({ userId: authUser?.uid, scopeId });
     res.json({ stats });
   } catch (error) {
     next(error);

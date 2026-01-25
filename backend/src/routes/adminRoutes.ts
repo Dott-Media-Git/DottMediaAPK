@@ -2,6 +2,7 @@ import { Router } from 'express';
 import createHttpError from 'http-errors';
 // TODO: Extend with Google/Microsoft SSO claims once identity providers are connected.
 import { requireFirebase } from '../middleware/firebaseAuth';
+import { requireAdmin } from '../middleware/adminAuth';
 import { withOrgContext, requireRole, OrgRequest } from '../middleware/orgAuth';
 import {
   createOrg,
@@ -23,10 +24,25 @@ import {
   enqueueJob,
   logAuditEvent,
 } from '../services/admin/adminService';
+import { getAdminMetrics } from '../services/admin/adminMetricsService';
 import { getSecret } from '../services/secretVaultService';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore';
 
 const router = Router();
+
+router.get('/admin/metrics', requireFirebase, requireAdmin, async (_req, res, next) => {
+  try {
+    const metrics = await getAdminMetrics();
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    res.json({ metrics });
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.post('/admin/orgs', requireFirebase, async (req, res, next) => {
   try {

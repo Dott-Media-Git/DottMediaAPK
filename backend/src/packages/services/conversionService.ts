@@ -1,5 +1,5 @@
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore';
 import { Prospect } from './prospectFinder';
 import { LeadScoringService } from '../../services/leadScoringService';
 import { classifyReply, ReplyClassification } from '../brain/nlu/replyClassifier';

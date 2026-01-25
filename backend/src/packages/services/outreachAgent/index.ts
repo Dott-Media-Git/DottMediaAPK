@@ -12,6 +12,8 @@ const prospectsCollection = firestore.collection('prospects');
 const outreachCollection = firestore.collection('outreach');
 const leadsCollection = firestore.collection('leads');
 const outboundLogsCollection = firestore.collection('logs').doc('outbound').collection('runs');
+const SETTINGS_CACHE_TTL_MS = 10 * 60 * 1000;
+const complianceFooterCache = new Map<string, { value: string; fetchedAt: number; loaded: boolean }>();
 
 const outboundChannels = ['linkedin', 'instagram', 'whatsapp'] as const;
 type OutboundChannel = (typeof outboundChannels)[number];
@@ -30,7 +32,8 @@ export class OutreachAgent {
   /**
    * Pulls up to 20 new prospects and sends the first-touch outreach.
    */
-  async runDailyOutreach(seedProspects: Prospect[] = []) {
+  async runDailyOutreach(seedProspects: Prospect[] = [], options?: { userId?: string }) {
+    const userId = options?.userId;
     const perChannelCap = Math.max(0, Number(process.env.OUTBOUND_DAILY_CAP_PER_CHANNEL ?? 20));
     const startOfDay = new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
@@ -109,7 +112,7 @@ export class OutreachAgent {
 
     for (const prospect of sendable) {
       try {
-        const message = await this.generateFirstMessage(prospect);
+        const message = await this.generateFirstMessage(prospect, userId);
         const channelUsed = await this.dispatchMessage(prospect, message);
         await this.recordMessage(prospect, message, channelUsed);
         await incrementMetric('outbound_sent', 1, { industry: prospect.industry });
@@ -197,7 +200,7 @@ export class OutreachAgent {
     return counts;
   }
 
-  private async generateFirstMessage(prospect: Prospect) {
+  private async generateFirstMessage(prospect: Prospect, userId?: string) {
     const prompt = `
 You are Dotti, an AI Sales Agent representing Dott-Media.
 Write a short, friendly, professional message to ${prospect.name} from ${prospect.company ?? 'their company'}.
@@ -218,10 +221,11 @@ Max 3 sentences. Add natural emoji if suitable.
           { role: 'user', content: prompt },
         ],
       });
-      return completion.choices?.[0]?.message?.content?.trim() ?? this.fallbackMessage(prospect);
+      const base = completion.choices?.[0]?.message?.content?.trim() ?? this.fallbackMessage(prospect);
+      return this.appendComplianceFooter(base, userId);
     } catch (error) {
       console.error('Failed to generate outreach copy', error);
-      return this.fallbackMessage(prospect);
+      return this.appendComplianceFooter(this.fallbackMessage(prospect), userId);
     }
   }
 
@@ -229,6 +233,32 @@ Max 3 sentences. Add natural emoji if suitable.
     return `Hi ${prospect.name ?? 'there'}! I'm Dotti with Dott Media. We build AI automations that help ${
       prospect.company ?? 'sales teams'
     } capture and convert more leads. Want a quick walkthrough?`;
+  }
+
+  private async getComplianceFooter(userId?: string) {
+    if (!userId) return null;
+    const now = Date.now();
+    const cached = complianceFooterCache.get(userId);
+    if (cached?.loaded && now - cached.fetchedAt < SETTINGS_CACHE_TTL_MS) {
+      return cached.value || null;
+    }
+    try {
+      const snap = await firestore.collection('assistant_settings').doc(userId).get();
+      const value = (snap.data()?.outreachComplianceFooter as string | undefined)?.trim() ?? '';
+      complianceFooterCache.set(userId, { value: value || '', fetchedAt: now, loaded: true });
+      return value || null;
+    } catch (error) {
+      console.warn('Failed to load outreach compliance footer', (error as Error).message);
+      complianceFooterCache.set(userId, { value: '', fetchedAt: now, loaded: true });
+      return null;
+    }
+  }
+
+  private async appendComplianceFooter(message: string, userId?: string) {
+    const footer = await this.getComplianceFooter(userId);
+    if (!footer) return message;
+    if (message.toLowerCase().includes(footer.toLowerCase())) return message;
+    return `${message}\n\n${footer}`;
   }
 
   private async dispatchMessage(prospect: Prospect, text: string) {

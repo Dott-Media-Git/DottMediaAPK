@@ -3,24 +3,31 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-nat
 import { VictoryBar, VictoryChart, VictoryTheme } from 'victory-native';
 import { colors } from '@constants/colors';
 import { DMCard } from '@components/DMCard';
-import { fetchInboundStats, InboundStats } from '@services/analytics';
-
-const buildHistory = (total: number) =>
-  Array.from({ length: 7 }).map((_, index) => ({
-    label: `Day ${index + 1}`,
-    value: Math.max(1, Math.round(total / 7 + (Math.random() - 0.5) * 6)),
-  }));
+import { fetchInboundStats, InboundStats, resolveAnalyticsScopeId } from '@services/analytics';
+import { useI18n } from '@context/I18nContext';
+import { useAuth } from '@context/AuthContext';
 
 export const InboundAnalyticsScreen: React.FC = () => {
+  const { t } = useI18n();
+  const { state } = useAuth();
+  const orgId = (state.user as any)?.orgId ?? state.crmData?.orgId;
+  const analyticsScopeId = useMemo(
+    () => resolveAnalyticsScopeId(state.user?.uid, orgId),
+    [state.user?.uid, orgId]
+  );
   const [stats, setStats] = useState<InboundStats | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     const load = async () => {
+      if (!state.user) {
+        if (mounted) setStats(null);
+        return;
+      }
       setLoading(true);
       try {
-        const payload = await fetchInboundStats();
+        const payload = await fetchInboundStats(state.user.uid, analyticsScopeId);
         if (mounted) setStats(payload);
       } finally {
         if (mounted) setLoading(false);
@@ -30,24 +37,37 @@ export const InboundAnalyticsScreen: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [analyticsScopeId, state.user]);
 
-  const history = useMemo(() => buildHistory(stats?.messages ?? 40), [stats?.messages]);
+  const history = useMemo(
+    () =>
+      stats
+        ? [
+            {
+              label: t('Total'),
+              value: stats.messages
+            }
+          ]
+        : [],
+    [stats, t]
+  );
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <DMCard title="Inbound Funnel" subtitle="Passive chats flowing into Dotti">
+      <DMCard title={t('Inbound Funnel')} subtitle={t('Passive chats flowing into Dotti')}>
         <View style={styles.grid}>
-          <Stat label="Messages" value={stats?.messages} />
-          <Stat label="Leads" value={stats?.leads} />
-          <Stat label="Avg Sentiment" value={stats ? stats.avgSentiment.toFixed(2) : undefined} />
-          <Stat label="Conversion Rate" value={stats ? `${Math.round(stats.conversionRate * 100)}%` : undefined} />
+          <Stat label={t('Messages')} value={stats?.messages} />
+          <Stat label={t('Leads')} value={stats?.leads} />
+          <Stat label={t('Avg Sentiment')} value={stats ? stats.avgSentiment.toFixed(2) : undefined} />
+          <Stat label={t('Conversion Rate')} value={stats ? `${Math.round(stats.conversionRate * 100)}%` : undefined} />
         </View>
       </DMCard>
 
-      <DMCard title="Messages per day" subtitle="Rolling 7 day sparkline">
+      <DMCard title={t('Message volume')} subtitle={t('Total inbound messages')}>
         {loading ? (
           <ActivityIndicator color={colors.accent} />
+        ) : history.length === 0 ? (
+          <Text style={styles.empty}>{t('No inbound activity yet.')}</Text>
         ) : (
           <VictoryChart theme={VictoryTheme.material} domainPadding={{ x: 12, y: 10 }}>
             <VictoryBar data={history} x="label" y="value" style={{ data: { fill: colors.accent } }} />
@@ -55,12 +75,12 @@ export const InboundAnalyticsScreen: React.FC = () => {
         )}
       </DMCard>
 
-      <DMCard title="Insights">
+      <DMCard title={t('Insights')}>
         <Text style={styles.insight}>
-          Dotti captures inbound interest automatically and qualifies warm replies using GPT-powered flows.
+          {t('Dotti captures inbound interest automatically and qualifies warm replies using GPT-powered flows.')}
         </Text>
         <Text style={styles.insight}>
-          Keep an eye on sentiment — anything below 0.2 may signal friction in your first-touch prompts.
+          {t('Keep an eye on sentiment - anything below 0.2 may signal friction in your first-touch prompts.')}
         </Text>
       </DMCard>
     </ScrollView>
@@ -70,7 +90,7 @@ export const InboundAnalyticsScreen: React.FC = () => {
 const Stat: React.FC<{ label: string; value?: string | number }> = ({ label, value }) => (
   <View style={styles.statCard}>
     <Text style={styles.statLabel}>{label}</Text>
-    <Text style={styles.statValue}>{value ?? '—'}</Text>
+    <Text style={styles.statValue}>{value ?? '0'}</Text>
   </View>
 );
 
@@ -105,5 +125,9 @@ const styles = StyleSheet.create({
     color: colors.subtext,
     marginBottom: 12,
     lineHeight: 20,
+  },
+  empty: {
+    color: colors.subtext,
+    fontStyle: 'italic',
   },
 });

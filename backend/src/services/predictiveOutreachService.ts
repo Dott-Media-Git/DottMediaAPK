@@ -1,4 +1,4 @@
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore';
 import { Platform } from '../types/bot';
 import { OutboundMessenger } from './outboundMessenger';
 import { OpenAIService } from './openAIService';

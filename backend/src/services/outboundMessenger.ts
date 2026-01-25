@@ -11,6 +11,10 @@ export class OutboundMessenger {
   private async dispatch(platform: Platform, recipientId: string, text: string) {
     switch (platform) {
       case 'whatsapp':
+        if (!config.whatsapp.token || !config.whatsapp.phoneNumberId) {
+          console.info('[outbound] WhatsApp disabled; skipping send');
+          return;
+        }
         await axios.post(
           `https://graph.facebook.com/v19.0/${config.whatsapp.phoneNumberId}/messages`,
           {
@@ -49,6 +53,10 @@ export class OutboundMessenger {
         );
         return;
       case 'threads':
+        if (!config.channels.threads.profileId || !config.channels.threads.accessToken) {
+          console.info('[outbound] Threads disabled; skipping send');
+          return;
+        }
         await axios.post(
           `https://graph.facebook.com/v19.0/${config.channels.threads.profileId}/messages`,
           {

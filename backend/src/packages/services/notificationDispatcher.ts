@@ -1,5 +1,7 @@
+import axios from 'axios';
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
+import { config } from '../../config';
+import { firestore } from '../../db/firestore';
 import { sendLinkedInMessage } from './outreachAgent/senders/linkedinSender';
 import { sendInstagramMessage } from './outreachAgent/senders/instagramSender';
 import { sendWhatsAppMessage } from './outreachAgent/senders/whatsappSender';
@@ -10,11 +12,14 @@ type ChannelMessage = {
   channel: string;
   leadId: string;
   recipient: string;
+  type?: string;
   payload: {
     text: string;
     metadata?: Record<string, unknown>;
   };
 };
+
+const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 
 export class NotificationDispatcher {
   private timer?: NodeJS.Timeout;
@@ -35,15 +40,11 @@ export class NotificationDispatcher {
     if (this.isFlushing) return;
     this.isFlushing = true;
     try {
-      const snapshot = await notificationsCollection
-        .where('type', '==', 'channel_message')
-        .where('status', '==', 'pending')
-        .orderBy('createdAt', 'asc')
-        .limit(10)
-        .get();
+      const snapshot = await notificationsCollection.where('status', '==', 'pending').limit(10).get();
 
       for (const doc of snapshot.docs) {
         const data = doc.data() as ChannelMessage & { attempts?: number };
+        if (data.type && data.type !== 'channel_message') continue;
         await doc.ref.update({
           status: 'sending',
           lastTriedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -72,10 +73,25 @@ export class NotificationDispatcher {
   }
 
   private async dispatch(message: ChannelMessage) {
+    const text = message.payload.text;
+    const metadata = message.payload.metadata as Record<string, unknown> | undefined;
+
+    if (message.channel === 'facebook') {
+      const commentId = typeof metadata?.commentId === 'string' ? metadata.commentId : undefined;
+      if (commentId) {
+        await replyToFacebookComment(commentId, text);
+        return;
+      }
+      if (!message.recipient) {
+        throw new Error('Missing recipient for Facebook dispatch');
+      }
+      await sendFacebookMessage(message.recipient, text);
+      return;
+    }
+
     if (!message.recipient) {
       throw new Error('Missing recipient for channel dispatch');
     }
-    const text = message.payload.text;
     if (message.channel === 'linkedin') {
       await sendLinkedInMessage(message.recipient, text);
       return;
@@ -94,4 +110,30 @@ export class NotificationDispatcher {
     }
     console.info(`Unsupported channel ${message.channel}, marking as sent without dispatch`);
   }
+}
+
+async function replyToFacebookComment(commentId: string, text: string) {
+  if (!config.channels.facebook.pageToken) {
+    throw new Error('Facebook page token missing; cannot reply to comment');
+  }
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${commentId}/comments`;
+  await axios.post(url, null, {
+    params: { message: text, access_token: config.channels.facebook.pageToken },
+  });
+}
+
+async function sendFacebookMessage(recipientId: string, text: string) {
+  if (!config.channels.facebook.pageToken) {
+    console.info('[facebook] skipping send; channel disabled');
+    return;
+  }
+  await axios.post(
+    `https://graph.facebook.com/${GRAPH_VERSION}/me/messages`,
+    {
+      recipient: { id: recipientId },
+      messaging_type: 'RESPONSE',
+      message: { text },
+    },
+    { params: { access_token: config.channels.facebook.pageToken } },
+  );
 }

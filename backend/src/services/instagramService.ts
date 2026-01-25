@@ -37,7 +37,13 @@ export class InstagramService {
         message: message.text.body,
         timestamp,
       });
-      await this.messenger.send('instagram', message.from, response.reply);
+      try {
+        await this.messenger.send('instagram', message.from, response.reply);
+        await this.conversations.updateReplyStatus(response.messageDocId, 'sent');
+      } catch (error) {
+        await this.conversations.updateReplyStatus(response.messageDocId, 'failed', (error as Error).message);
+        throw error;
+      }
       processed += 1;
     }
 

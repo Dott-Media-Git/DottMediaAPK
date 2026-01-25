@@ -8,6 +8,30 @@ const buildDate = (offset: number) => {
 };
 
 const platforms = ['whatsapp', 'facebook', 'instagram', 'threads', 'linkedin', 'web'] as const;
+const buildZeroSeries = () =>
+  Array.from({ length: 7 }).map((_, index) => ({
+    label: buildDate(6 - index),
+    value: 0
+  }));
+const buildZeroPlatformSeries = () =>
+  platforms.map(platform => ({
+    platform,
+    series: buildZeroSeries()
+  }));
+const buildZeroLeadsByPlatform = () =>
+  platforms.map(platform => ({
+    label: platform,
+    value: 0
+  }));
+const buildZeroPlatformMetrics = () =>
+  platforms.map(platform => ({
+    platform,
+    messages: 0,
+    leads: 0,
+    avgResponseTime: 0,
+    avgSentiment: 0,
+    conversionRate: 0
+  }));
 
 export const sampleBotAnalytics: BotAnalytics = {
   summary: {
@@ -92,6 +116,48 @@ export const sampleBotAnalytics: BotAnalytics = {
     roi: {
       bookings: 9,
       learningEfficiency: 0.68
+    }
+  }
+};
+
+export const emptyBotAnalytics: BotAnalytics = {
+  summary: {
+    totalMessagesToday: 0,
+    newLeadsToday: 0,
+    mostCommonCategory: 'none',
+    avgResponseTime: 0,
+    conversionRate: 0,
+    avgSentiment: 0
+  },
+  charts: {
+    dailyMessages: buildZeroSeries(),
+    weeklyMessagesByPlatform: buildZeroPlatformSeries(),
+    leadsByPlatform: buildZeroLeadsByPlatform()
+  },
+  platformMetrics: buildZeroPlatformMetrics(),
+  categoryBreakdown: [],
+  activeUsers: 0,
+  topConversations: [],
+  learningEfficiency: 0,
+  leadInsights: {
+    intentBreakdown: [],
+    sentimentBuckets: [],
+    leadTiers: [],
+    conversionTrend: buildZeroSeries(),
+    responseMix: [],
+    followUp: {
+      sent: 0,
+      pending: 0,
+      successRate: 0
+    },
+    outreach: {
+      sent: 0,
+      replies: 0,
+      replyRate: 0
+    },
+    roi: {
+      bookings: 0,
+      learningEfficiency: 0
     }
   }
 };

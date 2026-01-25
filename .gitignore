@@ -3,3 +3,4 @@ node_modules
 .codex-local.json
 .expo/
 .firebase/
+backend/.render-env.json

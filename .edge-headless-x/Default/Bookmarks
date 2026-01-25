@@ -1,0 +1,73 @@
+{
+   "checksum": "2c7d2b8b039601167dcf8fc3715b3f8e",
+   "roots": {
+      "bookmark_bar": {
+         "children": [ {
+            "date_added": "13412686837137428",
+            "date_last_used": "0",
+            "guid": "cee7aeec-18a8-4aed-8c40-b83b3f402e0f",
+            "id": "8",
+            "name": "Booking.com",
+            "show_icon": false,
+            "source": "oem_preload",
+            "type": "url",
+            "url": "https://js.redirect.hp.com/jumpstation?bd=booking&c=231&locale=*&pf=*&tp=edge&TYPE=3",
+            "visit_count": 0
+         }, {
+            "date_added": "13412686837136942",
+            "date_last_used": "0",
+            "guid": "ce63d13c-a02b-4389-a8f4-5479827c8890",
+            "id": "7",
+            "name": "McAfee Security",
+            "show_icon": false,
+            "source": "oem_preload",
+            "type": "url",
+            "url": "https://www.mcafee.com/consumer/v/browserfav/hp.html",
+            "visit_count": 0
+         }, {
+            "date_added": "13412686837005523",
+            "date_last_used": "0",
+            "guid": "80b3e56b-d2b0-4fa5-ac8f-5fdf4801fb14",
+            "id": "6",
+            "name": "LastPass password manager",
+            "show_icon": false,
+            "source": "oem_preload",
+            "type": "url",
+            "url": "https://js.redirect.hp.com/jumpstation?bd=lastpass&c=231&locale=*&pf=*&tp=edge&TYPE=3",
+            "visit_count": 0
+         } ],
+         "date_added": "13412686826932637",
+         "date_last_used": "0",
+         "date_modified": "13412686837137428",
+         "guid": "0bc5d13f-2cba-5d74-951f-3f233fe6c908",
+         "id": "1",
+         "name": "Favorites bar",
+         "source": "unknown",
+         "type": "folder"
+      },
+      "other": {
+         "children": [  ],
+         "date_added": "13412686826932637",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "82b081ec-3dd3-529c-8475-ab6c344590dd",
+         "id": "2",
+         "name": "Other favorites",
+         "source": "unknown",
+         "type": "folder"
+      },
+      "synced": {
+         "children": [  ],
+         "date_added": "13412686826932637",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "4cf2e351-0e85-532b-bb37-df045d8f8d0f",
+         "id": "3",
+         "name": "Mobile favorites",
+         "source": "unknown",
+         "type": "folder"
+      }
+   },
+   "sync_metadata": "CjEKDgiIgQISCHwjM3yZAQAAEgAqGC9SeHpPRHQvd0RYRGs2SnVmUFBSNmc9PUgDoAYJEo4BCAESiQEKHHl4Si82ZnZrZWNyN2twNUVRekI0dFdMcGRiRT0SJDBjODZjYjUxLTE2MWYtNTNmMS1iYTk0LTA2MmE2ZjFlMjEzYRgAIAAoADCC7ezX5C4414+3w4MwQNePt8ODMEocYVJDV0xnaEY5YjVJbnFLSUR2dUovanZRa0ZjPVoAZQAAAADCPgJgABKOAQgCEokBChxZY1NUb252RVNQd3FDczRMMmNyVmh2NjhMOTg9EiQ3OGE0ZjM0OS0zMTllLTVhODEtYTY0YS01NjE2MzcwNmRmZmMYACAAKAAwg+3s1+QuOPaPt8ODMED2j7fDgzBKHG9QVmtod0JSYlY2NUtDV1IyK0lPTkhXb091OD1aAGUAAAAAwj4CYAASjgEIAxKJAQocbmpnRHU4OGVDcnZYcDg2cEQ3ZkhHY3FGcDg4PRIkYjE4ZmI3NjktYmZlNS01ZGYzLTlmZTMtNTc1NjM5YzhmZDA4GAAgACgAMIft7NfkLjjTkLfDgzBA05C3w4MwShx5ek5CMDFjbjU0QTdjUlUwdVQrL1BnbVR0VW89WgBlAAAAAMI+AmAAMAA4AA==",
+   "version": 1
+}

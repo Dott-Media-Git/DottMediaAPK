@@ -1,7 +1,7 @@
 import { env } from '@services/env';
 import type { BotAnalytics, LeadInsights, PlatformName } from '@models/bot';
-import { sampleBotAnalytics } from '@constants/botAnalytics';
-import { isFirebaseEnabled, realtimeDb } from '@services/firebase';
+import { emptyBotAnalytics } from '@constants/botAnalytics';
+import { getIdToken, isFirebaseEnabled, realtimeDb } from '@services/firebase';
 import {
   collection,
   limit,
@@ -17,38 +17,69 @@ const buildApiUrl = (path: string) => {
   return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
 };
 
+const sanitizeScopeId = (value?: string) => {
+  if (!value) return '';
+  return value.trim().replace(/[\\/]/g, '_');
+};
+
+const appendScope = (path: string, scopeId?: string) => {
+  const scoped = sanitizeScopeId(scopeId);
+  if (!scoped) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}scopeId=${encodeURIComponent(scoped)}`;
+};
+
+const buildAuthHeader = async (userId?: string) => {
+  const headers: Record<string, string> = {};
+  const token = await getIdToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  } else if (userId) {
+    headers.Authorization = `Bearer mock-${userId}`;
+  }
+  return headers;
+};
+
+const scopedCollectionId = (base: string, scopeId?: string) => {
+  const scoped = sanitizeScopeId(scopeId);
+  return scoped ? `${base}_${scoped}` : base;
+};
+
 const mergeAnalytics = (analytics: BotAnalytics | null, leadInsights: LeadInsights | null): BotAnalytics => {
-  const base = analytics ?? sampleBotAnalytics;
+  const base = analytics ?? emptyBotAnalytics;
   return {
-    ...sampleBotAnalytics,
+    ...emptyBotAnalytics,
     ...base,
     charts: {
-      dailyMessages: base.charts?.dailyMessages ?? sampleBotAnalytics.charts.dailyMessages,
-      weeklyMessagesByPlatform: base.charts?.weeklyMessagesByPlatform ?? sampleBotAnalytics.charts.weeklyMessagesByPlatform,
-      leadsByPlatform: base.charts?.leadsByPlatform ?? sampleBotAnalytics.charts.leadsByPlatform
+      dailyMessages: base.charts?.dailyMessages?.length ? base.charts.dailyMessages : emptyBotAnalytics.charts.dailyMessages,
+      weeklyMessagesByPlatform: base.charts?.weeklyMessagesByPlatform?.length
+        ? base.charts.weeklyMessagesByPlatform
+        : emptyBotAnalytics.charts.weeklyMessagesByPlatform,
+      leadsByPlatform: base.charts?.leadsByPlatform?.length ? base.charts.leadsByPlatform : emptyBotAnalytics.charts.leadsByPlatform
     },
-    platformMetrics: base.platformMetrics?.length ? base.platformMetrics : sampleBotAnalytics.platformMetrics,
-    categoryBreakdown: base.categoryBreakdown?.length ? base.categoryBreakdown : sampleBotAnalytics.categoryBreakdown,
-    activeUsers: base.activeUsers ?? sampleBotAnalytics.activeUsers,
-    topConversations: base.topConversations?.length ? base.topConversations : sampleBotAnalytics.topConversations,
-    learningEfficiency: base.learningEfficiency ?? sampleBotAnalytics.learningEfficiency,
-    leadInsights: leadInsights ?? sampleBotAnalytics.leadInsights
+    platformMetrics: base.platformMetrics?.length ? base.platformMetrics : emptyBotAnalytics.platformMetrics,
+    categoryBreakdown: base.categoryBreakdown?.length ? base.categoryBreakdown : emptyBotAnalytics.categoryBreakdown,
+    activeUsers: base.activeUsers ?? emptyBotAnalytics.activeUsers,
+    topConversations: base.topConversations?.length ? base.topConversations : emptyBotAnalytics.topConversations,
+    learningEfficiency: base.learningEfficiency ?? emptyBotAnalytics.learningEfficiency,
+    leadInsights: leadInsights ?? base.leadInsights ?? emptyBotAnalytics.leadInsights
   };
 };
 
-export const fetchBotAnalytics = async (): Promise<BotAnalytics> => {
-  const endpoint = buildApiUrl('/stats');
+export const fetchBotAnalytics = async (userId?: string, scopeId?: string): Promise<BotAnalytics> => {
+  const endpoint = buildApiUrl(appendScope('/stats', scopeId));
   if (!endpoint) {
-    return sampleBotAnalytics;
+    return emptyBotAnalytics;
   }
   try {
+    const headers = await buildAuthHeader(userId);
     const [analyticsResp, leadResp] = await Promise.all([
-      fetch(endpoint),
-      fetch(buildApiUrl('/stats/leads'))
+      fetch(endpoint, { headers }),
+      fetch(buildApiUrl(appendScope('/stats/leads', scopeId)), { headers })
     ]);
     if (!analyticsResp.ok) {
       console.warn('Failed to fetch bot analytics', analyticsResp.status);
-      return sampleBotAnalytics;
+      return emptyBotAnalytics;
     }
     const analyticsPayload = (await analyticsResp.json()) as BotAnalytics;
     let leadInsights: LeadInsights | null = null;
@@ -58,7 +89,7 @@ export const fetchBotAnalytics = async (): Promise<BotAnalytics> => {
     return mergeAnalytics(analyticsPayload, leadInsights);
   } catch (error) {
     console.warn('Bot analytics network error', error);
-    return sampleBotAnalytics;
+    return emptyBotAnalytics;
   }
 };
 
@@ -72,17 +103,25 @@ const ensurePlatforms = (platforms: Platform[]) => {
 };
 
 export const subscribeBotAnalytics = (
+  scopeId: string | undefined,
   onData: (payload: BotAnalytics) => void,
   onError?: (err: unknown) => void
 ): Unsubscribe | null => {
   if (!isFirebaseEnabled || !realtimeDb) return null;
-  const statsRef = query(collection(realtimeDb, 'stats'), orderBy('date', 'desc'), limit(7));
+  const statsRef = query(
+    collection(realtimeDb, scopedCollectionId('stats', scopeId)),
+    orderBy('date', 'desc'),
+    limit(7)
+  );
 
   return onSnapshot(
     statsRef,
     snap => {
       const docs = snap.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
-      if (docs.length === 0) return;
+      if (docs.length === 0) {
+        onData(emptyBotAnalytics);
+        return;
+      }
       const latest = docs[0];
       const summary = {
         totalMessagesToday: latest.totalMessagesToday ?? 0,

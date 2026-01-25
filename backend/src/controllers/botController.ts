@@ -1,22 +1,27 @@
 import { Request, Response, NextFunction } from 'express';
 import { BotStatsService } from '../services/botStatsService';
 import { MakeLeadPayload } from '../types/bot';
+import { AuthedRequest } from '../middleware/firebaseAuth';
 
 export class BotController {
   private stats = new BotStatsService();
 
-  getStats = async (_req: Request, res: Response, next: NextFunction) => {
+  getStats = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const payload = await this.stats.getStats();
+      const authUser = (req as AuthedRequest).authUser;
+      const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+      const payload = await this.stats.getStats({ userId: authUser?.uid, scopeId });
       res.json(payload);
     } catch (error) {
       next(error);
     }
   };
 
-  getLeadStats = async (_req: Request, res: Response, next: NextFunction) => {
+  getLeadStats = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const payload = await this.stats.getLeadInsights();
+      const authUser = (req as AuthedRequest).authUser;
+      const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+      const payload = await this.stats.getLeadInsights({ userId: authUser?.uid, scopeId });
       res.json(payload);
     } catch (error) {
       next(error);

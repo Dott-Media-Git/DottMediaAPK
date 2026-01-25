@@ -6,6 +6,8 @@ import { useAuth } from '@context/AuthContext';
 import { DMTextInput } from '@components/DMTextInput';
 import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
+import { Ionicons } from '@expo/vector-icons';
+import { useI18n } from '@context/I18nContext';
 
 export type AuthStackParamList = {
   Login: undefined;
@@ -17,16 +19,37 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'Login'>;
 
 export const LoginScreen: React.FC<Props> = ({ navigation }) => {
   const { signIn, state } = useAuth();
+  const { t } = useI18n();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+
+  const getAuthErrorMessage = (err: unknown) => {
+    const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as any).code) : '';
+    switch (code) {
+      case 'auth/invalid-email':
+        return t('Enter a valid email address.');
+      case 'auth/user-not-found':
+      case 'auth/invalid-login-credentials':
+        return t('No account found for this email.');
+      case 'auth/wrong-password':
+        return t('Incorrect password.');
+      case 'auth/too-many-requests':
+        return t('Too many attempts. Try again later.');
+      case 'auth/network-request-failed':
+        return t('Network error. Check your connection.');
+      default:
+        return t('Unable to sign in. Please double-check your details.');
+    }
+  };
 
   const handleSignIn = async () => {
     try {
       setError('');
-      await signIn(email.trim(), password);
+      await signIn(email.trim().toLowerCase(), password);
     } catch (err) {
-      setError('Unable to sign in. Please double-check your details.');
+      setError(getAuthErrorMessage(err));
       console.error(err);
     }
   };
@@ -42,36 +65,50 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
         end={{ x: 1, y: 1 }}
         style={styles.hero}
       >
-        <Text style={styles.badge}>AI Automation Suite</Text>
+        <Text style={styles.badge}>{t('AI Automation Suite')}</Text>
         <Text style={styles.heroTitle}>DOTT-MEDIA</Text>
-        <Text style={styles.heroSubtitle}>Command your AI operations cockpit.</Text>
+        <Text style={styles.heroSubtitle}>{t('Command your AI operations cockpit.')}</Text>
       </LinearGradient>
       <View style={styles.card}>
-        <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.subtitle}>Log in to orchestrate your AI-driven CRM.</Text>
+        <Text style={styles.title}>{t('Welcome back')}</Text>
+        <Text style={styles.subtitle}>{t('Log in to orchestrate your AI-driven CRM.')}</Text>
         <DMTextInput
-          label="Email"
+          label={t('Email')}
           value={email}
-          onChangeText={setEmail}
+          onChangeText={text => {
+            setEmail(text);
+            if (error) setError('');
+          }}
           autoCapitalize="none"
           keyboardType="email-address"
         />
         <DMTextInput
-          label="Password"
+          label={t('Password')}
           value={password}
-          onChangeText={setPassword}
-          secureTextEntry
+          onChangeText={text => {
+            setPassword(text);
+            if (error) setError('');
+          }}
+          secureTextEntry={!showPassword}
+          rightElement={
+            <TouchableOpacity
+              onPress={() => setShowPassword(prev => !prev)}
+              accessibilityLabel={showPassword ? t('Hide password') : t('Show password')}
+            >
+              <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.subtext} />
+            </TouchableOpacity>
+          }
         />
         {error ? <Text style={styles.error}>{error}</Text> : null}
-        <DMButton title="Sign In" onPress={handleSignIn} loading={state.loading} />
+        <DMButton title={t('Sign In')} onPress={handleSignIn} loading={state.loading} />
         <TouchableOpacity style={styles.link} onPress={() => navigation.navigate('PasswordReset')}>
-          <Text style={styles.linkLabel}>Forgot password?</Text>
+          <Text style={styles.linkLabel}>{t('Forgot password?')}</Text>
         </TouchableOpacity>
       </View>
       <View style={styles.footer}>
-        <Text style={styles.footerLabel}>New to Dott Media?</Text>
+        <Text style={styles.footerLabel}>{t('New to Dott Media?')}</Text>
         <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
-          <Text style={styles.linkLabel}>Create an account</Text>
+          <Text style={styles.linkLabel}>{t('Create an account')}</Text>
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>

@@ -16,6 +16,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '@constants/colors';
 import { useAssistant } from '@context/AssistantContext';
+import { useI18n } from '@context/I18nContext';
 
 const { height } = Dimensions.get('window');
 
@@ -27,6 +28,7 @@ export const ChatInterface: React.FC = () => {
         sendMessage,
         isTyping,
     } = useAssistant();
+    const { t } = useI18n();
     const [inputText, setInputText] = React.useState('');
     const slideAnim = useRef(new Animated.Value(height)).current;
     const scrollViewRef = useRef<ScrollView>(null);
@@ -77,7 +79,7 @@ export const ChatInterface: React.FC = () => {
                 <View style={styles.header}>
                     <View style={styles.headerTitleContainer}>
                         <Ionicons name="sparkles" size={20} color={colors.accent} />
-                        <Text style={styles.headerTitle}>Dotti Assistant</Text>
+                        <Text style={styles.headerTitle}>{t('Dotti Assistant')}</Text>
                     </View>
                     <TouchableOpacity onPress={() => toggleChat(false)}>
                         <Ionicons name="close" size={24} color={colors.subtext} />
@@ -100,8 +102,7 @@ export const ChatInterface: React.FC = () => {
                                 color={colors.border}
                             />
                             <Text style={styles.emptyStateText}>
-                                Hi! I'm Dotti. Ask me anything about your leads, performance, or
-                                navigation.
+                                {t("Hi! I'm Dotti. Ask me anything about your leads, performance, or navigation.")}
                             </Text>
                         </View>
                     )}
@@ -130,7 +131,7 @@ export const ChatInterface: React.FC = () => {
                     {isTyping && (
                         <View style={styles.typingIndicator}>
                             <ActivityIndicator size="small" color={colors.accent} />
-                            <Text style={styles.typingText}>Dotti is thinking...</Text>
+                            <Text style={styles.typingText}>{t('Dotti is thinking...')}</Text>
                         </View>
                     )}
                 </ScrollView>
@@ -142,7 +143,7 @@ export const ChatInterface: React.FC = () => {
                     <View style={styles.inputContainer}>
                         <TextInput
                             style={styles.input}
-                            placeholder="Ask Dotti..."
+                            placeholder={t('Ask Dotti...')}
                             placeholderTextColor={colors.subtext}
                             value={inputText}
                             onChangeText={setInputText}

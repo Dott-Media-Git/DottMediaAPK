@@ -3,15 +3,18 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-nat
 import { VictoryArea, VictoryChart, VictoryTheme } from 'victory-native';
 import { colors } from '@constants/colors';
 import { DMCard } from '@components/DMCard';
-import { WebLeadStats, fetchWebLeadStats, subscribeWebLeadStats } from '@services/analytics';
-
-const buildAreaSeries = (count: number) =>
-  Array.from({ length: 7 }).map((_, index) => ({
-    label: index + 1,
-    value: Math.max(1, Math.round(count / 7 + (Math.random() - 0.5) * 4)),
-  }));
+import { WebLeadStats, fetchWebLeadStats, subscribeWebLeadStats, resolveAnalyticsScopeId } from '@services/analytics';
+import { useI18n } from '@context/I18nContext';
+import { useAuth } from '@context/AuthContext';
 
 export const WebLeadsAnalyticsScreen: React.FC = () => {
+  const { t } = useI18n();
+  const { state } = useAuth();
+  const orgId = (state.user as any)?.orgId ?? state.crmData?.orgId;
+  const analyticsScopeId = useMemo(
+    () => resolveAnalyticsScopeId(state.user?.uid, orgId),
+    [state.user?.uid, orgId]
+  );
   const [stats, setStats] = useState<WebLeadStats | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -19,6 +22,7 @@ export const WebLeadsAnalyticsScreen: React.FC = () => {
     let mounted = true;
     const unsub =
       subscribeWebLeadStats(
+        analyticsScopeId,
         payload => {
           if (mounted) setStats(payload);
           if (mounted) setLoading(false);
@@ -28,9 +32,13 @@ export const WebLeadsAnalyticsScreen: React.FC = () => {
 
     if (!unsub) {
       const load = async () => {
+        if (!state.user) {
+          if (mounted) setStats(null);
+          return;
+        }
         setLoading(true);
         try {
-          const payload = await fetchWebLeadStats();
+          const payload = await fetchWebLeadStats(state.user.uid, analyticsScopeId);
           if (mounted) setStats(payload);
         } finally {
           if (mounted) setLoading(false);
@@ -43,23 +51,36 @@ export const WebLeadsAnalyticsScreen: React.FC = () => {
       mounted = false;
       unsub?.();
     };
-  }, []);
+  }, [analyticsScopeId, state.user]);
 
-  const series = useMemo(() => buildAreaSeries(stats?.messages ?? 20), [stats?.messages]);
+  const series = useMemo(
+    () =>
+      stats
+        ? [
+            {
+              label: t('Total'),
+              value: stats.messages
+            }
+          ]
+        : [],
+    [stats, t]
+  );
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <DMCard title="Web Widget Leads" subtitle="Traffic converting via Dotti widget">
+      <DMCard title={t('Web Widget Leads')} subtitle={t('Traffic converting via Dotti widget')}>
         <View style={styles.grid}>
-          <Stat label="Chat messages" value={stats?.messages} />
-          <Stat label="Leads captured" value={stats?.leads} />
-          <Stat label="Conversion rate" value={stats ? `${Math.round(stats.conversionRate * 100)}%` : undefined} />
+          <Stat label={t('Chat messages')} value={stats?.messages} />
+          <Stat label={t('Leads captured')} value={stats?.leads} />
+          <Stat label={t('Conversion rate')} value={stats ? `${Math.round(stats.conversionRate * 100)}%` : undefined} />
         </View>
       </DMCard>
 
-      <DMCard title="Daily widget volume">
+      <DMCard title={t('Widget volume')} subtitle={t('Total web widget messages')}>
         {loading ? (
           <ActivityIndicator color={colors.accent} />
+        ) : series.length === 0 ? (
+          <Text style={styles.empty}>{t('No web widget activity yet.')}</Text>
         ) : (
           <VictoryChart theme={VictoryTheme.material} domainPadding={{ x: 12, y: 8 }}>
             <VictoryArea
@@ -78,7 +99,7 @@ export const WebLeadsAnalyticsScreen: React.FC = () => {
         )}
       </DMCard>
 
-      <DMCard title="Activation snippet">
+      <DMCard title={t('Activation snippet')}>
         <Text style={styles.code}>{`<script src="https://api.dott-media.com/widget.js"></script>
 <script>
   DottiWidget.init({ api: '${process.env.EXPO_PUBLIC_API_URL ?? 'https://api.dott-media.com'}/widget/webhook' });
@@ -91,7 +112,7 @@ export const WebLeadsAnalyticsScreen: React.FC = () => {
 const Stat: React.FC<{ label: string; value?: number | string }> = ({ label, value }) => (
   <View style={styles.stat}>
     <Text style={styles.statLabel}>{label}</Text>
-    <Text style={styles.statValue}>{value ?? '—'}</Text>
+    <Text style={styles.statValue}>{value ?? '0'}</Text>
   </View>
 );
 
@@ -129,5 +150,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#050b1a',
     padding: 12,
     borderRadius: 12,
+  },
+  empty: {
+    color: colors.subtext,
+    fontStyle: 'italic',
   },
 });

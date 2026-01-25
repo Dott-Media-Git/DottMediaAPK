@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { config } from '../../../config';
+import { OPENAI_REPLY_TIMEOUT_MS } from '../../../utils/openaiTimeout';
 
 export type IntentLabel = 'LEAD_INQUIRY' | 'GENERAL' | 'SUPPORT' | 'BOOK_DEMO' | 'REFERRAL' | 'FOLLOW_UP';
 
@@ -17,7 +18,7 @@ const DEFAULT_CLASSIFICATION: IntentClassification = {
   keywords: [],
 };
 
-const openai = new OpenAI({ apiKey: config.openAI.apiKey });
+const openai = new OpenAI({ apiKey: config.openAI.apiKey, timeout: OPENAI_REPLY_TIMEOUT_MS });
 
 /**
  * Lightweight intent detector shared by inbound + engagement funnels.

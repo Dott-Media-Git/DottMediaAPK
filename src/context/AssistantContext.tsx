@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendChatQuery } from '@services/chatService';
 import { navigationRef } from '@navigation/navigationRef';
 import { useAuth } from './AuthContext';
+import { useI18n } from './I18nContext';
 
 type Message = {
   role: 'user' | 'assistant';
@@ -28,6 +29,7 @@ const AssistantContext = createContext<AssistantContextValue | undefined>(undefi
 
 export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { state: authState } = useAuth();
+  const { locale, t } = useI18n();
   const [enabled, setEnabled] = useState(true);
   const [hydrated, setHydrated] = useState(false);
   const [currentScreen, setCurrentScreen] = useState<string>();
@@ -94,10 +96,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         company: authState.crmData?.companyName,
         analytics: authState.crmData?.analytics,
         subscriptionStatus: authState.subscriptionStatus,
-        connectedChannels
+        connectedChannels,
+        locale
       };
 
-      const response = await sendChatQuery(text, context);
+      const response = await sendChatQuery(text, context, locale);
 
       let botText = '';
 
@@ -113,7 +116,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } catch (error) {
       const errorMsg: Message = {
         role: 'assistant',
-        content: "I'm sorry, I ran into an issue. Please try again.",
+        content: t("I'm sorry, I ran into an issue. Please try again."),
       };
       setMessages(prev => [...prev, errorMsg]);
     } finally {

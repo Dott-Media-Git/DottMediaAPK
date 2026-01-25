@@ -1,69 +1,48 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { VictoryBar, VictoryChart, VictoryTheme } from 'victory-native';
+import { VictoryAxis, VictoryBar, VictoryChart, VictoryTheme } from 'victory-native';
 import { DMCard } from '@components/DMCard';
-import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
+import { useI18n } from '@context/I18nContext';
 import {
   fetchAnalytics,
   DashboardAnalytics,
+  fetchOrgDashboardAnalytics,
   fetchOutboundStats,
   OutboundStats,
+  subscribeOrgDashboardAnalytics,
   subscribeOutboundStats,
-  subscribeAnalytics
+  subscribeAnalytics,
+  resolveAnalyticsScopeId
 } from '@services/analytics';
 
 type ChartMetric = 'leads' | 'engagement' | 'conversions' | 'feedbackScore';
+type MetricSnapshot = DashboardAnalytics['history'][number];
 
-const buildPlaceholderHistory = (base: {
-  leads: number;
-  engagement: number;
-  conversions: number;
-  feedbackScore: number;
-}): DashboardAnalytics['history'] => {
-  return Array.from({ length: 7 }).map((_, index) => {
-    const day = new Date();
-    day.setDate(day.getDate() - (6 - index));
-    const pad = (value: number) => Math.max(1, Math.round(value + (Math.random() - 0.5) * 5));
-    return {
-      date: day.toISOString().slice(0, 10),
-      leads: pad(base.leads),
-      engagement: Math.min(100, pad(base.engagement)),
-      conversions: Math.max(1, Math.round(base.conversions + (Math.random() - 0.5) * 2)),
-      feedbackScore: Number((base.feedbackScore + (Math.random() - 0.5) * 0.4).toFixed(1))
-    };
-  });
-};
+const createEmptyAnalytics = (seed?: Partial<DashboardAnalytics>): DashboardAnalytics => ({
+  leads: seed?.leads ?? 0,
+  engagement: seed?.engagement ?? 0,
+  conversions: seed?.conversions ?? 0,
+  feedbackScore: seed?.feedbackScore ?? 0,
+  jobBreakdown: seed?.jobBreakdown ?? {
+    active: 0,
+    queued: 0,
+    failed: 0
+  },
+  recentJobs: seed?.recentJobs ?? [],
+  history: seed?.history ?? []
+});
 
-const fallbackAnalytics = (): DashboardAnalytics => {
-  const base = {
-    leads: 12,
-    engagement: 45,
-    conversions: 4,
-    feedbackScore: 4.5
-  };
-  return {
-    ...base,
-    jobBreakdown: {
-      active: 1,
-      queued: 0,
-      failed: 0
-    },
-    recentJobs: [],
-    history: buildPlaceholderHistory(base)
-  };
-};
-
-const fallbackOutboundStats = (): OutboundStats => ({
+const emptyOutboundStats: OutboundStats = {
   prospectsContacted: 0,
   replies: 0,
   positiveReplies: 0,
   conversions: 0,
   demoBookings: 0,
   conversionRate: 0
-});
+};
 
 const formatDateLabel = (date: string) => {
   const parsed = new Date(date);
@@ -73,30 +52,27 @@ const formatDateLabel = (date: string) => {
   return date.slice(5);
 };
 
+const formatDayOfWeek = (date: string, locale?: string) => {
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return 'Day';
+  return parsed.toLocaleDateString(locale ?? undefined, { weekday: 'short' });
+};
+
 export const DashboardScreen: React.FC = () => {
   const { state } = useAuth();
-  const [analytics, setAnalytics] = useState<DashboardAnalytics>(() => {
-    if (state.crmData) {
-      const base = state.crmData.analytics;
-      return {
-        ...base,
-        jobBreakdown: { active: 1, queued: 0, failed: 0 },
-        recentJobs: [],
-        history: buildPlaceholderHistory(base)
-      };
-    }
-    return fallbackAnalytics();
-  });
+  const { t, locale } = useI18n();
+  const hasConnectedSocials = Boolean(state.crmData?.instagram || state.crmData?.facebook || state.crmData?.linkedin);
+  const orgId = (state.user as any)?.orgId ?? state.crmData?.orgId;
+  const analyticsScopeId = useMemo(
+    () => resolveAnalyticsScopeId(state.user?.uid, orgId),
+    [state.user?.uid, orgId]
+  );
+  const [analytics, setAnalytics] = useState<DashboardAnalytics>(() =>
+    createEmptyAnalytics(state.crmData?.analytics)
+  );
   const [loading, setLoading] = useState(false);
   const [chartMetric, setChartMetric] = useState<ChartMetric>('leads');
-  const [outboundStats, setOutboundStats] = useState<OutboundStats>(() => fallbackOutboundStats());
-
-  const heroStats = [
-    { label: 'Leads', value: analytics.leads },
-    { label: 'Engagement', value: `${analytics.engagement}%` },
-    { label: 'Conversions', value: analytics.conversions },
-    { label: 'Feedback', value: `${analytics.feedbackScore}/5` }
-  ];
+  const [outboundStats, setOutboundStats] = useState<OutboundStats>(() => emptyOutboundStats);
 
   useEffect(() => {
     let isMounted = true;
@@ -104,18 +80,39 @@ export const DashboardScreen: React.FC = () => {
     const loadAnalytics = async () => {
       if (!state.user) return;
       setLoading(true);
+      if (orgId) {
+        unsubscribe =
+          subscribeOrgDashboardAnalytics(
+            analyticsScopeId,
+            payload => {
+              if (!isMounted) return;
+              setAnalytics(createEmptyAnalytics(payload));
+              setLoading(false);
+            },
+            error => console.warn('Realtime org analytics failed', error)
+          ) ?? null;
+
+        if (!unsubscribe) {
+          try {
+            const response = await fetchOrgDashboardAnalytics(analyticsScopeId);
+            if (response && isMounted) {
+              setAnalytics(createEmptyAnalytics(response));
+            }
+          } catch (error) {
+            console.warn('Failed to refresh org analytics', error);
+          } finally {
+            if (isMounted) setLoading(false);
+          }
+        }
+        return;
+      }
+
       unsubscribe =
         subscribeAnalytics(
           state.user.uid,
           payload => {
             if (!isMounted) return;
-            setAnalytics({
-              ...payload,
-              history:
-                payload.history && payload.history.length > 0
-                  ? payload.history
-                  : buildPlaceholderHistory(payload)
-            });
+            setAnalytics(createEmptyAnalytics(payload));
             setLoading(false);
           },
           error => {
@@ -127,28 +124,9 @@ export const DashboardScreen: React.FC = () => {
         try {
           const response = await fetchAnalytics(state.user.uid);
           if (response && isMounted) {
-            setAnalytics({
-              ...response,
-              history:
-                response.history && response.history.length > 0
-                  ? response.history
-                  : buildPlaceholderHistory(response)
-            });
+            setAnalytics(createEmptyAnalytics(response));
           } else if (isMounted && state.crmData) {
-            const crmAnalytics = state.crmData.analytics;
-            setAnalytics(prev => {
-              const next = {
-                ...prev,
-                leads: crmAnalytics.leads,
-                engagement: crmAnalytics.engagement,
-                conversions: crmAnalytics.conversions,
-                feedbackScore: crmAnalytics.feedbackScore
-              };
-              return {
-                ...next,
-                history: buildPlaceholderHistory(next)
-              };
-            });
+            setAnalytics(createEmptyAnalytics(state.crmData.analytics));
           }
         } catch (error) {
           console.warn('Failed to refresh analytics', error);
@@ -162,124 +140,189 @@ export const DashboardScreen: React.FC = () => {
       isMounted = false;
       if (unsubscribe) unsubscribe();
     };
-  }, [state.user?.uid, state.crmData]);
+  }, [analyticsScopeId, orgId, state.user?.uid, state.crmData]);
 
   useEffect(() => {
     let mounted = true;
-    const outboundUnsub =
-      subscribeOutboundStats(
-        stats => mounted && setOutboundStats(stats),
-        error => console.warn('Realtime outbound stats failed', error)
-      ) ?? null;
+    let outboundUnsub: (() => void) | null = null;
 
-    if (!outboundUnsub) {
-      void fetchOutboundStats().then(stats => {
-        if (stats && mounted) setOutboundStats(stats);
-      });
+    if (!hasConnectedSocials) {
+      setOutboundStats(emptyOutboundStats);
+    } else {
+      outboundUnsub =
+        subscribeOutboundStats(
+          analyticsScopeId,
+          stats => mounted && setOutboundStats(stats),
+          error => console.warn('Realtime outbound stats failed', error)
+        ) ?? null;
+
+      if (!outboundUnsub) {
+        void fetchOutboundStats(state.user?.uid, analyticsScopeId).then(stats => {
+          if (stats && mounted) setOutboundStats(stats);
+        });
+      }
     }
 
     return () => {
       mounted = false;
       outboundUnsub?.();
     };
-  }, []);
+  }, [analyticsScopeId, hasConnectedSocials, state.user?.uid]);
 
   const historySeries = useMemo(
-    () =>
-      analytics.history && analytics.history.length > 0
-        ? analytics.history
-        : buildPlaceholderHistory(analytics),
+    () => analytics.history ?? [],
     [analytics]
   );
 
-  const sources = [
-    { label: 'Web', weight: 0.24, bias: 4 },
-    { label: 'Facebook', weight: 0.2, bias: 3 },
-    { label: 'Instagram', weight: 0.18, bias: 2 },
-    { label: 'WhatsApp', weight: 0.16, bias: 2 },
-    { label: 'Threads', weight: 0.12, bias: 1 },
-    { label: 'LinkedIn', weight: 0.1, bias: 1 }
-  ];
+  const latestHistoryPoint: MetricSnapshot = useMemo(() => {
+    if (historySeries.length > 0) {
+      return historySeries[historySeries.length - 1];
+    }
+    return {
+      date: new Date().toISOString().slice(0, 10),
+      leads: analytics.leads,
+      engagement: analytics.engagement,
+      conversions: analytics.conversions,
+      feedbackScore: analytics.feedbackScore
+    };
+  }, [analytics, historySeries]);
 
-  const sourceActivity = useMemo(() => {
-    const base =
-      chartMetric === 'feedbackScore'
-        ? analytics.feedbackScore * 10
-        : chartMetric === 'engagement'
-        ? analytics.engagement
-        : chartMetric === 'conversions'
-        ? analytics.conversions
-        : analytics.leads;
-    return sources.map(source => ({
-      source: source.label,
-      value: Math.max(1, Math.round(base * source.weight + source.bias))
-    }));
-  }, [analytics, chartMetric]);
+  const previousHistoryPoint = useMemo<MetricSnapshot | null>(
+    () => (historySeries.length > 1 ? historySeries[historySeries.length - 2] : null),
+    [historySeries]
+  );
+
+  const heroStats = [
+    { label: t('Leads'), value: latestHistoryPoint.leads },
+    { label: t('Engagement'), value: `${latestHistoryPoint.engagement}%` },
+    { label: t('Conversions'), value: latestHistoryPoint.conversions },
+    { label: t('Feedback'), value: `${latestHistoryPoint.feedbackScore}/5` }
+  ];
 
   const logItems =
     analytics.recentJobs && analytics.recentJobs.length > 0
       ? analytics.recentJobs.map(job => {
-          const label = job.scenarioId ? `Scenario ${job.scenarioId}` : `Job ${job.jobId}`;
-          return `${label} marked ${job.status}`;
+          const label = job.scenarioId
+            ? t('Scenario {{id}}', { id: job.scenarioId })
+            : t('Job {{id}}', { id: job.jobId });
+          return t('{{label}} marked {{status}}', { label, status: job.status });
         })
-      : [
-          'AI content calendar deployed',
-          'Instagram campaign synced',
-          'Lead nurture flow optimized',
-          'Weekly report sent to stakeholders'
-        ];
+      : [t('No recent activity yet')];
 
   const handleDrilldown = (metric: ChartMetric) => {
     const metricMap: Record<ChartMetric, string> = {
-      leads: `You're averaging ${analytics.leads} new leads per automation cycle. Activate or duplicate high-performing scenarios to scale.`,
-      engagement: `Engagement is at ${analytics.engagement}%. Test fresh creatives or prompts to push beyond current reach.`,
-      conversions: `Conversions are currently ${analytics.conversions}. Tighten your follow-up cadence or revise offers for better results.`,
-      feedbackScore: `Your feedback score is ${analytics.feedbackScore}/5. Keep replying quickly to maintain sentiment.`
+      leads: t(
+        "You're averaging {{value}} new leads per automation cycle. Activate or duplicate high-performing scenarios to scale.",
+        { value: latestHistoryPoint.leads }
+      ),
+      engagement: t(
+        'Engagement is at {{value}}%. Test fresh creatives or prompts to push beyond current reach.',
+        { value: latestHistoryPoint.engagement }
+      ),
+      conversions: t(
+        'Conversions are currently {{value}}. Tighten your follow-up cadence or revise offers for better results.',
+        { value: latestHistoryPoint.conversions }
+      ),
+      feedbackScore: t(
+        'Your feedback score is {{value}}/5. Keep replying quickly to maintain sentiment.',
+        { value: latestHistoryPoint.feedbackScore }
+      )
     };
-    Alert.alert('Metric details', metricMap[metric]);
+    Alert.alert(t('Metric details'), metricMap[metric]);
   };
 
-  const metricButtons = [
-    { key: 'leads', label: 'Leads', value: `${analytics.leads}` },
-    { key: 'engagement', label: 'Engagement', value: `${analytics.engagement}%` },
-    { key: 'conversions', label: 'Conversions', value: `${analytics.conversions}` }
-  ] as const;
+  const metricButtons = useMemo(
+    () => {
+      const computeHint = (metric: ChartMetric) => {
+        if (!previousHistoryPoint) return t('Live data');
+        const delta = latestHistoryPoint[metric] - previousHistoryPoint[metric];
+        if (Math.abs(delta) < 0.001) return t('No change vs prior day');
+        const formattedDelta = Number.isInteger(delta) ? delta : Number(delta.toFixed(1));
+        const suffix = metric === 'engagement' ? '%' : '';
+        const value = `${delta > 0 ? '+' : ''}${formattedDelta}${suffix}`;
+        return t('{{value}} vs prior day', { value });
+      };
+
+      return [
+        { key: 'leads', label: t('Leads'), value: `${latestHistoryPoint.leads}`, hint: computeHint('leads') },
+        {
+          key: 'engagement',
+          label: t('Engagement'),
+          value: `${latestHistoryPoint.engagement}%`,
+          hint: computeHint('engagement')
+        },
+        {
+          key: 'conversions',
+          label: t('Conversions'),
+          value: `${latestHistoryPoint.conversions}`,
+          hint: computeHint('conversions')
+        }
+      ] as const;
+    },
+    [latestHistoryPoint, previousHistoryPoint, t]
+  );
 
   const outboundMetrics = useMemo(
     () => [
       {
-        label: 'Prospects contacted',
+        label: t('Prospects contacted'),
         value: outboundStats.prospectsContacted.toString()
       },
       {
-        label: 'Replies',
+        label: t('Replies'),
         value: outboundStats.replies.toString(),
-        hint: `${outboundStats.positiveReplies} positive`
+        hint: t('{{count}} positive', { count: outboundStats.positiveReplies })
       },
       {
-        label: 'Conversions',
+        label: t('Conversions'),
         value: outboundStats.conversions.toString()
       },
       {
-        label: 'Demo bookings',
+        label: t('Demo bookings'),
         value: outboundStats.demoBookings.toString()
       },
       {
-        label: 'Conversion rate',
+        label: t('Conversion rate'),
         value: `${Math.round(outboundStats.conversionRate * 100)}%`,
-        hint: 'of contacted prospects'
+        hint: t('of contacted prospects')
       }
     ],
-    [outboundStats]
+    [outboundStats, t]
   );
+
+  const heatmapSeries = useMemo(
+    () =>
+      [...historySeries]
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        .slice(-7)
+        .map((day, index, arr) => ({
+          label: index === arr.length - 1 ? t('Today') : formatDayOfWeek(day.date, locale),
+          value:
+            chartMetric === 'leads'
+              ? day.leads
+              : chartMetric === 'engagement'
+              ? day.engagement
+              : chartMetric === 'conversions'
+              ? day.conversions
+              : day.feedbackScore
+        })),
+    [chartMetric, historySeries]
+  );
+
+  const heatmapTicks = useMemo(() => {
+    const maxValue = heatmapSeries.reduce((max, item) => Math.max(max, item.value), 0);
+    const top = Math.max(100, Math.ceil(maxValue / 100) * 100);
+    const steps = Math.max(1, top / 100);
+    return Array.from({ length: steps + 1 }, (_, i) => i * 100);
+  }, [heatmapSeries]);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.hero}>
-        <Text style={styles.heroEyebrow}>Live cockpit</Text>
-        <Text style={styles.heroTitle}>Analytics overview</Text>
+        <Text style={styles.heroEyebrow}>{t('Live cockpit')}</Text>
+        <Text style={styles.heroTitle}>{t('Analytics overview')}</Text>
         <Text style={styles.heroSubtitle}>
-          High-impact gradients and typography inspired by dott-media.com, now wrapped around realtime CRM signals.
+          {t('High-impact gradients and typography inspired by dott-media.com, now wrapped around realtime CRM signals.')}
         </Text>
         <View style={styles.heroStatRow}>
           {heroStats.map(stat => (
@@ -290,7 +333,10 @@ export const DashboardScreen: React.FC = () => {
           ))}
         </View>
       </LinearGradient>
-        <DMCard title="Outbound Pipeline" subtitle="Prospecting + booking overview">
+      <DMCard title={t('Outbound Pipeline')} subtitle={t('Prospecting + booking overview')}>
+        {!hasConnectedSocials ? (
+          <Text style={styles.emptyState}>{t('Connect a social account to unlock outbound metrics.')}</Text>
+        ) : (
           <View style={styles.outboundGrid}>
             {outboundMetrics.map((metric, index) => (
               <View
@@ -303,26 +349,27 @@ export const DashboardScreen: React.FC = () => {
               </View>
             ))}
           </View>
-        </DMCard>
-        <DMCard title="Daily Reviews" subtitle={loading ? 'Refreshing data...' : 'Pulse across the last 24h'}>
+        )}
+      </DMCard>
+      <DMCard title={t('Daily Reviews')} subtitle={loading ? t('Refreshing data...') : t('Pulse across the last 24h')}>
         <View style={styles.kpiRow}>
           <View style={styles.kpiItem}>
-            <Text style={styles.kpiLabel}>Leads</Text>
-            <Text style={styles.kpiValue}>{analytics.leads}</Text>
+            <Text style={styles.kpiLabel}>{t('Leads')}</Text>
+            <Text style={styles.kpiValue}>{latestHistoryPoint.leads}</Text>
           </View>
           <View style={styles.kpiItem}>
-            <Text style={styles.kpiLabel}>Engagement</Text>
-            <Text style={styles.kpiValue}>{analytics.engagement}%</Text>
+            <Text style={styles.kpiLabel}>{t('Engagement')}</Text>
+            <Text style={styles.kpiValue}>{latestHistoryPoint.engagement}%</Text>
           </View>
         </View>
         <View style={styles.kpiRow}>
           <View style={styles.kpiItem}>
-            <Text style={styles.kpiLabel}>Conversions</Text>
-            <Text style={styles.kpiValue}>{analytics.conversions}</Text>
+            <Text style={styles.kpiLabel}>{t('Conversions')}</Text>
+            <Text style={styles.kpiValue}>{latestHistoryPoint.conversions}</Text>
           </View>
           <View style={styles.kpiItem}>
-            <Text style={styles.kpiLabel}>Feedback</Text>
-            <Text style={styles.kpiValue}>{analytics.feedbackScore}/5</Text>
+            <Text style={styles.kpiLabel}>{t('Feedback')}</Text>
+            <Text style={styles.kpiValue}>{latestHistoryPoint.feedbackScore}/5</Text>
           </View>
         </View>
         <View style={styles.metricSummaryRow}>
@@ -333,13 +380,22 @@ export const DashboardScreen: React.FC = () => {
               onPress={() => handleDrilldown(button.key)}
             >
               <Text style={styles.metricsubtitle}>{button.label}</Text>
-              <Text style={styles.metricSummaryValue}>{button.label.split('•')[1]?.trim() ?? ''}</Text>
-              <Text style={styles.metricSummaryHint}>Tap for insights</Text>
+              <Text style={styles.metricSummaryValue}>{button.value}</Text>
+              <Text style={styles.metricSummaryHint}>{button.hint ?? t('Tap for insights')}</Text>
             </TouchableOpacity>
           ))}
         </View>
       </DMCard>
-      <DMCard title="Activity Heatmap" subtitle={`Top channels by ${chartMetric === 'feedbackScore' ? 'sentiment' : chartMetric}`}>
+      <DMCard
+        title={t('Activity Heatmap')}
+        subtitle={t('Last {{count}} days of {{metric}}', {
+          count: Math.min(heatmapSeries.length, 7),
+          metric:
+            chartMetric === 'feedbackScore'
+              ? t('feedback')
+              : t(chartMetric.charAt(0).toUpperCase() + chartMetric.slice(1))
+        })}
+      >
         <View style={styles.chartMetricRow}>
           {(['leads', 'engagement', 'conversions', 'feedbackScore'] as const).map(metric => (
             <TouchableOpacity
@@ -357,23 +413,40 @@ export const DashboardScreen: React.FC = () => {
                 ]}
               >
                 {metric === 'feedbackScore'
-                  ? 'Feedback'
-                  : metric.charAt(0).toUpperCase() + metric.slice(1)}
+                  ? t('Feedback')
+                  : t(metric.charAt(0).toUpperCase() + metric.slice(1))}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
         <VictoryChart theme={VictoryTheme.material} domainPadding={{ x: 20, y: 12 }}>
+          <VictoryAxis
+            style={{
+              axis: { stroke: colors.border },
+              tickLabels: { fill: colors.subtext },
+              grid: { stroke: 'transparent' }
+            }}
+          />
+          <VictoryAxis
+            dependentAxis
+            label={t('People')}
+            tickValues={heatmapTicks}
+            style={{
+              axisLabel: { padding: 32, fill: colors.subtext },
+              tickLabels: { fill: colors.subtext },
+              grid: { stroke: 'transparent' }
+            }}
+          />
           <VictoryBar
             style={{ data: { fill: colors.accent } }}
-            data={sourceActivity}
-            x="source"
+            data={heatmapSeries}
+            x="label"
             y="value"
             barWidth={24}
           />
         </VictoryChart>
       </DMCard>
-      <DMCard title="Automation Log" subtitle="Recent events across your CRM scenarios">
+      <DMCard title={t('Automation Log')} subtitle={t('Recent events across your CRM scenarios')}>
         {logItems.map(item => (
           <Text key={item} style={styles.logItem}>
             {item}
@@ -565,6 +638,11 @@ const styles = StyleSheet.create({
     color: colors.subtext,
     fontSize: 12,
     marginTop: 4
+  },
+  emptyState: {
+    color: colors.subtext,
+    marginTop: 8,
+    lineHeight: 18
   },
   logItem: {
     color: colors.subtext,

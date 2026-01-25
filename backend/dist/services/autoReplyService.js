@@ -2,10 +2,12 @@ import axios from 'axios';
 import OpenAI from 'openai';
 import { config } from '../config.js';
 import { firestore } from '../db/firestore.js';
+import { pickFallbackReply } from './fallbackReplyLibrary.js';
+import { OPENAI_REPLY_TIMEOUT_MS } from '../utils/openaiTimeout.js';
 const GRAPH_VERSION = 'v19.0';
 const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
 const replyPromptCache = new Map();
-const openai = new OpenAI({ apiKey: config.openAI.apiKey });
+const openai = new OpenAI({ apiKey: config.openAI.apiKey, timeout: OPENAI_REPLY_TIMEOUT_MS });
 const buildGraphUrl = (path) => `https://graph.facebook.com/${GRAPH_VERSION}/${path}`;
 const formatAxiosError = (error, label) => {
     const err = error;
@@ -33,10 +35,11 @@ const getAutoReplyPromptOverride = async (userId) => {
         return null;
     }
 };
-export async function generateReply(message, platform, userId) {
+export async function generateReply(message, platform, userId, kind = 'message') {
     const baseSystem = `You are Dotti, the Dott Media AI assistant. Reply briefly (1-2 sentences), friendly, and guide them to buy or book the Dott Media AI Sales Agent. Always include a clear CTA like 'Grab the AI Sales Agent' or 'Book a demo'. Platform: ${platform}.`;
     const override = await getAutoReplyPromptOverride(userId);
     const system = override ? `${baseSystem}\nAdditional guidance: ${override}` : baseSystem;
+    const fallback = pickFallbackReply({ channel: platform, kind });
     try {
         const completion = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
@@ -47,12 +50,12 @@ export async function generateReply(message, platform, userId) {
                 { role: 'user', content: message.slice(0, 500) },
             ],
         });
-        return completion.choices[0]?.message?.content?.trim() || 'Thanks for reaching out! Grab the Dott Media AI Sales Agent or book a demo and we will guide you in minutes.';
+        return completion.choices[0]?.message?.content?.trim() || fallback;
     }
     catch (err) {
         console.error('OpenAI generateReply failed', { error: err.message, platform });
         // Return a safe, short fallback so webhook flow continues even if the AI is unavailable
-        return 'Thanks for reaching out! Grab the Dott Media AI Sales Agent or book a demo and we will guide you in minutes.';
+        return fallback;
     }
 }
 export async function replyToInstagramComment(commentId, message, accessToken) {

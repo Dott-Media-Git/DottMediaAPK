@@ -30,7 +30,13 @@ export class LinkedInService {
         profile: { name: event.sender.name },
         timestamp,
       });
-      await this.messenger.send('linkedin', event.sender.urn, response.reply);
+      try {
+        await this.messenger.send('linkedin', event.sender.urn, response.reply);
+        await this.conversations.updateReplyStatus(response.messageDocId, 'sent');
+      } catch (error) {
+        await this.conversations.updateReplyStatus(response.messageDocId, 'failed', (error as Error).message);
+        throw error;
+      }
       processed += 1;
     }
 

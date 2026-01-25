@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore';
 import { config } from '../../config';
 import { ReplyClassification } from '../brain/nlu/replyClassifier';
 import { NotificationService, LeadDescriptor } from './notificationService';

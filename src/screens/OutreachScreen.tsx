@@ -5,11 +5,13 @@ import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { getIdToken } from '@services/firebase';
 import { env } from '@services/env';
+import { useI18n } from '@context/I18nContext';
 
 const API_BASE = env.apiUrl?.replace(/\/$/, '') ?? '';
 
 export const OutreachScreen: React.FC = () => {
     const { state } = useAuth();
+    const { t } = useI18n();
     const [stats, setStats] = useState({ sent: 0, replies: 0, conversions: 0, queue: 0 });
     const [logs, setLogs] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
@@ -49,10 +51,13 @@ export const OutreachScreen: React.FC = () => {
                 headers: { Authorization: `Bearer ${token}` }
             });
             const result = await res.json();
-            Alert.alert('Outreach Complete', `Sent: ${result.messagesSent}, Errors: ${result.errors.length}`);
+            Alert.alert(
+                t('Outreach Complete'),
+                t('Sent: {{sent}}, Errors: {{errors}}', { sent: result.messagesSent, errors: result.errors.length })
+            );
             fetchData();
         } catch (error) {
-            Alert.alert('Error', 'Failed to run outreach');
+            Alert.alert(t('Error'), t('Failed to run outreach'));
         } finally {
             setRunning(false);
         }
@@ -65,39 +70,39 @@ export const OutreachScreen: React.FC = () => {
             refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchData} />}
         >
             <View style={styles.header}>
-                <Text style={styles.title}>Outreach Manager</Text>
-                <Text style={styles.subtitle}>Automated prospecting & messaging</Text>
+                <Text style={styles.title}>{t('Outreach Manager')}</Text>
+                <Text style={styles.subtitle}>{t('Automated prospecting & messaging')}</Text>
             </View>
 
             <View style={styles.statsRow}>
                 <View style={styles.statCard}>
                     <Text style={styles.statValue}>{stats.sent}</Text>
-                    <Text style={styles.statLabel}>Sent</Text>
+                    <Text style={styles.statLabel}>{t('Sent')}</Text>
                 </View>
                 <View style={styles.statCard}>
                     <Text style={styles.statValue}>{stats.replies}</Text>
-                    <Text style={styles.statLabel}>Replies</Text>
+                    <Text style={styles.statLabel}>{t('Replies')}</Text>
                 </View>
                 <View style={styles.statCard}>
                     <Text style={styles.statValue}>{stats.conversions}</Text>
-                    <Text style={styles.statLabel}>Leads</Text>
+                    <Text style={styles.statLabel}>{t('Leads')}</Text>
                 </View>
             </View>
 
             <View style={styles.card}>
-                <Text style={styles.cardTitle}>Actions</Text>
+                <Text style={styles.cardTitle}>{t('Actions')}</Text>
                 <Text style={styles.cardText}>
-                    {stats.queue} prospects in queue. Ready to run daily batch?
+                    {t('{{count}} prospects in queue. Ready to run daily batch?', { count: stats.queue })}
                 </Text>
                 <DMButton
-                    title={running ? 'Running Agent...' : 'Run Outreach Now'}
+                    title={running ? t('Running Agent...') : t('Run Outreach Now')}
                     onPress={runOutreach}
                     disabled={running}
                 />
             </View>
 
             <View style={styles.card}>
-                <Text style={styles.cardTitle}>Recent Activity</Text>
+                <Text style={styles.cardTitle}>{t('Recent Activity')}</Text>
                 {logs.map((log, index) => (
                     <View key={index} style={styles.logItem}>
                         <View style={[styles.dot, { backgroundColor: log.type === 'sent' ? colors.accent : colors.success }]} />
@@ -107,7 +112,7 @@ export const OutreachScreen: React.FC = () => {
                         </View>
                     </View>
                 ))}
-                {logs.length === 0 && <Text style={styles.cardText}>No recent activity.</Text>}
+                {logs.length === 0 && <Text style={styles.cardText}>{t('No recent activity.')}</Text>}
             </View>
         </ScrollView>
     );

@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Social Integration Checklist — Dott Media</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 40px; color: #111 }
+    h1 { font-size: 24px }
+    h2 { font-size: 18px; margin-top: 20px }
+    ul { margin-left: 18px }
+    .note { color: #666; font-size: 12px }
+    @media print { body { padding: 20mm } }
+  </style>
+</head>
+<body>
+  <h1>Social Integration Checklist — Dott Media</h1>
+  <p class="note">This file can be printed to PDF via your browser's Print &rarr; Save as PDF.</p>
+
+  <h2>Common requirements</h2>
+  <ul>
+    <li>Active Dott Media user account with permission to add integrations.</li>
+    <li>Admin or appropriate role on the social account.</li>
+    <li>Developer app / project created for the platform when required.</li>
+    <li>OAuth redirect URI / callback URL configured to point to the Dott Media callback.</li>
+    <li>Required scopes/permissions granted during OAuth or token creation.</li>
+    <li>Tokens/credentials stored (access/refresh tokens, secrets, IDs).</li>
+    <li>Webhook callback & verify token configured when needed.</li>
+    <li>Two-factor auth recommended/required for some platforms.</li>
+  </ul>
+
+  <h2>Instagram</h2>
+  <p><strong>Prerequisites:</strong> Business/Creator account; linked to a Facebook Page; admin in Business Manager.</p>
+  <p><strong>Permissions:</strong> instagram_basic, pages_show_list, instagram_content_publish, pages_read_engagement, instagram_manage_comments, instagram_manage_messages, instagram_manage_insights, pages_manage_metadata.</p>
+
+  <h2>Facebook</h2>
+  <p><strong>Prerequisites:</strong> Facebook Page; admin in Business Manager; 2FA recommended.</p>
+  <p><strong>Permissions:</strong> pages_show_list, pages_read_engagement, pages_manage_posts, pages_manage_engagement, pages_manage_metadata, pages_messaging.</p>
+
+  <h2>WhatsApp</h2>
+  <p>Meta Business Manager with verified business; WABA and verified phone number; webhook configured; permissions: whatsapp_business_messaging, whatsapp_business_management.</p>
+
+  <h2>LinkedIn</h2>
+  <p>Company Page; Super Admin or Content Admin; LinkedIn app with OAuth and Marketing API access.</p>
+
+  <h2>TikTok</h2>
+  <p>Creator/Business account; Developer app; scopes: user.info.basic, video.upload, video.publish.</p>
+
+  <h2>X (Twitter)</h2>
+  <p>Developer Project + App; OAuth 1.0a access token + secret.</p>
+
+  <h2>Threads</h2>
+  <p>Uses Instagram Business account; same prerequisites and permissions as Instagram.</p>
+
+  <h2>YouTube</h2>
+  <p>Google Cloud Project with YouTube Data API; OAuth client; scope https://www.googleapis.com/auth/youtube.upload.</p>
+
+  <h2>Verification checklist</h2>
+  <ul>
+    <li>Integration shows Connected in Integrations screen.</li>
+    <li>Test post/upload or message succeeds.</li>
+    <li>Webhooks/inbound messages received when applicable.</li>
+    <li>Analytics/engagement metrics appear where expected.</li>
+  </ul>
+
+</body>
+</html>

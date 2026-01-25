@@ -27,6 +27,8 @@ import engagementWebhookRoutes from './routes/engagementWebhookRoutes';
 import webWidgetRoutes from './routes/webWidgetRoutes';
 import adminRoutes from './routes/adminRoutes';
 import contentRoutes from './routes/contentRoutes';
+import footballTrendRoutes from './routes/footballTrendRoutes';
+import trendRoutes from './routes/trendRoutes';
 import socialRoutes from './routes/socialRoutes';
 import metaWebhookRoutes from './routes/metaWebhookRoutes';
 import authRoutes from './routes/authRoutes';
@@ -68,6 +70,7 @@ if (config.security.allowMockAuth) {
 
 const app = express();
 const startedAt = new Date().toISOString();
+const footballTrendsEnabled = process.env.FOOTBALL_TRENDS_ENABLED === 'true';
 
 app.use('/stripe/webhook', express.raw({ type: 'application/json' }), stripeRoutes);
 
@@ -143,6 +146,12 @@ app.use('/api', automationRoutes);
 app.use('/api', assistantRoutes);
 app.use('/api', analyticsRoutes);
 app.use('/api', contentRoutes);
+app.use('/api', trendRoutes);
+if (footballTrendsEnabled) {
+  app.use('/api', footballTrendRoutes);
+} else {
+  console.info('[football-trends] Routes disabled (set FOOTBALL_TRENDS_ENABLED=true).');
+}
 app.use('/api', socialRoutes);
 app.use('/api', authRoutes);
 app.use('/', youtubeIntegrationRoutes);

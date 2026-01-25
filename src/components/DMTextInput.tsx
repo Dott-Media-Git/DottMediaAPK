@@ -6,9 +6,17 @@ type DMTextInputProps = TextInputProps & {
   label?: string;
   helperText?: string;
   error?: string;
+  rightElement?: React.ReactNode;
 };
 
-export const DMTextInput: React.FC<DMTextInputProps> = ({ label, helperText, error, style, ...rest }) => {
+export const DMTextInput: React.FC<DMTextInputProps> = ({
+  label,
+  helperText,
+  error,
+  rightElement,
+  style,
+  ...rest
+}) => {
   const [focused, setFocused] = useState(false);
   return (
     <View style={styles.container}>
@@ -17,16 +25,18 @@ export const DMTextInput: React.FC<DMTextInputProps> = ({ label, helperText, err
         style={[
           styles.inputWrapper,
           focused && styles.inputWrapperFocused,
-          error && styles.inputWrapperError
+          error && styles.inputWrapperError,
+          rightElement && styles.inputWrapperWithAdornment
         ]}
       >
         <TextInput
           placeholderTextColor={colors.subtext}
-          style={[styles.input, style]}
+          style={[styles.input, rightElement && styles.inputWithAdornment, style]}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           {...rest}
         />
+        {rightElement ? <View style={styles.rightElement}>{rightElement}</View> : null}
       </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {!error && helperText ? <Text style={styles.helper}>{helperText}</Text> : null}
@@ -49,6 +59,10 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.cardOverlay
   },
+  inputWrapperWithAdornment: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
   inputWrapperFocused: {
     borderColor: colors.accent,
     shadowColor: colors.accent,
@@ -65,6 +79,13 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 16,
     fontSize: 16
+  },
+  inputWithAdornment: {
+    flex: 1
+  },
+  rightElement: {
+    paddingRight: 12,
+    paddingLeft: 4
   },
   helper: {
     color: colors.subtext,

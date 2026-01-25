@@ -1,6 +1,6 @@
 import { v4 as uuid } from 'uuid';
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore';
 import { ConversationMessage, ConversationRecord, Platform } from '../types/bot';
 import {
   classifyIntent,
@@ -121,7 +121,7 @@ export class ConversationService {
       updated_at: conversation.updated_at,
     });
 
-    await messagesCollection.add({
+    const messageRef = await messagesCollection.add({
       messageId: payload.messageId,
       platform: payload.platform,
       intent: intentCategory,
@@ -132,6 +132,7 @@ export class ConversationService {
       lead_score: leadScoreResult.score,
       lead_tier: leadScoreResult.tier,
       created_at: admin.firestore.FieldValue.serverTimestamp(),
+      replyStatus: 'pending',
     });
 
     await this.stats.recordSession({
@@ -165,6 +166,23 @@ export class ConversationService {
       intentCategory,
       sentimentScore,
       conversation,
+      messageDocId: messageRef.id,
     };
+  }
+
+  async updateReplyStatus(messageDocId: string | undefined, status: 'sent' | 'failed', error?: string) {
+    if (!messageDocId) return;
+    const update: Record<string, unknown> = {
+      replyStatus: status,
+      replyAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (error) {
+      update.replyError = error;
+    }
+    try {
+      await messagesCollection.doc(messageDocId).update(update);
+    } catch (err) {
+      console.warn('Failed to update reply status', (err as Error).message);
+    }
   }
 }

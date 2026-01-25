@@ -1,12 +1,13 @@
 import OpenAI from 'openai';
 import { config } from '../../../config.js';
+import { OPENAI_REPLY_TIMEOUT_MS } from '../../../utils/openaiTimeout.js';
 const DEFAULT_CLASSIFICATION = {
     intent: 'GENERAL',
     sentiment: 0,
     confidence: 0.4,
     keywords: [],
 };
-const openai = new OpenAI({ apiKey: config.openAI.apiKey });
+const openai = new OpenAI({ apiKey: config.openAI.apiKey, timeout: OPENAI_REPLY_TIMEOUT_MS });
 /**
  * Lightweight intent detector shared by inbound + engagement funnels.
  */

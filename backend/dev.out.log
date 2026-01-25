@@ -1,0 +1,51 @@
+
+> dott-media-backend@1.0.0 dev
+> tsx watch src/index.ts
+
+Loading config. ALLOW_MOCK_AUTH: false
+Follow-up job scheduled (0 15 * * *).
+[autopost] fallback image directory enabled (C:\Users\joseph marvin\Downloads\FallBack-Images).
+Dott Media backend running on :4000
+[autopost] job scheduled (0 */4 * * *).
+[autopost] poll interval set (10m).
+Outbound prospect job scheduled (0 9 * * *) using auto targeting.
+[autopost] runDueJobs complete (startup) { processed: 0 }
+::1 - - [01/Jan/2026:11:22:40 +0000] "GET /robots.txt HTTP/1.1" 404 41 "-" "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+::1 - - [01/Jan/2026:11:22:40 +0000] "GET /robots.txt HTTP/1.1" 404 41 "-" "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+::1 - - [01/Jan/2026:11:22:40 +0000] "GET /robots.txt HTTP/1.1" 404 41 "-" "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+::1 - - [01/Jan/2026:11:22:52 +0000] "GET /public/fallback-images/Dynamic%20Robot%20with%20Angular%20Lines.png?t=1767266555018 HTTP/1.1" 200 3673994 "-" "facebookplatform/1.0 (+http://developers.facebook.com)"
+::1 - - [01/Jan/2026:11:27:21 +0000] "HEAD /public/fallback-images/Dynamic%20Robot%20with%20Angular%20Lines.png HTTP/1.1" 200 3673994 "-" "facebookexternalhit/1.1"
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+2:42:59 PM [tsx] change in ./src\services\autoPostService.ts Restarting...
+cLoading config. ALLOW_MOCK_AUTH: false
+Follow-up job scheduled (0 15 * * *).
+[autopost] fallback image directory enabled (C:\Users\joseph marvin\Downloads\FallBack-Images).
+Dott Media backend running on :4000
+[autopost] job scheduled (0 */4 * * *).
+[autopost] poll interval set (10m).
+Outbound prospect job scheduled (0 9 * * *) using auto targeting.
+[autopost] runDueJobs complete (startup) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+Running follow-up job...
+Follow-up job finished { processed: 0, sent: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (cron) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+[autopost] runDueJobs complete (poll) { processed: 0 }
+6:01:25 PM [tsx] unlink in ./src\routes\publicMediaRoutes.ts Restarting...
+c

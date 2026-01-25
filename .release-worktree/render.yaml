@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: dottmedia-backend
+    env: node
+    region: oregon # or frankfurt
+    plan: free
+    buildCommand: cd backend && npm install && npm run build
+    startCommand: cd backend && node dist/index.js
+    envVars:
+      - key: NODE_VERSION
+        value: "18"
+      - key: META_VERIFY_TOKEN
+        value: your_meta_verify_token
+      - key: INSTAGRAM_ACCESS_TOKEN
+        value: your_instagram_token
+      - key: FACEBOOK_PAGE_TOKEN
+        value: your_facebook_token
+      - key: FACEBOOK_PAGE_ID
+        value: your_page_id
+      - key: FIREBASE_SERVICE_ACCOUNT
+        value: your_service_account_json_stringified
+      - key: OPENAI_API_KEY
+        value: your_openai_api_key
+      - key: AUTOPOST_CRON
+        value: "0 */2 * * *"
+      - key: AUTOPOST_INTERVAL_MINUTES
+        value: "120"
+      - key: AUTOPOST_REELS_INTERVAL_MINUTES
+        value: "240"
+      - key: AUTOPOST_YOUTUBE_SHORTS
+        value: "true"
+      - key: BASE_URL
+        value: "https://dottmediaapk.onrender.com"
+      - key: AUTOPOST_FALLBACK_DIR
+        value: "./public/fallback-images"
+      - key: AUTOPOST_FALLBACK_VIDEO_DIR
+        value: "./public/fallback-videos"
+      - key: AUTOPOST_REQUIRE_AI_IMAGES
+        value: "false"
+      - key: ANALYTICS_ORG_ID
+        value: "e3UXyD35FtaEtm0HMmQ4"
+      - key: ANALYTICS_USER_ID
+        value: ""
+      - key: EAS_SKIP_AUTO_FINGERPRINT
+        value: "1"
+      - key: EXPO_NO_LEGACY_YOGA
+        value: "0"

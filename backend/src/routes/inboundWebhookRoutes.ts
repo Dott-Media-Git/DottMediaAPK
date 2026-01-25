@@ -6,7 +6,15 @@ const inboundHandler = new InboundHandler();
 
 router.post('/webhook/:channel', async (req, res, next) => {
   try {
-    const payload = normalizeInbound(req.params.channel?.toLowerCase() ?? '', req.body);
+    const ownerId = normalizeOwnerId(
+      req.header('x-owner-id'),
+      req.header('x-workspace-id'),
+      req.header('x-org-id'),
+      req.query.ownerId,
+      req.query.workspaceId,
+      req.query.orgId,
+    );
+    const payload = normalizeInbound(req.params.channel?.toLowerCase() ?? '', req.body, ownerId);
     if (!payload) {
       return res.status(400).json({ message: 'Unsupported channel or malformed payload' });
     }
@@ -19,7 +27,8 @@ router.post('/webhook/:channel', async (req, res, next) => {
 
 export default router;
 
-function normalizeInbound(channel: string, body: any): InboundPayload | null {
+function normalizeInbound(channel: string, body: any, ownerIdOverride?: string): InboundPayload | null {
+  const ownerId = normalizeOwnerId(ownerIdOverride, body?.ownerId, body?.workspaceId, body?.orgId);
   switch (channel) {
     case 'whatsapp': {
       const message = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -28,6 +37,7 @@ function normalizeInbound(channel: string, body: any): InboundPayload | null {
       return {
         channel: 'whatsapp',
         userId: message.from,
+        ownerId,
         text: message.text.body,
         name: contact?.profile?.name,
         metadata: { messageId: message.id },
@@ -40,6 +50,7 @@ function normalizeInbound(channel: string, body: any): InboundPayload | null {
       return {
         channel: channel as 'instagram' | 'facebook',
         userId: body.senderId ?? body.user_id ?? body.from ?? 'unknown',
+        ownerId,
         text: body.text ?? body.message,
         name: body.username ?? body.name,
         metadata: body,
@@ -50,6 +61,7 @@ function normalizeInbound(channel: string, body: any): InboundPayload | null {
       return {
         channel: 'linkedin',
         userId: body.profileUrn ?? body.userId ?? body.profileUrl ?? 'unknown',
+        ownerId,
         text: body.text ?? body.message,
         name: body.name,
         profileUrl: body.profileUrl,
@@ -61,6 +73,7 @@ function normalizeInbound(channel: string, body: any): InboundPayload | null {
       return {
         channel: 'web',
         userId: body.sessionId ?? `web-${Date.now()}`,
+        ownerId,
         text: body.text,
         name: body.name,
         email: body.email,
@@ -70,4 +83,21 @@ function normalizeInbound(channel: string, body: any): InboundPayload | null {
     default:
       return null;
   }
+}
+
+function normalizeOwnerId(...candidates: Array<unknown>): string | undefined {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) return trimmed;
+    }
+    if (Array.isArray(candidate) && candidate.length > 0) {
+      const value = candidate[0];
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed) return trimmed;
+      }
+    }
+  }
+  return undefined;
 }

@@ -1,5 +1,5 @@
 import createHttpError from 'http-errors';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore';
 import { OrgRequest } from './orgAuth';
 
 const usageCollection = firestore.collection('usageDaily');

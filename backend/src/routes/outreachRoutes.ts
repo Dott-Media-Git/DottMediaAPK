@@ -9,8 +9,5 @@ router.post('/outreach/send', controller.send);
 router.get('/outreach/stats', controller.stats);
 router.post('/outreach/run', controller.run);
 router.get('/outreach/logs', controller.logs);
-router.get('/outreach/stats', controller.stats);
-router.post('/outreach/run', controller.run);
-router.get('/outreach/logs', controller.logs);
 
 export default router;

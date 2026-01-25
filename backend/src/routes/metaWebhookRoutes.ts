@@ -20,6 +20,44 @@ const igBusinessId = process.env.INSTAGRAM_BUSINESS_ID;
 const pageId = process.env.FACEBOOK_PAGE_ID;
 const logFile = path.join(process.cwd(), 'meta-webhook.log');
 
+type SocialAccount = {
+  accessToken?: string;
+  accountId?: string;
+  pageId?: string;
+};
+
+type AccountContext = {
+  userId?: string;
+  accessToken?: string;
+  accountId?: string;
+  pageId?: string;
+};
+
+const resolvePlatformContext = async (platform: 'instagram' | 'facebook', entryId?: string): Promise<AccountContext | null> => {
+  if (!entryId) return null;
+  const field = platform === 'instagram' ? 'accountId' : 'pageId';
+  try {
+    const snap = await firestore
+      .collection('users')
+      .where(`socialAccounts.${platform}.${field}`, '==', entryId)
+      .limit(1)
+      .get();
+    if (snap.empty) return null;
+    const doc = snap.docs[0];
+    const data = doc.data() as { socialAccounts?: Record<string, SocialAccount> };
+    const account = data.socialAccounts?.[platform] ?? {};
+    return {
+      userId: doc.id,
+      accessToken: account.accessToken,
+      accountId: account.accountId,
+      pageId: account.pageId,
+    };
+  } catch (error) {
+    console.warn('[meta-webhook] failed to resolve user context', (error as Error).message);
+    return null;
+  }
+};
+
 const buildDedupeKey = (platform: 'instagram' | 'facebook', type: 'comment' | 'dm', id?: string) => {
   if (!id) return undefined;
   return `${platform}_${type}_${id}`;
@@ -67,6 +105,7 @@ const saveInbound = async (event: {
   senderId?: string;
   text?: string;
   commentId?: string;
+  ownerId?: string;
   raw?: unknown;
 }) => {
   try {
@@ -89,6 +128,7 @@ const reserveInbound = async (event: {
   senderId?: string;
   text?: string;
   commentId?: string;
+  ownerId?: string;
   raw?: unknown;
 }) => {
   const dedupeKey = buildDedupeKey(event.platform, event.type, event.commentId);
@@ -167,6 +207,9 @@ router.post('/meta/webhook', async (req, res) => {
     res.sendStatus(200);
 
     for (const entry of body.entry) {
+      const entryId = entry?.id as string | undefined;
+      const instagramContext = body.object === 'instagram' ? await resolvePlatformContext('instagram', entryId) : null;
+      const facebookContext = body.object === 'page' ? await resolvePlatformContext('facebook', entryId) : null;
       if (!entry.changes) continue;
       for (const change of entry.changes) {
         // Instagram comments
@@ -176,13 +219,15 @@ router.post('/meta/webhook', async (req, res) => {
           const fromId = change.value?.from?.id as string | undefined;
           logEvent('IG comment event', { commentId, fromId, text });
           if (!commentId || !text) continue;
-          if (igBusinessId && fromId && fromId === igBusinessId) continue; // avoid replying to self
+          const igAccountId = instagramContext?.accountId ?? igBusinessId;
+          if (igAccountId && fromId && fromId === igAccountId) continue; // avoid replying to self
           const inbound = await reserveInbound({
             platform: 'instagram',
             type: 'comment',
             senderId: fromId,
             text,
             commentId,
+            ownerId: instagramContext?.userId,
             raw: change,
           });
           if (!inbound.shouldProcess) {
@@ -190,13 +235,16 @@ router.post('/meta/webhook', async (req, res) => {
             continue;
           }
           try {
-            const reply = await generateReply(text, 'instagram');
-            await replyToInstagramComment(commentId, reply);
+            const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'comment');
+            await replyToInstagramComment(commentId, reply, instagramContext?.accessToken);
             await updateReplyStatus(inbound.ref, 'sent');
-            await likeInstagramComment(commentId).catch(err => console.warn('IG comment like failed', err));
+            await likeInstagramComment(commentId, instagramContext?.accessToken).catch(err => console.warn('IG comment like failed', err));
             if (fromId) {
               const dmFollowUp = `${reply}\n\nWant a quick demo? I can send the link.`;
-              await replyToInstagramMessage(fromId, dmFollowUp).catch(err => console.warn('IG DM follow-up failed', err));
+              await replyToInstagramMessage(fromId, dmFollowUp, {
+                accessToken: instagramContext?.accessToken,
+                igBusinessId: igAccountId ?? undefined,
+              }).catch(err => console.warn('IG DM follow-up failed', err));
             }
           } catch (err) {
             await updateReplyStatus(inbound.ref, 'failed', (err as Error).message);
@@ -212,11 +260,22 @@ router.post('/meta/webhook', async (req, res) => {
             const text = msg?.text?.body as string | undefined;
             logEvent('IG message (changes)', { senderId, text });
             if (!senderId || !text) continue;
-            if (igBusinessId && senderId === igBusinessId) continue; // avoid replying to self
-            const inboundRef = await saveInbound({ platform: 'instagram', type: 'dm', senderId, text, raw: msg });
+            const igAccountId = instagramContext?.accountId ?? igBusinessId;
+            if (igAccountId && senderId === igAccountId) continue; // avoid replying to self
+            const inboundRef = await saveInbound({
+              platform: 'instagram',
+              type: 'dm',
+              senderId,
+              text,
+              ownerId: instagramContext?.userId,
+              raw: msg,
+            });
             try {
-              const reply = await generateReply(text, 'instagram');
-              await replyToInstagramMessage(senderId, reply);
+              const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'message');
+              await replyToInstagramMessage(senderId, reply, {
+                accessToken: instagramContext?.accessToken,
+                igBusinessId: igAccountId ?? undefined,
+              });
               await updateReplyStatus(inboundRef, 'sent');
             } catch (err) {
               await updateReplyStatus(inboundRef, 'failed', (err as Error).message);
@@ -233,13 +292,15 @@ router.post('/meta/webhook', async (req, res) => {
           const fromId = change.value?.from?.id as string | undefined;
           logEvent('FB feed event', { item, commentId, fromId, message });
           if (item === 'comment' && commentId && message) {
-            if (pageId && fromId && fromId === pageId) continue; // avoid replying to self
+            const fbPageId = facebookContext?.pageId ?? pageId;
+            if (fbPageId && fromId && fromId === fbPageId) continue; // avoid replying to self
             const inbound = await reserveInbound({
               platform: 'facebook',
               type: 'comment',
               senderId: fromId,
               text: message,
               commentId,
+              ownerId: facebookContext?.userId,
               raw: change,
             });
             if (!inbound.shouldProcess) {
@@ -247,13 +308,17 @@ router.post('/meta/webhook', async (req, res) => {
               continue;
             }
             try {
-              const reply = await generateReply(message, 'facebook');
-              await replyToFacebookComment(commentId, reply);
+              const reply = await generateReply(message, 'facebook', facebookContext?.userId, 'comment');
+              await replyToFacebookComment(commentId, reply, facebookContext?.accessToken);
               await updateReplyStatus(inbound.ref, 'sent');
-              await likeFacebookComment(commentId).catch(err => console.warn('FB comment like failed', err));
+              await likeFacebookComment(commentId, facebookContext?.accessToken).catch(err =>
+                console.warn('FB comment like failed', err)
+              );
               if (fromId) {
                 const dmFollowUp = `${reply}\n\nHappy to send a quick AI Sales Agent demo link — want it?`;
-                await replyToFacebookMessage(fromId, dmFollowUp).catch(err => console.warn('FB DM follow-up failed', err));
+                await replyToFacebookMessage(fromId, dmFollowUp, facebookContext?.accessToken).catch(err =>
+                  console.warn('FB DM follow-up failed', err)
+                );
               }
             } catch (err) {
               await updateReplyStatus(inbound.ref, 'failed', (err as Error).message);
@@ -272,22 +337,30 @@ router.post('/meta/webhook', async (req, res) => {
           if (!senderId || !message) continue;
 
           // Avoid replying to self
-          if (pageId && senderId === pageId) continue;
-          if (igBusinessId && senderId === igBusinessId) continue;
+          const context = body.object === 'instagram' ? instagramContext : facebookContext;
+          const ownId = body.object === 'instagram'
+            ? (context?.accountId ?? igBusinessId)
+            : (context?.pageId ?? pageId);
+          if (ownId && senderId === ownId) continue;
 
           const inboundRef = await saveInbound({
             platform: body.object === 'instagram' ? 'instagram' : 'facebook',
             type: 'dm',
             senderId,
             text: message,
+            ownerId: context?.userId,
             raw: event,
           });
           try {
-            const reply = await generateReply(message, body.object === 'instagram' ? 'instagram' : 'facebook');
+            const platform = body.object === 'instagram' ? 'instagram' : 'facebook';
+            const reply = await generateReply(message, platform, context?.userId, 'message');
             if (body.object === 'instagram') {
-              await replyToInstagramMessage(senderId, reply);
+              await replyToInstagramMessage(senderId, reply, {
+                accessToken: context?.accessToken,
+                igBusinessId: (context?.accountId ?? igBusinessId) ?? undefined,
+              });
             } else {
-              await replyToFacebookMessage(senderId, reply);
+              await replyToFacebookMessage(senderId, reply, context?.accessToken);
             }
             await updateReplyStatus(inboundRef, 'sent');
           } catch (err) {

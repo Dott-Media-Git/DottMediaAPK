@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import createHttpError from 'http-errors';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore';
 import { AuthedRequest } from './firebaseAuth';
 import { OrgRole, OrgUserDocument } from '../types/org';
 import { roleAllowed } from '../utils/rbac';

@@ -13,7 +13,8 @@
       "backgroundColor": "#0D1117"
     },
     "updates": {
-      "fallbackToCacheTimeout": 0
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/2c1c654b-a235-4e12-886f-34020bc6de28"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -23,6 +24,9 @@
       "bundleIdentifier": "com.dottmedia.dottmediaapk",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
+      },
+      "runtimeVersion": {
+        "policy": "appVersion"
       }
     },
     "android": {
@@ -30,7 +34,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0D1117"
       },
-      "package": "com.anonymous.dottmediacrm"
+      "package": "com.anonymous.dottmediacrm",
+      "runtimeVersion": "1.0.0"
     },
     "web": {
       "bundler": "metro",

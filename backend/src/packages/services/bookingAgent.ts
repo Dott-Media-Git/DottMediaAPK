@@ -1,6 +1,6 @@
 import { google } from 'googleapis';
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore';
 import { config } from '../../config';
 import { Prospect } from './prospectFinder';
 import { incrementMetric } from '../../services/analyticsService';

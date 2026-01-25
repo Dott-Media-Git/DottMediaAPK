@@ -7,7 +7,17 @@ import { schedulePost } from '@services/social';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
 
-const PLATFORM_OPTIONS = ['instagram', 'instagram_reels', 'facebook', 'linkedin', 'twitter', 'youtube', 'tiktok'] as const;
+const PLATFORM_OPTIONS = [
+  'instagram',
+  'instagram_story',
+  'instagram_reels',
+  'facebook',
+  'facebook_story',
+  'linkedin',
+  'twitter',
+  'youtube',
+  'tiktok',
+] as const;
 
 export const SchedulePostScreen: React.FC = () => {
   const { state } = useAuth();
@@ -38,7 +48,7 @@ export const SchedulePostScreen: React.FC = () => {
   const hasTikTok = selectedPlatforms.includes('tiktok');
   const hasReels = selectedPlatforms.includes('instagram_reels');
   const hasOptionalVideoPlatforms = selectedPlatforms.some(
-    platform => platform === 'facebook' || platform === 'linkedin',
+    platform => platform === 'facebook' || platform === 'facebook_story' || platform === 'instagram_story' || platform === 'linkedin',
   );
   const hasGenericVideo = videoUrl.trim().length > 0;
   const hasVideoPlatform = hasYoutube || hasTikTok || hasReels;
@@ -48,6 +58,8 @@ export const SchedulePostScreen: React.FC = () => {
       platform !== 'tiktok' &&
       platform !== 'instagram_reels' &&
       platform !== 'facebook' &&
+      platform !== 'facebook_story' &&
+      platform !== 'instagram_story' &&
       platform !== 'linkedin',
   );
   const needsImages = imageOnlyPlatforms.length > 0 || (hasOptionalVideoPlatforms && !hasGenericVideo);
@@ -132,6 +144,10 @@ export const SchedulePostScreen: React.FC = () => {
                   ? 'X'
                   : platform === 'instagram_reels'
                     ? 'Instagram Reels'
+                    : platform === 'instagram_story'
+                      ? 'Instagram Story'
+                      : platform === 'facebook_story'
+                        ? 'Facebook Story'
                     : platform === 'youtube'
                       ? 'YouTube'
                       : platform === 'tiktok'

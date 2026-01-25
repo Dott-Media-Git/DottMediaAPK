@@ -2,6 +2,8 @@ import admin from 'firebase-admin';
 import OpenAI from 'openai';
 import { firestore } from '../../db/firestore';
 import { config } from '../../config.js';
+import { pickFallbackReply } from '../../services/fallbackReplyLibrary.js';
+import { OPENAI_REPLY_TIMEOUT_MS } from '../../utils/openaiTimeout.js';
 import { classifyIntentText } from '../brain/nlu/intentClassifier';
 import { LeadService } from './leadService';
 import { NotificationService } from './notificationService';
@@ -22,7 +24,7 @@ type EngagementPayload = {
 const KEYWORDS = ['price', 'cost', 'crm', 'automation', 'ai', 'demo'];
 
 export class EngagementHandler {
-  private aiClient = new OpenAI({ apiKey: config.openAI.apiKey });
+  private aiClient = new OpenAI({ apiKey: config.openAI.apiKey, timeout: OPENAI_REPLY_TIMEOUT_MS });
   private leadService = new LeadService();
   private notifier = new NotificationService();
 
@@ -77,6 +79,7 @@ Comment: """${payload.text}"""
 Intent: ${classification.intent}
 Respond as Dotti from Dott Media within 2 sentences. Nudge them to get the Dott Media AI Sales Agent or book a demo, with a clear CTA.
 `;
+    const fallback = pickFallbackReply({ channel: payload.channel, kind: 'comment' });
     try {
       const completion = await this.aiClient.chat.completions.create({
         model: 'gpt-4o-mini',
@@ -86,10 +89,10 @@ Respond as Dotti from Dott Media within 2 sentences. Nudge them to get the Dott 
           { role: 'user', content: prompt },
         ],
       });
-      return completion.choices?.[0]?.message?.content?.trim() ?? 'Thanks for checking out Dott Media! DM us for an AI automation demo.';
+      return completion.choices?.[0]?.message?.content?.trim() ?? fallback;
     } catch (error) {
       console.error('Engagement reply failed', error);
-      return 'Thanks so much for engaging with Dott Media! Happy to share a quick AI automation demo if you’d like.';
+      return fallback;
     }
   }
 }

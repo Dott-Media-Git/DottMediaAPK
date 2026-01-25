@@ -2,6 +2,8 @@ import OpenAI from 'openai';
 import { config } from '../config';
 import { IntentCategory, LeadProfile, Platform, ResponseType } from '../types/bot';
 import { detectResponseType } from '../utils/nlp';
+import { pickFallbackReply } from './fallbackReplyLibrary';
+import { OPENAI_REPLY_TIMEOUT_MS } from '../utils/openaiTimeout';
 
 type ReplyContext = {
   intentCategory: IntentCategory;
@@ -71,10 +73,12 @@ const buildSystemPrompt = (context: ReplyContext) => {
 export class OpenAIService {
   private client = new OpenAI({
     apiKey: config.openAI.apiKey,
+    timeout: OPENAI_REPLY_TIMEOUT_MS,
   });
 
   async generateReply(context: ReplyContext): Promise<{ reply: string; responseType: ResponseType }> {
     const systemPrompt = buildSystemPrompt(context);
+    const fallback = pickFallbackReply({ channel: context.platform, kind: 'message' });
 
     try {
       const completion = await this.client.chat.completions.create({
@@ -90,9 +94,7 @@ export class OpenAIService {
         ],
       });
 
-      const reply =
-        completion.choices?.[0]?.message?.content?.trim() ||
-        'Thanks for reaching out to Dott Media! A strategist will follow up shortly with more details.';
+      const reply = completion.choices?.[0]?.message?.content?.trim() || fallback;
       return {
         reply,
         responseType: detectResponseType(reply),
@@ -100,8 +102,8 @@ export class OpenAIService {
     } catch (error) {
       console.error('OpenAI completion failed', error);
       return {
-        reply: 'Thanks for reaching out to Dott Media! A strategist will follow up shortly with more details.',
-        responseType: 'General',
+        reply: fallback,
+        responseType: detectResponseType(fallback),
       };
     }
   }

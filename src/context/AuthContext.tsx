@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useReducer } from 'react';
+﻿import React, { createContext, useContext, useEffect, useMemo, useReducer } from 'react';
 import {
   signIn as authSignIn,
   signUp as authSignUp,
@@ -17,6 +17,7 @@ import {
 } from '@services/make';
 import { scheduleWelcomeNotification } from '@services/notifications';
 import type { AuthUser, CRMAnalytics, CRMData, SubscriptionStatus } from '@models/crm';
+import { signInWithSocial } from '@services/firebase';
 
 export type { AuthUser, CRMAnalytics, CRMData, SubscriptionStatus } from '@models/crm';
 
@@ -69,6 +70,8 @@ type AuthContextValue = {
   orgId?: string;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
+  signInWithFacebook: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   signOut: () => void;
   startSubscription: () => Promise<void>;
@@ -132,6 +135,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       } catch (error) {
         console.warn('Failed to hydrate auth profile', error);
+        dispatch({
+          type: 'SIGN_IN',
+          payload: {
+            user: authUser,
+            subscriptionStatus: 'active',
+            onboardingComplete: true
+          }
+        });
       }
     });
     return unsubscribe;
@@ -141,7 +152,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
       const credentials = await authSignIn(email, password);
-      const profile = await fetchProfile(credentials.user.uid);
+      let profile: {
+        user: AuthUser;
+        subscriptionStatus: SubscriptionStatus;
+        crmData?: CRMData;
+        onboardingComplete: boolean;
+      };
+      try {
+        profile = await fetchProfile(credentials.user.uid);
+      } catch (error) {
+        console.warn('Failed to load profile after sign-in', error);
+        profile = {
+          user: credentials.user,
+          subscriptionStatus: 'active',
+          onboardingComplete: true
+        };
+      }
       dispatch({
         type: 'SIGN_IN',
         payload: {
@@ -161,7 +187,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const credentials = await authSignUp(name, email, password);
       await scheduleWelcomeNotification(credentials.user.name);
-      const profile = await fetchProfile(credentials.user.uid);
+      let profile: {
+        user: AuthUser;
+        subscriptionStatus: SubscriptionStatus;
+        crmData?: CRMData;
+        onboardingComplete: boolean;
+      };
+      try {
+        profile = await fetchProfile(credentials.user.uid);
+      } catch (error) {
+        console.warn('Failed to load profile after signup', error);
+        profile = {
+          user: credentials.user,
+          subscriptionStatus: 'active',
+          onboardingComplete: true
+        };
+      }
       dispatch({
         type: 'SIGN_IN',
         payload: {
@@ -180,6 +221,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
       await authPasswordReset(email);
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
+  };
+
+  const signInWithGoogle = async () => {
+    dispatch({ type: 'SET_LOADING', payload: true });
+    try {
+      const credentials = await signInWithSocial('google');
+      const profile = await fetchProfile(credentials.user.uid);
+      dispatch({
+        type: 'SIGN_IN',
+        payload: {
+          user: profile.user,
+          subscriptionStatus: profile.subscriptionStatus,
+          crmData: profile.crmData,
+          onboardingComplete: profile.onboardingComplete
+        }
+      });
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
+  };
+
+  const signInWithFacebook = async () => {
+    dispatch({ type: 'SET_LOADING', payload: true });
+    try {
+      const credentials = await signInWithSocial('facebook');
+      const profile = await fetchProfile(credentials.user.uid);
+      dispatch({
+        type: 'SIGN_IN',
+        payload: {
+          user: profile.user,
+          subscriptionStatus: profile.subscriptionStatus,
+          crmData: profile.crmData,
+          onboardingComplete: profile.onboardingComplete
+        }
+      });
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false });
     }
@@ -266,6 +345,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       orgId: ((state.user as any)?.orgId ?? state.crmData?.orgId ?? 'demo') as string,
       signIn,
       signUp,
+      signInWithGoogle,
+      signInWithFacebook,
       sendPasswordReset,
       signOut,
       startSubscription,
@@ -286,3 +367,4 @@ export const useAuth = () => {
   }
   return context;
 };
+

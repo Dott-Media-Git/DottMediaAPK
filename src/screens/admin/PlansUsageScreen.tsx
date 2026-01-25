@@ -6,9 +6,11 @@ import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { fetchPlans, swapPlan } from '@services/admin/plansService';
 import { fetchUsage } from '@services/admin/usageService';
+import { useI18n } from '@context/I18nContext';
 
 export const PlansUsageScreen: React.FC = () => {
   const { orgId } = useAuth();
+  const { t } = useI18n();
   const [plans, setPlans] = useState<any[]>([]);
   const [usage, setUsage] = useState<any[]>([]);
 
@@ -25,9 +27,9 @@ export const PlansUsageScreen: React.FC = () => {
     if (!orgId) return;
     try {
       const session = await swapPlan(orgId, plan);
-      Alert.alert('Stripe Checkout', session.checkoutUrl ?? 'Session created');
+      Alert.alert(t('Stripe Checkout'), session.checkoutUrl ?? t('Session created'));
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert(t('Error'), error.message);
     }
   };
 
@@ -37,13 +39,13 @@ export const PlansUsageScreen: React.FC = () => {
         <View key={plan.id} style={styles.planCard}>
           <Text style={styles.planTitle}>{plan.name}</Text>
           <Text style={styles.planPrice}>${plan.price}/mo</Text>
-          <Text style={styles.planLimits}>Leads/mo: {plan.limits?.leadsPerMo}</Text>
-          <DMButton title="Select" onPress={() => changePlan(plan.name)} />
+          <Text style={styles.planLimits}>{t('Leads/mo: {{count}}', { count: plan.limits?.leadsPerMo ?? 0 })}</Text>
+          <DMButton title={t('Select')} onPress={() => changePlan(plan.name)} />
         </View>
       ))}
 
       <View style={styles.usageCard}>
-        <Text style={styles.sectionTitle}>Usage</Text>
+        <Text style={styles.sectionTitle}>{t('Usage')}</Text>
         <VictoryChart theme={VictoryTheme.material} domainPadding={12}>
           <VictoryBar
             data={usage.map(entry => ({ x: entry.date?.slice(-2), y: entry.leads ?? 0 }))}

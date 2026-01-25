@@ -22,7 +22,13 @@ export class WhatsAppService {
         timestamp: Number(message.timestamp) * 1000,
       });
 
-      await this.messenger.send('whatsapp', message.from, result.reply);
+      try {
+        await this.messenger.send('whatsapp', message.from, result.reply);
+        await this.conversations.updateReplyStatus(result.messageDocId, 'sent');
+      } catch (error) {
+        await this.conversations.updateReplyStatus(result.messageDocId, 'failed', (error as Error).message);
+        throw error;
+      }
       results.push({ id: message.id, status: 'processed' });
     }
 

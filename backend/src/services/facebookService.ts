@@ -31,7 +31,13 @@ export class FacebookService {
         timestamp,
       });
 
-      await this.messenger.send('facebook', message.sender.id, response.reply);
+      try {
+        await this.messenger.send('facebook', message.sender.id, response.reply);
+        await this.conversations.updateReplyStatus(response.messageDocId, 'sent');
+      } catch (error) {
+        await this.conversations.updateReplyStatus(response.messageDocId, 'failed', (error as Error).message);
+        throw error;
+      }
       processed += 1;
     }
 

@@ -2,7 +2,7 @@ import axios from 'axios';
 import nodemailer from 'nodemailer';
 import admin from 'firebase-admin';
 import { config } from '../../config';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore';
 
 const notificationsCollection = firestore.collection('notifications');
 const leadsCollection = firestore.collection('leads');
@@ -50,12 +50,16 @@ export class NotificationService {
       console.warn('Missing recipient for channel message', channel, lead.id);
       return;
     }
+    const payload: Record<string, unknown> = { text };
+    if (metadata !== undefined) {
+      payload.metadata = metadata;
+    }
     await notificationsCollection.add({
       type: 'channel_message',
       channel,
       leadId: lead.id,
       recipient,
-      payload: { text, metadata },
+      payload,
       status: 'pending',
       attempts: 0,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -91,10 +95,11 @@ export class NotificationService {
   }
 
   private async persist(type: string, message: string, lead: LeadDescriptor) {
+    const sanitizedLead = Object.fromEntries(Object.entries(lead).filter(([, value]) => value !== undefined));
     await notificationsCollection.add({
       type,
       message,
-      lead,
+      lead: sanitizedLead,
       createdAt: new Date().toISOString(),
     });
   }

@@ -8,10 +8,12 @@ import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useAssistant } from '@context/AssistantContext';
 import { addKnowledgeDocument, addKnowledgeUrl } from '@services/knowledgeBase';
+import { useI18n } from '@context/I18nContext';
 
 export const ControlsScreen: React.FC = () => {
   const { state, toggleCRM, updateCRMPrompt } = useAuth();
   const { enabled: assistantEnabled, toggleAssistant } = useAssistant();
+  const { t } = useI18n();
   const crmData = state.crmData;
   const [prompt, setPrompt] = useState(crmData?.crmPrompt ?? '');
   const [assistantSwitchLoading, setAssistantSwitchLoading] = useState(false);
@@ -34,15 +36,15 @@ export const ControlsScreen: React.FC = () => {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.hero}>
-        <Text style={styles.badge}>Orchestration</Text>
-        <Text style={styles.title}>Automation controls</Text>
+        <Text style={styles.badge}>{t('Orchestration')}</Text>
+        <Text style={styles.title}>{t('Automation controls')}</Text>
         <Text style={styles.subtitle}>
-          Mirrors the gradient-heavy control panels on dott-media.com while letting you toggle AI infrastructure.
+          {t('Mirrors the gradient-heavy control panels on dott-media.com while letting you toggle AI infrastructure.')}
         </Text>
       </LinearGradient>
-      <DMCard title="CRM status" subtitle="Flip your Make.com stack on or off">
+      <DMCard title={t('CRM status')} subtitle={t('Flip your Make.com stack on or off')}>
         <View style={styles.row}>
-          <Text style={styles.statusLabel}>{crmData?.isActive ? 'Active' : 'Paused'}</Text>
+          <Text style={styles.statusLabel}>{crmData?.isActive ? t('Active') : t('Paused')}</Text>
           <Switch
             value={crmData?.isActive ?? false}
             onValueChange={toggleCRM}
@@ -51,18 +53,18 @@ export const ControlsScreen: React.FC = () => {
           />
         </View>
       </DMCard>
-      <DMCard title="AI prompt" subtitle="Guide the assistant and campaign copy">
+      <DMCard title={t('AI prompt')} subtitle={t('Guide the assistant and campaign copy')}>
         <DMTextInput
           value={prompt}
           onChangeText={setPrompt}
           multiline
-          placeholder="Outline what the CRM should focus on this week."
+          placeholder={t('Outline what the CRM should focus on this week.')}
         />
-        <DMButton title="Update prompt" onPress={() => updateCRMPrompt(prompt)} loading={state.loading} />
+        <DMButton title={t('Update prompt')} onPress={() => updateCRMPrompt(prompt)} loading={state.loading} />
       </DMCard>
-      <DMCard title="Assistant overlay" subtitle="Floating guidance across the app">
+      <DMCard title={t('Assistant overlay')} subtitle={t('Floating guidance across the app')}>
         <View style={styles.row}>
-          <Text style={styles.statusLabel}>{assistantEnabled ? 'Assistant On' : 'Assistant Off'}</Text>
+          <Text style={styles.statusLabel}>{assistantEnabled ? t('Assistant On') : t('Assistant Off')}</Text>
           <Switch
             value={assistantEnabled}
             onValueChange={handleAssistantToggle}
@@ -71,70 +73,85 @@ export const ControlsScreen: React.FC = () => {
             disabled={assistantSwitchLoading}
           />
         </View>
-        <Text style={styles.infoText}>Tap the glowing orb to chat about metrics anywhere.</Text>
+        <Text style={styles.infoText}>{t('Tap the glowing orb to chat about metrics anywhere.')}</Text>
       </DMCard>
-      <DMCard title="Business info" subtitle="Data synced across your automations">
-        <Text style={styles.infoText}>Company: {crmData?.companyName ?? 'Not set'}</Text>
-        <Text style={styles.infoText}>Primary email: {crmData?.email ?? 'Not set'}</Text>
-        <Text style={styles.infoText}>Phone: {crmData?.phone ?? 'Not set'}</Text>
-        <Text style={styles.infoText}>Instagram: {crmData?.instagram ?? 'Not linked'}</Text>
-        <Text style={styles.infoText}>Facebook: {crmData?.facebook ?? 'Not linked'}</Text>
-        <Text style={styles.infoText}>LinkedIn: {crmData?.linkedin ?? 'Not linked'}</Text>
+      <DMCard title={t('Business info')} subtitle={t('Data synced across your automations')}>
+        <Text style={styles.infoText}>{t('Company: {{value}}', { value: crmData?.companyName ?? t('Not set') })}</Text>
+        <Text style={styles.infoText}>{t('Primary email: {{value}}', { value: crmData?.email ?? t('Not set') })}</Text>
+        <Text style={styles.infoText}>{t('Phone: {{value}}', { value: crmData?.phone ?? t('Not set') })}</Text>
+        <Text style={styles.infoText}>{t('Instagram: {{value}}', { value: crmData?.instagram ?? t('Not linked') })}</Text>
+        <Text style={styles.infoText}>{t('Facebook: {{value}}', { value: crmData?.facebook ?? t('Not linked') })}</Text>
+        <Text style={styles.infoText}>{t('LinkedIn: {{value}}', { value: crmData?.linkedin ?? t('Not linked') })}</Text>
       </DMCard>
-      <DMCard title="Lead Agent Config" subtitle="Goals, budget, and widget secret for agentSetup">
-        <DMTextInput label="North Star Goal" value={goal} onChangeText={setGoal} placeholder="e.g., 30 demos booked" />
-        <DMTextInput label="Budget Range" value={budget} onChangeText={setBudget} placeholder="$2k - $5k" />
+      <DMCard title={t('Lead Agent Config')} subtitle={t('Goals, budget, and widget secret for agentSetup')}>
         <DMTextInput
-          label="Widget Secret"
+          label={t('North Star Goal')}
+          value={goal}
+          onChangeText={setGoal}
+          placeholder={t('e.g., 30 demos booked')}
+        />
+        <DMTextInput
+          label={t('Budget Range')}
+          value={budget}
+          onChangeText={setBudget}
+          placeholder="$2k - $5k"
+        />
+        <DMTextInput
+          label={t('Widget Secret')}
           value={widgetSecret}
           onChangeText={setWidgetSecret}
-          placeholder="Matches WIDGET_SHARED_SECRET"
+          placeholder={t('Matches WIDGET_SHARED_SECRET')}
         />
         <DMButton
-          title="Save agent config"
+          title={t('Save agent config')}
           onPress={() => {
-            Alert.alert('Preferences saved', 'Updated goals shared with the lead agent.');
+            Alert.alert(t('Preferences saved'), t('Updated goals shared with the lead agent.'));
           }}
         />
       </DMCard>
-      <DMCard title="Automation Knowledge Base" subtitle="Teach Dotti using URLs or inline notes">
+      <DMCard title={t('Automation Knowledge Base')} subtitle={t('Teach Dotti using URLs or inline notes')}>
         <DMTextInput
-          label="Reference URL"
+          label={t('Reference URL')}
           value={resourceUrl}
           onChangeText={setResourceUrl}
           placeholder="https://dott-media.com/services"
         />
         <DMButton
-          title="Add URL"
+          title={t('Add URL')}
           onPress={async () => {
             try {
               await addKnowledgeUrl(resourceUrl);
-              Alert.alert('Knowledge updated', 'URL ingested successfully.');
+              Alert.alert(t('Knowledge updated'), t('URL ingested successfully.'));
               setResourceUrl('');
             } catch (error) {
-              Alert.alert('Failed to add URL', (error as Error).message);
+              Alert.alert(t('Failed to add URL'), (error as Error).message);
             }
           }}
         />
         <View style={{ height: 12 }} />
-        <DMTextInput label="Document title" value={docTitle} onChangeText={setDocTitle} placeholder="Case study summary" />
         <DMTextInput
-          label="Document text"
+          label={t('Document title')}
+          value={docTitle}
+          onChangeText={setDocTitle}
+          placeholder={t('Case study summary')}
+        />
+        <DMTextInput
+          label={t('Document text')}
           value={docContent}
           onChangeText={setDocContent}
-          placeholder="Paste notes or transcript..."
+          placeholder={t('Paste notes or transcript...')}
           multiline
         />
         <DMButton
-          title="Add document"
+          title={t('Add document')}
           onPress={async () => {
             try {
               await addKnowledgeDocument(docTitle, docContent);
-              Alert.alert('Knowledge updated', 'Document added successfully.');
+              Alert.alert(t('Knowledge updated'), t('Document added successfully.'));
               setDocTitle('');
               setDocContent('');
             } catch (error) {
-              Alert.alert('Failed to add document', (error as Error).message);
+              Alert.alert(t('Failed to add document'), (error as Error).message);
             }
           }}
         />

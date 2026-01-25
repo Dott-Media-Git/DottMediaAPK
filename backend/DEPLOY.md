@@ -6,7 +6,7 @@
 2. Populate all secrets:
    - Firebase Admin: `FIREBASE_SERVICE_ACCOUNT`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`.
    - WhatsApp Cloud API: `WHATSAPP_TOKEN`, `VERIFY_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`.
-   - OpenAI + Make.com: `OPENAI_API_KEY`, `MAKE_API_KEY`/`MAKE_API_TOKEN`, `MAKE_WEBHOOK_URL`, `MAKE_SCENARIO_TEMPLATE_ID`.
+   - OpenAI: `OPENAI_API_KEY`.
    - SMTP + Redis + Sentry as needed.
 3. Set `EXPO_PUBLIC_API_URL=https://<backend-host>` so the app can reach `/stats`.
 
@@ -48,11 +48,11 @@
    - Build command: `npm run build`
    - Output directory: `dist`
    - Install command: `npm install`
-3. Add all environment variables in Vercel’s dashboard (same list as above). Mark `WHATSAPP_*`, `MAKE_*`, and Firebase keys as production + preview.
-4. Add a Vercel rewrite so the Express server receives `/webhook/whatsapp`, `/stats`, and `/make-webhook` without the `/api` prefix:
+3. Add all environment variables in Vercel’s dashboard (same list as above). Mark `WHATSAPP_*` and Firebase keys as production + preview.
+4. Add a Vercel rewrite so the Express server receives `/webhook/whatsapp` and `/stats` without the `/api` prefix:
    ```json
    [
-     { "source": "/(webhook/whatsapp|stats|make-webhook)", "destination": "/$1" }
+     { "source": "/(webhook/whatsapp|stats)", "destination": "/$1" }
    ]
    ```
 5. After deploying, set `EXPO_PUBLIC_API_URL=https://<vercel-app-url>` and update the WhatsApp webhook callback URL.
@@ -67,4 +67,3 @@
 - `GET /healthz` → sanity check.
 - `POST /webhook/whatsapp` → configure from Meta dashboard (use cURL + sample payload for tests).
 - `GET /stats` → should return analytics JSON for the Bot Analytics screen.
-- `POST /make-webhook` → send a sample lead payload and confirm it shows up in Make.com scenario runs.

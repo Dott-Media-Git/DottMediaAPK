@@ -1,5 +1,5 @@
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore';
 import { OutboundCrmSyncService, LeadRecord } from './crmSyncService';
 
 const leadsCollection = firestore.collection('leads');
@@ -49,9 +49,10 @@ export class LeadService {
       lastActive: now,
     } as LeadRecord & { updatedAt: number; lastMessage?: string; sentiment?: number; lastActive: number };
 
+    const sanitized = Object.fromEntries(Object.entries(leadRecord).filter(([, value]) => value !== undefined));
     await docRef.set(
       {
-        ...leadRecord,
+        ...sanitized,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         lastActive: admin.firestore.FieldValue.serverTimestamp(),
       },

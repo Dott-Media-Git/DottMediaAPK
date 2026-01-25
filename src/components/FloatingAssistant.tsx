@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useAssistant } from '@context/AssistantContext';
+import { useI18n } from '@context/I18nContext';
 import { askAssistant } from '@services/assistant';
 
 type Message = {
@@ -23,17 +24,10 @@ type Message = {
   text: string;
 };
 
-const quickPrompts = [
-  'What plan am I on?',
-  'Which channels are connected?',
-  'Is my billing active?',
-  'How is my performance this week?',
-  'What should I check next?'
-];
-
 export const FloatingAssistant: React.FC = () => {
   const { state } = useAuth();
   const { enabled, hydrated, currentScreen } = useAssistant();
+  const { locale, t } = useI18n();
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -42,11 +36,22 @@ export const FloatingAssistant: React.FC = () => {
     {
       id: 'welcome',
       role: 'assistant',
-      text: buildPerformanceSummary(state.crmData?.analytics, state.crmData?.companyName)
+      text: buildPerformanceSummary(state.crmData?.analytics, state.crmData?.companyName, t)
     }
   ]);
 
   const canDisplay = hydrated && enabled && Boolean(state.user);
+
+  const quickPrompts = useMemo(
+    () => [
+      t('What plan am I on?'),
+      t('Which channels are connected?'),
+      t('Is my billing active?'),
+      t('How is my performance this week?'),
+      t('What should I check next?')
+    ],
+    [t]
+  );
 
   const context = useMemo(() => {
     const connectedChannels = [
@@ -60,7 +65,8 @@ export const FloatingAssistant: React.FC = () => {
       analytics: state.crmData?.analytics,
       subscriptionStatus: state.subscriptionStatus,
       connectedChannels,
-      currentScreen
+      currentScreen,
+      locale
     };
   }, [
     state.user?.uid,
@@ -70,7 +76,8 @@ export const FloatingAssistant: React.FC = () => {
     state.crmData?.facebook,
     state.crmData?.linkedin,
     state.subscriptionStatus,
-    currentScreen
+    currentScreen,
+    locale
   ]);
 
   const handleOpen = () => setOpen(true);
@@ -95,12 +102,26 @@ export const FloatingAssistant: React.FC = () => {
       pushMessage({
         id: `assistant-error-${Date.now()}`,
         role: 'assistant',
-        text: 'I ran into an issue answering that. Please try again shortly.'
+        text: t('I ran into an issue answering that. Please try again shortly.')
       });
     } finally {
       setSending(false);
     }
   };
+
+  useEffect(() => {
+    setMessages(prev => {
+      if (prev.length === 1 && prev[0].id === 'welcome') {
+        return [
+          {
+            ...prev[0],
+            text: buildPerformanceSummary(state.crmData?.analytics, state.crmData?.companyName, t)
+          }
+        ];
+      }
+      return prev;
+    });
+  }, [state.crmData?.analytics, state.crmData?.companyName, t]);
 
   if (!canDisplay) {
     return null;
@@ -114,8 +135,8 @@ export const FloatingAssistant: React.FC = () => {
             <View style={[styles.panel, { paddingBottom: 16 + insets.bottom }]}>
               <View style={styles.panelHeader}>
                 <View>
-                  <Text style={styles.panelTitle}>Dott Assistant</Text>
-                  <Text style={styles.panelSubtitle}>Ask about performance or where to go next.</Text>
+                  <Text style={styles.panelTitle}>{t('Dott Assistant')}</Text>
+                  <Text style={styles.panelSubtitle}>{t('Ask about performance or where to go next.')}</Text>
                 </View>
                 <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
                   <Ionicons name="close" size={20} color={colors.text} />
@@ -127,14 +148,14 @@ export const FloatingAssistant: React.FC = () => {
                     key={message.id}
                     style={[styles.messageBubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}
                   >
-                    <Text style={styles.messageLabel}>{message.role === 'user' ? 'You' : 'Dott'}</Text>
+                    <Text style={styles.messageLabel}>{message.role === 'user' ? t('You') : t('Dott')}</Text>
                     <Text style={styles.messageText}>{message.text}</Text>
                   </View>
                 ))}
                 {sending ? (
                   <View style={[styles.messageBubble, styles.assistantBubble, styles.typingBubble]}>
                     <ActivityIndicator size="small" color={colors.accent} />
-                    <Text style={[styles.messageText, { marginLeft: 8 }]}>Thinking...</Text>
+                    <Text style={[styles.messageText, { marginLeft: 8 }]}>{t('Thinking...')}</Text>
                   </View>
                 ) : null}
               </ScrollView>
@@ -148,7 +169,7 @@ export const FloatingAssistant: React.FC = () => {
               <View style={styles.inputRow}>
                 <TextInput
                   style={styles.input}
-                  placeholder="Ask me anything..."
+                  placeholder={t('Ask me anything...')}
                   placeholderTextColor={colors.subtext}
                   value={input}
                   onChangeText={setInput}
@@ -174,7 +195,7 @@ export const FloatingAssistant: React.FC = () => {
           ]}
           onPress={handleOpen}
           accessibilityRole="button"
-          accessibilityLabel="Open AI assistant"
+          accessibilityLabel={t('Open AI assistant')}
         >
           <Ionicons name="sparkles-outline" size={26} color={colors.background} />
         </TouchableOpacity>
@@ -184,13 +205,24 @@ export const FloatingAssistant: React.FC = () => {
 };
 
 const buildPerformanceSummary = (
-  analytics?: { leads: number; engagement: number; conversions: number; feedbackScore: number },
-  companyName?: string
+  analytics: { leads: number; engagement: number; conversions: number; feedbackScore: number } | undefined,
+  companyName: string | undefined,
+  t: (key: string, params?: Record<string, string | number>) => string
 ) => {
   if (!analytics) {
-    return 'Hi! I am your Dott assistant. Ask me about performance metrics or where to head next in the app.';
+    return t('Hi! I am your Dott assistant. Ask me about performance metrics or where to head next in the app.');
   }
-  return `Hi${companyName ? ` ${companyName} team` : ''}! Leads are at ${analytics.leads}, engagement ${analytics.engagement}%, conversions ${analytics.conversions} and feedback ${analytics.feedbackScore}/5. Ask for deeper insight or guidance.`;
+  const companyTag = companyName ? ` ${companyName} ${t('team')}` : '';
+  return t(
+    'Hi{{company}}! Leads are at {{leads}}, engagement {{engagement}}%, conversions {{conversions}} and feedback {{feedback}}/5. Ask for deeper insight or guidance.',
+    {
+      company: companyTag,
+      leads: analytics.leads,
+      engagement: analytics.engagement,
+      conversions: analytics.conversions,
+      feedback: analytics.feedbackScore
+    }
+  );
 };
 
 const styles = StyleSheet.create({

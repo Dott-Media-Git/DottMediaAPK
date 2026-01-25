@@ -1,0 +1,545 @@
+﻿<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+  <script data-ionic="inject">
+    (function(w){var i=w.Ionic=w.Ionic||{};i.version='3.9.2';i.angular='5.2.9';i.staticDir='build/';})(window);
+  </script>
+  <meta charset="UTF-8">
+  <title>BwinBet Betting</title>
+  <meta name="viewport" content="viewport-fit=cover, width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="msapplication-tap-highlight" content="no">
+  <meta name="google-site-verification" content="">
+  <link rel="icon" type="image/x-x-icon" href="assets/icon/favicon.ico">
+
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#ffca08">
+  <meta name="color-scheme" content="light dark">
+
+
+<meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+
+
+<!-- Splash Screens  -->
+
+<!-- iPhone SE (1st gen) -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-640-1136.jpg" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+
+<!-- iPhone SE (2nd/3rd), 6, 7, 8 -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-750-1334.jpg" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+
+<!-- iPhone 6/7/8 Plus -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-1242-2208.jpg" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+
+<!-- iPhone X / XS / 11 Pro -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-1125-2436.jpg" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+
+<!-- iPhone XR / 11 -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-828-1792.jpg" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+
+<!-- iPhone XS Max / 11 Pro Max -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-1242-2688.jpg" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+
+<!-- iPhone 12 / 13 / 14 -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-1170-2532.jpg" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+
+<!-- iPhone 14 Pro -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-1179-2556.jpg" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+
+<!-- iPhone 14 Plus / 15 Pro Max -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-1290-2796.jpg" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+
+<!-- iPhone 12 Pro Max / 13 Pro Max / 14 Plus -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-1284-2778.jpg" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+
+<!-- iPad Mini / Air / iPad 9th gen -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-1536-2048.jpg" media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+
+<!-- iPad Mini / Air / iPad 9th gen (landscape) -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-2048-1536.jpg" media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+
+<!-- iPad Pro 10.5" -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-1668-2224.jpg" media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+
+<!-- iPad Pro 10.5" (landscape) -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-2224-1668.jpg" media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+
+<!-- iPad Pro 11" -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-1668-2388.jpg" media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+
+<!-- iPad Pro 11" (landscape) -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-2388-1668.jpg" media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+
+<!-- iPad Pro 12.9" -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-2048-2732.jpg" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+
+<!-- iPad Pro 12.9" (landscape) -->
+<link rel="apple-touch-startup-image" href="assets/splash/apple-splash-2732-2048.jpg" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+
+
+  <link rel="canonical" href="https://bwinbetug.com">
+  <link href="build/main.css?ts=5.183.5" rel="stylesheet">
+  <link rel="stylesheet" type="text/css" href="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.1.0/cookieconsent.min.css">
+  <script id="consent-updater"></script>
+  <script id="g-tag"></script>
+  <script src="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.1.0/cookieconsent.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-messaging.js"></script>
+
+<style>
+    body {
+      background: black;
+    }
+
+    .app-root {
+      background: black;
+    }
+
+    .mobile-web {
+      position: unset;
+      overflow: unset;
+      width: unset;
+      max-width: unset;
+      height: unset;
+      max-height: unset;
+    }
+
+    .mobile-web .app-root {
+      left: unset;
+      top: unset;
+      position: unset;
+      z-index: unset;
+      display: block;
+      width: 100%;
+      height: unset;
+      contain: none;
+    }
+
+    .mobile-web .app-root .ion-page {
+      left: unset;
+      top: unset;
+      position: unset;
+      display: block;
+      width: 100%;
+      height: unset;
+      opacity: 0;
+      height: auto;
+    }
+
+    .mobile-web .app-root .ion-page.show-page {
+      opacity: 1;
+    }
+
+    .mobile-web .app-root ion-header {
+      left: unset;
+      top: unset;
+      position: unset;
+      z-index: 1001;
+      display: block;
+      width: 100%;
+    }
+
+    .mobile-web .app-root .ion-page>ion-content {
+      position: unset;
+      padding: 0;
+    }
+
+    .mobile-web .app-root ion-content {
+      left: 0;
+      top: 0;
+      position: unset;
+      display: block;
+      width: 100%;
+      height: unset;
+      contain: unset;
+    }
+
+    .mobile-web .app-root ion-app,
+    .mobile-web .app-root ion-nav,
+    .mobile-web .app-root ion-tab,
+    .mobile-web .app-root ion-tabs,
+    .mobile-web .app-root,
+    .mobile-web .app-root .ion-page {
+      contain: unset;
+    }
+
+    .mobile-web .app-root ion-app,
+    .mobile-web .app-root ion-nav,
+    .mobile-web .app-root ion-tab,
+    .mobile-web .app-root ion-tabs,
+    .mobile-web .app-root .app-root {
+      left: unset;
+      top: unset;
+      position: unset;
+      z-index: 0;
+      display: block;
+      width: 100%;
+      height: unset;
+    }
+
+    .mobile-web .app-root .scroll-content {
+      left: unset;
+      right: unset;
+      top: unset;
+      bottom: unset;
+      position: unset;
+      z-index: 1;
+      display: block;
+      overflow-x: unset;
+      overflow-y: unset;
+      -webkit-overflow-scrolling: touch;
+      will-change: scroll-position;
+      contain: unset;
+    }
+
+    .mobile-web .app-root .fixed-content {
+      display: none;
+    }
+
+    .mobile-web ion-alert {
+      position: fixed;
+    }
+
+    .mobile-web .app-root .menu-content {
+      -webkit-transform: unset;
+      transform: unset;
+    }
+
+    .mobile-web .app-root ion-header {
+      position: fixed;
+      top: 0;
+      left: 0;
+    }
+
+    .mobile-web .app-root ion-footer {
+      left: 0;
+      bottom: 0;
+      position: fixed;
+      z-index: 10;
+      display: block;
+      width: 100%;
+    }
+
+    .mobile-web .app-root ion-menu {
+      position: fixed;
+      contain: unset;
+
+    }
+
+    .app-root ion-menu[type=overlay] {
+      z-index: 1002;
+    }
+
+    .mobile-web .app-root ion-menu .fixed-content {
+      display: none;
+    }
+
+    .mobile-web .app-root ion-menu .scroll-content {
+      height: calc(100% - 56px);
+      overflow: scroll;
+    }
+
+    .mobile-web .app-root ion-menu.menu-76 .scroll-content {
+      height: calc(100% - 76px) !important;
+    }
+    .mobile-web .app-root .menu-inner {
+      overflow: scroll;
+    }
+
+    .mobile-web .app-root .menu-inner>ion-content {
+      position: absolute;
+      min-height: 100%;
+    }
+
+    .mobile-web ion-toast {
+      position: fixed;
+    }
+
+    .mobile-web eba-bet-slip-keyboard .background-opacity {
+      position: fixed;
+      top: 0;
+      left: 0;
+    }
+
+    .mobile-web ion-modal {
+      position: fixed;
+    }
+
+    .mobile-web ion-modal .modal-wrapper {
+      overflow: scroll;
+    }
+
+    .mobile-web .app-root ion-modal .ion-page {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    .mobile-web , .mobile-web #golden-race-mobile-app{
+      top:56px!important;
+    }
+    .integration-mobile-web{
+      background: transparent !important;
+    }
+    .integration-mobile-web ion-header, 
+    .integration-mobile-web seo-footer, 
+    .integration-mobile-web bottom-navigation-menu, 
+    .integration-mobile-web bottom-navigation-menu-spacer,
+    .integration-mobile-web ion-menu
+    {
+        display: none !important;
+    }
+    .integration-mobile-web .mb-56{
+        margin-bottom: 0px !important;
+    }
+    .integration-mobile-web sports-betting-betslip-fab{
+      bottom: unset !important;
+      top: calc(100vh - 140px);
+    }
+
+    .update-worker {
+    position: fixed;
+    bottom: 0px;
+    width: 100%;
+    height: 56px;
+    background-color: black;
+    z-index: 999999;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    justify-content: space-between;
+    padding: 16px;
+    transition: bottom 0.3s ease-in-out;
+    visibility: hidden;
+    font-size: 12px;
+    font-family: sans-serif !important;
+}
+
+  .update-worker.dismissed{
+    bottom: -56px;
+    visibility: hidden;
+  }
+
+  .mobile-web .sticky-filter {
+    top: 56px
+  }
+
+  .mobile-web .sticky-filter.extended {
+    top: 75px
+  }
+
+  .mobile-web .extended-offer-wrapper {
+    position: absolute;
+    width: 100%;
+    z-index: 1;
+  }
+
+  </style>
+
+  <script id="matomo-tracker"></script>
+<base href="/"></head>
+
+<body>
+  <noscript id="g-body"></noscript>
+  <!-- Ionic's root component and where the app will load -->
+  <ion-app class="md"></ion-app>
+
+  <!-- The polyfills js is generated during the build process -->
+  <script src="build/polyfills.js?ts=5.183.5"></script>
+
+  <!-- The vendor js is generated during the build process
+       It contains all of the dependencies in node_modules -->
+  <script src="build/vendor.js?ts=5.183.5"></script>
+
+  <!-- The main bundle js is generated during the build process -->
+  <script src="build/main.js?ts=5.183.5"></script>
+  <div class="update-worker" id="updateWorker">
+    <div id="reloadTextDiv" class="d-flex w-100 flex-row h-100 align-items-center">Please reload app to update to latest version.</div>
+    <div class="d-flex flex-row justify-content-around h-100 align-items-center d-flex" style="margin-left: 8px; width: 70%;">
+      <div id="acceptButton" style="cursor: pointer; height: 100%; width: 100%; height: 100%;" class="align-items-center  justify-content-center d-flex">ACCEPT</div>
+    </div>
+  </div> 
+
+
+
+  <script type="module">
+  import { Workbox } from 'https://storage.googleapis.com/workbox-cdn/releases/6.4.1/workbox-window.prod.mjs';
+
+    let wb;
+
+    if ('serviceWorker' in navigator && (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true)) {
+
+      console.log("-- PWA --");
+
+      wb = new Workbox('service-worker.js');
+
+      wb.addEventListener('installed', (event) => {
+        if (event.isUpdate) {
+          console.log('[SW] New service worker installed.');
+          wb.messageSkipWaiting();
+        }
+      });
+
+      wb.addEventListener('waiting', () => {
+        console.log('[SW] New service worker is waiting.');
+        showUpdatePrompt();
+        setTimeout(() => {
+          wb.messageSkipWaiting();
+        }, 5000);
+      });
+
+      wb.addEventListener('controlling', () => {
+        console.log('[SW] New service worker is now controlling. Reloading page.');
+        localStorage.removeItem('chunkReloadCount'); 
+      });
+
+      document.getElementById('acceptButton').addEventListener('click', async () => {
+        hideUpdatePrompt();
+        const registration = await navigator.serviceWorker.getRegistration();
+        if (registration?.waiting) {
+          console.log('[SW] Sending skipWaiting message.');
+          registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        } else if (wb) {
+          console.log('[SW] Fallback: Using wb.messageSkipWaiting()');
+          wb.messageSkipWaiting();
+        }
+      });
+
+
+
+      window.addEventListener('load', async () => {
+        const reg = await navigator.serviceWorker.getRegistration();
+        console.log("reg", reg);
+        if (reg?.waiting) {
+          console.log('[SW] Detected waiting service worker on load.');
+          showUpdatePrompt();
+          setTimeout(() => {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }, 5000);
+        }
+      });
+
+      wb.register().catch(error => {
+        console.error('Service worker registration failed:', error);
+      }).then(() => {
+        setInterval(() => {
+          wb.update();
+        }, 1000 * 60 * 5); 
+      });
+    }
+
+    function showUpdatePrompt() {
+      const el = document.getElementById('updateWorker');
+      if (el) {
+        el.classList.remove('dismissed');
+        el.style.visibility = 'visible';
+      }
+    }
+
+    function hideUpdatePrompt() {
+      const el = document.getElementById('updateWorker');
+      if (el) {
+        el.classList.add('dismissed');
+        el.style.visibility = 'hidden';
+      }
+    }
+  </script>
+
+  <script>
+    let reloadCount = parseInt(localStorage.getItem('chunkReloadCount') || '0', 10);
+    const maxReloads = 3;
+    window.onerror = function(msg, url, lineNo, columnNo, error) {
+      handlePotentialChunkError(msg, error, url);
+    };
+
+    window.addEventListener('unhandledrejection', (event) => {
+      const error = event.reason;
+      handlePotentialChunkError(error.message || error, error, error?.url || window.location.href);
+    });
+
+    function handlePotentialChunkError(message, error, url) {
+      const isChunkError = /Loading chunk [\d]+ failed|ChunkLoadError/.test(message || '');
+      if (!isChunkError) return;
+
+      const isThirdParty = url && (url.startsWith('https://') && !url.startsWith(window.location.origin));
+      const isAppChunk = url && (url.includes('chunk.js') || url.includes('/build/') || !isThirdParty);
+
+      if (isThirdParty) {
+        console.warn('Third-party script error (not reloading):', url);
+        return; 
+      }
+
+      if (!isAppChunk) return;
+
+      console.error('Detected chunk load error:', message, url);
+
+      if (reloadCount < maxReloads) {
+        reloadCount++;
+        localStorage.setItem('chunkReloadCount', reloadCount.toString());
+        window.location.reload();
+      } else {
+        console.warn('Max reloads reached for chunk error:', url);
+      }
+    }
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data?.type === 'CHUNK_LOAD_ERROR') {
+          if (event.data.url.includes('chunk.js') || event.data.url.startsWith('/build/')) {
+            handlePotentialChunkError('Chunk load failed from SW', null, event.data.url);
+          }
+        }
+      });
+    }
+
+    setTimeout(() => {
+      const _bgColor = getComputedStyle(document.documentElement).getPropertyValue('--eba-primary-color-type1');
+      const _textColor = getComputedStyle(document.documentElement).getPropertyValue('--eba-light-color-type1');
+      const updateWorkerContainer = document.getElementById('updateWorker');
+      updateWorkerContainer.style.background = _bgColor;
+      updateWorkerContainer.style.color = _textColor;
+
+      const language = document.documentElement.lang;
+      const reloadTextDiv = document.getElementById('reloadTextDiv');
+      const acceptButton = document.getElementById('acceptButton');
+
+      switch (language) {
+        case 'en':
+          reloadTextDiv.innerHTML = 'Please reload app to update to latest version.';
+          acceptButton.innerHTML = 'ACCEPT';
+          break;
+        case 'fr':
+          reloadTextDiv.innerHTML = 'Veuillez recharger l\'application pour mettre Ã  jour vers la derniÃ¨re version.';
+          acceptButton.innerHTML = 'ACCEPTER';
+          break;
+        case 'hr':
+          reloadTextDiv.innerHTML = 'Ponovno uÄitajte aplikaciju kako biste aÅ¾urirali na najnoviju verziju.';
+          acceptButton.innerHTML = 'PRIHVAÄAM';
+          break;
+        case 'srl':
+          reloadTextDiv.innerHTML = 'Ponovo uÄitajte aplikaciju da biste aÅ¾urirali na najnoviju verziju.';
+          acceptButton.innerHTML = 'PRIHVATAM';
+          break;
+        case 'cs':
+          reloadTextDiv.innerHTML = 'ProsÃ­m, znovu naÄtÄte aplikaci pro aktualizaci na nejnovÄjÅ¡Ã­ verzi.';
+          acceptButton.innerHTML = 'PÅIJMOUT';
+          break;
+        case 'es':
+          reloadTextDiv.innerHTML = 'Por favor, recargue la aplicaciÃ³n para actualizar a la Ãºltima versiÃ³n.';
+          acceptButton.innerHTML = 'ACEPTAR';
+          break;
+        case 'pl':
+          reloadTextDiv.innerHTML = 'ProszÄ przeÅadowaÄ aplikacjÄ, aby zaktualizowaÄ do najnowszej wersji.';
+          acceptButton.innerHTML = 'AKCEPTUJÄ';
+          break;
+        default:
+          reloadTextDiv.innerHTML = 'Please reload app to update to latest version.';
+          acceptButton.innerHTML = 'ACCEPT';
+          break;
+      }
+    }, 50);
+  </script>
+</body>
+</html>

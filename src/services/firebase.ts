@@ -8,14 +8,18 @@ import {
   updateProfile,
   signOut as firebaseSignOut,
   User as FirebaseUser,
-  onAuthStateChanged
+  onAuthStateChanged,
+  GoogleAuthProvider,
+  FacebookAuthProvider,
+  signInWithPopup
 } from 'firebase/auth';
 import {
   getFirestore,
   doc,
   getDoc,
   setDoc,
-  updateDoc
+  updateDoc,
+  serverTimestamp
 } from 'firebase/firestore';
 import { env } from '@services/env';
 import type { AuthUser, CRMAnalytics, CRMData, Profile, SubscriptionStatus } from '@models/crm';
@@ -42,6 +46,7 @@ const firebaseConfig: FirebaseOptions = {
 };
 
 const firebaseEnabled = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
+const allowMockAuth = env.offline;
 const firebaseApp = firebaseEnabled
   ? getApps().length
     ? getApps()[0]
@@ -54,10 +59,10 @@ const useFirebase = Boolean(auth && db);
 const mockDatabase: Record<string, Profile> = {};
 
 const createAnalytics = (): CRMAnalytics => ({
-  leads: Math.floor(Math.random() * 120),
-  engagement: Math.floor(Math.random() * 85),
-  conversions: Math.floor(Math.random() * 40),
-  feedbackScore: Math.round(3 + Math.random() * 2)
+  leads: 0,
+  engagement: 0,
+  conversions: 0,
+  feedbackScore: 0
 });
 
 const delay = (ms = 650) => new Promise(resolve => setTimeout(resolve, ms));
@@ -65,7 +70,8 @@ const delay = (ms = 650) => new Promise(resolve => setTimeout(resolve, ms));
 const mapFirebaseUser = (user: FirebaseUser): AuthUser => ({
   uid: user.uid,
   email: user.email ?? 'member@dott-media.com',
-  name: user.displayName ?? user.email ?? 'Dott Media Member'
+  name: user.displayName ?? user.email ?? 'Dott Media Member',
+  photoURL: user.photoURL ?? undefined
 });
 
 const mockSignUp = async (name: string, email: string): Promise<Credentials> => {
@@ -74,8 +80,8 @@ const mockSignUp = async (name: string, email: string): Promise<Credentials> => 
   const user: AuthUser = { uid, email, name };
   mockDatabase[uid] = {
     user,
-    subscriptionStatus: 'none',
-    onboardingComplete: false
+    subscriptionStatus: 'active',
+    onboardingComplete: true
   };
   return { user };
 };
@@ -177,20 +183,59 @@ const normalizeProfile = (data: ProfileDoc | undefined, fallbackUser: AuthUser):
   onboardingComplete: data?.onboardingComplete ?? Boolean(data?.crmData)
 });
 
-const ensureProfileDoc = async (uid: string, user: AuthUser) => {
+const ensureProfileDoc = async (
+  uid: string,
+  user: AuthUser,
+  options?: { subscriptionStatus?: SubscriptionStatus; onboardingComplete?: boolean }
+) => {
   if (!useFirebase) return;
+  const payload: Record<string, unknown> = {
+    user,
+    lastLoginAt: serverTimestamp()
+  };
+  if (options?.subscriptionStatus !== undefined) {
+    payload.subscriptionStatus = options.subscriptionStatus;
+  }
+  if (typeof options?.onboardingComplete === 'boolean') {
+    payload.onboardingComplete = options.onboardingComplete;
+  }
   await setDoc(
     profileRef(uid),
-    {
-      user,
-      subscriptionStatus: 'none',
-      onboardingComplete: false
-    },
+    payload,
     { merge: true }
   );
 };
 
+const userRef = (uid: string) => {
+  if (!db) {
+    throw new Error('Firestore not initialized');
+  }
+  return doc(db, 'users', uid);
+};
+
+const upsertUserRecord = async (user: AuthUser, provider: string, isNew: boolean) => {
+  if (!useFirebase) return;
+  const payload: Record<string, unknown> = {
+    uid: user.uid,
+    name: user.name,
+    email: user.email,
+    photoURL: user.photoURL ?? null,
+    authProvider: provider,
+    lastLoginAt: serverTimestamp()
+  };
+  if (isNew) {
+    payload.createdAt = serverTimestamp();
+  }
+  await setDoc(userRef(user.uid), payload, { merge: true });
+};
+
+const requireFirebaseAuth = () => {
+  if (useFirebase || allowMockAuth) return;
+  throw new Error('Firebase authentication is not configured.');
+};
+
 export const signUp = async (name: string, email: string, password: string): Promise<Credentials> => {
+  requireFirebaseAuth();
   if (!useFirebase || !auth) {
     return mockSignUp(name, email);
   }
@@ -198,22 +243,58 @@ export const signUp = async (name: string, email: string, password: string): Pro
   if (credential.user && credential.user.displayName !== name) {
     await updateProfile(credential.user, { displayName: name }).catch(() => undefined);
   }
-  const user = mapFirebaseUser(credential.user);
-  await ensureProfileDoc(user.uid, user);
+  const mappedUser = mapFirebaseUser(credential.user);
+  const user = { ...mappedUser, name: name.trim() || mappedUser.name };
+  await ensureProfileDoc(user.uid, user, { subscriptionStatus: 'active', onboardingComplete: true });
+  await upsertUserRecord(user, 'password', true);
   return { user };
 };
 
 export const signIn = async (email: string, password: string): Promise<Credentials> => {
+  requireFirebaseAuth();
   if (!useFirebase || !auth) {
     return mockSignIn(email);
   }
   const credential = await signInWithEmailAndPassword(auth, email, password);
   const user = mapFirebaseUser(credential.user);
   await ensureProfileDoc(user.uid, user);
+  await upsertUserRecord(user, 'password', false);
+  return { user };
+};
+
+type SocialProvider = 'google' | 'facebook';
+
+const makeProvider = (provider: SocialProvider) => {
+  switch (provider) {
+    case 'google':
+      return new GoogleAuthProvider();
+    case 'facebook':
+      return new FacebookAuthProvider();
+    default:
+      throw new Error('Unsupported provider');
+  }
+};
+
+export const signInWithSocial = async (provider: SocialProvider): Promise<Credentials> => {
+  requireFirebaseAuth();
+  if (!useFirebase || !auth) {
+    return mockSignIn(`${provider}@dott-media.com`);
+  }
+  // Web-only guard; native uses mock for now.
+  if (typeof window === 'undefined' || typeof signInWithPopup !== 'function') {
+    return mockSignIn(`${provider}@dott-media.com`);
+  }
+  const credential = await signInWithPopup(auth, makeProvider(provider));
+  const user = mapFirebaseUser(credential.user);
+  await ensureProfileDoc(user.uid, user);
+  const meta = credential.user.metadata;
+  const isNew = Boolean(meta?.creationTime && meta?.lastSignInTime && meta.creationTime === meta.lastSignInTime);
+  await upsertUserRecord(user, provider, isNew);
   return { user };
 };
 
 export const sendPasswordReset = async (email: string): Promise<void> => {
+  requireFirebaseAuth();
   if (!useFirebase || !auth) {
     await mockPasswordReset(email);
     return;
@@ -222,6 +303,7 @@ export const sendPasswordReset = async (email: string): Promise<void> => {
 };
 
 export const fetchProfile = async (uid: string): Promise<Profile> => {
+  requireFirebaseAuth();
   if (!useFirebase) {
     return mockFetchProfile(uid);
   }
@@ -236,6 +318,7 @@ export const fetchProfile = async (uid: string): Promise<Profile> => {
 };
 
 export const persistCRMData = async (uid: string, data: CRMData): Promise<void> => {
+  requireFirebaseAuth();
   if (!useFirebase) {
     await mockPersistCRMData(uid, data);
     return;
@@ -251,6 +334,7 @@ export const persistCRMData = async (uid: string, data: CRMData): Promise<void> 
 };
 
 export const updateSubscription = async (uid: string, status: SubscriptionStatus): Promise<void> => {
+  requireFirebaseAuth();
   if (!useFirebase) {
     mockUpdateSubscription(uid, status);
     return;
@@ -259,6 +343,7 @@ export const updateSubscription = async (uid: string, status: SubscriptionStatus
 };
 
 export const signOutUser = async () => {
+  requireFirebaseAuth();
   if (!useFirebase || !auth) {
     return;
   }
@@ -272,12 +357,16 @@ export const observeAuthState = (
   handler: (user: AuthUser | null) => void
 ): (() => void) => {
   if (!useFirebase || !auth) {
+    if (!allowMockAuth) {
+      handler(null);
+    }
     return () => undefined;
   }
   return onAuthStateChanged(auth, user => handler(user ? mapFirebaseUser(user) : null));
 };
 
 export const getIdToken = async (): Promise<string | null> => {
+  requireFirebaseAuth();
   if (!useFirebase || !auth?.currentUser) {
     return null;
   }

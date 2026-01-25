@@ -4,6 +4,7 @@ import { colors } from '@constants/colors';
 import { getOrgProfile } from '@services/admin/orgService';
 import { useAuth } from '@context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
+import { useI18n } from '@context/I18nContext';
 
 type Section = {
   title: string;
@@ -24,6 +25,7 @@ const sections: Section[] = [
 export const AdminHomeScreen: React.FC = () => {
   const { orgId } = useAuth();
   const navigation = useNavigation();
+  const { t } = useI18n();
   const [org, setOrg] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
@@ -32,16 +34,16 @@ export const AdminHomeScreen: React.FC = () => {
     setLoading(true);
     getOrgProfile(orgId)
       .then(data => setOrg(data))
-      .catch(error => Alert.alert('Error', error.message))
+      .catch(error => Alert.alert(t('Error'), error.message))
       .finally(() => setLoading(false));
   }, [orgId]);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.hero}>
-        <Text style={styles.heroTitle}>{org?.name ?? 'Organization'}</Text>
+        <Text style={styles.heroTitle}>{org?.name ?? t('Organization')}</Text>
         <Text style={styles.heroSubtitle}>
-          Plan: {org?.plan ?? 'Free'} {org?.locale?.tz ? `• ${org.locale.tz}` : ''}
+          {t('Plan: {{plan}}', { plan: org?.plan ?? t('Free') })} {org?.locale?.tz ? `- ${org.locale.tz}` : ''}
         </Text>
         {loading && <ActivityIndicator color={colors.accent} style={{ marginTop: 12 }} />}
       </View>
@@ -51,8 +53,8 @@ export const AdminHomeScreen: React.FC = () => {
           style={styles.card}
           onPress={() => navigation.navigate(section.screen as never)}
         >
-          <Text style={styles.cardTitle}>{section.title}</Text>
-          <Text style={styles.cardSubtitle}>{section.description}</Text>
+          <Text style={styles.cardTitle}>{t(section.title)}</Text>
+          <Text style={styles.cardSubtitle}>{t(section.description)}</Text>
         </TouchableOpacity>
       ))}
     </ScrollView>

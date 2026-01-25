@@ -1,4 +1,4 @@
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore';
 import { config } from '../config';
 import { withRetry } from '../utils/retry';
 import { google } from 'googleapis';

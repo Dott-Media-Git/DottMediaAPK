@@ -1,0 +1,67 @@
+{
+  "id": "bwinbetug",
+  "name": "bwinbet",
+  "tone": "bold, confident, matchday energy",
+  "colors": [
+    "#FFCA08",
+    "#005540",
+    "#000000",
+    "#F53D3D",
+    "#F4F4F4",
+    "#343434",
+    "#E0E0E0"
+  ],
+  "typography": "FreightSansProSemibold for headlines; FreightSans/Roboto/Noto Sans for body",
+  "logoPlacement": "Bottom-left or bottom-right with clear space equal to the 'b' height.",
+  "logoPath": "docs/brand-kits/assets/bwinbetug-logo.jpeg",
+  "templates": {
+    "instagram_poster": {
+      "size": "1080x1350",
+      "safe_zone": "Top 10% and bottom 12% reserved for logo/headline",
+      "headline_style": "Bold, 2-6 words, all caps",
+      "subhead_style": "Short stat or context line",
+      "cta": "Optional: Follow for odds or highlights",
+      "background": "Brand gold with black or green overlays"
+    },
+    "x_image": {
+      "size": "1600x900",
+      "safe_zone": "Keep text within central 70% width",
+      "headline_style": "Short, sharp, 2-5 words",
+      "subhead_style": "One-liner takeaway",
+      "cta": "Optional: Reply with your pick",
+      "background": "Brand green or black with gold accents"
+    },
+    "tiktok_cover": {
+      "size": "1080x1920",
+      "safe_zone": "Keep headline above 15% and below 80% to avoid UI",
+      "headline_style": "Large, stacked, 2-5 words",
+      "subhead_style": "Tiny stat line",
+      "cta": "Swipe/Watch/Follow",
+      "background": "Gold base with green gradient or black panel"
+    },
+    "instagram_square": {
+      "size": "1080x1080",
+      "safe_zone": "Keep headline within central 70% width",
+      "headline_style": "Bold, 2-5 words, all caps",
+      "subhead_style": "Short stat or result line",
+      "cta": "Optional: Tap for full story",
+      "background": "Brand gold with black block headline"
+    },
+    "instagram_story": {
+      "size": "1080x1920",
+      "safe_zone": "Avoid top 12% and bottom 15% UI zones",
+      "headline_style": "Large stacked headline",
+      "subhead_style": "One stat line",
+      "cta": "Swipe up / Follow for more",
+      "background": "Gold base with green accents"
+    },
+    "youtube_thumbnail": {
+      "size": "1280x720",
+      "safe_zone": "Keep text within center 70% width",
+      "headline_style": "2-4 words, heavy weight",
+      "subhead_style": "Optional micro stat",
+      "cta": "Watch now",
+      "background": "Dark green or black with gold highlights"
+    }
+  }
+}

@@ -2,6 +2,8 @@ import admin from 'firebase-admin';
 import OpenAI from 'openai';
 import { firestore } from '../../db/firestore.js';
 import { config } from '../../config.js';
+import { pickFallbackReply } from '../../services/fallbackReplyLibrary.js';
+import { OPENAI_REPLY_TIMEOUT_MS } from '../../utils/openaiTimeout.js';
 import { classifyIntentText } from '../brain/nlu/intentClassifier.js';
 import { LeadService } from './leadService.js';
 import { QualificationAgent } from './qualificationAgent.js';
@@ -15,7 +17,7 @@ export class InboundHandler {
         this.leadService = new LeadService();
         this.qualificationAgent = new QualificationAgent();
         this.messenger = new OutboundMessenger();
-        this.aiClient = new OpenAI({ apiKey: config.openAI.apiKey });
+        this.aiClient = new OpenAI({ apiKey: config.openAI.apiKey, timeout: OPENAI_REPLY_TIMEOUT_MS });
     }
     async handle(payload) {
         const classification = await classifyIntentText(payload.text);
@@ -96,9 +98,7 @@ ${override ? `Additional guidance: ${override}` : ''}
         }
     }
     fallbackReply(channel) {
-        return channel === 'web'
-            ? 'Thanks for reaching out to Dott Media! A strategist will follow up shortly.'
-            : "Appreciate the message! We'll send over AI automation details shortly.";
+        return pickFallbackReply({ channel, kind: 'message' });
     }
     async logMessage(payload, classification) {
         const entry = {

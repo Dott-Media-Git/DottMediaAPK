@@ -25,3 +25,18 @@ export async function sendWorkspaceLiveEmail(to: string, company: string) {
     ].join('\n'),
   });
 }
+
+export async function sendMonthlyPerformanceReportEmail(to: string, company: string, report: string) {
+  await transporter.sendMail({
+    from: config.smtp.from,
+    to,
+    subject: `Monthly performance report - ${company}`,
+    text: [
+      `Hi ${company} team,`,
+      '',
+      report,
+      '',
+      '-- Dott Media',
+    ].join('\n'),
+  });
+}

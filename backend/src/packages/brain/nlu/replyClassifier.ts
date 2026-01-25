@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { config } from '../../../config';
+import { OPENAI_REPLY_TIMEOUT_MS } from '../../../utils/openaiTimeout';
 
 export interface ReplyClassification {
   sentiment: number; // -1 to +1
@@ -16,6 +17,7 @@ const DEFAULT_CLASSIFICATION: ReplyClassification = {
 
 const client = new OpenAI({
   apiKey: config.openAI.apiKey,
+  timeout: OPENAI_REPLY_TIMEOUT_MS,
 });
 
 /**

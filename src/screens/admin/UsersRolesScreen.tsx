@@ -4,11 +4,13 @@ import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { inviteOrgUser, listOrgUsers, removeOrgUser, updateOrgUser } from '@services/admin/usersService';
+import { useI18n } from '@context/I18nContext';
 
 const roles: Array<'Owner' | 'Admin' | 'Agent' | 'Viewer'> = ['Owner', 'Admin', 'Agent', 'Viewer'];
 
 export const UsersRolesScreen: React.FC = () => {
   const { orgId } = useAuth();
+  const { t } = useI18n();
   const [users, setUsers] = useState<any[]>([]);
   const [invite, setInvite] = useState<{ uid: string; role: (typeof roles)[number] }>({ uid: '', role: 'Agent' });
   const [loading, setLoading] = useState(false);
@@ -17,7 +19,7 @@ export const UsersRolesScreen: React.FC = () => {
     if (!orgId) return;
     listOrgUsers(orgId)
       .then(setUsers)
-      .catch(error => Alert.alert('Error', error.message));
+      .catch(error => Alert.alert(t('Error'), error.message));
   };
 
   useEffect(refresh, [orgId]);
@@ -30,7 +32,7 @@ export const UsersRolesScreen: React.FC = () => {
       setInvite({ uid: '', role: 'Agent' });
       refresh();
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert(t('Error'), error.message);
     } finally {
       setLoading(false);
     }
@@ -51,7 +53,7 @@ export const UsersRolesScreen: React.FC = () => {
   return (
     <View style={styles.container}>
       <View style={styles.inviteCard}>
-        <Text style={styles.label}>Invite by UID / email</Text>
+        <Text style={styles.label}>{t('Invite by UID / email')}</Text>
         <TextInput
           value={invite.uid}
           onChangeText={uid => setInvite(prev => ({ ...prev, uid }))}
@@ -69,7 +71,7 @@ export const UsersRolesScreen: React.FC = () => {
             </Text>
           ))}
         </View>
-        <DMButton title="Send Invite" onPress={handleInvite} disabled={loading} />
+        <DMButton title={t('Send Invite')} onPress={handleInvite} disabled={loading} />
       </View>
       <FlatList
         data={users}
@@ -92,7 +94,7 @@ export const UsersRolesScreen: React.FC = () => {
                 </Text>
               ))}
               <Text style={styles.remove} onPress={() => remove(item.uid)}>
-                Remove
+                {t('Remove')}
               </Text>
             </View>
           </View>

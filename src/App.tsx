@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AuthProvider, useAuth } from '@context/AuthContext';
 import { AssistantProvider } from '@context/AssistantContext';
 import { ThemeProvider, useThemeMode } from '@context/ThemeContext';
+import { I18nProvider } from '@context/I18nContext';
 import { AppNavigator } from '@navigation/AppNavigator';
 import { colors } from '@constants/colors';
 import { FloatingAssistant } from '@components/FloatingAssistant';
@@ -62,11 +63,13 @@ export default function App() {
   }
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AssistantProvider>
-          <RootView />
-        </AssistantProvider>
-      </AuthProvider>
+      <I18nProvider>
+        <AuthProvider>
+          <AssistantProvider>
+            <RootView />
+          </AssistantProvider>
+        </AuthProvider>
+      </I18nProvider>
     </ThemeProvider>
   );
 }

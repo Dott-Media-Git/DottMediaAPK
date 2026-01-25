@@ -1,6 +1,8 @@
 import OpenAI from 'openai';
 import { config } from '../config.js';
 import { detectResponseType } from '../utils/nlp.js';
+import { pickFallbackReply } from './fallbackReplyLibrary.js';
+import { OPENAI_REPLY_TIMEOUT_MS } from '../utils/openaiTimeout.js';
 const platformTone = {
     whatsapp: { style: 'human and service-oriented with subtle empathy', greeting: 'Hey there, welcome to Dott Media - how can I help you today?' },
     facebook: { style: 'conversational and trust-building', greeting: 'Hey there, welcome to Dott Media - how can I help you today?' },
@@ -48,10 +50,12 @@ export class OpenAIService {
     constructor() {
         this.client = new OpenAI({
             apiKey: config.openAI.apiKey,
+            timeout: OPENAI_REPLY_TIMEOUT_MS,
         });
     }
     async generateReply(context) {
         const systemPrompt = buildSystemPrompt(context);
+        const fallback = pickFallbackReply({ channel: context.platform, kind: 'message' });
         try {
             const completion = await this.client.chat.completions.create({
                 model: 'gpt-4o-mini',
@@ -65,8 +69,7 @@ export class OpenAIService {
                     },
                 ],
             });
-            const reply = completion.choices?.[0]?.message?.content?.trim() ||
-                'Thanks for reaching out to Dott Media! A strategist will follow up shortly with more details.';
+            const reply = completion.choices?.[0]?.message?.content?.trim() || fallback;
             return {
                 reply,
                 responseType: detectResponseType(reply),
@@ -75,8 +78,8 @@ export class OpenAIService {
         catch (error) {
             console.error('OpenAI completion failed', error);
             return {
-                reply: 'Thanks for reaching out to Dott Media! A strategist will follow up shortly with more details.',
-                responseType: 'General',
+                reply: fallback,
+                responseType: detectResponseType(fallback),
             };
         }
     }

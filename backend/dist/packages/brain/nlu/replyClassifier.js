@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { config } from '../../../config.js';
+import { OPENAI_REPLY_TIMEOUT_MS } from '../../../utils/openaiTimeout.js';
 const DEFAULT_CLASSIFICATION = {
     sentiment: 0,
     intent: 'CURIOUS',
@@ -7,6 +8,7 @@ const DEFAULT_CLASSIFICATION = {
 };
 const client = new OpenAI({
     apiKey: config.openAI.apiKey,
+    timeout: OPENAI_REPLY_TIMEOUT_MS,
 });
 /**
  * Uses GPT-based reasoning to classify inbound replies for sentiment + intent.

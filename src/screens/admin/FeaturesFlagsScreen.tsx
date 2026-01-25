@@ -3,16 +3,18 @@ import { Alert, ScrollView, StyleSheet, Text, View, Switch } from 'react-native'
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { fetchSettings, updateSettings } from '@services/admin/settingsService';
+import { useI18n } from '@context/I18nContext';
 
 export const FeaturesFlagsScreen: React.FC = () => {
   const { orgId } = useAuth();
+  const { t } = useI18n();
   const [features, setFeatures] = useState<any>({});
 
   useEffect(() => {
     if (!orgId) return;
     fetchSettings(orgId)
       .then(data => setFeatures(data.features))
-      .catch(error => Alert.alert('Error', error.message));
+      .catch(error => Alert.alert(t('Error'), error.message));
   }, [orgId]);
 
   const toggle = async (key: string) => {
@@ -22,7 +24,7 @@ export const FeaturesFlagsScreen: React.FC = () => {
     try {
       await updateSettings(orgId, { features: next });
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert(t('Error'), error.message);
     }
   };
 
@@ -32,7 +34,7 @@ export const FeaturesFlagsScreen: React.FC = () => {
         <View key={key} style={styles.row}>
           <View>
             <Text style={styles.label}>{key}</Text>
-            <Text style={styles.subtitle}>Controls {key} experience</Text>
+            <Text style={styles.subtitle}>{t('Controls {{key}} experience', { key })}</Text>
           </View>
           <Switch
             value={features[key]}

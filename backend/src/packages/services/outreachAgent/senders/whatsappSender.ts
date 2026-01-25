@@ -11,6 +11,11 @@ export async function sendWhatsAppMessage(phoneNumber: string | undefined, text:
     throw new Error('WhatsApp phone number missing for prospect.');
   }
 
+  if (!config.whatsapp.token || !config.whatsapp.phoneNumberId) {
+    console.info('[whatsapp] skipping send; channel disabled');
+    return;
+  }
+
   const url = `https://graph.facebook.com/${WHATSAPP_GRAPH_VERSION}/${config.whatsapp.phoneNumberId}/messages`;
   await axios.post(
     url,

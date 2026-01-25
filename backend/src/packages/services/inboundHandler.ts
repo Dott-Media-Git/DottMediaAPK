@@ -2,18 +2,23 @@ import admin from 'firebase-admin';
 import OpenAI from 'openai';
 import { firestore } from '../../db/firestore';
 import { config } from '../../config.js';
+import { pickFallbackReply } from '../../services/fallbackReplyLibrary.js';
+import { OPENAI_REPLY_TIMEOUT_MS } from '../../utils/openaiTimeout.js';
 import { classifyIntentText, IntentClassification } from '../brain/nlu/intentClassifier';
 import { ReplyClassification } from '../brain/nlu/replyClassifier';
 import { LeadService } from './leadService';
 import { QualificationAgent } from './qualificationAgent';
 import { OutboundMessenger } from '../../services/outboundMessenger';
-import { incrementInboundAnalytics } from '../../services/analyticsService';
+import { incrementInboundAnalytics, incrementWebLeadAnalytics } from '../../services/analyticsService';
 
 const messagesCollection = firestore.collection('messages');
+const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
+const replyPromptCache = new Map<string, { value: string; fetchedAt: number; loaded: boolean }>();
 
 export type InboundPayload = {
   channel: 'whatsapp' | 'instagram' | 'facebook' | 'linkedin' | 'web';
   userId: string;
+  ownerId?: string;
   text: string;
   name?: string;
   profileUrl?: string;
@@ -26,7 +31,7 @@ export class InboundHandler {
   private leadService = new LeadService();
   private qualificationAgent = new QualificationAgent();
   private messenger = new OutboundMessenger();
-  private aiClient = new OpenAI({ apiKey: config.openAI.apiKey });
+  private aiClient = new OpenAI({ apiKey: config.openAI.apiKey, timeout: OPENAI_REPLY_TIMEOUT_MS });
 
   async handle(payload: InboundPayload) {
     const classification = await classifyIntentText(payload.text);
@@ -53,11 +58,18 @@ export class InboundHandler {
       leadCreated = true;
     }
 
-    await incrementInboundAnalytics({
-      messages: 1,
-      leads: lead ? 1 : 0,
-      sentimentTotal: classification.sentiment,
-    });
+    if (payload.channel === 'web') {
+      await incrementWebLeadAnalytics({
+        messages: 1,
+        leads: lead ? 1 : 0,
+      });
+    } else {
+      await incrementInboundAnalytics({
+        messages: 1,
+        leads: lead ? 1 : 0,
+        sentimentTotal: classification.sentiment,
+      });
+    }
 
     const reply = await this.composeReply(payload, classification, lead?.name);
 
@@ -77,12 +89,14 @@ export class InboundHandler {
   }
 
   private async composeReply(payload: InboundPayload, classification: Awaited<ReturnType<typeof classifyIntentText>>, leadName?: string) {
+    const override = await getAutoReplyPromptOverride(payload.ownerId ?? (payload.metadata as any)?.ownerId);
     const prompt = `
 You are Dotti from Dott Media, responding on ${payload.channel}.
 Message: """${payload.text}"""
 Intent: ${classification.intent}
 Name: ${leadName ?? payload.name ?? 'there'}
 Goal: move them toward buying or booking a demo of the Dott Media AI Sales Agent. Keep it friendly, concise (<=3 sentences), give a clear CTA (book a demo or get the Sales Agent), and offer a link or next step.
+${override ? `Additional guidance: ${override}` : ''}
 `.trim();
 
     try {
@@ -102,16 +116,15 @@ Goal: move them toward buying or booking a demo of the Dott Media AI Sales Agent
     }
   }
 
-  private fallbackReply(channel: string) {
-    return channel === 'web'
-      ? 'Thanks for reaching out to Dott Media! A strategist will follow up shortly.'
-      : "Appreciate the message! We'll send over AI automation details shortly.";
+  private fallbackReply(channel: InboundPayload['channel']) {
+    return pickFallbackReply({ channel, kind: 'message' });
   }
 
   private async logMessage(payload: InboundPayload, classification: Awaited<ReturnType<typeof classifyIntentText>>) {
     const entry: Record<string, unknown> = {
       channel: payload.channel,
       userId: payload.userId,
+      ownerId: payload.ownerId,
       text: payload.text,
       direction: 'inbound',
       classification,
@@ -149,6 +162,25 @@ Goal: move them toward buying or booking a demo of the Dott Media AI Sales Agent
     }
   }
 }
+
+const getAutoReplyPromptOverride = async (userId?: string) => {
+  if (!userId) return null;
+  const now = Date.now();
+  const cached = replyPromptCache.get(userId);
+  if (cached?.loaded && now - cached.fetchedAt < SETTINGS_CACHE_TTL_MS) {
+    return cached.value || null;
+  }
+  try {
+    const snap = await firestore.collection('assistant_settings').doc(userId).get();
+    const value = (snap.data()?.autoReplyPrompt as string | undefined)?.trim() ?? '';
+    replyPromptCache.set(userId, { value: value || '', fetchedAt: now, loaded: true });
+    return value || null;
+  } catch (error) {
+    console.warn('Failed to load auto-reply prompt override', (error as Error).message);
+    replyPromptCache.set(userId, { value: '', fetchedAt: now, loaded: true });
+    return null;
+  }
+};
 
 function toReplyClassification(classification: IntentClassification): ReplyClassification {
   const intentMap: Record<string, ReplyClassification['intent']> = {

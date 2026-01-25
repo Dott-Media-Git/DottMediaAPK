@@ -3,6 +3,7 @@ import { getIdToken, isFirebaseEnabled, realtimeDb } from '@services/firebase';
 import {
   collection,
   doc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
@@ -45,6 +46,27 @@ const buildApiUrl = (path: string) => {
   const base = env.apiUrl?.replace(/\/$/, '') ?? '';
   if (!base) return '';
   return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
+};
+
+const sanitizeScopeId = (value?: string) => {
+  if (!value) return '';
+  return value.trim().replace(/[\\/]/g, '_');
+};
+
+export const resolveAnalyticsScopeId = (userId?: string, orgId?: string) => {
+  const candidate = sanitizeScopeId(orgId ?? userId);
+  const envOrg = sanitizeScopeId(env.analyticsOrgId);
+  const envUser = sanitizeScopeId(env.analyticsUserId);
+  return candidate || envOrg || envUser || undefined;
+};
+
+const resolveScopeKey = (scopeId?: string) => sanitizeScopeId(scopeId) || 'global';
+
+const appendScope = (path: string, scopeId?: string) => {
+  const scoped = sanitizeScopeId(scopeId);
+  if (!scoped) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}scopeId=${encodeURIComponent(scoped)}`;
 };
 
 const buildAuthHeader = async (userId: string) => {
@@ -95,12 +117,14 @@ export const fetchAnalytics = async (userId: string): Promise<DashboardAnalytics
 export const subscribeAnalytics = (
   userId: string,
   onData: (payload: DashboardAnalytics) => void,
-  onError?: (err: unknown) => void
+  onError?: (err: unknown) => void,
+  scopeId?: string
 ): Unsubscribe | null => {
   if (!isFirebaseEnabled || !realtimeDb) return null;
 
+  const dailyOwner = scopeId ?? userId;
   const dailyRef = query(
-    collection(realtimeDb, 'analytics', userId, 'daily'),
+    collection(realtimeDb, 'analytics', dailyOwner, 'daily'),
     orderBy('date', 'desc'),
     limit(14)
   );
@@ -175,11 +199,180 @@ export const subscribeAnalytics = (
   };
 };
 
-export const fetchOutboundStats = async (): Promise<OutboundStats | null> => {
-  const endpoint = buildApiUrl('/api/stats/outbound');
+type InboundDailyDoc = {
+  date?: string;
+  leads?: number;
+  messages?: number;
+  sentimentTotal?: number;
+  sentimentSamples?: number;
+};
+
+type OutboundDailyDoc = {
+  date?: string;
+  conversions?: number;
+};
+
+type WebLeadDailyDoc = {
+  date?: string;
+  leads?: number;
+  messages?: number;
+};
+
+const toScore = (avgSentiment: number) => {
+  const clamped = Math.max(-1, Math.min(1, avgSentiment));
+  return Number(((clamped + 1) * 2.5).toFixed(1));
+};
+
+const buildOrgDashboard = (
+  inbound: InboundDailyDoc[],
+  outbound: OutboundDailyDoc[],
+  webLeads: WebLeadDailyDoc[]
+): DashboardAnalytics => {
+  const byDate = new Map<string, { inbound?: InboundDailyDoc; outbound?: OutboundDailyDoc; web?: WebLeadDailyDoc }>();
+  const push = (entry: { date?: string }, key: 'inbound' | 'outbound' | 'web') => {
+    const date = entry.date ?? '';
+    if (!date) return;
+    const existing = byDate.get(date) ?? {};
+    byDate.set(date, { ...existing, [key]: entry });
+  };
+  inbound.forEach(entry => push(entry, 'inbound'));
+  outbound.forEach(entry => push(entry, 'outbound'));
+  webLeads.forEach(entry => push(entry, 'web'));
+
+  const dates = Array.from(byDate.keys()).sort();
+  const history = dates.slice(-14).map(date => {
+    const entry = byDate.get(date) ?? {};
+    const inboundLeads = Number(entry.inbound?.leads ?? 0);
+    const inboundMessages = Number(entry.inbound?.messages ?? 0);
+    const webLeadsCount = Number(entry.web?.leads ?? 0);
+    const webMessages = Number(entry.web?.messages ?? 0);
+    const totalLeads = inboundLeads + webLeadsCount;
+    const totalMessages = inboundMessages + webMessages;
+    const engagement = totalMessages ? (totalLeads / totalMessages) * 100 : 0;
+    const sentimentSamples = Number(entry.inbound?.sentimentSamples ?? 0);
+    const sentimentTotal = Number(entry.inbound?.sentimentTotal ?? 0);
+    const avgSentiment = sentimentSamples ? sentimentTotal / sentimentSamples : 0;
+    return {
+      date,
+      leads: totalLeads,
+      engagement: Number(engagement.toFixed(1)),
+      conversions: Number(entry.outbound?.conversions ?? 0),
+      feedbackScore: toScore(avgSentiment),
+    };
+  });
+
+  const latest = history[history.length - 1];
+  return {
+    leads: latest?.leads ?? 0,
+    engagement: latest?.engagement ?? 0,
+    conversions: latest?.conversions ?? 0,
+    feedbackScore: latest?.feedbackScore ?? 0,
+    jobBreakdown: { active: 0, queued: 0, failed: 0 },
+    recentJobs: [],
+    history,
+  };
+};
+
+export const fetchOrgDashboardAnalytics = async (
+  scopeId: string | undefined
+): Promise<DashboardAnalytics | null> => {
+  if (!isFirebaseEnabled || !realtimeDb || !scopeId) return null;
+  const inboundRef = query(
+    collection(realtimeDb, 'analytics', scopeId, 'inboundDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+  const outboundRef = query(
+    collection(realtimeDb, 'analytics', scopeId, 'outboundDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+  const webRef = query(
+    collection(realtimeDb, 'analytics', scopeId, 'webLeadsDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+
+  const [inboundSnap, outboundSnap, webSnap] = await Promise.all([
+    getDocs(inboundRef),
+    getDocs(outboundRef),
+    getDocs(webRef),
+  ]);
+
+  const inbound = inboundSnap.docs.map(doc => ({ date: doc.id, ...(doc.data() as InboundDailyDoc) }));
+  const outbound = outboundSnap.docs.map(doc => ({ date: doc.id, ...(doc.data() as OutboundDailyDoc) }));
+  const webLeads = webSnap.docs.map(doc => ({ date: doc.id, ...(doc.data() as WebLeadDailyDoc) }));
+  return buildOrgDashboard(inbound, outbound, webLeads);
+};
+
+export const subscribeOrgDashboardAnalytics = (
+  scopeId: string | undefined,
+  onData: (payload: DashboardAnalytics) => void,
+  onError?: (err: unknown) => void
+): Unsubscribe | null => {
+  if (!isFirebaseEnabled || !realtimeDb || !scopeId) return null;
+  const inboundRef = query(
+    collection(realtimeDb, 'analytics', scopeId, 'inboundDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+  const outboundRef = query(
+    collection(realtimeDb, 'analytics', scopeId, 'outboundDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+  const webRef = query(
+    collection(realtimeDb, 'analytics', scopeId, 'webLeadsDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+
+  let inbound: InboundDailyDoc[] = [];
+  let outbound: OutboundDailyDoc[] = [];
+  let webLeads: WebLeadDailyDoc[] = [];
+
+  const emit = () => {
+    onData(buildOrgDashboard(inbound, outbound, webLeads));
+  };
+
+  const unsubInbound = onSnapshot(
+    inboundRef,
+    snap => {
+      inbound = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as InboundDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
+  const unsubOutbound = onSnapshot(
+    outboundRef,
+    snap => {
+      outbound = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as OutboundDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
+  const unsubWeb = onSnapshot(
+    webRef,
+    snap => {
+      webLeads = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as WebLeadDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
+
+  return () => {
+    unsubInbound();
+    unsubOutbound();
+    unsubWeb();
+  };
+};
+
+export const fetchOutboundStats = async (userId?: string, scopeId?: string): Promise<OutboundStats | null> => {
+  const endpoint = buildApiUrl(appendScope('/api/stats/outbound', scopeId));
   if (!endpoint) return null;
   try {
-    const response = await fetch(endpoint);
+    const headers = await buildAuthHeader(userId ?? '');
+    const response = await fetch(endpoint, { headers });
     if (!response.ok) {
       console.warn('Failed to fetch outbound stats', response.status);
       return null;
@@ -193,20 +386,23 @@ export const fetchOutboundStats = async (): Promise<OutboundStats | null> => {
 };
 
 export const subscribeOutboundStats = (
+  scopeId: string | undefined,
   onData: (stats: OutboundStats) => void,
   onError?: (err: unknown) => void
 ): Unsubscribe | null => {
   if (!isFirebaseEnabled || !realtimeDb) return null;
-  const summaryRef = doc(realtimeDb, 'analytics', 'outboundSummary');
+  const summaryRef = doc(realtimeDb, 'analytics', resolveScopeKey(scopeId), 'summaries', 'outbound');
   return onSnapshot(
     summaryRef,
     snap => {
       const data = (snap.data() ?? {}) as any;
-      const prospectsContacted = Number(data.prospectsContacted ?? 0);
+      const prospectsContacted = Number(
+        data.prospectsContacted ?? data.messagesSent ?? data.prospectsFound ?? 0
+      );
       const replies = Number(data.replies ?? 0);
       const conversions = Number(data.conversions ?? 0);
       const positiveReplies = Number(data.positiveReplies ?? replies);
-      const demoBookings = Number(data.demoBookings ?? 0);
+      const demoBookings = Number(data.demosBooked ?? data.demoBookings ?? 0);
       const conversionRate = prospectsContacted ? conversions / prospectsContacted : 0;
       onData({
         prospectsContacted,
@@ -249,11 +445,12 @@ export type WebLeadStats = {
   conversionRate: number;
 };
 
-const simpleFetch = async <T>(path: string): Promise<T | null> => {
-  const endpoint = buildApiUrl(path);
+const simpleFetch = async <T>(path: string, userId?: string, scopeId?: string): Promise<T | null> => {
+  const endpoint = buildApiUrl(appendScope(path, scopeId));
   if (!endpoint) return null;
   try {
-    const response = await fetch(endpoint);
+    const headers = await buildAuthHeader(userId ?? '');
+    const response = await fetch(endpoint, { headers });
     if (!response.ok) {
       console.warn(`Failed to fetch ${path}`, response.status);
       return null;
@@ -266,17 +463,22 @@ const simpleFetch = async <T>(path: string): Promise<T | null> => {
   }
 };
 
-export const fetchInboundStats = () => simpleFetch<InboundStats>('/api/stats/inbound');
-export const fetchEngagementStats = () => simpleFetch<EngagementStats>('/api/stats/engagement');
-export const fetchFollowupStats = () => simpleFetch<FollowupStats>('/api/stats/followups');
-export const fetchWebLeadStats = () => simpleFetch<WebLeadStats>('/api/stats/webLeads');
+export const fetchInboundStats = (userId?: string, scopeId?: string) =>
+  simpleFetch<InboundStats>('/api/stats/inbound', userId, scopeId);
+export const fetchEngagementStats = (userId?: string, scopeId?: string) =>
+  simpleFetch<EngagementStats>('/api/stats/engagement', userId, scopeId);
+export const fetchFollowupStats = (userId?: string, scopeId?: string) =>
+  simpleFetch<FollowupStats>('/api/stats/followups', userId, scopeId);
+export const fetchWebLeadStats = (userId?: string, scopeId?: string) =>
+  simpleFetch<WebLeadStats>('/api/stats/webLeads', userId, scopeId);
 
 export const subscribeWebLeadStats = (
+  scopeId: string | undefined,
   onData: (stats: WebLeadStats) => void,
   onError?: (err: unknown) => void
 ): Unsubscribe | null => {
   if (!isFirebaseEnabled || !realtimeDb) return null;
-  const summaryRef = doc(realtimeDb, 'analytics', 'webLeadsSummary');
+  const summaryRef = doc(realtimeDb, 'analytics', resolveScopeKey(scopeId), 'summaries', 'webLeads');
   return onSnapshot(
     summaryRef,
     snap => {
