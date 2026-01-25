@@ -39,17 +39,17 @@ const library: Library = {
   },
   comment: {
     default: [
-      'Thanks for the comment! DM us if you want a quick Dott Media AI demo.',
-      'Appreciate the support. Happy to share Details through https://api.whatsapp.com/send/?phone=0775067216&text&type=phone_number&app_absent=0',
+      'Thanks for the comment! For details, WhatsApp +256-775067216.',
+      'Appreciate the support. Happy to share details in a DM.',
       'Thanks for engaging! We can share a short demo link if you want.',
     ],
     instagram: [
-      'Thanks for the comment! DM us if you want a quick Dott Media AI demo.',
-      'Appreciate the support. Happy to share Details through https://api.whatsapp.com/send/?phone=0775067216&text&type=phone_number&app_absent=0',
+      'Thanks for the comment! For details, WhatsApp +256-775067216.',
+      'Appreciate the support. Happy to share details in a DM.',
     ],
     facebook: [
-      'Thanks for the comment! Send us a message if you want a quick Dott Media AI demo.',
-      'Appreciate the support. Happy to share Details through https://api.whatsapp.com/send/?phone=0775067216&text&type=phone_number&app_absent=0',
+      'Thanks for the comment! For details, WhatsApp +256-775067216.',
+      'Appreciate the support. Happy to share details in a message.',
     ],
     linkedin: [
       'Thanks for the note. Happy to share a brief overview in a message.',
