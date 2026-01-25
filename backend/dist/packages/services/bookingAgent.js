@@ -1,10 +1,10 @@
 import { google } from 'googleapis';
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
-import { config } from '../../config';
-import { incrementMetric } from '../../services/analyticsService';
-import { NotificationService } from './notificationService';
-import { OutboundCrmSyncService } from './crmSyncService';
+import { firestore } from '../../db/firestore.js';
+import { config } from '../../config.js';
+import { incrementMetric } from '../../services/analyticsService.js';
+import { NotificationService } from './notificationService.js';
+import { OutboundCrmSyncService } from './crmSyncService.js';
 const bookingsCollection = firestore.collection('bookings');
 const leadsCollection = firestore.collection('leads');
 const bookingOffersCollection = firestore.collection('bookingOffers');

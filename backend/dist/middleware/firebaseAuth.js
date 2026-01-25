@@ -1,6 +1,6 @@
 import createHttpError from 'http-errors';
-import { firebaseApp } from '../lib/firebase';
-import { config } from '../config';
+import { firebaseApp } from '../db/firestore.js';
+import { config } from '../config.js';
 export async function requireFirebase(req, _res, next) {
     const header = req.header('Authorization');
     if (!header)
@@ -18,6 +18,9 @@ export async function requireFirebase(req, _res, next) {
         return next();
     }
     try {
+        if (!firebaseApp) {
+            return next(createHttpError(503, 'Firebase auth is not initialized'));
+        }
         const decoded = await firebaseApp.auth().verifyIdToken(token);
         req.authUser = decoded;
         return next();

@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
-import { config } from '../config';
-import { detectResponseType } from '../utils/nlp';
+import { config } from '../config.js';
+import { detectResponseType } from '../utils/nlp.js';
 const platformTone = {
     whatsapp: { style: 'human and service-oriented with subtle empathy', greeting: 'Hey there, welcome to Dott Media - how can I help you today?' },
     facebook: { style: 'conversational and trust-building', greeting: 'Hey there, welcome to Dott Media - how can I help you today?' },

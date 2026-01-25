@@ -1,12 +1,12 @@
 import { v4 as uuid } from 'uuid';
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
-import { classifyIntent, detectResponseType, extractKeywords, extractLeadProfile, scoreSentiment, } from '../utils/nlp';
-import { OpenAIService } from './openAIService';
-import { BotStatsService } from './botStatsService';
-import { LeadScoringService } from './leadScoringService';
-import { FollowUpService } from './followUpService';
-import { KnowledgeBaseService } from './knowledgeBaseService';
+import { firestore } from '../db/firestore.js';
+import { classifyIntent, detectResponseType, extractKeywords, extractLeadProfile, scoreSentiment, } from '../utils/nlp.js';
+import { OpenAIService } from './openAIService.js';
+import { BotStatsService } from './botStatsService.js';
+import { LeadScoringService } from './leadScoringService.js';
+import { FollowUpService } from './followUpService.js';
+import { KnowledgeBaseService } from './knowledgeBaseService.js';
 const conversationsCollection = firestore.collection('conversations');
 const messagesCollection = firestore.collection('messages');
 const leadsCollection = firestore.collection('leads');
@@ -92,7 +92,7 @@ export class ConversationService {
             created_at: conversation.created_at,
             updated_at: conversation.updated_at,
         });
-        await messagesCollection.add({
+        const messageRef = await messagesCollection.add({
             messageId: payload.messageId,
             platform: payload.platform,
             intent: intentCategory,
@@ -103,6 +103,7 @@ export class ConversationService {
             lead_score: leadScoreResult.score,
             lead_tier: leadScoreResult.tier,
             created_at: admin.firestore.FieldValue.serverTimestamp(),
+            replyStatus: 'pending',
         });
         await this.stats.recordSession({
             conversation,
@@ -133,6 +134,24 @@ export class ConversationService {
             intentCategory,
             sentimentScore,
             conversation,
+            messageDocId: messageRef.id,
         };
+    }
+    async updateReplyStatus(messageDocId, status, error) {
+        if (!messageDocId)
+            return;
+        const update = {
+            replyStatus: status,
+            replyAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        if (error) {
+            update.replyError = error;
+        }
+        try {
+            await messagesCollection.doc(messageDocId).update(update);
+        }
+        catch (err) {
+            console.warn('Failed to update reply status', err.message);
+        }
     }
 }

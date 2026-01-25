@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { config } from '../../config';
+import { config } from '../../config.js';
 const DEFAULT_OUTPUT = {
     images: [],
     caption_instagram: '',
@@ -10,7 +10,8 @@ const DEFAULT_OUTPUT = {
 };
 export class ContentGenerationService {
     constructor() {
-        this.client = new OpenAI({ apiKey: config.openAI.apiKey });
+        this.client = new OpenAI({ apiKey: config.openAI.apiKey, timeout: 120000 });
+        this.lastImageError = null;
     }
     async generateContent(params) {
         const result = { ...DEFAULT_OUTPUT };
@@ -18,26 +19,50 @@ export class ContentGenerationService {
         const [images, captions] = await Promise.all([this.generateImages(params, imageCount), this.generateCaptions(params)]);
         result.images = images;
         Object.assign(result, captions);
+        if (!result.images.length && this.lastImageError) {
+            result.image_error = this.lastImageError;
+        }
         return result;
     }
     async generateImages(params, imageCount) {
-        try {
-            const response = await this.client.images.generate({
-                model: 'gpt-image-1',
-                prompt: `${params.prompt}. Stylize for ${params.businessType} social media campaign.`,
-                size: '1024x1024',
-                n: imageCount,
-            });
-            const data = response.data ?? [];
-            return data.map(item => item.url).filter((url) => Boolean(url));
+        const model = 'dall-e-3';
+        const count = Math.min(imageCount, 1); // DALL-E 3 supports a single image per request
+        this.lastImageError = null;
+        const prompt = `${params.prompt}. Stylize for ${params.businessType} social media campaign.`;
+        const attempts = Math.max(Number(process.env.OPENAI_IMAGE_ATTEMPTS ?? 2), 1);
+        for (let attempt = 0; attempt < attempts; attempt += 1) {
+            try {
+                const response = await this.client.images.generate({
+                    model,
+                    prompt,
+                    size: '1024x1024',
+                    n: count,
+                    response_format: 'url',
+                });
+                const data = response.data ?? [];
+                const urls = data.map(item => item.url).filter((url) => Boolean(url));
+                if (urls.length)
+                    return urls;
+                this.lastImageError = 'OpenAI returned no image URL.';
+            }
+            catch (error) {
+                const message = error?.response?.data?.error?.message ??
+                    error?.message ??
+                    'OpenAI image generation failed';
+                this.lastImageError = message;
+                console.error('Image generation failed', message);
+                if (attempt < attempts - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                }
+            }
         }
-        catch (error) {
-            console.error('Image generation failed', error);
-            return [];
-        }
+        return [];
     }
     async generateCaptions(params) {
         const systemPrompt = `You create high-performing social media copy for Instagram, LinkedIn, and Twitter.
+Focus on the product/services and outcomes, not the image scene.
+Avoid describing clothing, suits, ties, executive suites, or photography/lighting.
+Emphasize real services like CRM, social media marketing, lead generation, outreach automation, analytics, AI automation, and appointment booking.
 Return JSON with keys:
 caption_instagram, caption_linkedin, caption_x, hashtags_instagram (comma separated), hashtags_generic (comma separated 15-25 hashtags).`;
         const completion = await this.client.chat.completions.create({
@@ -48,7 +73,7 @@ caption_instagram, caption_linkedin, caption_x, hashtags_instagram (comma separa
                 { role: 'system', content: systemPrompt },
                 {
                     role: 'user',
-                    content: `Prompt: ${params.prompt}\nBusiness type: ${params.businessType}\nTone: energetic, helpful, growth-minded.`,
+                    content: `Prompt: ${params.prompt}\nBusiness type: ${params.businessType}\nServices: CRM, social media marketing, lead generation, outreach automation, analytics, AI automation, appointment booking, auto-replies.\nTone: energetic, helpful, growth-minded.`,
                 },
             ],
         });

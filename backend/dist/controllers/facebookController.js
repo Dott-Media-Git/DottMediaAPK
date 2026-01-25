@@ -1,5 +1,5 @@
-import { config } from '../config';
-import { FacebookService } from '../services/facebookService';
+import { config } from '../config.js';
+import { FacebookService } from '../services/facebookService.js';
 export class FacebookController {
     constructor() {
         this.service = new FacebookService();

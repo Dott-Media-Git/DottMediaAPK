@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { ThreadsController } from '../controllers/threadsController';
+import { ThreadsController } from '../controllers/threadsController.js';
 const router = Router();
 const controller = new ThreadsController();
 router.get('/webhook/threads', controller.verify);

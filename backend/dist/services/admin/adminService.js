@@ -1,9 +1,9 @@
 import admin from 'firebase-admin';
 import Stripe from 'stripe';
 import createHttpError from 'http-errors';
-import { firestore } from '../../lib/firebase';
-import { putSecret, getSecret } from '../secretVaultService';
-import { validateSettingsPatch } from './settingsValidator';
+import { firestore } from '../../db/firestore.js';
+import { putSecret, getSecret } from '../secretVaultService.js';
+import { validateSettingsPatch } from './settingsValidator.js';
 const orgsCollection = firestore.collection('orgs');
 const orgUsersCollection = firestore.collection('orgUsers');
 const orgSettingsCollection = firestore.collection('orgSettings');

@@ -1,6 +1,6 @@
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
-import { OutboundCrmSyncService } from './crmSyncService';
+import { firestore } from '../../db/firestore.js';
+import { OutboundCrmSyncService } from './crmSyncService.js';
 const leadsCollection = firestore.collection('leads');
 export class LeadService {
     constructor() {
@@ -31,8 +31,9 @@ export class LeadService {
             sentiment: payload.sentiment ?? existing?.sentiment,
             lastActive: now,
         };
+        const sanitized = Object.fromEntries(Object.entries(leadRecord).filter(([, value]) => value !== undefined));
         await docRef.set({
-            ...leadRecord,
+            ...sanitized,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             lastActive: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });

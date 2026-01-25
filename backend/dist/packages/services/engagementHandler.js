@@ -1,15 +1,16 @@
 import admin from 'firebase-admin';
 import OpenAI from 'openai';
-import { firestore } from '../../lib/firebase';
-import { classifyIntentText } from '../brain/nlu/intentClassifier';
-import { LeadService } from './leadService';
-import { NotificationService } from './notificationService';
-import { incrementEngagementAnalytics } from '../../services/analyticsService';
+import { firestore } from '../../db/firestore.js';
+import { config } from '../../config.js';
+import { classifyIntentText } from '../brain/nlu/intentClassifier.js';
+import { LeadService } from './leadService.js';
+import { NotificationService } from './notificationService.js';
+import { incrementEngagementAnalytics } from '../../services/analyticsService.js';
 const engagementsCollection = firestore.collection('engagements');
 const KEYWORDS = ['price', 'cost', 'crm', 'automation', 'ai', 'demo'];
 export class EngagementHandler {
     constructor() {
-        this.aiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        this.aiClient = new OpenAI({ apiKey: config.openAI.apiKey });
         this.leadService = new LeadService();
         this.notifier = new NotificationService();
     }
@@ -56,7 +57,7 @@ export class EngagementHandler {
 Platform: ${payload.channel}
 Comment: """${payload.text}"""
 Intent: ${classification.intent}
-Respond as Dotti from Dott Media within 2 sentences. Invite them to request a demo if relevant.
+Respond as Dotti from Dott Media within 2 sentences. Nudge them to get the Dott Media AI Sales Agent or book a demo, with a clear CTA.
 `;
         try {
             const completion = await this.aiClient.chat.completions.create({

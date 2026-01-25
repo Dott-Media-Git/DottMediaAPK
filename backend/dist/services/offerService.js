@@ -1,6 +1,6 @@
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
-import { OpenAIService } from './openAIService';
+import { firestore } from '../db/firestore.js';
+import { OpenAIService } from './openAIService.js';
 const conversationsCollection = firestore.collection('conversations');
 const offersCollection = firestore.collection('offers');
 export class OfferService {

@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { firestore } from '../lib/firebase';
-import { classifyReply } from '../packages/brain/nlu/replyClassifier';
-import { ConversionService } from '../packages/services/conversionService';
-import { incrementMetric } from '../services/analyticsService';
+import { firestore } from '../db/firestore.js';
+import { classifyReply } from '../packages/brain/nlu/replyClassifier.js';
+import { ConversionService } from '../packages/services/conversionService.js';
+import { incrementMetric } from '../services/analyticsService.js';
 const conversionService = new ConversionService();
 const prospectsCollection = firestore.collection('prospects');
 const router = Router();

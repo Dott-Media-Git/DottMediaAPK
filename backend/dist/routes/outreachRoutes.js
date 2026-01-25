@@ -1,7 +1,10 @@
 import { Router } from 'express';
-import { OutreachController } from '../controllers/outreachController';
+import { OutreachController } from '../controllers/outreachController.js';
 const router = Router();
 const controller = new OutreachController();
 router.post('/outreach/search', controller.search);
 router.post('/outreach/send', controller.send);
+router.get('/outreach/stats', controller.stats);
+router.post('/outreach/run', controller.run);
+router.get('/outreach/logs', controller.logs);
 export default router;

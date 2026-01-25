@@ -1,4 +1,4 @@
-import { IntentCategories, InterestCategories, ResponseTypes, } from '../types/bot';
+import { IntentCategories, InterestCategories, ResponseTypes, } from '../types/bot.js';
 const normalize = (value) => value?.toLowerCase() ?? '';
 const intentKeywordMap = {
     'Lead Inquiry': ['pricing', 'cost', 'plan', 'package', 'lead', 'crm'],

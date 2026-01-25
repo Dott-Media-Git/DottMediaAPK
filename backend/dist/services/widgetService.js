@@ -1,4 +1,4 @@
-import { ConversationService } from './conversationService';
+import { ConversationService } from './conversationService.js';
 export class WidgetService {
     constructor() {
         this.conversations = new ConversationService();

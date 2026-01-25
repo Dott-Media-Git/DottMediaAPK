@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import { InboundHandler } from '../packages/services/inboundHandler';
-import { incrementWebLeadAnalytics } from '../services/analyticsService';
+import { InboundHandler } from '../packages/services/inboundHandler.js';
 const router = Router();
 const inbound = new InboundHandler();
 router.post('/widget/webhook', async (req, res, next) => {
@@ -12,10 +11,6 @@ router.post('/widget/webhook', async (req, res, next) => {
             name: req.body.name,
             email: req.body.email,
             metadata: { widget: true },
-        });
-        await incrementWebLeadAnalytics({
-            messages: 1,
-            leads: response.leadCreated ? 1 : 0,
         });
         res.json({ ok: true, response });
     }

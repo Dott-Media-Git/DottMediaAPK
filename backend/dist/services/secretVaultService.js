@@ -1,6 +1,6 @@
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
-import { decryptValueRaw, encryptValueRaw, getEncryptionKey } from './vaultCrypto';
+import { firestore } from '../db/firestore.js';
+import { decryptValueRaw, encryptValueRaw, getEncryptionKey } from './vaultCrypto.js';
 const vaultCollection = firestore.collection('vault');
 const secretsCollection = firestore.collection('secrets');
 const encryptionKey = getEncryptionKey();

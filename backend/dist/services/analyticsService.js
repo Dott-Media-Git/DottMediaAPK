@@ -1,119 +1,167 @@
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore.js';
+import { resolveAnalyticsScopeKey } from './analyticsScope.js';
 const RatingWeights = {
     active: 1,
     queued: 0.6,
     failed: 0.2,
 };
-const outboundAnalyticsCollection = firestore.collection('analytics').doc('outbound').collection('daily');
-const outboundSummaryDoc = firestore.collection('analytics').doc('outboundSummary');
-const inboundAnalyticsCollection = firestore.collection('analytics').doc('inbound').collection('daily');
-const inboundSummaryDoc = firestore.collection('analytics').doc('inboundSummary');
-const engagementAnalyticsCollection = firestore.collection('analytics').doc('engagement').collection('daily');
-const engagementSummaryDoc = firestore.collection('analytics').doc('engagementSummary');
-const followupAnalyticsCollection = firestore.collection('analytics').doc('followups').collection('daily');
-const followupSummaryDoc = firestore.collection('analytics').doc('followupsSummary');
-const webLeadAnalyticsCollection = firestore.collection('analytics').doc('webLeads').collection('daily');
-const webLeadSummaryDoc = firestore.collection('analytics').doc('webLeadsSummary');
+const analyticsRoot = (scope) => firestore.collection('analytics').doc(resolveAnalyticsScopeKey(scope));
+const outboundAnalyticsCollection = (scope) => analyticsRoot(scope).collection('outboundDaily');
+const outboundSummaryDoc = (scope) => analyticsRoot(scope).collection('summaries').doc('outbound');
+const inboundAnalyticsCollection = (scope) => analyticsRoot(scope).collection('inboundDaily');
+const inboundSummaryDoc = (scope) => analyticsRoot(scope).collection('summaries').doc('inbound');
+const engagementAnalyticsCollection = (scope) => analyticsRoot(scope).collection('engagementDaily');
+const engagementSummaryDoc = (scope) => analyticsRoot(scope).collection('summaries').doc('engagement');
+const followupAnalyticsCollection = (scope) => analyticsRoot(scope).collection('followupsDaily');
+const followupSummaryDoc = (scope) => analyticsRoot(scope).collection('summaries').doc('followups');
+const webLeadAnalyticsCollection = (scope) => analyticsRoot(scope).collection('webLeadsDaily');
+const webLeadSummaryDoc = (scope) => analyticsRoot(scope).collection('summaries').doc('webLeads');
 export class AnalyticsService {
     async getSummary(userId) {
-        const jobsSnap = await firestore
-            .collection('automations')
-            .doc(userId)
-            .collection('jobs')
-            .orderBy('updatedAt', 'desc')
-            .limit(15)
-            .get();
-        let leads = 0;
-        let engagement = 0;
-        let conversions = 0;
-        let feedbackScore = 4.2;
-        let active = 0;
-        let queued = 0;
-        let failed = 0;
-        jobsSnap.forEach(doc => {
-            const data = doc.data();
-            const status = data.status?.toLowerCase() ?? 'queued';
-            if (status === 'active')
-                active += 1;
-            else if (status === 'failed')
-                failed += 1;
-            else
-                queued += 1;
-            leads += data.analytics?.leads ?? 8;
-            engagement += data.analytics?.engagement ?? 40;
-            conversions += data.analytics?.conversions ?? 3;
-            feedbackScore += RatingWeights[status] ?? 0.5;
-        });
-        const historySnap = await firestore
-            .collection('analytics')
-            .doc(userId)
-            .collection('daily')
-            .orderBy('date', 'desc')
-            .limit(14)
-            .get();
-        const history = historySnap.docs
-            .map(doc => {
-            const data = doc.data();
-            const samples = Number(data.samples ?? 1) || 1;
-            return {
-                date: data.date ?? doc.id,
-                leads: Math.round(Number(data.leads ?? 0) / samples),
-                engagement: Math.round(Number(data.engagement ?? 0) / samples),
-                conversions: Math.round(Number(data.conversions ?? 0) / samples),
-                feedbackScore: Number(((Number(data.feedbackScore ?? 0) / samples) || 0).toFixed(1)),
-            };
-        })
-            .reverse();
-        if (history.length) {
-            const divisor = history.length;
-            leads = history.reduce((sum, day) => sum + day.leads, 0) / divisor;
-            engagement = history.reduce((sum, day) => sum + day.engagement, 0) / divisor;
-            conversions = history.reduce((sum, day) => sum + day.conversions, 0) / divisor;
-            feedbackScore = history.reduce((sum, day) => sum + day.feedbackScore, 0) / divisor;
-        }
-        else {
-            const divisor = Math.max(jobsSnap.size, 1);
-            leads = leads / divisor;
-            engagement = engagement / divisor;
-            conversions = conversions / divisor;
-            feedbackScore = feedbackScore / divisor;
-        }
-        return {
-            leads: Math.round(leads),
-            engagement: Math.round(engagement),
-            conversions: Math.round(conversions),
-            feedbackScore: Math.min(5, Number(feedbackScore.toFixed(1))),
-            jobBreakdown: {
-                active,
-                queued,
-                failed,
-            },
-            recentJobs: jobsSnap.docs.map(doc => {
-                const data = doc.data();
-                const updatedAt = data.updatedAt;
+        // Mock Data Logic
+        if (process.env.ALLOW_MOCK_AUTH === 'true') {
+            const mockHistory = Array.from({ length: 14 }).map((_, i) => {
+                const date = new Date();
+                date.setDate(date.getDate() - i);
                 return {
-                    jobId: data.jobId,
-                    scenarioId: data.scenarioId ?? null,
-                    status: data.status ?? 'queued',
-                    updatedAt: updatedAt ? updatedAt.toDate().toISOString() : undefined,
+                    date: date.toISOString().slice(0, 10),
+                    leads: Math.floor(Math.random() * 20) + 5,
+                    engagement: Math.floor(Math.random() * 40) + 30,
+                    conversions: Math.floor(Math.random() * 5) + 1,
+                    feedbackScore: Number((4 + Math.random()).toFixed(1)),
                 };
-            }),
-            history: history.length
-                ? history
-                : [
-                    {
-                        date: new Date().toISOString().slice(0, 10),
-                        leads: Math.round(leads),
-                        engagement: Math.round(engagement),
-                        conversions: Math.round(conversions),
-                        feedbackScore: Number(feedbackScore.toFixed(1)),
-                    },
+            }).reverse();
+            return {
+                leads: 145,
+                engagement: 68,
+                conversions: 12,
+                feedbackScore: 4.8,
+                jobBreakdown: {
+                    active: 3,
+                    queued: 5,
+                    failed: 0,
+                },
+                recentJobs: [
+                    { jobId: 'job-123', scenarioId: 'lead-gen-v1', status: 'active', updatedAt: new Date().toISOString() },
+                    { jobId: 'job-124', scenarioId: 'nurture-seq', status: 'queued', updatedAt: new Date().toISOString() },
+                    { jobId: 'job-125', scenarioId: 'outreach-bot', status: 'completed', updatedAt: new Date().toISOString() },
                 ],
-        };
+                history: mockHistory,
+            };
+        }
+        try {
+            const jobsSnap = await firestore
+                .collection('automations')
+                .doc(userId)
+                .collection('jobs')
+                .orderBy('updatedAt', 'desc')
+                .limit(15)
+                .get();
+            let leads = 0;
+            let engagement = 0;
+            let conversions = 0;
+            let feedbackScore = 4.2;
+            let active = 0;
+            let queued = 0;
+            let failed = 0;
+            jobsSnap.forEach(doc => {
+                const data = doc.data();
+                const status = data.status?.toLowerCase() ?? 'queued';
+                if (status === 'active')
+                    active += 1;
+                else if (status === 'failed')
+                    failed += 1;
+                else
+                    queued += 1;
+                leads += data.analytics?.leads ?? 8;
+                engagement += data.analytics?.engagement ?? 40;
+                conversions += data.analytics?.conversions ?? 3;
+                feedbackScore += RatingWeights[status] ?? 0.5;
+            });
+            const historySnap = await firestore
+                .collection('analytics')
+                .doc(userId)
+                .collection('daily')
+                .orderBy('date', 'desc')
+                .limit(14)
+                .get();
+            const history = historySnap.docs
+                .map(doc => {
+                const data = doc.data();
+                const samples = Number(data.samples ?? 1) || 1;
+                return {
+                    date: data.date ?? doc.id,
+                    leads: Math.round(Number(data.leads ?? 0) / samples),
+                    engagement: Math.round(Number(data.engagement ?? 0) / samples),
+                    conversions: Math.round(Number(data.conversions ?? 0) / samples),
+                    feedbackScore: Number(((Number(data.feedbackScore ?? 0) / samples) || 0).toFixed(1)),
+                };
+            })
+                .reverse();
+            if (history.length) {
+                const divisor = history.length;
+                leads = history.reduce((sum, day) => sum + day.leads, 0) / divisor;
+                engagement = history.reduce((sum, day) => sum + day.engagement, 0) / divisor;
+                conversions = history.reduce((sum, day) => sum + day.conversions, 0) / divisor;
+                feedbackScore = history.reduce((sum, day) => sum + day.feedbackScore, 0) / divisor;
+            }
+            else {
+                const divisor = Math.max(jobsSnap.size, 1);
+                leads = leads / divisor;
+                engagement = engagement / divisor;
+                conversions = conversions / divisor;
+                feedbackScore = feedbackScore / divisor;
+            }
+            return {
+                leads: Math.round(leads),
+                engagement: Math.round(engagement),
+                conversions: Math.round(conversions),
+                feedbackScore: Math.min(5, Number(feedbackScore.toFixed(1))),
+                jobBreakdown: {
+                    active,
+                    queued,
+                    failed,
+                },
+                recentJobs: jobsSnap.docs.map(doc => {
+                    const data = doc.data();
+                    const updatedAt = data.updatedAt;
+                    return {
+                        jobId: data.jobId,
+                        scenarioId: data.scenarioId ?? null,
+                        status: data.status ?? 'queued',
+                        updatedAt: updatedAt ? updatedAt.toDate().toISOString() : undefined,
+                    };
+                }),
+                history: history.length
+                    ? history
+                    : [
+                        {
+                            date: new Date().toISOString().slice(0, 10),
+                            leads: Math.round(leads),
+                            engagement: Math.round(engagement),
+                            conversions: Math.round(conversions),
+                            feedbackScore: Number(feedbackScore.toFixed(1)),
+                        },
+                    ],
+            };
+        }
+        catch (error) {
+            console.warn('Firestore analytics fetch failed, returning fallback data', error);
+            // Fallback if Firestore fails even if mock auth is off (or if it crashes during fetch)
+            return {
+                leads: 0,
+                engagement: 0,
+                conversions: 0,
+                feedbackScore: 0,
+                jobBreakdown: { active: 0, queued: 0, failed: 0 },
+                recentJobs: [],
+                history: []
+            };
+        }
     }
 }
-export async function incrementMetric(metric, amount = 1, metadata) {
+export async function incrementMetric(metric, amount = 1, metadata, scope) {
     const update = {};
     if (metric === 'outbound_prospects')
         update.prospectsFound = amount;
@@ -135,9 +183,9 @@ export async function incrementMetric(metric, amount = 1, metadata) {
             : undefined);
     if (breakdown)
         update.industryBreakdown = breakdown;
-    await incrementOutboundAnalytics(update);
+    await incrementOutboundAnalytics(update, scope);
 }
-export async function incrementOutboundAnalytics(update) {
+export async function incrementOutboundAnalytics(update, scope) {
     if (!update.prospectsFound &&
         !update.messagesSent &&
         !update.replies &&
@@ -148,7 +196,7 @@ export async function incrementOutboundAnalytics(update) {
         return;
     }
     const date = new Date().toISOString().slice(0, 10);
-    const docRef = outboundAnalyticsCollection.doc(date);
+    const docRef = outboundAnalyticsCollection(scope).doc(date);
     await firestore.runTransaction(async (tx) => {
         const snap = await tx.get(docRef);
         const existing = snap.exists
@@ -183,7 +231,7 @@ export async function incrementOutboundAnalytics(update) {
         };
         tx.set(docRef, payload, { merge: true });
     });
-    await outboundSummaryDoc.set({
+    await outboundSummaryDoc(scope).set({
         prospectsFound: admin.firestore.FieldValue.increment(update.prospectsFound ?? 0),
         messagesSent: admin.firestore.FieldValue.increment(update.messagesSent ?? 0),
         replies: admin.firestore.FieldValue.increment(update.replies ?? 0),
@@ -201,58 +249,81 @@ function sanitizeIndustryKey(industry) {
         .replace(/[^a-z0-9]+/g, '_')
         .slice(0, 50);
 }
-export async function getOutboundStats() {
-    const doc = await outboundSummaryDoc.get();
-    const data = doc.exists
-        ? doc.data()
-        : {};
-    const prospectsContacted = data.messagesSent ?? 0;
-    const replies = data.replies ?? 0;
-    const positiveReplies = data.positiveReplies ?? 0;
-    const conversions = data.conversions ?? 0;
-    const demoBookings = data.demosBooked ?? 0;
-    const conversionRate = prospectsContacted ? conversions / prospectsContacted : 0;
-    return {
-        prospectsContacted,
-        replies,
-        positiveReplies,
-        conversions,
-        demoBookings,
-        conversionRate: Number(conversionRate.toFixed(2)),
-    };
+export async function getOutboundStats(scope) {
+    if (process.env.ALLOW_MOCK_AUTH === 'true') {
+        return {
+            prospectsContacted: 1250,
+            replies: 340,
+            positiveReplies: 85,
+            conversions: 42,
+            demoBookings: 18,
+            conversionRate: 0.03
+        };
+    }
+    try {
+        const doc = await outboundSummaryDoc(scope).get();
+        const data = doc.exists
+            ? doc.data()
+            : {};
+        const prospectsContacted = data.messagesSent ?? 0;
+        const replies = data.replies ?? 0;
+        const positiveReplies = data.positiveReplies ?? 0;
+        const conversions = data.conversions ?? 0;
+        const demoBookings = data.demosBooked ?? 0;
+        const conversionRate = prospectsContacted ? conversions / prospectsContacted : 0;
+        return {
+            prospectsContacted,
+            replies,
+            positiveReplies,
+            conversions,
+            demoBookings,
+            conversionRate: Number(conversionRate.toFixed(2)),
+        };
+    }
+    catch (error) {
+        console.warn('Firestore outbound stats fetch failed', error);
+        return {
+            prospectsContacted: 0,
+            replies: 0,
+            positiveReplies: 0,
+            conversions: 0,
+            demoBookings: 0,
+            conversionRate: 0
+        };
+    }
 }
-export async function incrementInboundAnalytics(update) {
+export async function incrementInboundAnalytics(update, scope) {
     if (!update.messages && !update.leads && !update.sentimentTotal)
         return;
-    await writeDailySummary(inboundAnalyticsCollection, inboundSummaryDoc, {
+    await writeDailySummary(inboundAnalyticsCollection(scope), inboundSummaryDoc(scope), {
         messages: update.messages ?? 0,
         leads: update.leads ?? 0,
         sentimentTotal: update.sentimentTotal ?? 0,
         sentimentSamples: update.messages ?? 0,
     });
 }
-export async function incrementEngagementAnalytics(update) {
+export async function incrementEngagementAnalytics(update, scope) {
     if (!update.commentsDetected && !update.repliesSent && !update.conversions)
         return;
-    await writeDailySummary(engagementAnalyticsCollection, engagementSummaryDoc, {
+    await writeDailySummary(engagementAnalyticsCollection(scope), engagementSummaryDoc(scope), {
         commentsDetected: update.commentsDetected ?? 0,
         repliesSent: update.repliesSent ?? 0,
         conversions: update.conversions ?? 0,
     });
 }
-export async function incrementFollowupAnalytics(update) {
+export async function incrementFollowupAnalytics(update, scope) {
     if (!update.sent && !update.replies && !update.conversions)
         return;
-    await writeDailySummary(followupAnalyticsCollection, followupSummaryDoc, {
+    await writeDailySummary(followupAnalyticsCollection(scope), followupSummaryDoc(scope), {
         sent: update.sent ?? 0,
         replies: update.replies ?? 0,
         conversions: update.conversions ?? 0,
     });
 }
-export async function incrementWebLeadAnalytics(update) {
+export async function incrementWebLeadAnalytics(update, scope) {
     if (!update.leads && !update.messages)
         return;
-    await writeDailySummary(webLeadAnalyticsCollection, webLeadSummaryDoc, {
+    await writeDailySummary(webLeadAnalyticsCollection(scope), webLeadSummaryDoc(scope), {
         leads: update.leads ?? 0,
         messages: update.messages ?? 0,
     });
@@ -272,8 +343,8 @@ async function writeDailySummary(collection, summaryDoc, counters) {
     });
     await summaryDoc.set(Object.fromEntries(Object.entries(counters).map(([key, value]) => [key, admin.firestore.FieldValue.increment(value)])), { merge: true });
 }
-export async function getInboundStats() {
-    const doc = await inboundSummaryDoc.get();
+export async function getInboundStats(scope) {
+    const doc = await inboundSummaryDoc(scope).get();
     const data = doc.data() ?? {};
     const messages = Number(data.messages ?? 0);
     const leads = Number(data.leads ?? 0);
@@ -288,8 +359,8 @@ export async function getInboundStats() {
         conversionRate: Number(conversionRate.toFixed(2)),
     };
 }
-export async function getEngagementStats() {
-    const doc = await engagementSummaryDoc.get();
+export async function getEngagementStats(scope) {
+    const doc = await engagementSummaryDoc(scope).get();
     const data = doc.data() ?? {};
     const comments = Number(data.commentsDetected ?? 0);
     const replies = Number(data.repliesSent ?? 0);
@@ -302,8 +373,8 @@ export async function getEngagementStats() {
         conversionRate: Number(conversionRate.toFixed(2)),
     };
 }
-export async function getFollowupStats() {
-    const doc = await followupSummaryDoc.get();
+export async function getFollowupStats(scope) {
+    const doc = await followupSummaryDoc(scope).get();
     const data = doc.data() ?? {};
     const sent = Number(data.sent ?? 0);
     const replies = Number(data.replies ?? 0);
@@ -316,8 +387,8 @@ export async function getFollowupStats() {
         conversionRate: sent ? Number((conversions / sent).toFixed(2)) : 0,
     };
 }
-export async function getWebLeadStats() {
-    const doc = await webLeadSummaryDoc.get();
+export async function getWebLeadStats(scope) {
+    const doc = await webLeadSummaryDoc(scope).get();
     const data = doc.data() ?? {};
     const leads = Number(data.leads ?? 0);
     const messages = Number(data.messages ?? 0);

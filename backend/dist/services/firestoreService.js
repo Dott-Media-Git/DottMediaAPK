@@ -1,5 +1,5 @@
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore.js';
 const automationsCollection = firestore.collection('automations');
 const analyticsCollection = firestore.collection('analytics');
 const jobDoc = (userId, jobId) => automationsCollection.doc(userId).collection('jobs').doc(jobId);

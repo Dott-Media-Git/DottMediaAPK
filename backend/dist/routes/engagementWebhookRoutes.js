@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { EngagementHandler } from '../packages/services/engagementHandler';
+import { EngagementHandler } from '../packages/services/engagementHandler.js';
 const router = Router();
 const handler = new EngagementHandler();
 router.post('/webhook/engagement', async (req, res, next) => {

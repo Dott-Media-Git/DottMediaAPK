@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { config } from '../../../config';
+import { config } from '../../../config.js';
 const DEFAULT_CLASSIFICATION = {
     sentiment: 0,
     intent: 'CURIOUS',

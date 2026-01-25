@@ -1,62 +1,129 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+const runningOnRender = process.env.RENDER === 'true' ||
+    !!process.env.RENDER_SERVICE_ID ||
+    !!process.env.RENDER_SERVICE_NAME ||
+    !!process.env.RENDER_INSTANCE_ID ||
+    !!process.env.RENDER_EXTERNAL_HOSTNAME;
+if (!runningOnRender && process.env.NODE_ENV !== 'production') {
+    dotenv.config();
+}
 const required = (obj) => {
     Object.entries(obj).forEach(([key, value]) => {
         if (value === undefined || value === null || value === '') {
-            throw new Error(`Missing required env var: ${key}`);
+            if (process.env.ALLOW_MOCK_AUTH === 'true') {
+                console.warn(`Missing required env var: ${key} (Allowed due to ALLOW_MOCK_AUTH)`);
+                // @ts-ignore
+                obj[key] = 'mock-value';
+            }
+            else {
+                throw new Error(`Missing required env var: ${key}`);
+            }
         }
     });
     return obj;
 };
+console.log('Loading config. ALLOW_MOCK_AUTH:', process.env.ALLOW_MOCK_AUTH);
 const metaVerifyToken = process.env.META_VERIFY_TOKEN ?? process.env.VERIFY_TOKEN;
 if (!metaVerifyToken) {
-    throw new Error('Missing required env var: META_VERIFY_TOKEN or VERIFY_TOKEN');
+    if (process.env.ALLOW_MOCK_AUTH === 'true') {
+        console.warn('Missing required env var: META_VERIFY_TOKEN or VERIFY_TOKEN (Allowed due to ALLOW_MOCK_AUTH)');
+    }
+    else {
+        throw new Error('Missing required env var: META_VERIFY_TOKEN or VERIFY_TOKEN');
+    }
 }
+const openAIKey = process.env.OPENAI_API_KEY ?? process.env.OPENAI_KEY ?? process.env.OPENAI_API_TOKEN ?? '';
+const isLocalRedisHost = (hostname) => hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+const normalizeRedisUrl = (value) => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return '';
+    }
+    const normalized = trimmed.includes('://') ? trimmed : `redis://${trimmed}`;
+    const allowLocalRedis = process.env.ALLOW_LOCAL_REDIS === 'true';
+    const hostedPort = process.env.PORT;
+    const hostedRuntime = runningOnRender || process.env.NODE_ENV === 'production' || (!!hostedPort && hostedPort !== '4000');
+    if (!hostedRuntime || allowLocalRedis) {
+        return normalized;
+    }
+    try {
+        const parsed = new URL(normalized);
+        if (!parsed.hostname) {
+            console.warn('[config] REDIS_URL missing hostname; Redis disabled.');
+            return '';
+        }
+        if (isLocalRedisHost(parsed.hostname)) {
+            console.warn('[config] REDIS_URL points to localhost on Render; Redis disabled.');
+            return '';
+        }
+    }
+    catch (error) {
+        if (normalized.includes('localhost') || normalized.includes('127.0.0.1')) {
+            console.warn('[config] REDIS_URL looks local on Render; Redis disabled.');
+            return '';
+        }
+    }
+    return normalized;
+};
+const redisUrl = normalizeRedisUrl(process.env.REDIS_URL ?? '');
 export const config = {
     port: Number(process.env.PORT ?? 4000),
-    make: required({
+    make: {
         baseUrl: process.env.MAKE_BASE_URL ?? 'https://api.make.com/v2',
-        apiKey: process.env.MAKE_API_KEY ?? process.env.MAKE_API_TOKEN,
-        webhookUrl: process.env.MAKE_WEBHOOK_URL,
-        templateId: process.env.MAKE_SCENARIO_TEMPLATE_ID,
-    }),
+        apiKey: process.env.MAKE_API_KEY ?? process.env.MAKE_API_TOKEN ?? '',
+        webhookUrl: process.env.MAKE_WEBHOOK_URL ?? '',
+        templateId: process.env.MAKE_SCENARIO_TEMPLATE_ID ?? '',
+    },
     channels: {
         metaVerifyToken,
-        facebook: required({
-            pageId: process.env.FACEBOOK_PAGE_ID,
-            pageToken: process.env.FACEBOOK_PAGE_TOKEN,
-        }),
-        instagram: required({
-            businessId: process.env.INSTAGRAM_BUSINESS_ID,
-            accessToken: process.env.INSTAGRAM_ACCESS_TOKEN,
-        }),
-        threads: required({
-            profileId: process.env.THREADS_PROFILE_ID,
-            accessToken: process.env.THREADS_ACCESS_TOKEN,
-        }),
+        facebook: {
+            pageId: process.env.FACEBOOK_PAGE_ID ?? '',
+            pageToken: process.env.FACEBOOK_PAGE_TOKEN ?? '',
+        },
+        instagram: {
+            businessId: process.env.INSTAGRAM_BUSINESS_ID ?? '',
+            accessToken: process.env.INSTAGRAM_ACCESS_TOKEN ?? '',
+        },
+        threads: {
+            profileId: process.env.THREADS_PROFILE_ID ?? '',
+            accessToken: process.env.THREADS_ACCESS_TOKEN ?? '',
+        },
     },
     linkedin: required({
         accessToken: process.env.LINKEDIN_ACCESS_TOKEN,
         organizationId: process.env.LINKEDIN_ORGANIZATION_ID,
     }),
-    whatsapp: required({
-        token: process.env.WHATSAPP_TOKEN,
-        verifyToken: process.env.VERIFY_TOKEN,
-        phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
-    }),
-    smtp: required({
-        from: process.env.MAIL_FROM,
-        host: process.env.SMTP_HOST,
+    tiktok: {
+        accessToken: process.env.TIKTOK_ACCESS_TOKEN ?? '',
+        openId: process.env.TIKTOK_OPEN_ID ?? '',
+        clientKey: process.env.TIKTOK_CLIENT_KEY ?? '',
+        clientSecret: process.env.TIKTOK_CLIENT_SECRET ?? '',
+        redirectUri: process.env.TIKTOK_REDIRECT_URI ?? '',
+    },
+    youtube: {
+        clientId: process.env.YOUTUBE_CLIENT_ID ?? process.env.GOOGLE_OAUTH_CLIENT_ID ?? '',
+        clientSecret: process.env.YOUTUBE_CLIENT_SECRET ?? process.env.GOOGLE_OAUTH_CLIENT_SECRET ?? '',
+        redirectUri: process.env.YOUTUBE_REDIRECT_URI ?? process.env.GOOGLE_OAUTH_REDIRECT_URI ?? '',
+    },
+    whatsapp: {
+        token: process.env.WHATSAPP_TOKEN ?? '',
+        verifyToken: process.env.VERIFY_TOKEN ?? metaVerifyToken ?? '',
+        phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? '',
+    },
+    smtp: {
+        from: process.env.MAIL_FROM ?? '',
+        host: process.env.SMTP_HOST ?? '',
         port: Number(process.env.SMTP_PORT ?? 465),
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-    }),
-    redisUrl: process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
+        user: process.env.SMTP_USER ?? '',
+        pass: process.env.SMTP_PASS ?? '',
+    },
+    redisUrl,
     sentry: {
         dsn: process.env.SENTRY_DSN,
         environment: process.env.SENTRY_ENV ?? 'local',
     },
     openAI: required({
-        apiKey: process.env.OPENAI_API_KEY,
+        apiKey: openAIKey,
     }),
     calendar: {
         timezone: process.env.DEFAULT_TIMEZONE ?? 'UTC',
@@ -73,7 +140,7 @@ export const config = {
         allowMockAuth: process.env.ALLOW_MOCK_AUTH === 'true',
     },
     widget: required({
-        sharedSecret: process.env.WIDGET_SHARED_SECRET,
+        sharedSecret: process.env.WIDGET_SHARED_SECRET ?? metaVerifyToken,
     }),
     followUps: {
         enableAuto: process.env.ENABLE_AUTO_FOLLOWUPS !== 'false',

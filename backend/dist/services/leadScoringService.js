@@ -1,4 +1,4 @@
-import { extractKeywords } from '../utils/nlp';
+import { extractKeywords } from '../utils/nlp.js';
 const positiveSignals = ['budget', 'urgent', 'launch', 'scale', 'need crm', 'automation', 'ai crm', 'demo', 'proposal'];
 const urgencySignals = ['asap', 'this week', 'immediately', 'today', 'now', 'deadline'];
 export class LeadScoringService {

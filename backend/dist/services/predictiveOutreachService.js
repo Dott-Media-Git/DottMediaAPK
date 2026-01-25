@@ -1,6 +1,6 @@
-import { firestore } from '../lib/firebase';
-import { OutboundMessenger } from './outboundMessenger';
-import { OpenAIService } from './openAIService';
+import { firestore } from '../db/firestore.js';
+import { OutboundMessenger } from './outboundMessenger.js';
+import { OpenAIService } from './openAIService.js';
 const outreachCollection = firestore.collection('outreach_logs');
 export class PredictiveOutreachService {
     constructor() {

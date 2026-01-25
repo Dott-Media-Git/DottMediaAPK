@@ -1,5 +1,5 @@
-import { config } from '../config';
-import { MakeClient } from './makeClient';
+import { config } from '../config.js';
+import { MakeClient } from './makeClient.js';
 export class CRMSyncService {
     constructor() {
         this.makeClient = new MakeClient();

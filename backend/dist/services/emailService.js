@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { config } from '../config';
+import { config } from '../config.js';
 const transporter = nodemailer.createTransport({
     host: config.smtp.host,
     port: config.smtp.port,
@@ -20,6 +20,20 @@ export async function sendWorkspaceLiveEmail(to, company) {
             'Your AI workspace is live. You can start automating tasks right away.',
             '',
             '– Dott Media',
+        ].join('\n'),
+    });
+}
+export async function sendMonthlyPerformanceReportEmail(to, company, report) {
+    await transporter.sendMail({
+        from: config.smtp.from,
+        to,
+        subject: `Monthly performance report - ${company}`,
+        text: [
+            `Hi ${company} team,`,
+            '',
+            report,
+            '',
+            '-- Dott Media',
         ].join('\n'),
     });
 }

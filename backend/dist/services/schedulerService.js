@@ -1,6 +1,6 @@
-import { firestore } from '../lib/firebase';
-import { config } from '../config';
-import { withRetry } from '../utils/retry';
+import { firestore } from '../db/firestore.js';
+import { config } from '../config.js';
+import { withRetry } from '../utils/retry.js';
 import { google } from 'googleapis';
 const bookingsCollection = firestore.collection('scheduler_bookings');
 const addDays = (date, days) => {

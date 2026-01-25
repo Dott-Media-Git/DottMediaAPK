@@ -1,14 +1,15 @@
 import admin from 'firebase-admin';
 import OpenAI from 'openai';
-import { firestore } from '../../lib/firebase';
-import { incrementFollowupAnalytics } from '../../services/analyticsService';
-import { OutboundMessenger } from '../../services/outboundMessenger';
+import { firestore } from '../../db/firestore.js';
+import { config } from '../../config.js';
+import { incrementFollowupAnalytics } from '../../services/analyticsService.js';
+import { OutboundMessenger } from '../../services/outboundMessenger.js';
 const leadsCollection = firestore.collection('leads');
 const followupsCollection = firestore.collection('followups');
 export class FollowupService {
     constructor() {
         this.messenger = new OutboundMessenger();
-        this.aiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        this.aiClient = new OpenAI({ apiKey: config.openAI.apiKey });
     }
     async runDailyFollowups() {
         const staleLeads = await this.fetchStaleLeads();

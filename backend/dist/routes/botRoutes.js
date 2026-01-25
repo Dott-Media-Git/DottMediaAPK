@@ -1,11 +1,12 @@
 import { Router } from 'express';
-import { BotController } from '../controllers/botController';
+import { BotController } from '../controllers/botController.js';
+import { requireFirebase } from '../middleware/firebaseAuth.js';
 const router = Router();
 const controller = new BotController();
-router.get('/stats', controller.getStats);
-router.get('/api/stats', controller.getStats);
-router.get('/stats/leads', controller.getLeadStats);
-router.get('/api/stats/leads', controller.getLeadStats);
+router.get('/stats', requireFirebase, controller.getStats);
+router.get('/api/stats', requireFirebase, controller.getStats);
+router.get('/stats/leads', requireFirebase, controller.getLeadStats);
+router.get('/api/stats/leads', requireFirebase, controller.getLeadStats);
 router.post('/make-webhook', controller.forwardLead);
 router.post('/api/make-webhook', controller.forwardLead);
 export default router;

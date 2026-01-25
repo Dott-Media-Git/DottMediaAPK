@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { config } from '../../../../config';
+import { config } from '../../../../config.js';
 let cachedClient = null;
 const titleSignals = ['manager', 'director', 'founder', 'chief', 'lead'];
 /**

@@ -1,5 +1,5 @@
-import { ConversationService } from './conversationService';
-import { OutboundMessenger } from './outboundMessenger';
+import { ConversationService } from './conversationService.js';
+import { OutboundMessenger } from './outboundMessenger.js';
 export class FacebookService {
     constructor() {
         this.conversations = new ConversationService();
@@ -20,7 +20,14 @@ export class FacebookService {
                 message: message.message.text,
                 timestamp,
             });
-            await this.messenger.send('facebook', message.sender.id, response.reply);
+            try {
+                await this.messenger.send('facebook', message.sender.id, response.reply);
+                await this.conversations.updateReplyStatus(response.messageDocId, 'sent');
+            }
+            catch (error) {
+                await this.conversations.updateReplyStatus(response.messageDocId, 'failed', error.message);
+                throw error;
+            }
             processed += 1;
         }
         return processed;

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { config } from '../../../../config';
+import { config } from '../../../../config.js';
 const LINKEDIN_API_URL = 'https://api.linkedin.com/rest/messages';
 const LINKEDIN_VERSION = process.env.LINKEDIN_API_VERSION ?? '202404';
 /**
@@ -12,24 +12,30 @@ export async function sendLinkedInMessage(profileUrl, text) {
     }
     const recipientUrn = buildRecipientUrn(profileUrl);
     if (!recipientUrn) {
-        throw new Error(`Unable to derive LinkedIn URN from ${profileUrl}`);
+        console.warn(`[linkedin] unable to derive URN from ${profileUrl}; skipping send`);
+        return;
     }
     const senderCompany = config.linkedin.organizationId ? `urn:li:organization:${config.linkedin.organizationId}` : undefined;
-    await axios.post(LINKEDIN_API_URL, {
-        recipients: [recipientUrn],
-        message: {
-            body: text,
-            subject: 'AI Automation for your team',
-        },
-        senderCompany,
-    }, {
-        headers: {
-            Authorization: `Bearer ${config.linkedin.accessToken}`,
-            'Content-Type': 'application/json',
-            'Linkedin-Version': LINKEDIN_VERSION,
-            'X-Restli-Protocol-Version': '2.0.0',
-        },
-    });
+    try {
+        await axios.post(LINKEDIN_API_URL, {
+            recipients: [recipientUrn],
+            message: {
+                body: text,
+                subject: 'AI Automation for your team',
+            },
+            senderCompany,
+        }, {
+            headers: {
+                Authorization: `Bearer ${config.linkedin.accessToken}`,
+                'Content-Type': 'application/json',
+                'Linkedin-Version': LINKEDIN_VERSION,
+                'X-Restli-Protocol-Version': '2.0.0',
+            },
+        });
+    }
+    catch (error) {
+        console.warn('[linkedin] send failed; continuing outreach', error.message);
+    }
 }
 function buildRecipientUrn(profileUrl) {
     if (profileUrl.startsWith('urn:li:person:')) {

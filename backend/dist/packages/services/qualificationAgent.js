@@ -1,8 +1,8 @@
 import OpenAI from 'openai';
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
-import { config } from '../../config';
-import { NotificationService } from './notificationService';
+import { firestore } from '../../db/firestore.js';
+import { config } from '../../config.js';
+import { NotificationService } from './notificationService.js';
 const leadsCollection = firestore.collection('leads');
 const qualificationCollection = firestore.collection('qualificationSessions');
 export class QualificationAgent {

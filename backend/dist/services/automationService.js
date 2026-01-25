@@ -1,8 +1,8 @@
 import crypto from 'crypto';
-import { automationQueue } from '../queues/automationQueue';
-import { MakeClient } from './makeClient';
-import { sendWorkspaceLiveEmail } from './emailService';
-import { createJobDoc, upsertJobDoc, getJobDoc, findJobById, recordAnalyticsSample, } from './firestoreService';
+import { automationQueue } from '../queues/automationQueue.js';
+import { MakeClient } from './makeClient.js';
+import { sendWorkspaceLiveEmail } from './emailService.js';
+import { createJobDoc, upsertJobDoc, getJobDoc, findJobById, recordAnalyticsSample, } from './firestoreService.js';
 const make = new MakeClient();
 export class AutomationService {
     async enqueueActivation(payload) {

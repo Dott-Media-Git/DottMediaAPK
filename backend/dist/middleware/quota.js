@@ -1,5 +1,5 @@
 import createHttpError from 'http-errors';
-import { firestore } from '../lib/firebase';
+import { firestore } from '../db/firestore.js';
 const usageCollection = firestore.collection('usageDaily');
 export function enforceQuota(resource) {
     return async (req, _res, next) => {

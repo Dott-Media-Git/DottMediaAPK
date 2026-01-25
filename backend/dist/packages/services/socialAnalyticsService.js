@@ -1,7 +1,12 @@
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore.js';
 const dailyCollection = firestore.collection('analytics').doc('socialDaily').collection('user');
 export class SocialAnalyticsService {
+    isMissingIndexError(error) {
+        const err = error;
+        const message = `${err?.message ?? ''} ${err?.details ?? ''}`.toLowerCase();
+        return err?.code === 9 && message.includes('index');
+    }
     async incrementDaily(payload) {
         const date = new Date().toISOString().slice(0, 10);
         const docRef = dailyCollection.doc(`${payload.userId}_${date}`);
@@ -27,8 +32,18 @@ export class SocialAnalyticsService {
         });
     }
     async getDailySummary(userId, limit = 14) {
-        const snap = await dailyCollection.where('userId', '==', userId).orderBy('date', 'desc').limit(limit).get();
-        return snap.docs.map(doc => doc.data());
+        let snap;
+        try {
+            snap = await dailyCollection.where('userId', '==', userId).orderBy('date', 'desc').limit(limit).get();
+        }
+        catch (error) {
+            if (!this.isMissingIndexError(error))
+                throw error;
+            snap = await dailyCollection.where('userId', '==', userId).limit(limit).get();
+        }
+        const rows = snap.docs.map(doc => doc.data());
+        rows.sort((a, b) => `${b?.date ?? ''}`.localeCompare(`${a?.date ?? ''}`));
+        return rows;
     }
 }
 export const socialAnalyticsService = new SocialAnalyticsService();

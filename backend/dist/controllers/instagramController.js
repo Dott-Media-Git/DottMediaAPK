@@ -1,5 +1,5 @@
-import { config } from '../config';
-import { InstagramService } from '../services/instagramService';
+import { config } from '../config.js';
+import { InstagramService } from '../services/instagramService.js';
 export class InstagramController {
     constructor() {
         this.service = new InstagramService();

@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import createHttpError from 'http-errors';
-import { requireFirebase } from '../middleware/firebaseAuth';
-import { AutomationService } from '../services/automationService';
+import { requireFirebase } from '../middleware/firebaseAuth.js';
+import { AutomationService } from '../services/automationService.js';
 const router = Router();
 const service = new AutomationService();
 const activateSchema = z.object({

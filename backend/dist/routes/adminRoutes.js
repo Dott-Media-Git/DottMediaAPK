@@ -1,11 +1,27 @@
 import { Router } from 'express';
 import createHttpError from 'http-errors';
 // TODO: Extend with Google/Microsoft SSO claims once identity providers are connected.
-import { requireFirebase } from '../middleware/firebaseAuth';
-import { withOrgContext, requireRole } from '../middleware/orgAuth';
-import { createOrg, getOrg, updateOrg, listOrgUsers, inviteOrgUser, updateOrgUserRole, removeOrgUser, getOrgSettings, updateOrgSettings, connectChannel, disconnectChannel, storeSecret, describeSecret, getUsage, listPlans, swapPlan, enqueueJob, logAuditEvent, } from '../services/admin/adminService';
-import { firestore } from '../lib/firebase';
+import { requireFirebase } from '../middleware/firebaseAuth.js';
+import { requireAdmin } from '../middleware/adminAuth.js';
+import { withOrgContext, requireRole } from '../middleware/orgAuth.js';
+import { createOrg, getOrg, updateOrg, listOrgUsers, inviteOrgUser, updateOrgUserRole, removeOrgUser, getOrgSettings, updateOrgSettings, connectChannel, disconnectChannel, storeSecret, describeSecret, getUsage, listPlans, swapPlan, enqueueJob, logAuditEvent, } from '../services/admin/adminService.js';
+import { getAdminMetrics } from '../services/admin/adminMetricsService.js';
+import { firestore } from '../db/firestore.js';
 const router = Router();
+router.get('/admin/metrics', requireFirebase, requireAdmin, async (_req, res, next) => {
+    try {
+        const metrics = await getAdminMetrics();
+        res.set({
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            Pragma: 'no-cache',
+            Expires: '0',
+        });
+        res.json({ metrics });
+    }
+    catch (error) {
+        next(error);
+    }
+});
 router.post('/admin/orgs', requireFirebase, async (req, res, next) => {
     try {
         const user = req.authUser;

@@ -1,10 +1,10 @@
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
-import { Platforms, } from '../types/bot';
-import { sampleConversations, sampleStats } from '../lib/seedData';
-import { CRMSyncService } from './crmSyncService';
-const statsCollection = firestore.collection('stats');
-const latestDoc = statsCollection.doc('latest');
+import { firestore } from '../db/firestore.js';
+import { Platforms, } from '../types/bot.js';
+import { sampleConversations, sampleStats } from '../lib/seedData.js';
+import { CRMSyncService } from './crmSyncService.js';
+import { scopedCollectionId } from './analyticsScope.js';
+const allowMockStats = process.env.ALLOW_MOCK_AUTH === 'true';
 const leadsCollection = firestore.collection('leads');
 const conversationsCollection = firestore.collection('conversations');
 const followUpsCollection = firestore.collection('follow_ups');
@@ -74,9 +74,15 @@ export class BotStatsService {
     constructor() {
         this.crmSync = new CRMSyncService();
     }
-    async recordSession(summary) {
+    statsCollection(scope) {
+        return firestore.collection(scopedCollectionId('stats', scope));
+    }
+    latestDoc(scope) {
+        return this.statsCollection(scope).doc('latest');
+    }
+    async recordSession(summary, scope) {
         const dateKey = new Date().toISOString().slice(0, 10);
-        const statsDoc = statsCollection.doc(dateKey);
+        const statsDoc = this.statsCollection(scope).doc(dateKey);
         await firestore.runTransaction(async (tx) => {
             const existingSnap = await tx.get(statsDoc);
             const existing = (existingSnap.exists ? existingSnap.data() : {}) ?? {};
@@ -127,7 +133,7 @@ export class BotStatsService {
                 learningEfficiency,
             };
             tx.set(statsDoc, doc);
-            tx.set(latestDoc, {
+            tx.set(this.latestDoc(scope), {
                 ...doc,
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             }, { merge: true });
@@ -142,14 +148,24 @@ export class BotStatsService {
     }
     buildSummary(doc) {
         if (!doc) {
-            const fallback = sampleStats[sampleStats.length - 1];
+            if (allowMockStats) {
+                const fallback = sampleStats[sampleStats.length - 1];
+                return {
+                    totalMessagesToday: fallback.totalMessagesToday,
+                    newLeadsToday: fallback.newLeadsToday,
+                    mostCommonCategory: fallback.mostCommonCategory,
+                    avgResponseTime: fallback.avgResponseTime,
+                    conversionRate: fallback.conversionRate,
+                    avgSentiment: 4.2,
+                };
+            }
             return {
-                totalMessagesToday: fallback.totalMessagesToday,
-                newLeadsToday: fallback.newLeadsToday,
-                mostCommonCategory: fallback.mostCommonCategory,
-                avgResponseTime: fallback.avgResponseTime,
-                conversionRate: fallback.conversionRate,
-                avgSentiment: 4.2,
+                totalMessagesToday: 0,
+                newLeadsToday: 0,
+                mostCommonCategory: 'General Chat',
+                avgResponseTime: 0,
+                conversionRate: 0,
+                avgSentiment: 0,
             };
         }
         const avgSentiment = Number(((doc.sentimentTotal ?? 0) / Math.max(doc.sentimentSamples ?? 1, 1)).toFixed(1));
@@ -170,8 +186,12 @@ export class BotStatsService {
             value: Number(point.value.toFixed(2)),
         }));
     }
-    async fetchDocs(limit = 14) {
-        const snap = await statsCollection.where('date', '>=', '2000-01-01').orderBy('date', 'desc').limit(limit).get();
+    async fetchDocs(limit = 14, scope) {
+        const snap = await this.statsCollection(scope)
+            .where('date', '>=', '2000-01-01')
+            .orderBy('date', 'desc')
+            .limit(limit)
+            .get();
         if (snap.empty) {
             return [];
         }
@@ -203,12 +223,42 @@ export class BotStatsService {
     async fetchTopConversations(limit = 10) {
         const snap = await firestore.collection('conversations').orderBy('created_at', 'desc').limit(limit).get();
         if (snap.empty) {
-            return sampleConversations;
+            return allowMockStats ? sampleConversations : [];
         }
         return snap.docs.map(doc => doc.data());
     }
-    async getStats() {
-        const docs = await this.fetchDocs(14);
+    async getStats(scope) {
+        const docs = await this.fetchDocs(14, scope);
+        if (docs.length === 0 && !allowMockStats) {
+            const today = new Date();
+            const emptyDates = Array.from({ length: 7 }).map((_, index) => {
+                const date = new Date(today);
+                date.setDate(date.getDate() - (6 - index));
+                return { date: date.toISOString().slice(0, 10), value: 0 };
+            });
+            const dailyMessages = this.buildChart(emptyDates);
+            const weeklyMessagesByPlatform = Platforms.map(platform => ({
+                platform,
+                series: this.buildChart(emptyDates),
+            }));
+            const leadsByPlatform = Platforms.map(platform => ({
+                label: platform,
+                value: 0,
+            }));
+            return {
+                summary: this.buildSummary(),
+                charts: {
+                    dailyMessages,
+                    weeklyMessagesByPlatform,
+                    leadsByPlatform,
+                },
+                platformMetrics: this.platformMetrics(),
+                categoryBreakdown: [],
+                activeUsers: 0,
+                topConversations: [],
+                learningEfficiency: 0,
+            };
+        }
         const statsDocs = docs.length
             ? docs
             : sampleStats.map(stat => ({
@@ -267,11 +317,11 @@ export class BotStatsService {
             learningEfficiency: statsDocs[0]?.learningEfficiency ?? summary.avgSentiment,
         };
     }
-    async getLeadInsights() {
+    async getLeadInsights(scope) {
         const [leadsSnap, convSnap, statsSnap, followPendingSnap, followLogsSnap, outreachSnap, bookingsSnap] = await Promise.all([
             leadsCollection.orderBy('created_at', 'desc').limit(400).get(),
             conversationsCollection.orderBy('created_at', 'desc').limit(400).get(),
-            statsCollection.orderBy('date', 'desc').limit(7).get(),
+            this.statsCollection(scope).orderBy('date', 'desc').limit(7).get(),
             followUpsCollection.where('status', '==', 'pending').get(),
             followUpLogsCollection.orderBy('sentAt', 'desc').limit(200).get(),
             outreachLogsCollection.orderBy('createdAt', 'desc').limit(200).get(),

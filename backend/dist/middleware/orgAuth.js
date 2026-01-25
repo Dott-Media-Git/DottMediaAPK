@@ -1,6 +1,6 @@
 import createHttpError from 'http-errors';
-import { firestore } from '../lib/firebase';
-import { roleAllowed } from '../utils/rbac';
+import { firestore } from '../db/firestore.js';
+import { roleAllowed } from '../utils/rbac.js';
 const orgUsersCollection = firestore.collection('orgUsers');
 export async function withOrgContext(req, _res, next) {
     const authed = req;

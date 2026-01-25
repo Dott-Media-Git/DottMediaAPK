@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { FacebookController } from '../controllers/facebookController';
+import { FacebookController } from '../controllers/facebookController.js';
 const router = Router();
 const controller = new FacebookController();
 router.get('/webhook/facebook', controller.verify);

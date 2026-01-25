@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import Stripe from 'stripe';
 import createHttpError from 'http-errors';
-import { updateOrg } from '../services/admin/adminService';
+import { updateOrg } from '../services/admin/adminService.js';
 const router = Router();
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 router.post('/', async (req, res, next) => {

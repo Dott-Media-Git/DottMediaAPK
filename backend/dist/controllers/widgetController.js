@@ -1,5 +1,5 @@
-import { config } from '../config';
-import { WidgetService } from '../services/widgetService';
+import { config } from '../config.js';
+import { WidgetService } from '../services/widgetService.js';
 const widgetService = new WidgetService();
 export class WidgetController {
     constructor() {

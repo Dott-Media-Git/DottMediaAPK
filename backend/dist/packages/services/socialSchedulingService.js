@@ -1,11 +1,37 @@
 import admin from 'firebase-admin';
-import { firestore } from '../../lib/firebase';
+import { firestore } from '../../db/firestore.js';
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
 export class SocialSchedulingService {
     async schedulePosts(payload) {
         if (!payload.platforms.length)
             throw new Error('At least one platform is required');
+        const hasYoutube = payload.platforms.includes('youtube');
+        const hasTikTok = payload.platforms.includes('tiktok');
+        const hasReels = payload.platforms.includes('instagram_reels');
+        const videoCapable = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
+        const hasImagePlatform = payload.platforms.some(platform => {
+            if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels')
+                return false;
+            if (videoCapable.has(platform) && payload.videoUrl)
+                return false;
+            return true;
+        });
+        const youtubeUrl = payload.youtubeVideoUrl ?? payload.videoUrl;
+        const tiktokUrl = payload.tiktokVideoUrl ?? payload.videoUrl;
+        const reelsUrl = payload.instagramReelsVideoUrl ?? null;
+        if (hasYoutube && !youtubeUrl) {
+            throw new Error('YouTube requires a videoUrl');
+        }
+        if (hasTikTok && !tiktokUrl) {
+            throw new Error('TikTok requires a videoUrl');
+        }
+        if (hasReels && !reelsUrl) {
+            throw new Error('Instagram Reels requires a videoUrl');
+        }
+        if (hasImagePlatform && (!payload.images || payload.images.length === 0)) {
+            throw new Error('Images are required for the selected platforms');
+        }
         const timesPerDay = Math.min(Math.max(payload.timesPerDay, 1), 5);
         const scheduledDate = new Date(payload.scheduledFor);
         if (Number.isNaN(scheduledDate.getTime()))
@@ -40,10 +66,32 @@ export class SocialSchedulingService {
         }
         const batch = firestore.batch();
         docsToCreate.forEach(doc => {
+            const isVideoPlatform = doc.platform === 'youtube' ||
+                doc.platform === 'tiktok' ||
+                doc.platform === 'instagram_reels' ||
+                ((doc.platform === 'facebook' ||
+                    doc.platform === 'facebook_story' ||
+                    doc.platform === 'instagram_story' ||
+                    doc.platform === 'linkedin') &&
+                    Boolean(payload.videoUrl));
+            const videoUrl = doc.platform === 'youtube'
+                ? payload.youtubeVideoUrl ?? payload.videoUrl ?? null
+                : doc.platform === 'tiktok'
+                    ? payload.tiktokVideoUrl ?? payload.videoUrl ?? null
+                    : doc.platform === 'instagram_reels'
+                        ? payload.instagramReelsVideoUrl ?? null
+                        : (doc.platform === 'facebook' ||
+                            doc.platform === 'facebook_story' ||
+                            doc.platform === 'instagram_story' ||
+                            doc.platform === 'linkedin')
+                            ? payload.videoUrl ?? null
+                            : null;
             batch.set(scheduledPostsCollection.doc(doc.id), {
                 userId: payload.userId,
                 platform: doc.platform,
-                imageUrls: payload.images ?? [],
+                imageUrls: isVideoPlatform ? [] : payload.images ?? [],
+                videoUrl,
+                videoTitle: payload.videoTitle ?? null,
                 caption: payload.caption,
                 hashtags: payload.hashtags ?? '',
                 scheduledFor: admin.firestore.Timestamp.fromDate(doc.scheduledFor),

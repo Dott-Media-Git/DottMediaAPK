@@ -1,8 +1,8 @@
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
-import { OpenAIService } from './openAIService';
-import { OutboundMessenger } from './outboundMessenger';
-import { config } from '../config';
+import { firestore } from '../db/firestore.js';
+import { OpenAIService } from './openAIService.js';
+import { OutboundMessenger } from './outboundMessenger.js';
+import { config } from '../config.js';
 const followUpsCollection = firestore.collection('follow_ups');
 const followUpLogsCollection = firestore.collection('follow_up_logs');
 const DAY = 24 * 60 * 60 * 1000;

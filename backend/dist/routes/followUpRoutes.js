@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { FollowUpController } from '../controllers/followUpController';
-import { runFollowupJob } from '../jobs/followupJob';
+import { FollowUpController } from '../controllers/followUpController.js';
+import { runFollowupJob } from '../jobs/followupJob.js';
 const router = Router();
 const controller = new FollowUpController();
 router.post('/followups/run', controller.run);

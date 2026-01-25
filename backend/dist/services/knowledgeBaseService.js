@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { load } from 'cheerio';
 import admin from 'firebase-admin';
-import { firestore } from '../lib/firebase';
-import { extractKeywords } from '../utils/nlp';
+import { firestore } from '../db/firestore.js';
+import { extractKeywords } from '../utils/nlp.js';
+import { helpDocIndex } from './helpDocsIndex.js';
 const knowledgeCollection = firestore.collection('knowledge_base');
 const cleanText = (html) => {
     const $ = load(html);
@@ -52,10 +53,26 @@ export class KnowledgeBaseService {
         const snapshot = await knowledgeCollection.orderBy('createdAt', 'desc').limit(75).get();
         const cleanQuery = query.toLowerCase();
         const keywords = extractKeywords(cleanQuery, 6);
-        const scored = snapshot.docs
-            .map(doc => doc.data())
+        const firestoreResources = snapshot.docs.map(doc => {
+            const resource = doc.data();
+            return {
+                title: resource.title,
+                summary: resource.summary,
+                url: resource.url,
+                tags: resource.tags ?? [],
+            };
+        });
+        const helpResources = helpDocIndex.map(doc => ({
+            title: doc.title,
+            summary: doc.summary,
+            url: doc.url,
+            tags: doc.tags,
+        }));
+        const resources = [...firestoreResources, ...helpResources];
+        const scored = resources
             .map(resource => {
-            const haystack = `${resource.title} ${resource.summary} ${resource.tags?.join(' ') ?? ''}`.toLowerCase();
+            const tags = resource.tags ?? [];
+            const haystack = `${resource.title} ${resource.summary} ${tags.join(' ')}`.toLowerCase();
             const score = keywords.reduce((acc, keyword) => (haystack.includes(keyword) ? acc + 2 : acc), 0) + (haystack.includes(cleanQuery) ? 4 : 0);
             return { resource, score };
         })

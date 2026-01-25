@@ -1,19 +1,23 @@
-import { BotStatsService } from '../services/botStatsService';
+import { BotStatsService } from '../services/botStatsService.js';
 export class BotController {
     constructor() {
         this.stats = new BotStatsService();
-        this.getStats = async (_req, res, next) => {
+        this.getStats = async (req, res, next) => {
             try {
-                const payload = await this.stats.getStats();
+                const authUser = req.authUser;
+                const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+                const payload = await this.stats.getStats({ userId: authUser?.uid, scopeId });
                 res.json(payload);
             }
             catch (error) {
                 next(error);
             }
         };
-        this.getLeadStats = async (_req, res, next) => {
+        this.getLeadStats = async (req, res, next) => {
             try {
-                const payload = await this.stats.getLeadInsights();
+                const authUser = req.authUser;
+                const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+                const payload = await this.stats.getLeadInsights({ userId: authUser?.uid, scopeId });
                 res.json(payload);
             }
             catch (error) {

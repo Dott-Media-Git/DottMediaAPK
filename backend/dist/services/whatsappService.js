@@ -1,5 +1,5 @@
-import { ConversationService } from './conversationService';
-import { OutboundMessenger } from './outboundMessenger';
+import { ConversationService } from './conversationService.js';
+import { OutboundMessenger } from './outboundMessenger.js';
 export class WhatsAppService {
     constructor() {
         this.conversations = new ConversationService();
@@ -19,7 +19,14 @@ export class WhatsAppService {
                 profile: { name: profileName },
                 timestamp: Number(message.timestamp) * 1000,
             });
-            await this.messenger.send('whatsapp', message.from, result.reply);
+            try {
+                await this.messenger.send('whatsapp', message.from, result.reply);
+                await this.conversations.updateReplyStatus(result.messageDocId, 'sent');
+            }
+            catch (error) {
+                await this.conversations.updateReplyStatus(result.messageDocId, 'failed', error.message);
+                throw error;
+            }
             results.push({ id: message.id, status: 'processed' });
         }
         return results;

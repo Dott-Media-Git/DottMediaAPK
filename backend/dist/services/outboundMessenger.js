@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { config } from '../config';
-import { withRetry } from '../utils/retry';
+import { config } from '../config.js';
+import { withRetry } from '../utils/retry.js';
 export class OutboundMessenger {
     async send(platform, recipientId, text) {
         await withRetry(() => this.dispatch(platform, recipientId, text));
@@ -8,6 +8,10 @@ export class OutboundMessenger {
     async dispatch(platform, recipientId, text) {
         switch (platform) {
             case 'whatsapp':
+                if (!config.whatsapp.token || !config.whatsapp.phoneNumberId) {
+                    console.info('[outbound] WhatsApp disabled; skipping send');
+                    return;
+                }
                 await axios.post(`https://graph.facebook.com/v19.0/${config.whatsapp.phoneNumberId}/messages`, {
                     messaging_product: 'whatsapp',
                     to: recipientId,
@@ -34,6 +38,10 @@ export class OutboundMessenger {
                 }, { params: { access_token: config.channels.instagram.accessToken } });
                 return;
             case 'threads':
+                if (!config.channels.threads.profileId || !config.channels.threads.accessToken) {
+                    console.info('[outbound] Threads disabled; skipping send');
+                    return;
+                }
                 await axios.post(`https://graph.facebook.com/v19.0/${config.channels.threads.profileId}/messages`, {
                     recipient: { id: recipientId },
                     message: { text },

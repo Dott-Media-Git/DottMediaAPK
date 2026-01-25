@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireFirebase } from '../middleware/firebaseAuth';
-import { AssistantService } from '../services/assistantService';
+import { requireFirebase } from '../middleware/firebaseAuth.js';
+import { firestore } from '../db/firestore.js';
+import { AssistantService } from '../services/assistantService.js';
 const router = Router();
 const assistant = new AssistantService();
 const BodySchema = z.object({
@@ -10,6 +11,9 @@ const BodySchema = z.object({
         .object({
         company: z.string().optional(),
         currentScreen: z.string().optional(),
+        subscriptionStatus: z.string().optional(),
+        connectedChannels: z.array(z.string()).optional(),
+        locale: z.string().max(16).optional(),
         analytics: z
             .object({
             leads: z.number().optional(),
@@ -28,7 +32,14 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
         if (!authUser) {
             return res.status(401).json({ message: 'Unauthorized' });
         }
-        const answer = await assistant.answer(parsed.question, parsed.context ?? {});
+        const userDoc = await firestore.collection('users').doc(authUser.uid).get();
+        const historyUserId = userDoc.data()?.historyUserId?.trim();
+        const effectiveUserId = historyUserId || authUser.uid;
+        const answer = await assistant.answer(parsed.question, {
+            ...(parsed.context ?? {}),
+            userId: effectiveUserId,
+            userEmail: authUser.email,
+        });
         res.json({ answer });
     }
     catch (err) {
