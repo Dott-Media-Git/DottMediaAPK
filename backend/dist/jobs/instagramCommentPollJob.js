@@ -6,7 +6,7 @@ import { firestore } from '../db/firestore.js';
 import { generateReply, likeInstagramComment, replyToInstagramComment } from '../services/autoReplyService.js';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const enabled = process.env.IG_COMMENT_POLL_ENABLED !== 'false';
-const scheduleExpression = process.env.IG_COMMENT_POLL_CRON ?? '*/5 * * * *';
+const scheduleExpression = process.env.IG_COMMENT_POLL_CRON ?? '*/1 * * * *';
 const mediaLimit = Math.max(Number(process.env.IG_COMMENT_MEDIA_LIMIT ?? 5), 1);
 const commentLimit = Math.max(Number(process.env.IG_COMMENT_LIMIT ?? 10), 1);
 const windowHours = Math.max(Number(process.env.IG_COMMENT_WINDOW_HOURS ?? 24), 1);
