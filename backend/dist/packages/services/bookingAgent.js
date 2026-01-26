@@ -62,7 +62,8 @@ export class BookingAgent {
             status: 'confirmed',
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
-        await incrementMetric('demos_booked', 1, { industry: undefined });
+        const analyticsScope = resolveAnalyticsScope(context);
+        await incrementMetric('demos_booked', 1, { industry: undefined }, analyticsScope);
         await leadsCollection.doc(context.lead.id).set({
             stage: 'DemoBooked',
             demoSlot: slot,
@@ -165,4 +166,18 @@ function matchSlotChoice(slots, reply) {
             return slot;
     }
     return slots.find(slot => normalized.includes(slot.label.toLowerCase().split('(')[0].trim()));
+}
+function resolveAnalyticsScope(context) {
+    const scopeId = pickScopeId(context.metadata?.orgId, context.metadata?.workspaceId, context.metadata?.ownerId, context.metadata?.userId, context.lead?.orgId, context.lead?.ownerId, context.lead?.userId);
+    return scopeId ? { scopeId } : undefined;
+}
+function pickScopeId(...candidates) {
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string') {
+            const trimmed = candidate.trim();
+            if (trimmed)
+                return trimmed;
+        }
+    }
+    return undefined;
 }

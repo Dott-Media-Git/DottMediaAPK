@@ -117,7 +117,8 @@ export const DashboardScreen: React.FC = () => {
           },
           error => {
             console.warn('Realtime analytics subscription failed', error);
-          }
+          },
+          analyticsScopeId
         ) ?? null;
 
       if (!unsubscribe) {

@@ -111,11 +111,12 @@ export class OutreachAgent {
     });
 
     for (const prospect of sendable) {
+      const analyticsScope = resolveAnalyticsScope(userId, prospect);
       try {
         const message = await this.generateFirstMessage(prospect, userId);
         const channelUsed = await this.dispatchMessage(prospect, message);
         await this.recordMessage(prospect, message, channelUsed);
-        await incrementMetric('outbound_sent', 1, { industry: prospect.industry });
+        await incrementMetric('outbound_sent', 1, { industry: prospect.industry }, analyticsScope);
         sent += 1;
       } catch (error) {
         console.error('Outbound send failed', error);
@@ -164,11 +165,13 @@ export class OutreachAgent {
       { merge: true },
     );
 
-    await incrementMetric('outbound_reply', 1, { industry: prospect.industry });
+    const analyticsScope = resolveAnalyticsScope(undefined, prospect, payload.metadata);
+
+    await incrementMetric('outbound_reply', 1, { industry: prospect.industry }, analyticsScope);
 
     if (payload.sentiment === 'positive') {
       await this.createLeadFromProspect(prospect, payload);
-      await incrementMetric('outbound_converted', 1, { industry: prospect.industry });
+      await incrementMetric('outbound_converted', 1, { industry: prospect.industry }, analyticsScope);
     }
   }
 
@@ -375,6 +378,34 @@ Max 3 sentences. Add natural emoji if suitable.
       { merge: true },
     );
   }
+}
+
+function resolveAnalyticsScope(
+  userId?: string,
+  prospect?: Prospect,
+  metadata?: Record<string, unknown>,
+) {
+  const scopeId = pickScopeId(
+    (metadata as any)?.orgId,
+    (metadata as any)?.workspaceId,
+    (metadata as any)?.ownerId,
+    (metadata as any)?.userId,
+    (prospect as any)?.orgId,
+    (prospect as any)?.ownerId,
+    (prospect as any)?.userId,
+    userId,
+  );
+  return scopeId ? { scopeId } : undefined;
+}
+
+function pickScopeId(...candidates: Array<unknown>) {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return undefined;
 }
 
 export const outreachAgent = new OutreachAgent();

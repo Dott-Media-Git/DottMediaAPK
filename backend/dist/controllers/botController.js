@@ -1,4 +1,4 @@
-import { BotStatsService } from '../services/botStatsService.js';
+import { BotStatsService } from '../services/botStatsService';
 export class BotController {
     constructor() {
         this.stats = new BotStatsService();

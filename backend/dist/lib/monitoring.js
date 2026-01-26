@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/node';
-import { config } from '../config.js';
+import { config } from '../config';
 const sentryEnabled = Boolean(config.sentry.dsn);
 if (sentryEnabled) {
     Sentry.init({

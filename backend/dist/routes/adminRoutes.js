@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import createHttpError from 'http-errors';
 // TODO: Extend with Google/Microsoft SSO claims once identity providers are connected.
-import { requireFirebase } from '../middleware/firebaseAuth.js';
-import { requireAdmin } from '../middleware/adminAuth.js';
-import { withOrgContext, requireRole } from '../middleware/orgAuth.js';
-import { createOrg, getOrg, updateOrg, listOrgUsers, inviteOrgUser, updateOrgUserRole, removeOrgUser, getOrgSettings, updateOrgSettings, connectChannel, disconnectChannel, storeSecret, describeSecret, getUsage, listPlans, swapPlan, enqueueJob, logAuditEvent, } from '../services/admin/adminService.js';
-import { getAdminMetrics } from '../services/admin/adminMetricsService.js';
-import { firestore } from '../db/firestore.js';
+import { requireFirebase } from '../middleware/firebaseAuth';
+import { requireAdmin } from '../middleware/adminAuth';
+import { withOrgContext, requireRole } from '../middleware/orgAuth';
+import { createOrg, getOrg, updateOrg, listOrgUsers, inviteOrgUser, updateOrgUserRole, removeOrgUser, getOrgSettings, updateOrgSettings, connectChannel, disconnectChannel, storeSecret, describeSecret, getUsage, listPlans, swapPlan, enqueueJob, logAuditEvent, } from '../services/admin/adminService';
+import { getAdminMetrics } from '../services/admin/adminMetricsService';
+import { firestore } from '../db/firestore';
 const router = Router();
 router.get('/admin/metrics', requireFirebase, requireAdmin, async (_req, res, next) => {
     try {

@@ -1,6 +1,6 @@
 import { Queue } from 'bullmq';
-import { config } from '../config.js';
-import { createRedisConnection } from '../lib/redis.js';
+import { config } from '../config';
+import { createRedisConnection } from '../lib/redis';
 const createQueue = () => {
     if (config.security.allowMockAuth || process.env.SKIP_REDIS === 'true' || !config.redisUrl) {
         console.warn('[youtubeQueue] Redis disabled; queue not started');

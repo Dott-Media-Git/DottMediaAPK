@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { firestore } from '../db/firestore.js';
-import { classifyReply } from '../packages/brain/nlu/replyClassifier.js';
-import { ConversionService } from '../packages/services/conversionService.js';
-import { incrementMetric } from '../services/analyticsService.js';
+import { firestore } from '../db/firestore';
+import { classifyReply } from '../packages/brain/nlu/replyClassifier';
+import { ConversionService } from '../packages/services/conversionService';
+import { incrementMetric } from '../services/analyticsService';
 const conversionService = new ConversionService();
 const prospectsCollection = firestore.collection('prospects');
 const router = Router();
@@ -19,9 +19,10 @@ router.post('/webhook/reply/:channel', async (req, res, next) => {
             return res.status(404).json({ message: 'Prospect not found' });
         }
         const classification = await classifyReply(normalized.text);
-        await incrementMetric('outbound_reply', 1, { industry: prospect.industry });
+        const analyticsScope = resolveAnalyticsScope(prospect, normalized.metadata);
+        await incrementMetric('outbound_reply', 1, { industry: prospect.industry }, analyticsScope);
         if (classification.intent === 'INTERESTED' || classification.intent === 'BOOK_DEMO' || classification.sentiment > 0.2) {
-            await incrementMetric('outbound_positive_reply', 1, { industry: prospect.industry });
+            await incrementMetric('outbound_positive_reply', 1, { industry: prospect.industry }, analyticsScope);
         }
         const result = await conversionService.handleReplyWithClassification({
             prospectId: prospect.id,
@@ -118,4 +119,18 @@ function materialize(doc) {
 function materializeSnap(doc) {
     const data = doc.data();
     return { ...data, id: doc.id };
+}
+function resolveAnalyticsScope(prospect, metadata) {
+    const scopeId = pickScopeId(metadata?.orgId, metadata?.workspaceId, metadata?.ownerId, metadata?.userId, prospect.orgId, prospect.ownerId, prospect.userId);
+    return scopeId ? { scopeId } : undefined;
+}
+function pickScopeId(...candidates) {
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string') {
+            const trimmed = candidate.trim();
+            if (trimmed)
+                return trimmed;
+        }
+    }
+    return undefined;
 }

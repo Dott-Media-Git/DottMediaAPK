@@ -90,11 +90,12 @@ export class OutreachAgent {
             sendable.push(...channelProspects.slice(0, remaining));
         });
         for (const prospect of sendable) {
+            const analyticsScope = resolveAnalyticsScope(userId, prospect);
             try {
                 const message = await this.generateFirstMessage(prospect, userId);
                 const channelUsed = await this.dispatchMessage(prospect, message);
                 await this.recordMessage(prospect, message, channelUsed);
-                await incrementMetric('outbound_sent', 1, { industry: prospect.industry });
+                await incrementMetric('outbound_sent', 1, { industry: prospect.industry }, analyticsScope);
                 sent += 1;
             }
             catch (error) {
@@ -136,10 +137,11 @@ export class OutreachAgent {
             status: payload.sentiment === 'positive' ? 'converted' : 'contacted',
             lastReplyAt: Date.now(),
         }, { merge: true });
-        await incrementMetric('outbound_reply', 1, { industry: prospect.industry });
+        const analyticsScope = resolveAnalyticsScope(undefined, prospect, payload.metadata);
+        await incrementMetric('outbound_reply', 1, { industry: prospect.industry }, analyticsScope);
         if (payload.sentiment === 'positive') {
             await this.createLeadFromProspect(prospect, payload);
-            await incrementMetric('outbound_converted', 1, { industry: prospect.industry });
+            await incrementMetric('outbound_converted', 1, { industry: prospect.industry }, analyticsScope);
         }
     }
     async fetchUncontactedProspects(limit = 20) {
@@ -333,5 +335,19 @@ Max 3 sentences. Add natural emoji if suitable.
             lastMessage: payload.message,
         }, { merge: true });
     }
+}
+function resolveAnalyticsScope(userId, prospect, metadata) {
+    const scopeId = pickScopeId(metadata?.orgId, metadata?.workspaceId, metadata?.ownerId, metadata?.userId, prospect?.orgId, prospect?.ownerId, prospect?.userId, userId);
+    return scopeId ? { scopeId } : undefined;
+}
+function pickScopeId(...candidates) {
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string') {
+            const trimmed = candidate.trim();
+            if (trimmed)
+                return trimmed;
+        }
+    }
+    return undefined;
 }
 export const outreachAgent = new OutreachAgent();

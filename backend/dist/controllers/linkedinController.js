@@ -1,4 +1,4 @@
-import { LinkedInService } from '../services/linkedinService.js';
+import { LinkedInService } from '../services/linkedinService';
 export class LinkedInController {
     constructor() {
         this.service = new LinkedInService();

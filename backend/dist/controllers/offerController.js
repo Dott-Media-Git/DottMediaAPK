@@ -1,4 +1,4 @@
-import { OfferService } from '../services/offerService.js';
+import { OfferService } from '../services/offerService';
 const offers = new OfferService();
 export class OfferController {
     constructor() {

@@ -47,11 +47,12 @@ export class EngagementHandler {
             });
             leadCreated = 1;
         }
+        const analyticsScope = payload.ownerId ? { scopeId: payload.ownerId } : undefined;
         await incrementEngagementAnalytics({
             commentsDetected: 1,
             repliesSent: shouldRespond ? 1 : 0,
             conversions: leadCreated,
-        });
+        }, analyticsScope);
         return { reply: replyText, leadCreated: Boolean(leadCreated) };
     }
     async composeComment(payload, classification) {

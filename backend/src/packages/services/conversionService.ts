@@ -59,7 +59,8 @@ export class ConversionService {
     }
 
     // Convert or update lead
-    const leadRecord = await this.convertToLead(prospect, payload.text, classification);
+    const analyticsScope = resolveAnalyticsScope(prospect, payload.metadata);
+    const leadRecord = await this.convertToLead(prospect, payload.text, classification, analyticsScope);
     const leadContext = { ...leadRecord, channel: prospect.channel as Prospect['channel'] };
 
     if (classification.intent === 'BOOK_DEMO') {
@@ -74,7 +75,12 @@ export class ConversionService {
     return { status: 'converted' as const, lead: leadRecord };
   }
 
-  private async convertToLead(prospect: Prospect, reply: string, classification: ReplyClassification) {
+  private async convertToLead(
+    prospect: Prospect,
+    reply: string,
+    classification: ReplyClassification,
+    analyticsScope?: ReturnType<typeof resolveAnalyticsScope>,
+  ) {
     const profile = {
       name: prospect.name,
       company: prospect.company,
@@ -137,7 +143,7 @@ export class ConversionService {
       });
     });
 
-    await incrementMetric('outbound_converted', 1, { industry: prospect.industry });
+    await incrementMetric('outbound_converted', 1, { industry: prospect.industry }, analyticsScope);
     await this.crmSync.mirrorLead(leadRecord);
     await this.notifier.notifyConversion(leadRecord);
 
@@ -166,4 +172,27 @@ function resolveRecipient(prospect: Prospect) {
 function extractUsername(url: string) {
   const match = url.match(/instagram\.com\/([^/?]+)/i);
   return match?.[1] ?? url;
+}
+
+function resolveAnalyticsScope(prospect: Prospect, metadata?: Record<string, unknown>) {
+  const scopeId = pickScopeId(
+    (metadata as any)?.orgId,
+    (metadata as any)?.workspaceId,
+    (metadata as any)?.ownerId,
+    (metadata as any)?.userId,
+    (prospect as any).orgId,
+    (prospect as any).ownerId,
+    (prospect as any).userId,
+  );
+  return scopeId ? { scopeId } : undefined;
+}
+
+function pickScopeId(...candidates: Array<unknown>) {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return undefined;
 }

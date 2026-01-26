@@ -58,17 +58,25 @@ export class InboundHandler {
       leadCreated = true;
     }
 
+    const analyticsScope = resolveAnalyticsScope(payload);
+
     if (payload.channel === 'web') {
-      await incrementWebLeadAnalytics({
-        messages: 1,
-        leads: lead ? 1 : 0,
-      });
+      await incrementWebLeadAnalytics(
+        {
+          messages: 1,
+          leads: lead ? 1 : 0,
+        },
+        analyticsScope,
+      );
     } else {
-      await incrementInboundAnalytics({
-        messages: 1,
-        leads: lead ? 1 : 0,
-        sentimentTotal: classification.sentiment,
-      });
+      await incrementInboundAnalytics(
+        {
+          messages: 1,
+          leads: lead ? 1 : 0,
+          sentimentTotal: classification.sentiment,
+        },
+        analyticsScope,
+      );
     }
 
     const reply = await this.composeReply(payload, classification, lead?.name);
@@ -195,4 +203,25 @@ function toReplyClassification(classification: IntentClassification): ReplyClass
     intent: intentMap[classification.intent] ?? 'CURIOUS',
     confidence: classification.confidence,
   };
+}
+
+function resolveAnalyticsScope(payload: InboundPayload) {
+  const meta = payload.metadata ?? {};
+  const scopeId = pickScopeId(
+    (meta as any).orgId,
+    (meta as any).workspaceId,
+    (meta as any).ownerId,
+    payload.ownerId,
+  );
+  return scopeId ? { scopeId } : undefined;
+}
+
+function pickScopeId(...candidates: Array<unknown>) {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return undefined;
 }

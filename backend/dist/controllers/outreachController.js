@@ -1,5 +1,5 @@
-import { PredictiveOutreachService } from '../services/predictiveOutreachService.js';
-import { firestore } from '../db/firestore.js';
+import { PredictiveOutreachService } from '../services/predictiveOutreachService';
+import { firestore } from '../db/firestore';
 const outreach = new PredictiveOutreachService();
 export class OutreachController {
     constructor() {
@@ -62,9 +62,9 @@ export class OutreachController {
                     }
                 }
                 if (body?.includeDiscovery) {
-                    const { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } = await import('../services/outboundTargetingService.js');
-                    const { runProspectDiscovery } = await import('../packages/services/prospectFinder/index.js');
-                    const { outreachAgent } = await import('../packages/services/outreachAgent/index.js');
+                    const { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } = await import('../services/outboundTargetingService');
+                    const { runProspectDiscovery } = await import('../packages/services/prospectFinder');
+                    const { outreachAgent } = await import('../packages/services/outreachAgent');
                     const target = await resolveOutboundDiscoveryTarget();
                     const limit = resolveDiscoveryLimit();
                     const prospects = await runProspectDiscovery({ industry: target.industry, country: target.country, limit });
@@ -72,10 +72,10 @@ export class OutreachController {
                     return res.json({ target, discovered: prospects.length, outreach });
                 }
                 // Trigger the agent
-                // import { outreachAgent } from '../packages/services/outreachAgent/index.js';
+                // import { outreachAgent } from '../packages/services/outreachAgent';
                 // const result = await outreachAgent.runDailyOutreach();
                 // For now, we'll simulate a run or call the service if we can import it dynamically to avoid circular deps if any
-                const { outreachAgent } = await import('../packages/services/outreachAgent/index.js');
+                const { outreachAgent } = await import('../packages/services/outreachAgent');
                 const result = await outreachAgent.runDailyOutreach();
                 res.json(result);
             }

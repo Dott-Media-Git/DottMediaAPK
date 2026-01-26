@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { KnowledgeBaseController } from '../controllers/knowledgeBaseController.js';
+import { KnowledgeBaseController } from '../controllers/knowledgeBaseController';
 const router = Router();
 const controller = new KnowledgeBaseController();
 router.get('/knowledge', controller.list);

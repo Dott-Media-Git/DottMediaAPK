@@ -1,9 +1,9 @@
 import cron from 'node-cron';
 import axios from 'axios';
 import admin from 'firebase-admin';
-import { config } from '../config.js';
-import { firestore } from '../db/firestore.js';
-import { generateReply, likeInstagramComment, replyToInstagramComment } from '../services/autoReplyService.js';
+import { config } from '../config';
+import { firestore } from '../db/firestore';
+import { generateReply, likeInstagramComment, replyToInstagramComment } from '../services/autoReplyService';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const enabled = process.env.IG_COMMENT_POLL_ENABLED !== 'false';
 const scheduleExpression = process.env.IG_COMMENT_POLL_CRON ?? '*/1 * * * *';

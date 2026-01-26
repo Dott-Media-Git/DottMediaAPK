@@ -42,7 +42,8 @@ export class ConversionService {
             return { status: 'not_interested' };
         }
         // Convert or update lead
-        const leadRecord = await this.convertToLead(prospect, payload.text, classification);
+        const analyticsScope = resolveAnalyticsScope(prospect, payload.metadata);
+        const leadRecord = await this.convertToLead(prospect, payload.text, classification, analyticsScope);
         const leadContext = { ...leadRecord, channel: prospect.channel };
         if (classification.intent === 'BOOK_DEMO') {
             const handled = await this.bookingAgent.handleReply(leadContext, payload.text);
@@ -55,7 +56,7 @@ export class ConversionService {
         }
         return { status: 'converted', lead: leadRecord };
     }
-    async convertToLead(prospect, reply, classification) {
+    async convertToLead(prospect, reply, classification, analyticsScope) {
         const profile = {
             name: prospect.name,
             company: prospect.company,
@@ -109,7 +110,7 @@ export class ConversionService {
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
         });
-        await incrementMetric('outbound_converted', 1, { industry: prospect.industry });
+        await incrementMetric('outbound_converted', 1, { industry: prospect.industry }, analyticsScope);
         await this.crmSync.mirrorLead(leadRecord);
         await this.notifier.notifyConversion(leadRecord);
         return leadRecord;
@@ -137,4 +138,18 @@ function resolveRecipient(prospect) {
 function extractUsername(url) {
     const match = url.match(/instagram\.com\/([^/?]+)/i);
     return match?.[1] ?? url;
+}
+function resolveAnalyticsScope(prospect, metadata) {
+    const scopeId = pickScopeId(metadata?.orgId, metadata?.workspaceId, metadata?.ownerId, metadata?.userId, prospect.orgId, prospect.ownerId, prospect.userId);
+    return scopeId ? { scopeId } : undefined;
+}
+function pickScopeId(...candidates) {
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string') {
+            const trimmed = candidate.trim();
+            if (trimmed)
+                return trimmed;
+        }
+    }
+    return undefined;
 }

@@ -1,5 +1,5 @@
-import { config } from '../config.js';
-import { ThreadsService } from '../services/threadsService.js';
+import { config } from '../config';
+import { ThreadsService } from '../services/threadsService';
 export class ThreadsController {
     constructor() {
         this.service = new ThreadsService();

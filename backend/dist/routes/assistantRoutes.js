@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireFirebase } from '../middleware/firebaseAuth.js';
-import { firestore } from '../db/firestore.js';
-import { AssistantService } from '../services/assistantService.js';
+import { requireFirebase } from '../middleware/firebaseAuth';
+import { firestore } from '../db/firestore';
+import { AssistantService } from '../services/assistantService';
 const router = Router();
 const assistant = new AssistantService();
 const BodySchema = z.object({

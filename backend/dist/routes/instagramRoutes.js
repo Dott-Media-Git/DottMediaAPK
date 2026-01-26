@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { InstagramController } from '../controllers/instagramController.js';
+import { InstagramController } from '../controllers/instagramController';
 const router = Router();
 const controller = new InstagramController();
 router.get('/webhook/instagram', controller.verify);

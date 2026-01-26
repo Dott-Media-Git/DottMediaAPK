@@ -10,6 +10,7 @@ import {
   likeInstagramComment,
   likeFacebookComment,
 } from '../services/autoReplyService.js';
+import { incrementEngagementAnalytics, incrementInboundAnalytics } from '../services/analyticsService.js';
 import fs from 'fs';
 import path from 'path';
 import { firestore } from '../db/firestore.js';
@@ -28,6 +29,7 @@ type SocialAccount = {
 
 type AccountContext = {
   userId?: string;
+  orgId?: string;
   accessToken?: string;
   accountId?: string;
   pageId?: string;
@@ -44,10 +46,11 @@ const resolvePlatformContext = async (platform: 'instagram' | 'facebook', entryI
       .get();
     if (snap.empty) return null;
     const doc = snap.docs[0];
-    const data = doc.data() as { socialAccounts?: Record<string, SocialAccount> };
+    const data = doc.data() as { orgId?: string; socialAccounts?: Record<string, SocialAccount> };
     const account = data.socialAccounts?.[platform] ?? {};
     return {
       userId: doc.id,
+      orgId: data.orgId,
       accessToken: account.accessToken,
       accountId: account.accountId,
       pageId: account.pageId,
@@ -106,6 +109,7 @@ const saveInbound = async (event: {
   text?: string;
   commentId?: string;
   ownerId?: string;
+  scopeId?: string;
   raw?: unknown;
 }) => {
   try {
@@ -115,6 +119,16 @@ const saveInbound = async (event: {
       replyStatus: 'pending',
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    const analyticsScope = event.scopeId ? { scopeId: event.scopeId } : undefined;
+    try {
+      if (event.type === 'dm') {
+        await incrementInboundAnalytics({ messages: 1 }, analyticsScope);
+      } else {
+        await incrementEngagementAnalytics({ commentsDetected: 1 }, analyticsScope);
+      }
+    } catch (error) {
+      console.warn('Failed to update analytics for inbound event', (error as Error).message);
+    }
     return docRef;
   } catch (err) {
     console.warn('Failed to persist inbound webhook event', (err as Error).message);
@@ -129,6 +143,7 @@ const reserveInbound = async (event: {
   text?: string;
   commentId?: string;
   ownerId?: string;
+  scopeId?: string;
   raw?: unknown;
 }) => {
   const dedupeKey = buildDedupeKey(event.platform, event.type, event.commentId);
@@ -221,6 +236,7 @@ router.post('/meta/webhook', async (req, res) => {
           if (!commentId || !text) continue;
           const igAccountId = instagramContext?.accountId ?? igBusinessId;
           if (igAccountId && fromId && fromId === igAccountId) continue; // avoid replying to self
+          const analyticsScopeId = instagramContext?.orgId ?? instagramContext?.userId;
           const inbound = await reserveInbound({
             platform: 'instagram',
             type: 'comment',
@@ -228,6 +244,7 @@ router.post('/meta/webhook', async (req, res) => {
             text,
             commentId,
             ownerId: instagramContext?.userId,
+            scopeId: analyticsScopeId,
             raw: change,
           });
           if (!inbound.shouldProcess) {
@@ -239,6 +256,9 @@ router.post('/meta/webhook', async (req, res) => {
             await replyToInstagramComment(commentId, reply, instagramContext?.accessToken);
             await updateReplyStatus(inbound.ref, 'sent');
             await likeInstagramComment(commentId, instagramContext?.accessToken).catch(err => console.warn('IG comment like failed', err));
+            if (analyticsScopeId) {
+              await incrementEngagementAnalytics({ repliesSent: 1 }, { scopeId: analyticsScopeId });
+            }
             if (fromId) {
               const dmFollowUp = `${reply}\n\nWant a quick demo? I can send the link.`;
               await replyToInstagramMessage(fromId, dmFollowUp, {
@@ -262,12 +282,14 @@ router.post('/meta/webhook', async (req, res) => {
             if (!senderId || !text) continue;
             const igAccountId = instagramContext?.accountId ?? igBusinessId;
             if (igAccountId && senderId === igAccountId) continue; // avoid replying to self
+            const analyticsScopeId = instagramContext?.orgId ?? instagramContext?.userId;
             const inboundRef = await saveInbound({
               platform: 'instagram',
               type: 'dm',
               senderId,
               text,
               ownerId: instagramContext?.userId,
+              scopeId: analyticsScopeId,
               raw: msg,
             });
             try {
@@ -294,6 +316,7 @@ router.post('/meta/webhook', async (req, res) => {
           if (item === 'comment' && commentId && message) {
             const fbPageId = facebookContext?.pageId ?? pageId;
             if (fbPageId && fromId && fromId === fbPageId) continue; // avoid replying to self
+            const analyticsScopeId = facebookContext?.orgId ?? facebookContext?.userId;
             const inbound = await reserveInbound({
               platform: 'facebook',
               type: 'comment',
@@ -301,6 +324,7 @@ router.post('/meta/webhook', async (req, res) => {
               text: message,
               commentId,
               ownerId: facebookContext?.userId,
+              scopeId: analyticsScopeId,
               raw: change,
             });
             if (!inbound.shouldProcess) {
@@ -314,6 +338,9 @@ router.post('/meta/webhook', async (req, res) => {
               await likeFacebookComment(commentId, facebookContext?.accessToken).catch(err =>
                 console.warn('FB comment like failed', err)
               );
+              if (analyticsScopeId) {
+                await incrementEngagementAnalytics({ repliesSent: 1 }, { scopeId: analyticsScopeId });
+              }
               if (fromId) {
                 const dmFollowUp = `${reply}\n\nHappy to send a quick AI Sales Agent demo link — want it?`;
                 await replyToFacebookMessage(fromId, dmFollowUp, facebookContext?.accessToken).catch(err =>
@@ -343,12 +370,14 @@ router.post('/meta/webhook', async (req, res) => {
             : (context?.pageId ?? pageId);
           if (ownId && senderId === ownId) continue;
 
+          const analyticsScopeId = context?.orgId ?? context?.userId;
           const inboundRef = await saveInbound({
             platform: body.object === 'instagram' ? 'instagram' : 'facebook',
             type: 'dm',
             senderId,
             text: message,
             ownerId: context?.userId,
+            scopeId: analyticsScopeId,
             raw: event,
           });
           try {

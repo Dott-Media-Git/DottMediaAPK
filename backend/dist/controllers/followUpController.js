@@ -1,4 +1,4 @@
-import { FollowUpService } from '../services/followUpService.js';
+import { FollowUpService } from '../services/followUpService';
 const followUps = new FollowUpService();
 export class FollowUpController {
     constructor() {

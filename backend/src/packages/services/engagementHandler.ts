@@ -16,6 +16,7 @@ type EngagementPayload = {
   postId: string;
   commentId?: string;
   userId: string;
+  ownerId?: string;
   username?: string;
   text: string;
   link?: string;
@@ -63,11 +64,16 @@ export class EngagementHandler {
       leadCreated = 1;
     }
 
-    await incrementEngagementAnalytics({
-      commentsDetected: 1,
-      repliesSent: shouldRespond ? 1 : 0,
-      conversions: leadCreated,
-    });
+    const analyticsScope = payload.ownerId ? { scopeId: payload.ownerId } : undefined;
+
+    await incrementEngagementAnalytics(
+      {
+        commentsDetected: 1,
+        repliesSent: shouldRespond ? 1 : 0,
+        conversions: leadCreated,
+      },
+      analyticsScope,
+    );
 
     return { reply: replyText, leadCreated: Boolean(leadCreated) };
   }

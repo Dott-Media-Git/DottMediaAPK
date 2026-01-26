@@ -39,9 +39,10 @@ router.post('/webhook/reply/:channel', async (req, res, next) => {
     }
 
     const classification = await classifyReply(normalized.text);
-    await incrementMetric('outbound_reply', 1, { industry: prospect.industry });
+    const analyticsScope = resolveAnalyticsScope(prospect, normalized.metadata);
+    await incrementMetric('outbound_reply', 1, { industry: prospect.industry }, analyticsScope);
     if (classification.intent === 'INTERESTED' || classification.intent === 'BOOK_DEMO' || classification.sentiment > 0.2) {
-      await incrementMetric('outbound_positive_reply', 1, { industry: prospect.industry });
+      await incrementMetric('outbound_positive_reply', 1, { industry: prospect.industry }, analyticsScope);
     }
 
     const result = await conversionService.handleReplyWithClassification(
@@ -153,4 +154,27 @@ function materialize(doc: DocumentSnapshot): (Prospect & { id: string }) | null 
 function materializeSnap(doc: QueryDocumentSnapshot): Prospect & { id: string } {
   const data = doc.data() as Prospect;
   return { ...data, id: doc.id };
+}
+
+function resolveAnalyticsScope(prospect: Prospect, metadata?: Record<string, unknown>) {
+  const scopeId = pickScopeId(
+    (metadata as any)?.orgId,
+    (metadata as any)?.workspaceId,
+    (metadata as any)?.ownerId,
+    (metadata as any)?.userId,
+    (prospect as any).orgId,
+    (prospect as any).ownerId,
+    (prospect as any).userId,
+  );
+  return scopeId ? { scopeId } : undefined;
+}
+
+function pickScopeId(...candidates: Array<unknown>) {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return undefined;
 }

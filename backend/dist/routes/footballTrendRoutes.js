@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireFirebase } from '../middleware/firebaseAuth.js';
-import { footballTrendContentService } from '../services/footballTrendContentService.js';
-import { getTrendingCandidates } from '../services/footballTrendSources.js';
-import { socialSchedulingService } from '../packages/services/socialSchedulingService.js';
+import { requireFirebase } from '../middleware/firebaseAuth';
+import { footballTrendContentService } from '../services/footballTrendContentService';
+import { getTrendingCandidates } from '../services/footballTrendSources';
+import { socialSchedulingService } from '../packages/services/socialSchedulingService';
 const router = Router();
 const scanSchema = z.object({
     maxCandidates: z.number().int().min(1).max(20).optional(),

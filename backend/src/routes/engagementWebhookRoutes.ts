@@ -6,7 +6,15 @@ const handler = new EngagementHandler();
 
 router.post('/webhook/engagement', async (req, res, next) => {
   try {
-    const payload = normalizeEngagement(req.body);
+    const ownerId = normalizeOwnerId(
+      req.header('x-owner-id'),
+      req.header('x-workspace-id'),
+      req.header('x-org-id'),
+      req.query.ownerId,
+      req.query.workspaceId,
+      req.query.orgId,
+    );
+    const payload = normalizeEngagement(req.body, ownerId);
     if (!payload) {
       return res.status(400).json({ message: 'Invalid engagement payload' });
     }
@@ -19,17 +27,33 @@ router.post('/webhook/engagement', async (req, res, next) => {
 
 export default router;
 
-function normalizeEngagement(body: any) {
+function normalizeEngagement(body: any, ownerIdOverride?: string) {
   if (!body?.channel || !body?.text) return null;
   const channel = body.channel.toLowerCase();
   if (!['instagram', 'facebook', 'linkedin'].includes(channel)) return null;
+  const ownerId = normalizeOwnerId(ownerIdOverride, body?.ownerId, body?.workspaceId, body?.orgId);
   return {
     channel,
     postId: body.postId ?? 'unknown',
     commentId: body.commentId,
     userId: body.userId ?? body.profileUrl ?? 'unknown',
+    ownerId,
     username: body.username ?? body.name,
     text: body.text,
     link: body.profileUrl,
   };
+}
+
+function normalizeOwnerId(...candidates: Array<unknown>): string | undefined {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) return trimmed;
+    }
+    if (Array.isArray(candidate) && candidate.length > 0) {
+      const value = String(candidate[0] ?? '').trim();
+      if (value) return value;
+    }
+  }
+  return undefined;
 }

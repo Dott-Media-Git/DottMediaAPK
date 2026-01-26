@@ -1,4 +1,4 @@
-import { SchedulerService } from '../services/schedulerService.js';
+import { SchedulerService } from '../services/schedulerService';
 const scheduler = new SchedulerService();
 export class SchedulerController {
     constructor() {

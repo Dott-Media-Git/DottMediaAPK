@@ -42,18 +42,19 @@ export class InboundHandler {
             await this.qualificationAgent.enqueue({ ...lead, channel: payload.channel, score: lead.score }, replyClassification);
             leadCreated = true;
         }
+        const analyticsScope = resolveAnalyticsScope(payload);
         if (payload.channel === 'web') {
             await incrementWebLeadAnalytics({
                 messages: 1,
                 leads: lead ? 1 : 0,
-            });
+            }, analyticsScope);
         }
         else {
             await incrementInboundAnalytics({
                 messages: 1,
                 leads: lead ? 1 : 0,
                 sentimentTotal: classification.sentiment,
-            });
+            }, analyticsScope);
         }
         const reply = await this.composeReply(payload, classification, lead?.name);
         if (payload.channel === 'web') {
@@ -173,4 +174,19 @@ function toReplyClassification(classification) {
         intent: intentMap[classification.intent] ?? 'CURIOUS',
         confidence: classification.confidence,
     };
+}
+function resolveAnalyticsScope(payload) {
+    const meta = payload.metadata ?? {};
+    const scopeId = pickScopeId(meta.orgId, meta.workspaceId, meta.ownerId, payload.ownerId);
+    return scopeId ? { scopeId } : undefined;
+}
+function pickScopeId(...candidates) {
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string') {
+            const trimmed = candidate.trim();
+            if (trimmed)
+                return trimmed;
+        }
+    }
+    return undefined;
 }

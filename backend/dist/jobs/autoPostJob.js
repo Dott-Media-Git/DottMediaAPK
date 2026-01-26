@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { autoPostService } from '../services/autoPostService.js';
+import { autoPostService } from '../services/autoPostService';
 const scheduleExpression = process.env.AUTOPOST_CRON ?? '0 */4 * * *';
 const pollMinutes = Math.max(Number(process.env.AUTOPOST_POLL_MINUTES ?? 10), 1);
 /**
