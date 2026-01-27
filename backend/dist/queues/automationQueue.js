@@ -1,6 +1,6 @@
 import { Queue } from 'bullmq';
-import { config } from '../config';
-import { createRedisConnection } from '../lib/redis';
+import { config } from '../config.js';
+import { createRedisConnection } from '../lib/redis.js';
 const createQueue = () => {
     if (config.security.allowMockAuth || process.env.SKIP_REDIS === 'true' || !config.redisUrl) {
         console.warn('[automationQueue] Redis disabled; queue not started');

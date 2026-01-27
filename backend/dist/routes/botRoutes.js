@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { BotController } from '../controllers/botController';
-import { requireFirebase } from '../middleware/firebaseAuth';
+import { BotController } from '../controllers/botController.js';
+import { requireFirebase } from '../middleware/firebaseAuth.js';
 const router = Router();
 const controller = new BotController();
 router.get('/stats', requireFirebase, controller.getStats);

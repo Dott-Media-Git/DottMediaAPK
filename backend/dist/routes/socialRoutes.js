@@ -1,15 +1,15 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireFirebase } from '../middleware/firebaseAuth';
-import { socialSchedulingService } from '../packages/services/socialSchedulingService';
-import { socialPostingService } from '../packages/services/socialPostingService';
-import { socialAnalyticsService } from '../packages/services/socialAnalyticsService';
-import { autoPostService } from '../services/autoPostService';
-import { firestore } from '../db/firestore';
-import { config } from '../config';
-import { getTikTokIntegration, getYouTubeIntegration } from '../services/socialIntegrationService';
-import { resolveFacebookPageId, resolveInstagramAccountId } from '../services/socialAccountResolver';
-import { canUsePrimarySocialDefaults } from '../utils/socialAccess';
+import { requireFirebase } from '../middleware/firebaseAuth.js';
+import { socialSchedulingService } from '../packages/services/socialSchedulingService.js';
+import { socialPostingService } from '../packages/services/socialPostingService.js';
+import { socialAnalyticsService } from '../packages/services/socialAnalyticsService.js';
+import { autoPostService } from '../services/autoPostService.js';
+import { firestore } from '../db/firestore.js';
+import { config } from '../config.js';
+import { getTikTokIntegration, getYouTubeIntegration } from '../services/socialIntegrationService.js';
+import { resolveFacebookPageId, resolveInstagramAccountId } from '../services/socialAccountResolver.js';
+import { canUsePrimarySocialDefaults } from '../utils/socialAccess.js';
 const CRON_SECRET = process.env.CRON_SECRET;
 const router = Router();
 const scheduleSchema = z

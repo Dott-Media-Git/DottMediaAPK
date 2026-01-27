@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { InboundHandler } from '../packages/services/inboundHandler';
+import { InboundHandler } from '../packages/services/inboundHandler.js';
 const router = Router();
 const inboundHandler = new InboundHandler();
 router.post('/webhook/:channel', async (req, res, next) => {

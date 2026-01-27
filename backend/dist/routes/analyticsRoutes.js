@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { requireFirebase } from '../middleware/firebaseAuth';
-import { AnalyticsService, getOutboundStats, getInboundStats, getEngagementStats, getFollowupStats, getWebLeadStats, } from '../services/analyticsService';
+import { requireFirebase } from '../middleware/firebaseAuth.js';
+import { AnalyticsService, getOutboundStats, getInboundStats, getEngagementStats, getFollowupStats, getWebLeadStats, } from '../services/analyticsService.js';
 const router = Router();
 const analytics = new AnalyticsService();
 router.get('/analytics', requireFirebase, async (req, res, next) => {

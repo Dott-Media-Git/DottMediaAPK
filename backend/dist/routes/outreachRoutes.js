@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { OutreachController } from '../controllers/outreachController';
+import { OutreachController } from '../controllers/outreachController.js';
 const router = Router();
 const controller = new OutreachController();
 router.post('/outreach/search', controller.search);

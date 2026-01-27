@@ -1,4 +1,4 @@
-import { KnowledgeBaseService } from '../services/knowledgeBaseService';
+import { KnowledgeBaseService } from '../services/knowledgeBaseService.js';
 const service = new KnowledgeBaseService();
 export class KnowledgeBaseController {
     constructor() {

@@ -1,7 +1,7 @@
 import cron from 'node-cron';
-import { runProspectDiscovery } from '../packages/services/prospectFinder';
-import { outreachAgent } from '../packages/services/outreachAgent';
-import { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } from '../services/outboundTargetingService';
+import { runProspectDiscovery } from '../packages/services/prospectFinder/index.js';
+import { outreachAgent } from '../packages/services/outreachAgent/index.js';
+import { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } from '../services/outboundTargetingService.js';
 const scheduleExpression = process.env.OUTBOUND_CRON ?? '0 9 * * *';
 const manualIndustry = process.env.OUTBOUND_TARGET_INDUSTRY ?? process.env.OUTBOUND_TARGET_INDUSTRIES;
 const manualCountry = process.env.OUTBOUND_TARGET_COUNTRY ?? process.env.OUTBOUND_TARGET_COUNTRIES;

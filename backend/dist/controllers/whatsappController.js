@@ -1,5 +1,5 @@
-import { config } from '../config';
-import { WhatsAppService } from '../services/whatsappService';
+import { config } from '../config.js';
+import { WhatsAppService } from '../services/whatsappService.js';
 export class WhatsAppController {
     constructor() {
         this.service = new WhatsAppService();

@@ -1,5 +1,5 @@
 import IORedis from 'ioredis';
-import { config } from '../config';
+import { config } from '../config.js';
 const baseRedisOptions = {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,

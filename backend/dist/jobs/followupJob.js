@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { FollowupService } from '../packages/services/followupService';
+import { FollowupService } from '../packages/services/followupService.js';
 const followupService = new FollowupService();
 const scheduleExpression = process.env.FOLLOWUP_CRON ?? '0 15 * * *';
 export function scheduleFollowupJob() {

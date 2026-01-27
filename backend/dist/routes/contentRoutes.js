@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { contentGenerationService } from '../packages/services/contentGenerationService';
-import { requireFirebase } from '../middleware/firebaseAuth';
+import { contentGenerationService } from '../packages/services/contentGenerationService.js';
+import { requireFirebase } from '../middleware/firebaseAuth.js';
 const router = Router();
 const generateSchema = z.object({
     userId: z.string().min(1),
