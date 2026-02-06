@@ -286,7 +286,7 @@ export class SocialPostingService {
       scheduledPostId: post.id,
       status,
       responseId: responseId ?? null,
-      error,
+      error: error ?? null,
       postedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
   }
