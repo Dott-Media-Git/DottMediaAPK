@@ -402,16 +402,34 @@ export class AutoPostService {
         });
         const top = candidates[0];
         const topic = top?.topic?.trim() || 'Latest AI updates';
-        const prompt = `Create a clean, modern social media story image representing this AI news headline: \"${topic}\". Use futuristic tech visuals, abstract AI motifs, and leave space for a short headline. Avoid logos and real brand marks.`;
-        let generated = null;
-        try {
-            generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news update', imageCount: 1 });
+        const topItem = top?.items?.[0];
+        const summaryRaw = topItem?.summary || top?.sampleTitles?.[0] || '';
+        const summary = summaryRaw.replace(/\s+/g, ' ').trim().slice(0, 220);
+        const sourceLabel = top?.sources?.[0] || topItem?.sourceLabel || 'AI news';
+        const baseUrl = this.getPublicBaseUrl();
+        let finalImages = [];
+        if (baseUrl) {
+            const draftRef = firestore.collection('storyImageDrafts').doc();
+            await draftRef.set({
+                headline: topic,
+                summary,
+                source: sourceLabel,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            finalImages = [`${baseUrl}/public/story-image/${draftRef.id}.png`];
         }
-        catch (error) {
-            console.warn('[autopost] trend story generation failed', error);
+        else {
+            const prompt = `Create a clean, modern social media story image representing this AI news headline: \"${topic}\". Use futuristic tech visuals, abstract AI motifs, and leave space for a short headline. Avoid logos and real brand marks.`;
+            let generated = null;
+            try {
+                generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news update', imageCount: 1 });
+            }
+            catch (error) {
+                console.warn('[autopost] trend story generation failed', error);
+            }
+            const imageUrls = this.resolveImageUrls(generated?.images ?? [], recentSet, false);
+            finalImages = imageUrls.length ? imageUrls : [this.pickFallbackImage(recentSet)];
         }
-        const imageUrls = this.resolveImageUrls(generated?.images ?? [], recentSet, false);
-        const finalImages = imageUrls.length ? imageUrls : [this.pickFallbackImage(recentSet)];
         const credentials = await this.resolveCredentials(userId);
         const results = [];
         const historyEntries = [];

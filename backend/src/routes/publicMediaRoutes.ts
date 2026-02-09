@@ -1,6 +1,8 @@
 import express, { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
+import { firestore } from '../db/firestore';
+import { renderStoryImage } from '../services/storyImageService';
 
 const router = Router();
 
@@ -55,6 +57,36 @@ router.get('/public/fallback-videos/manifest', (_req, res) => {
     .map(entry => entry.name)
     .filter(name => /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(name));
   res.json({ ok: true, count: files.length, files });
+});
+
+router.get('/public/story-image/:id', async (req, res) => {
+  const rawId = req.params.id ?? '';
+  const id = rawId.replace(/\.png$/i, '').trim();
+  if (!id) {
+    res.status(400).json({ ok: false, error: 'Missing story image id.' });
+    return;
+  }
+  try {
+    const doc = await firestore.collection('storyImageDrafts').doc(id).get();
+    if (!doc.exists) {
+      res.status(404).json({ ok: false, error: 'Story image not found.' });
+      return;
+    }
+    const data = doc.data() as { headline?: string; summary?: string; source?: string } | undefined;
+    const buffer = await renderStoryImage({
+      headline: data?.headline ?? 'AI update',
+      summary: data?.summary ?? '',
+      source: data?.source ?? '',
+    });
+    res.set({
+      'Content-Type': 'image/png',
+      'Cache-Control': 'public, max-age=3600',
+    });
+    res.end(buffer);
+  } catch (error) {
+    console.error('[story-image] failed to render', error);
+    res.status(500).json({ ok: false, error: 'Failed to render story image.' });
+  }
 });
 
 export default router;

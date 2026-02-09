@@ -1,0 +1,107 @@
+import sharp from 'sharp';
+
+type StoryImageInput = {
+  headline: string;
+  summary?: string;
+  source?: string;
+};
+
+const WIDTH = 1080;
+const HEIGHT = 1920;
+
+const escapeXml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
+const wrapText = (text: string, maxChars: number, maxLines: number) => {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+    if (current) lines.push(current);
+    current = word;
+    if (lines.length >= maxLines - 1) break;
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  if (lines.length === maxLines && words.length) {
+    const last = lines[lines.length - 1];
+    if (last.length > maxChars - 1) {
+      lines[lines.length - 1] = `${last.slice(0, maxChars - 1)}…`;
+    } else if (!last.endsWith('…') && words.length > 0) {
+      lines[lines.length - 1] = `${last}…`;
+    }
+  }
+  return lines;
+};
+
+export async function renderStoryImage(input: StoryImageInput): Promise<Buffer> {
+  const headline = input.headline?.trim() || 'AI Update';
+  const summary = input.summary?.trim() || '';
+  const source = input.source?.trim() || '';
+
+  const headlineLines = wrapText(headline, 28, 3);
+  const summaryLines = summary ? wrapText(summary, 40, 4) : [];
+
+  const headlineStartY = 360;
+  const headlineLineHeight = 78;
+  const summaryStartY = headlineStartY + headlineLines.length * headlineLineHeight + 40;
+  const summaryLineHeight = 46;
+  const footerY = HEIGHT - 140;
+
+  const headlineTspans = headlineLines
+    .map((line, idx) => `<tspan x="96" dy="${idx === 0 ? 0 : headlineLineHeight}">${escapeXml(line)}</tspan>`)
+    .join('');
+  const summaryTspans = summaryLines
+    .map((line, idx) => `<tspan x="96" dy="${idx === 0 ? 0 : summaryLineHeight}">${escapeXml(line)}</tspan>`)
+    .join('');
+
+  const sourceText = source ? `Source: ${source}` : 'Source: AI news highlights';
+
+  const svg = `
+    <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#0b1026"/>
+          <stop offset="60%" stop-color="#161b36"/>
+          <stop offset="100%" stop-color="#1f2542"/>
+        </linearGradient>
+        <radialGradient id="glow" cx="20%" cy="10%" r="60%">
+          <stop offset="0%" stop-color="#2fe3ff" stop-opacity="0.35"/>
+          <stop offset="100%" stop-color="#2fe3ff" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <rect width="${WIDTH}" height="${HEIGHT}" fill="url(#bg)"/>
+      <rect width="${WIDTH}" height="${HEIGHT}" fill="url(#glow)"/>
+      <rect x="64" y="220" width="952" height="1150" rx="40" fill="rgba(12,16,32,0.65)" stroke="rgba(124,231,255,0.25)" stroke-width="2"/>
+
+      <text x="96" y="260" font-family="Inter, Arial, sans-serif" font-size="30" fill="#7ce7ff" letter-spacing="2">
+        AI NEWS • TRENDING
+      </text>
+      <text x="96" y="${headlineStartY}" font-family="Inter, Arial, sans-serif" font-size="64" font-weight="700" fill="#ffffff">
+        ${headlineTspans}
+      </text>
+      ${
+        summaryLines.length
+          ? `<text x="96" y="${summaryStartY}" font-family="Inter, Arial, sans-serif" font-size="36" fill="#d9e3ff">
+        ${summaryTspans}
+      </text>`
+          : ''
+      }
+      <rect x="96" y="${footerY - 44}" width="600" height="56" rx="28" fill="rgba(124,231,255,0.12)"/>
+      <text x="120" y="${footerY - 6}" font-family="Inter, Arial, sans-serif" font-size="28" fill="#7ce7ff">
+        ${escapeXml(sourceText)}
+      </text>
+    </svg>
+  `;
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
