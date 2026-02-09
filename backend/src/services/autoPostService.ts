@@ -14,6 +14,8 @@ import { publishToYouTube } from '../packages/services/socialPlatforms/youtubePu
 import { publishToTikTok } from '../packages/services/socialPlatforms/tiktokPublisher.js';
 import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from './socialIntegrationService.js';
 import { canUsePrimarySocialDefaults } from '../utils/socialAccess.js';
+import { getNewsTrendingCandidates } from './newsTrendSources.js';
+import { getUserTrendConfig } from './userTrendSourceService.js';
 
 type AutoPostJob = {
   userId: string;
@@ -27,6 +29,15 @@ type AutoPostJob = {
   reelsNextRun?: admin.firestore.Timestamp;
   reelsLastRunAt?: admin.firestore.Timestamp;
   reelsLastResult?: PostResult[];
+  storyIntervalHours?: number;
+  storyNextRun?: admin.firestore.Timestamp;
+  storyLastRunAt?: admin.firestore.Timestamp;
+  storyLastResult?: PostResult[];
+  storyPlatforms?: string[];
+  storyTrendEnabled?: boolean;
+  storyRecentImageUrls?: string[];
+  storyMaxAgeHours?: number;
+  storyMaxCandidates?: number;
   active?: boolean;
   recentImageUrls?: string[];
   fallbackCaption?: string;
@@ -105,6 +116,7 @@ export class AutoPostService {
   private defaultIntervalHours = Math.max(Number(process.env.AUTOPOST_INTERVAL_MINUTES ?? 240) / 60, 0.05);
   // Reels auto-post every 4 hours by default; override with AUTOPOST_REELS_INTERVAL_MINUTES if needed.
   private defaultReelsIntervalHours = Math.max(Number(process.env.AUTOPOST_REELS_INTERVAL_MINUTES ?? 240) / 60, 0.25);
+  private defaultStoryIntervalHours = Math.max(Number(process.env.AUTOPOST_STORY_INTERVAL_MINUTES ?? 120) / 60, 0.25);
   private fallbackImageBase =
     'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80';
   private defaultFallbackImagePool = [
@@ -253,6 +265,13 @@ export class AutoPostService {
       const dueReels = Array.from(this.memoryStore.entries()).filter(
         ([, job]) => job.active !== false && job.reelsNextRun && job.reelsNextRun.toMillis() <= now.toMillis(),
       );
+      const dueStories = Array.from(this.memoryStore.entries()).filter(
+        ([, job]) =>
+          job.active !== false &&
+          job.storyTrendEnabled === true &&
+          job.storyNextRun &&
+          job.storyNextRun.toMillis() <= now.toMillis(),
+      );
       let processed = 0;
       const results = new Map<
         string,
@@ -264,6 +283,9 @@ export class AutoPostService {
           reelsPosted?: number;
           reelsFailed?: number;
           reelsNextRun?: string | null;
+          storyPosted?: number;
+          storyFailed?: number;
+          storyNextRun?: string | null;
         }
       >();
       for (const [userId, job] of dueStandard) {
@@ -294,14 +316,27 @@ export class AutoPostService {
           reelsNextRun: outcome.nextRun,
         });
       }
+      for (const [userId, job] of dueStories) {
+        const outcome = await this.executeTrendStories(userId, job);
+        processed += 1;
+        const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
+        results.set(userId, {
+          ...existing,
+          storyPosted: outcome.posted,
+          storyFailed: outcome.failed.length,
+          storyNextRun: outcome.nextRun,
+        });
+      }
       return { processed, results: Array.from(results.values()) };
     }
 
     // Query only by nextRun to avoid composite index requirement, then filter active in memory.
-    const [standardSnap, reelsSnap, missingReelsSnap] = await Promise.all([
+    const [standardSnap, reelsSnap, storiesSnap, missingReelsSnap, missingStoriesSnap] = await Promise.all([
       autopostCollection.where('nextRun', '<=', now).get(),
       autopostCollection.where('reelsNextRun', '<=', now).get(),
+      autopostCollection.where('storyNextRun', '<=', now).get(),
       autopostCollection.where('reelsNextRun', '==', null).get(),
+      autopostCollection.where('storyNextRun', '==', null).get(),
     ]);
     if (!missingReelsSnap.empty) {
       const selfHealWrites = missingReelsSnap.docs.map(doc => {
@@ -329,7 +364,27 @@ export class AutoPostService {
         await Promise.all(selfHealWrites);
       }
     }
-    if (standardSnap.empty && reelsSnap.empty) return { processed: 0 };
+    if (!missingStoriesSnap.empty) {
+      const selfHealWrites = missingStoriesSnap.docs
+        .map(doc => {
+          const data = doc.data() as AutoPostJob;
+          if (data.active === false || data.storyTrendEnabled !== true) return null;
+          const intervalHours = data.storyIntervalHours ?? this.defaultStoryIntervalHours;
+          return autopostCollection.doc(doc.id).set(
+            {
+              storyIntervalHours: intervalHours,
+              storyNextRun: now,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        })
+        .filter(Boolean) as Array<Promise<FirebaseFirestore.WriteResult>>;
+      if (selfHealWrites.length) {
+        await Promise.all(selfHealWrites);
+      }
+    }
+    if (standardSnap.empty && reelsSnap.empty && storiesSnap.empty) return { processed: 0 };
     let processed = 0;
     const results = new Map<
       string,
@@ -341,6 +396,9 @@ export class AutoPostService {
         reelsPosted?: number;
         reelsFailed?: number;
         reelsNextRun?: string | null;
+        storyPosted?: number;
+        storyFailed?: number;
+        storyNextRun?: string | null;
       }
     >();
     for (const doc of standardSnap.docs) {
@@ -375,6 +433,19 @@ export class AutoPostService {
         reelsNextRun: outcome.nextRun,
       });
     }
+    for (const doc of storiesSnap.docs) {
+      const data = doc.data() as AutoPostJob;
+      if (data.active === false || data.storyTrendEnabled !== true) continue;
+      const outcome = await this.executeTrendStories(doc.id, data);
+      processed += 1;
+      const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
+      results.set(doc.id, {
+        ...existing,
+        storyPosted: outcome.posted,
+        storyFailed: outcome.failed.length,
+        storyNextRun: outcome.nextRun,
+      });
+    }
     return { processed, results: Array.from(results.values()) };
   }
 
@@ -396,6 +467,15 @@ export class AutoPostService {
           reelsPosted: reels.posted,
           reelsFailed: reels.failed,
           reelsNextRun: reels.nextRun,
+        };
+      }
+      if (job.storyTrendEnabled && job.storyNextRun) {
+        const stories = await this.executeTrendStories(userId, job);
+        return {
+          ...standard,
+          storyPosted: stories.posted,
+          storyFailed: stories.failed,
+          storyNextRun: stories.nextRun,
         };
       }
       return standard;
@@ -422,7 +502,113 @@ export class AutoPostService {
         reelsNextRun: reels.nextRun,
       };
     }
+    if (job.storyTrendEnabled && job.storyNextRun) {
+      const stories = await this.executeTrendStories(userId, job);
+      return {
+        ...standard,
+        storyPosted: stories.posted,
+        storyFailed: stories.failed,
+        storyNextRun: stories.nextRun,
+      };
+    }
     return standard;
+  }
+
+  private getStoryPlatforms(job: AutoPostJob) {
+    if (Array.isArray(job.storyPlatforms) && job.storyPlatforms.length) {
+      return job.storyPlatforms;
+    }
+    const fromJob = (job.platforms ?? []).filter(platform => platform.endsWith('_story'));
+    if (fromJob.length) return fromJob;
+    return ['instagram_story', 'facebook_story'];
+  }
+
+  private getRecentStoryImageHistory(job: AutoPostJob): string[] {
+    if (!Array.isArray(job.storyRecentImageUrls)) return [];
+    return job.storyRecentImageUrls.filter(Boolean);
+  }
+
+  private async executeTrendStories(userId: string, job: AutoPostJob) {
+    const intervalHours =
+      job.storyIntervalHours && job.storyIntervalHours > 0 ? job.storyIntervalHours : this.defaultStoryIntervalHours;
+    const nextRunDate = new Date();
+    nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
+    const platforms = this.getStoryPlatforms(job);
+    if (!platforms.length) {
+      return { posted: 0, failed: [{ platform: 'stories', error: 'no_story_platforms', status: 'failed' as const }], nextRun: nextRunDate.toISOString() };
+    }
+
+    const recentImages = this.getRecentStoryImageHistory(job);
+    const recentSet = new Set(recentImages);
+    const { sources, mode } = await getUserTrendConfig(userId);
+    const candidates = await getNewsTrendingCandidates({
+      sources,
+      sourceMode: mode,
+      maxCandidates: job.storyMaxCandidates ?? 6,
+      maxAgeHours: job.storyMaxAgeHours ?? 48,
+    });
+    const top = candidates[0];
+    const topic = top?.topic?.trim() || 'Latest AI updates';
+
+    const prompt = `Create a clean, modern social media story image representing this AI news headline: "${topic}". Use futuristic tech visuals, abstract AI motifs, and leave space for a short headline. Avoid logos and real brand marks.`;
+    let generated: GeneratedContent | null = null;
+    try {
+      generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news update', imageCount: 1 });
+    } catch (error) {
+      console.warn('[autopost] trend story generation failed', error);
+    }
+    const imageUrls = this.resolveImageUrls(generated?.images ?? [], recentSet, false);
+    const finalImages = imageUrls.length ? imageUrls : [this.pickFallbackImage(recentSet)];
+
+    const credentials = await this.resolveCredentials(userId);
+    const results: PostResult[] = [];
+    const historyEntries: HistoryEntry[] = [];
+
+    for (const platform of platforms) {
+      const publisher = platformPublishers[platform];
+      if (!publisher) {
+        results.push({ platform, status: 'failed', error: 'unsupported_platform' });
+        historyEntries.push({ platform, status: 'failed', caption: topic, errorMessage: 'unsupported_platform' });
+        continue;
+      }
+      try {
+        const response = await publisher({ caption: topic, imageUrls: finalImages, credentials });
+        results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
+        historyEntries.push({ platform, status: 'posted', caption: topic, remoteId: response.remoteId ?? null });
+      } catch (error: any) {
+        const message = error?.message ?? 'publish_failed';
+        results.push({ platform, status: 'failed', error: message });
+        historyEntries.push({ platform, status: 'failed', caption: topic, errorMessage: message });
+      }
+    }
+
+    const nextRecord: Partial<AutoPostJob> = {
+      storyLastRunAt: admin.firestore.Timestamp.now(),
+      storyNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+      storyLastResult: results,
+      storyRecentImageUrls: this.mergeRecentImages(recentImages, finalImages),
+    };
+    await autopostCollection.doc(userId).set(
+      {
+        ...nextRecord,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    if (this.useMemory) {
+      const current = this.memoryStore.get(userId);
+      if (current) {
+        this.memoryStore.set(userId, { ...current, ...nextRecord });
+      }
+    }
+
+    await this.recordHistory(userId, historyEntries, finalImages);
+
+    return {
+      posted: results.filter(result => result.status === 'posted').length,
+      failed: results.filter(result => result.status === 'failed'),
+      nextRun: nextRunDate.toISOString(),
+    };
   }
 
   private async executeJob(userId: string, job: AutoPostJob, options: ExecuteOptions = {}) {
