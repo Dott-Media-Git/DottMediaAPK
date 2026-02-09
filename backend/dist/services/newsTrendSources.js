@@ -266,7 +266,9 @@ const mergeSources = (base, custom) => {
 };
 export const getNewsTrendingCandidates = async (options = {}) => {
     const baseSources = resolveSources();
-    const sources = mergeSources(baseSources, options.sources);
+    const sources = options.sourceMode === 'replace' && options.sources?.length
+        ? options.sources
+        : mergeSources(baseSources, options.sources);
     const maxCandidates = Math.min(Math.max(options.maxCandidates ?? 6, 1), 20);
     const maxAgeHours = Math.min(Math.max(options.maxAgeHours ?? DEFAULT_MAX_AGE_HOURS, 6), 168);
     const items = (await Promise.all(sources.map(source => fetchSourceItems(source)))).flat();

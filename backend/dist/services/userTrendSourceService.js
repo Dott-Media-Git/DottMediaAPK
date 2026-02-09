@@ -44,12 +44,18 @@ const dedupeSources = (sources) => {
     }
     return unique;
 };
-export const getUserTrendSources = async (userId) => {
+export const getUserTrendConfig = async (userId) => {
     const doc = await userCollection.doc(userId).get();
     const data = doc.data();
-    if (!data?.trendSources || !Array.isArray(data.trendSources))
-        return [];
-    return data.trendSources.filter(source => source && typeof source.url === 'string');
+    const sources = Array.isArray(data?.trendSources)
+        ? data.trendSources.filter(source => source && typeof source.url === 'string')
+        : [];
+    const mode = data?.trendSourcesMode === 'replace' ? 'replace' : 'merge';
+    return { sources, mode };
+};
+export const getUserTrendSources = async (userId) => {
+    const config = await getUserTrendConfig(userId);
+    return config.sources;
 };
 export const saveUserTrendSources = async (userId, sources) => {
     const normalized = sources

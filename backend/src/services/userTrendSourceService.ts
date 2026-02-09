@@ -9,6 +9,8 @@ type TrendSourceInput = {
   selectors?: TrendSourceSelectors;
 };
 
+export type TrendSourceMode = 'merge' | 'replace';
+
 const MAX_SOURCES = 20;
 const userCollection = firestore.collection('users');
 
@@ -56,11 +58,21 @@ const dedupeSources = (sources: TrendSource[]) => {
   return unique;
 };
 
-export const getUserTrendSources = async (userId: string): Promise<TrendSource[]> => {
+export const getUserTrendConfig = async (
+  userId: string,
+): Promise<{ sources: TrendSource[]; mode: TrendSourceMode }> => {
   const doc = await userCollection.doc(userId).get();
-  const data = doc.data() as { trendSources?: TrendSource[] } | undefined;
-  if (!data?.trendSources || !Array.isArray(data.trendSources)) return [];
-  return data.trendSources.filter(source => source && typeof source.url === 'string');
+  const data = doc.data() as { trendSources?: TrendSource[]; trendSourcesMode?: TrendSourceMode } | undefined;
+  const sources = Array.isArray(data?.trendSources)
+    ? data!.trendSources.filter(source => source && typeof source.url === 'string')
+    : [];
+  const mode: TrendSourceMode = data?.trendSourcesMode === 'replace' ? 'replace' : 'merge';
+  return { sources, mode };
+};
+
+export const getUserTrendSources = async (userId: string): Promise<TrendSource[]> => {
+  const config = await getUserTrendConfig(userId);
+  return config.sources;
 };
 
 export const saveUserTrendSources = async (userId: string, sources: TrendSourceInput[]): Promise<TrendSource[]> => {

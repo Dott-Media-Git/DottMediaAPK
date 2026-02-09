@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { getNewsTrendingCandidates } from '../services/newsTrendSources';
 import { getTrendingCandidates as getFootballTrendingCandidates } from '../services/footballTrendSources';
-import { getUserTrendSources, saveUserTrendSources } from '../services/userTrendSourceService';
+import { getUserTrendConfig, getUserTrendSources, saveUserTrendSources } from '../services/userTrendSourceService';
 import { resolveBrandIdForClient } from '../services/brandKitService';
 
 const router = Router();
@@ -66,13 +66,13 @@ router.post('/trends/scan', requireFirebase, async (req, res, next) => {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
     const payload = scanSchema.parse(req.body ?? {});
-    const sources = await getUserTrendSources(authUser.uid);
+    const { sources, mode } = await getUserTrendConfig(authUser.uid);
     const scope = resolveScope(authUser.email ?? null);
     const candidates =
       scope === 'football'
         ? await getFootballTrendingCandidates({ ...payload, sources })
-        : await getNewsTrendingCandidates({ ...payload, sources });
-    res.json({ scope, candidates, sources });
+        : await getNewsTrendingCandidates({ ...payload, sources, sourceMode: mode });
+    res.json({ scope, candidates, sources, sourceMode: mode });
   } catch (error) {
     next(error);
   }
