@@ -528,6 +528,28 @@ export class AutoPostService {
     return job.storyRecentImageUrls.filter(Boolean);
   }
 
+  private summarizeStory(text: string, maxChars = 180) {
+    const cleaned = text.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return '';
+    if (cleaned.length <= maxChars) return cleaned;
+    const sentences = cleaned.split(/(?<=[.!?])\s+/).filter(Boolean);
+    let summary = '';
+    for (const sentence of sentences) {
+      const candidate = summary ? `${summary} ${sentence}` : sentence;
+      if (candidate.length > maxChars) break;
+      summary = candidate;
+      if (summary.length >= maxChars * 0.75) break;
+    }
+    if (!summary) {
+      const truncated = cleaned.slice(0, maxChars);
+      const lastSpace = truncated.lastIndexOf(' ');
+      summary = lastSpace > 60 ? truncated.slice(0, lastSpace) : truncated;
+    }
+    const trimmed = summary.trim();
+    if (!/[.!?]$/.test(trimmed)) return `${trimmed}.`;
+    return trimmed;
+  }
+
   private async executeTrendStories(userId: string, job: AutoPostJob) {
     const intervalHours =
       job.storyIntervalHours && job.storyIntervalHours > 0 ? job.storyIntervalHours : this.defaultStoryIntervalHours;
@@ -551,7 +573,7 @@ export class AutoPostService {
     const topic = top?.topic?.trim() || 'Latest AI updates';
     const topItem = top?.items?.[0];
     const summaryRaw = topItem?.summary || top?.sampleTitles?.[0] || '';
-    const summary = summaryRaw.replace(/\s+/g, ' ').trim().slice(0, 220);
+    const summary = this.summarizeStory(summaryRaw, 180);
     const sourceLabel = top?.sources?.[0] || topItem?.sourceLabel || 'AI news';
 
     const baseUrl = this.getPublicBaseUrl();

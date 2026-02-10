@@ -32,14 +32,7 @@ const wrapText = (text: string, maxChars: number, maxLines: number) => {
     if (lines.length >= maxLines - 1) break;
   }
   if (current && lines.length < maxLines) lines.push(current);
-  if (lines.length === maxLines && words.length) {
-    const last = lines[lines.length - 1];
-    if (last.length > maxChars - 1) {
-      lines[lines.length - 1] = `${last.slice(0, maxChars - 1)}…`;
-    } else if (!last.endsWith('…') && words.length > 0) {
-      lines[lines.length - 1] = `${last}…`;
-    }
-  }
+  // Do not append ellipses here; summaries should already be short.
   return lines;
 };
 
