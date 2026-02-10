@@ -11,7 +11,9 @@ const wrapText = (text, maxChars, maxLines) => {
     const words = text.split(/\s+/).filter(Boolean);
     const lines = [];
     let current = '';
-    for (const word of words) {
+    let truncated = false;
+    for (let i = 0; i < words.length; i += 1) {
+        const word = words[i];
         const candidate = current ? `${current} ${word}` : word;
         if (candidate.length <= maxChars) {
             current = candidate;
@@ -20,20 +22,68 @@ const wrapText = (text, maxChars, maxLines) => {
         if (current)
             lines.push(current);
         current = word;
-        if (lines.length >= maxLines - 1)
+        if (lines.length >= maxLines) {
+            truncated = true;
+            current = '';
             break;
+        }
+        if (lines.length >= maxLines - 1 && i < words.length - 1) {
+            truncated = true;
+            break;
+        }
     }
     if (current && lines.length < maxLines)
         lines.push(current);
-    // Do not append ellipses here; summaries should already be short.
-    return lines;
+    if (lines.length === maxLines && words.length) {
+        const used = lines.join(' ').split(/\s+/).length;
+        if (used < words.length)
+            truncated = true;
+    }
+    return { lines, truncated };
+};
+const summarizeToLength = (text, maxChars) => {
+    const cleaned = text.replace(/\s+/g, ' ').trim();
+    if (!cleaned)
+        return '';
+    if (cleaned.length <= maxChars)
+        return cleaned;
+    const sentences = cleaned.split(/(?<=[.!?])\s+/).filter(Boolean);
+    let summary = '';
+    for (const sentence of sentences) {
+        const candidate = summary ? `${summary} ${sentence}` : sentence;
+        if (candidate.length > maxChars)
+            break;
+        summary = candidate;
+        if (summary.length >= maxChars * 0.75)
+            break;
+    }
+    if (!summary) {
+        const truncated = cleaned.slice(0, maxChars);
+        const lastSpace = truncated.lastIndexOf(' ');
+        summary = lastSpace > 60 ? truncated.slice(0, lastSpace) : truncated;
+    }
+    const trimmed = summary.trim();
+    if (!/[.!?]$/.test(trimmed))
+        return `${trimmed}.`;
+    return trimmed;
+};
+const fitSummaryLines = (text, maxChars, maxLines) => {
+    let candidate = text;
+    for (let i = 0; i < 4; i += 1) {
+        const result = wrapText(candidate, maxChars, maxLines);
+        if (!result.truncated)
+            return result.lines;
+        const nextLimit = Math.max(100, candidate.length - 40);
+        candidate = summarizeToLength(candidate, nextLimit);
+    }
+    return wrapText(summarizeToLength(text, maxChars * maxLines - 10), maxChars, maxLines).lines;
 };
 export async function renderStoryImage(input) {
     const headline = input.headline?.trim() || 'AI Update';
     const summary = input.summary?.trim() || '';
     const source = input.source?.trim() || '';
-    const headlineLines = wrapText(headline, 28, 3);
-    const summaryLines = summary ? wrapText(summary, 40, 4) : [];
+    const headlineLines = wrapText(headline, 28, 3).lines;
+    const summaryLines = summary ? fitSummaryLines(summary, 40, 4) : [];
     const headlineStartY = 360;
     const headlineLineHeight = 78;
     const summaryStartY = headlineStartY + headlineLines.length * headlineLineHeight + 40;
