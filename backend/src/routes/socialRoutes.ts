@@ -283,7 +283,17 @@ const credentialsSchema = z.object({
     facebook: z.object({ accessToken: z.string(), pageId: z.string().optional(), pageName: z.string().optional() }).optional(),
     instagram: z.object({ accessToken: z.string(), accountId: z.string().optional(), username: z.string().optional() }).optional(),
     linkedin: z.object({ accessToken: z.string(), urn: z.string() }).optional(),
-    twitter: z.object({ accessToken: z.string(), accessSecret: z.string() }).optional(),
+    twitter: z
+      .object({
+        accessToken: z.string(),
+        accessSecret: z.string(),
+        // Optional per-user X app credentials. When provided, they override the server-wide TWITTER_API_KEY/SECRET.
+        appKey: z.string().optional(),
+        appSecret: z.string().optional(),
+        consumerKey: z.string().optional(),
+        consumerSecret: z.string().optional(),
+      })
+      .optional(),
     tiktok: z
       .object({
         accessToken: z.string(),

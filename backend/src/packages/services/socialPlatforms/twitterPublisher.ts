@@ -4,7 +4,16 @@ import { TwitterApi } from 'twitter-api-v2';
 type PublishInput = {
   caption: string;
   imageUrls: string[];
-  credentials?: { twitter?: { accessToken?: string; accessSecret?: string } };
+  credentials?: {
+    twitter?: {
+      accessToken?: string;
+      accessSecret?: string;
+      appKey?: string;
+      appSecret?: string;
+      consumerKey?: string;
+      consumerSecret?: string;
+    };
+  };
 };
 
 export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?: string }> {
@@ -13,8 +22,16 @@ export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?
 
   const accessToken = credentials?.twitter?.accessToken;
   const accessSecret = credentials?.twitter?.accessSecret;
-  const appKey = process.env.TWITTER_API_KEY ?? process.env.TWITTER_CONSUMER_KEY;
-  const appSecret = process.env.TWITTER_API_SECRET ?? process.env.TWITTER_CONSUMER_SECRET;
+  const appKey =
+    credentials?.twitter?.appKey ??
+    credentials?.twitter?.consumerKey ??
+    process.env.TWITTER_API_KEY ??
+    process.env.TWITTER_CONSUMER_KEY;
+  const appSecret =
+    credentials?.twitter?.appSecret ??
+    credentials?.twitter?.consumerSecret ??
+    process.env.TWITTER_API_SECRET ??
+    process.env.TWITTER_CONSUMER_SECRET;
 
   if (!appKey || !appSecret) {
     throw new Error('Missing Twitter app credentials (TWITTER_API_KEY / TWITTER_API_SECRET)');

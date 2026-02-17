@@ -33,7 +33,15 @@ export interface SocialAccounts {
   facebook?: { accessToken: string; pageId: string; pageName?: string };
   instagram?: { accessToken: string; accountId: string; username?: string };
   linkedin?: { accessToken: string; urn: string };
-  twitter?: { accessToken: string; accessSecret: string };
+  twitter?: {
+    accessToken: string;
+    accessSecret: string;
+    // Optional per-user X app credentials. When provided, they override the server-wide TWITTER_API_KEY/SECRET.
+    appKey?: string;
+    appSecret?: string;
+    consumerKey?: string;
+    consumerSecret?: string;
+  };
   tiktok?: {
     accessToken: string;
     openId?: string;
