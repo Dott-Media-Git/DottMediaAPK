@@ -1,4 +1,4 @@
-import axios from 'axios';
+﻿import axios from 'axios';
 import { TwitterApi } from 'twitter-api-v2';
 
 type PublishInput = {
@@ -68,11 +68,14 @@ export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?
       }
     }
 
-    // Post status with media if present
+    // X's newer access tiers may block v1.1 tweet creation; use v2 for posting.
+    const payload: any = { text: caption };
+    if (mediaIds.length) payload.media = { media_ids: mediaIds };
+
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
-    const tweet = await rw.v1.tweet(caption, mediaIds.length ? { media_ids: mediaIds } : undefined);
-    const rawId = tweet ? (tweet.id_str ?? tweet.id) : undefined;
+    const tweet = await rw.v2.tweet(payload);
+    const rawId = tweet?.data?.id ?? tweet?.id;
     const remoteId = rawId !== undefined && rawId !== null ? String(rawId) : undefined;
     return { remoteId };
   } catch (error) {
