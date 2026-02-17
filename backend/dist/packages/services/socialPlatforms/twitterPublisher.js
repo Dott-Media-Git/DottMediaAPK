@@ -27,6 +27,8 @@ export async function publishToTwitter(input) {
                 const res = await axios.get(url, { responseType: 'arraybuffer' });
                 const buffer = Buffer.from(res.data);
                 const contentType = res.headers['content-type'] ?? undefined;
+                // uploadMedia accepts Buffer and optional mimeType
+                // returns media id string
                 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-ignore
                 const mediaId = await rw.v1.uploadMedia(buffer, { mimeType: contentType });
@@ -37,10 +39,12 @@ export async function publishToTwitter(input) {
                 throw err;
             }
         }
+        // Post status with media if present
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore
         const tweet = await rw.v1.tweet(caption, mediaIds.length ? { media_ids: mediaIds } : undefined);
-        const remoteId = (tweet && (tweet.id_str || tweet.id)) ?? undefined;
+        const rawId = tweet ? (tweet.id_str ?? tweet.id) : undefined;
+        const remoteId = rawId !== undefined && rawId !== null ? String(rawId) : undefined;
         return { remoteId };
     }
     catch (error) {

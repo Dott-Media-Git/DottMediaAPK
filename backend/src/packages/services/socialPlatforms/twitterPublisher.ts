@@ -55,7 +55,8 @@ export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
     const tweet = await rw.v1.tweet(caption, mediaIds.length ? { media_ids: mediaIds } : undefined);
-    const remoteId = (tweet && (tweet.id_str || tweet.id)) ?? undefined;
+    const rawId = tweet ? (tweet.id_str ?? tweet.id) : undefined;
+    const remoteId = rawId !== undefined && rawId !== null ? String(rawId) : undefined;
     return { remoteId };
   } catch (error) {
     console.error('[twitter] publish error', error instanceof Error ? error.message : error);

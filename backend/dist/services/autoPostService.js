@@ -15,6 +15,9 @@ import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from './soc
 import { canUsePrimarySocialDefaults } from '../utils/socialAccess.js';
 import { getNewsTrendingCandidates } from './newsTrendSources.js';
 import { getUserTrendConfig } from './userTrendSourceService.js';
+import { getTrendingCandidates as getFootballTrendingCandidates } from './footballTrendSources.js';
+import { footballTrendContentService } from './footballTrendContentService.js';
+import { resolveBrandIdForClient } from './brandKitService.js';
 const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const platformPublishers = {
@@ -159,6 +162,10 @@ export class AutoPostService {
                 job.storyTrendEnabled === true &&
                 job.storyNextRun &&
                 job.storyNextRun.toMillis() <= now.toMillis());
+            const dueTrends = Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false &&
+                job.trendEnabled === true &&
+                job.trendNextRun &&
+                job.trendNextRun.toMillis() <= now.toMillis());
             let processed = 0;
             const results = new Map();
             for (const [userId, job] of dueStandard) {
@@ -200,13 +207,25 @@ export class AutoPostService {
                     storyNextRun: outcome.nextRun,
                 });
             }
+            for (const [userId, job] of dueTrends) {
+                const outcome = await this.executeTrendPosts(userId, job);
+                processed += 1;
+                const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
+                results.set(userId, {
+                    ...existing,
+                    trendPosted: outcome.posted,
+                    trendFailed: outcome.failed.length,
+                    trendNextRun: outcome.nextRun,
+                });
+            }
             return { processed, results: Array.from(results.values()) };
         }
         // Query only by nextRun to avoid composite index requirement, then filter active in memory.
-        const [standardSnap, reelsSnap, storiesSnap, missingReelsSnap, missingStoriesSnap] = await Promise.all([
+        const [standardSnap, reelsSnap, storiesSnap, trendSnap, missingReelsSnap, missingStoriesSnap] = await Promise.all([
             autopostCollection.where('nextRun', '<=', now).get(),
             autopostCollection.where('reelsNextRun', '<=', now).get(),
             autopostCollection.where('storyNextRun', '<=', now).get(),
+            autopostCollection.where('trendNextRun', '<=', now).get(),
             autopostCollection.where('reelsNextRun', '==', null).get(),
             autopostCollection.where('storyNextRun', '==', null).get(),
         ]);
@@ -251,7 +270,7 @@ export class AutoPostService {
                 await Promise.all(selfHealWrites);
             }
         }
-        if (standardSnap.empty && reelsSnap.empty && storiesSnap.empty)
+        if (standardSnap.empty && reelsSnap.empty && storiesSnap.empty && trendSnap.empty)
             return { processed: 0 };
         let processed = 0;
         const results = new Map();
@@ -301,6 +320,20 @@ export class AutoPostService {
                 storyPosted: outcome.posted,
                 storyFailed: outcome.failed.length,
                 storyNextRun: outcome.nextRun,
+            });
+        }
+        for (const doc of trendSnap.docs) {
+            const data = doc.data();
+            if (data.active === false || data.trendEnabled !== true)
+                continue;
+            const outcome = await this.executeTrendPosts(doc.id, data);
+            processed += 1;
+            const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
+            results.set(doc.id, {
+                ...existing,
+                trendPosted: outcome.posted,
+                trendFailed: outcome.failed.length,
+                trendNextRun: outcome.nextRun,
             });
         }
         return { processed, results: Array.from(results.values()) };
@@ -378,6 +411,13 @@ export class AutoPostService {
             return fromJob;
         return ['instagram_story', 'facebook_story'];
     }
+    getTrendPlatforms(job) {
+        if (Array.isArray(job.trendPlatforms) && job.trendPlatforms.length) {
+            return job.trendPlatforms;
+        }
+        // Default to Facebook feed for trend posting when enabled.
+        return ['facebook'];
+    }
     getRecentStoryImageHistory(job) {
         if (!Array.isArray(job.storyRecentImageUrls))
             return [];
@@ -445,7 +485,7 @@ export class AutoPostService {
             finalImages = [`${baseUrl}/public/story-image/${draftRef.id}.png`];
         }
         else {
-            const prompt = `Create a clean, modern social media story image representing this AI news headline: \"${topic}\". Use futuristic tech visuals, abstract AI motifs, and leave space for a short headline. Avoid logos and real brand marks.`;
+            const prompt = `Create a clean, modern social media story image representing this AI news headline: "${topic}". Use futuristic tech visuals, abstract AI motifs, and leave space for a short headline. Avoid logos and real brand marks.`;
             let generated = null;
             try {
                 generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news update', imageCount: 1 });
@@ -494,6 +534,154 @@ export class AutoPostService {
             }
         }
         await this.recordHistory(userId, historyEntries, finalImages);
+        return {
+            posted: results.filter(result => result.status === 'posted').length,
+            failed: results.filter(result => result.status === 'failed'),
+            nextRun: nextRunDate.toISOString(),
+        };
+    }
+    async executeTrendPosts(userId, job) {
+        const intervalHours = job.trendIntervalHours && job.trendIntervalHours > 0 ? job.trendIntervalHours : 4;
+        const nextRunDate = new Date();
+        nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
+        const platforms = this.getTrendPlatforms(job);
+        if (!platforms.length) {
+            return {
+                posted: 0,
+                failed: [{ platform: 'trend', error: 'no_trend_platforms', status: 'failed' }],
+                nextRun: nextRunDate.toISOString(),
+            };
+        }
+        const credentials = await this.resolveCredentials(userId);
+        const results = [];
+        const historyEntries = [];
+        const userDoc = await firestore.collection('users').doc(userId).get();
+        const userData = userDoc.data();
+        const email = userData?.email ?? null;
+        const normalizedEmail = email?.toLowerCase().trim() ?? '';
+        const brandId = normalizedEmail ? resolveBrandIdForClient(normalizedEmail) : null;
+        const scope = brandId === 'bwinbetug' ? 'football' : 'global';
+        // Currently optimized for football trend posting (bwinbetug). Other scopes fall back to a lightweight text post.
+        let caption = '';
+        let imageUrls = [];
+        const trendCaptions = {};
+        if (scope === 'football') {
+            try {
+                const { sources } = await getUserTrendConfig(userId);
+                const candidates = await getFootballTrendingCandidates({
+                    sources,
+                    maxCandidates: job.trendMaxCandidates ?? 6,
+                    maxAgeHours: job.trendMaxAgeHours ?? 48,
+                });
+                const top = candidates[0];
+                if (!top) {
+                    caption = 'No football trends found right now. Checking again soon.';
+                }
+                else {
+                    const items = (top.items ?? []).slice(0, 6);
+                    const contextLines = [
+                        `topic: ${top.topic}`,
+                        top.sources?.length ? `sources: ${top.sources.join(', ')}` : '',
+                        top.publishedAt ? `published_at: ${top.publishedAt}` : '',
+                        '',
+                        ...items.map(item => {
+                            const summary = item.summary ? ` | ${item.summary}` : '';
+                            const when = item.publishedAt ? ` (${item.publishedAt})` : '';
+                            return `- ${item.sourceLabel}: ${item.title}${when}${summary}`;
+                        }),
+                    ].filter(Boolean);
+                    const context = contextLines.join('\n').trim();
+                    const gen = await footballTrendContentService.generate({
+                        topic: top.topic,
+                        context: context.length >= 10 ? context : `topic: ${top.topic}`,
+                        trendSignals: [
+                            ...(top.sources?.slice(0, 3) ?? []),
+                            ...(top.sampleTitles?.slice(0, 3) ?? []),
+                        ],
+                        ...(normalizedEmail ? { clientId: normalizedEmail } : {}),
+                        channels: platforms.map(platform => platform.replace(/_story$/, '')),
+                        region: job.trendRegion ?? 'Uganda',
+                        language: job.trendLanguage ?? 'English',
+                        rightsInfo: 'Use official/public news context only. Do not claim ownership of match footage. Avoid copyrighted clips unless licensed.',
+                        includePosterImage: true,
+                        imageCount: 1,
+                    });
+                    const tags = (gen.content.hashtags ?? [])
+                        .map(tag => tag.trim())
+                        .filter(Boolean)
+                        .map(tag => (tag.startsWith('#') ? tag : `#${tag.replace(/^#+/, '')}`))
+                        .join(' ');
+                    const baseCaptionByPlatform = (platform) => {
+                        if (platform === 'twitter' || platform === 'x')
+                            return gen.content.captions.viral_caption;
+                        if (platform === 'linkedin')
+                            return gen.content.captions.instagram;
+                        return gen.content.captions.instagram;
+                    };
+                    // Default caption for history and for platforms that don't override further down.
+                    caption = [gen.content.captions.instagram, tags].filter(Boolean).join('\n\n').trim();
+                    imageUrls = gen.images ?? [];
+                    for (const p of platforms) {
+                        const base = baseCaptionByPlatform(p);
+                        const combined = [base, tags]
+                            .filter(Boolean)
+                            .join(p === 'twitter' || p === 'x' ? ' ' : '\n\n')
+                            .trim();
+                        if (combined)
+                            trendCaptions[p] = combined;
+                    }
+                }
+            }
+            catch (error) {
+                console.warn('[autopost] trend generation failed; using text fallback', error);
+                caption = 'Trending football update coming soon. Stay tuned.';
+                imageUrls = [];
+            }
+        }
+        else {
+            caption = 'Trending update coming soon.';
+            imageUrls = [];
+        }
+        for (const platform of platforms) {
+            const publisher = platformPublishers[platform];
+            if (!publisher) {
+                results.push({ platform, status: 'failed', error: 'unsupported_platform' });
+                historyEntries.push({ platform, status: 'failed', caption, errorMessage: 'unsupported_platform' });
+                continue;
+            }
+            if ((platform === 'facebook_story' || platform === 'instagram_story') && imageUrls.length === 0) {
+                results.push({ platform, status: 'failed', error: 'missing_image_for_story' });
+                historyEntries.push({ platform, status: 'failed', caption, errorMessage: 'missing_image_for_story' });
+                continue;
+            }
+            try {
+                const perPlatformCaption = trendCaptions[platform] || caption;
+                const response = await publisher({ caption: perPlatformCaption, imageUrls, credentials });
+                results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
+                historyEntries.push({ platform, status: 'posted', caption: perPlatformCaption, remoteId: response.remoteId ?? null });
+            }
+            catch (error) {
+                const message = error?.message ?? 'publish_failed';
+                results.push({ platform, status: 'failed', error: message });
+                historyEntries.push({ platform, status: 'failed', caption, errorMessage: message });
+            }
+        }
+        const nextRecord = {
+            trendLastRunAt: admin.firestore.Timestamp.now(),
+            trendNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+            trendLastResult: results,
+        };
+        await autopostCollection.doc(userId).set({
+            ...nextRecord,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        if (this.useMemory) {
+            const current = this.memoryStore.get(userId);
+            if (current) {
+                this.memoryStore.set(userId, { ...current, ...nextRecord });
+            }
+        }
+        await this.recordHistory(userId, historyEntries, imageUrls);
         return {
             posted: results.filter(result => result.status === 'posted').length,
             failed: results.filter(result => result.status === 'failed'),
