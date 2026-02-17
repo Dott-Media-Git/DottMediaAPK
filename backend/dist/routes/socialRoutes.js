@@ -298,13 +298,15 @@ router.post('/social/credentials', requireFirebase, async (req, res, next) => {
         }
         if (payload.credentials.facebook) {
             const pageId = payload.credentials.facebook.pageId?.trim() ?? '';
-            if (!pageId) {
-                const resolved = await resolveFacebookPageId(payload.credentials.facebook.accessToken);
-                if (resolved?.pageId) {
-                    payload.credentials.facebook.pageId = resolved.pageId;
-                    if (!payload.credentials.facebook.pageName && resolved.pageName) {
-                        payload.credentials.facebook.pageName = resolved.pageName;
-                    }
+            const resolved = await resolveFacebookPageId(payload.credentials.facebook.accessToken, pageId || undefined);
+            if (resolved?.pageId) {
+                payload.credentials.facebook.pageId = resolved.pageId;
+                if (!payload.credentials.facebook.pageName && resolved.pageName) {
+                    payload.credentials.facebook.pageName = resolved.pageName;
+                }
+                // Prefer storing the Page access token so posting doesn't break when a user token expires.
+                if (resolved.pageToken) {
+                    payload.credentials.facebook.accessToken = resolved.pageToken;
                 }
             }
             if (!payload.credentials.facebook.pageId?.trim()) {

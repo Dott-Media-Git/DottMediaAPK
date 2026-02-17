@@ -5,6 +5,7 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 type FacebookPageInfo = {
   pageId: string;
   pageName?: string;
+  pageToken?: string;
 };
 
 type InstagramAccountInfo = {
@@ -12,17 +13,21 @@ type InstagramAccountInfo = {
   username?: string;
 };
 
-export async function resolveFacebookPageId(accessToken: string): Promise<FacebookPageInfo | null> {
+export async function resolveFacebookPageId(
+  accessToken: string,
+  preferredPageId?: string,
+): Promise<FacebookPageInfo | null> {
   const token = accessToken?.trim();
   if (!token) return null;
   try {
     const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/me/accounts`, {
-      params: { fields: 'id,name', access_token: token },
+      params: { fields: 'id,name,access_token', access_token: token },
     });
-    const pages = (response.data?.data as Array<{ id?: string; name?: string }>) ?? [];
-    const page = pages.find(item => Boolean(item.id));
+    const pages = (response.data?.data as Array<{ id?: string; name?: string; access_token?: string }>) ?? [];
+    const desiredId = preferredPageId?.trim();
+    const page = desiredId ? pages.find(item => item.id === desiredId) : pages.find(item => Boolean(item.id));
     if (page?.id) {
-      return { pageId: page.id, pageName: page.name };
+      return { pageId: page.id, pageName: page.name, pageToken: page.access_token };
     }
   } catch (error) {
     console.warn('[social] failed to resolve Facebook page id via /me/accounts', (error as Error).message);
