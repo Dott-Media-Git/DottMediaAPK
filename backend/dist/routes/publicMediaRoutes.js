@@ -72,6 +72,7 @@ router.get('/public/story-image/:id', async (req, res) => {
             headline: data?.headline ?? 'AI update',
             summary: data?.summary ?? '',
             source: data?.source ?? '',
+            imageUrl: data?.imageUrl ?? '',
         });
         res.set({
             'Content-Type': 'image/png',

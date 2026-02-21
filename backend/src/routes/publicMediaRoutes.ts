@@ -72,11 +72,12 @@ router.get('/public/story-image/:id', async (req, res) => {
       res.status(404).json({ ok: false, error: 'Story image not found.' });
       return;
     }
-    const data = doc.data() as { headline?: string; summary?: string; source?: string } | undefined;
+    const data = doc.data() as { headline?: string; summary?: string; source?: string; imageUrl?: string } | undefined;
     const buffer = await renderStoryImage({
       headline: data?.headline ?? 'AI update',
       summary: data?.summary ?? '',
       source: data?.source ?? '',
+      imageUrl: data?.imageUrl ?? '',
     });
     res.set({
       'Content-Type': 'image/png',

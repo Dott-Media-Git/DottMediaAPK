@@ -132,6 +132,25 @@ const parseDate = (value?: string): string | undefined => {
   return new Date(ts).toISOString();
 };
 
+const toAbsoluteUrl = (value?: string, baseUrl?: string): string | undefined => {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+  try {
+    if (baseUrl) return new URL(raw, baseUrl).toString();
+    return new URL(raw).toString();
+  } catch {
+    return undefined;
+  }
+};
+
+const extractFirstImageFromMarkup = (markup?: string, baseUrl?: string): string | undefined => {
+  const raw = markup?.trim();
+  if (!raw) return undefined;
+  const $ = cheerio.load(raw);
+  const src = $('img').first().attr('src')?.trim();
+  return toAbsoluteUrl(src, baseUrl);
+};
+
 const tokenize = (title: string): string[] => {
   return title
     .toLowerCase()
@@ -203,6 +222,26 @@ const parseRssItems = (body: string, source: TrendSource): TrendItem[] => {
         $(entry).find('description').first().text().trim() ||
         $(entry).find('summary').first().text().trim() ||
         undefined;
+      const contentEncoded = $(entry).find('content\\:encoded').first().text().trim() || undefined;
+      const enclosureImage = $(entry)
+        .find('enclosure[url]')
+        .toArray()
+        .map(node => ({
+          url: $(node).attr('url')?.trim(),
+          type: $(node).attr('type')?.trim().toLowerCase() || '',
+        }))
+        .find(item => item.url && (!item.type || item.type.includes('image')))?.url;
+      const mediaImage =
+        $(entry).find('media\\:content').first().attr('url')?.trim() ||
+        $(entry).find('media\\:thumbnail').first().attr('url')?.trim() ||
+        $(entry).find('thumbnail').first().attr('url')?.trim();
+      const markupImage =
+        extractFirstImageFromMarkup(contentEncoded, source.url) ||
+        extractFirstImageFromMarkup(summary, source.url);
+      const imageUrl =
+        toAbsoluteUrl(enclosureImage, source.url) ||
+        toAbsoluteUrl(mediaImage, source.url) ||
+        markupImage;
       const publishedRaw =
         $(entry).find('pubDate').first().text().trim() ||
         $(entry).find('published').first().text().trim() ||
@@ -213,6 +252,7 @@ const parseRssItems = (body: string, source: TrendSource): TrendItem[] => {
         title,
         link: link || undefined,
         summary,
+        imageUrl,
         publishedAt,
         sourceId: source.id,
         sourceLabel: source.label,
@@ -231,6 +271,8 @@ const parseHtmlItems = (body: string, source: TrendSource): TrendItem[] => {
     if (!title) return;
     const link = selectors.link ? $(element).find(selectors.link).first().attr('href')?.trim() : undefined;
     const summary = selectors.summary ? $(element).find(selectors.summary).first().text().trim() : undefined;
+    const imageRaw = $(element).find('img').first().attr('src')?.trim();
+    const imageUrl = toAbsoluteUrl(imageRaw, source.url);
     const publishedRaw = selectors.published
       ? $(element).find(selectors.published).first().text().trim()
       : undefined;
@@ -239,6 +281,7 @@ const parseHtmlItems = (body: string, source: TrendSource): TrendItem[] => {
       title,
       link,
       summary,
+      imageUrl,
       publishedAt,
       sourceId: source.id,
       sourceLabel: source.label,
