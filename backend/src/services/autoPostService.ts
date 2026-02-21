@@ -656,7 +656,20 @@ export class AutoPostService {
         console.warn('[autopost] trend story generation failed', error);
       }
       const imageUrls = this.resolveImageUrls(generated?.images ?? [], recentSet, false);
-      finalImages = imageUrls.length ? imageUrls : [this.pickFallbackImage(recentSet)];
+      if (imageUrls.length) {
+        finalImages = imageUrls;
+      } else if (baseUrl) {
+        const draftRef = firestore.collection('storyImageDrafts').doc();
+        await draftRef.set({
+          headline: topic,
+          summary,
+          source: sourceLabel,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        finalImages = [`${baseUrl}/public/story-image/${draftRef.id}.png`];
+      } else {
+        finalImages = [this.pickFallbackImage(recentSet)];
+      }
     } else if (baseUrl) {
       const draftRef = firestore.collection('storyImageDrafts').doc();
       await draftRef.set({
