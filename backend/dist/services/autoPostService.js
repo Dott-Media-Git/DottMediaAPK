@@ -449,6 +449,12 @@ export class AutoPostService {
             return `${trimmed}.`;
         return trimmed;
     }
+    isMainAccountEmail(email) {
+        const normalized = email?.toLowerCase().trim();
+        if (!normalized)
+            return false;
+        return normalized === 'brasioxirin@gmail.com' || normalized === 'brasioxiri@gmail.com';
+    }
     async executeTrendStories(userId, job) {
         const intervalHours = job.storyIntervalHours && job.storyIntervalHours > 0 ? job.storyIntervalHours : this.defaultStoryIntervalHours;
         const nextRunDate = new Date();
@@ -472,9 +478,25 @@ export class AutoPostService {
         const summaryRaw = topItem?.summary || top?.sampleTitles?.[0] || '';
         const summary = this.summarizeStory(summaryRaw, 180);
         const sourceLabel = top?.sources?.[0] || topItem?.sourceLabel || 'AI news';
+        const userDoc = await firestore.collection('users').doc(userId).get();
+        const userData = userDoc.data();
+        const normalizedEmail = userData?.email?.toLowerCase().trim() ?? '';
+        const useRelatedNewsImage = this.isMainAccountEmail(normalizedEmail);
         const baseUrl = this.getPublicBaseUrl();
         let finalImages = [];
-        if (baseUrl) {
+        if (useRelatedNewsImage) {
+            const prompt = `Create a clean, modern social media image that clearly reflects this AI news topic: "${topic}". Context: "${summary || top?.sampleTitles?.[0] || 'Latest AI news update'}". Show relevant AI visuals, newsroom-style energy, and readable composition for a story post. Avoid logos and real brand marks.`;
+            let generated = null;
+            try {
+                generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news update', imageCount: 1 });
+            }
+            catch (error) {
+                console.warn('[autopost] trend story generation failed', error);
+            }
+            const imageUrls = this.resolveImageUrls(generated?.images ?? [], recentSet, false);
+            finalImages = imageUrls.length ? imageUrls : [this.pickFallbackImage(recentSet)];
+        }
+        else if (baseUrl) {
             const draftRef = firestore.collection('storyImageDrafts').doc();
             await draftRef.set({
                 headline: topic,
