@@ -38,6 +38,9 @@ type AutoPostJob = {
   storyLastResult?: PostResult[];
   storyPlatforms?: string[];
   storyTrendEnabled?: boolean;
+  storyOnNewRelease?: boolean;
+  storyPollMinutes?: number;
+  storyLastTrendKey?: string;
   storyRecentImageUrls?: string[];
   storyMaxAgeHours?: number;
   storyMaxCandidates?: number;
@@ -610,8 +613,14 @@ export class AutoPostService {
   }
 
   private async executeTrendStories(userId: string, job: AutoPostJob) {
-    const intervalHours =
-      job.storyIntervalHours && job.storyIntervalHours > 0 ? job.storyIntervalHours : this.defaultStoryIntervalHours;
+    const onNewRelease = job.storyOnNewRelease === true;
+    const defaultPollMinutes = Math.max(Number(process.env.AUTOPOST_STORY_POLL_MINUTES ?? 5), 1);
+    const pollMinutes = job.storyPollMinutes && job.storyPollMinutes > 0 ? job.storyPollMinutes : defaultPollMinutes;
+    const intervalHours = onNewRelease
+      ? Math.max(pollMinutes / 60, 1 / 60)
+      : job.storyIntervalHours && job.storyIntervalHours > 0
+        ? job.storyIntervalHours
+        : this.defaultStoryIntervalHours;
     const nextRunDate = new Date();
     nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
     const platforms = this.getStoryPlatforms(job);
@@ -634,6 +643,36 @@ export class AutoPostService {
     const summaryRaw = topItem?.summary || top?.sampleTitles?.[0] || '';
     const summary = this.summarizeStory(summaryRaw, 180);
     const sourceLabel = top?.sources?.[0] || topItem?.sourceLabel || 'AI news';
+    const publishedKey = topItem?.publishedAt || top?.publishedAt || '';
+    const linkKey = topItem?.link || '';
+    const trendKey = [sourceLabel, topic, linkKey, publishedKey]
+      .map(value => String(value || '').trim().toLowerCase())
+      .join('||');
+
+    if (onNewRelease && job.storyLastTrendKey && trendKey === job.storyLastTrendKey) {
+      const nextRecord: Partial<AutoPostJob> = {
+        storyLastRunAt: admin.firestore.Timestamp.now(),
+        storyNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+      };
+      await autopostCollection.doc(userId).set(
+        {
+          ...nextRecord,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      if (this.useMemory) {
+        const current = this.memoryStore.get(userId);
+        if (current) {
+          this.memoryStore.set(userId, { ...current, ...nextRecord });
+        }
+      }
+      return {
+        posted: 0,
+        failed: [],
+        nextRun: nextRunDate.toISOString(),
+      };
+    }
     let relatedImageUrl = topItem?.imageUrl?.trim() || '';
     if (!relatedImageUrl) {
       const prompt = `Create a clean, modern news visual related to this AI headline: "${topic}". Context: "${summary || top?.sampleTitles?.[0] || 'AI news update'}". Keep it realistic and editorial, no logos.`;
@@ -704,6 +743,7 @@ export class AutoPostService {
       storyLastRunAt: admin.firestore.Timestamp.now(),
       storyNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
       storyLastResult: results,
+      storyLastTrendKey: trendKey,
       storyRecentImageUrls: this.mergeRecentImages(recentImages, finalImages),
     };
     await autopostCollection.doc(userId).set(
