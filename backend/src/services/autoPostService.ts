@@ -634,7 +634,20 @@ export class AutoPostService {
     const summaryRaw = topItem?.summary || top?.sampleTitles?.[0] || '';
     const summary = this.summarizeStory(summaryRaw, 180);
     const sourceLabel = top?.sources?.[0] || topItem?.sourceLabel || 'AI news';
-    const relatedImageUrl = topItem?.imageUrl?.trim() || '';
+    let relatedImageUrl = topItem?.imageUrl?.trim() || '';
+    if (!relatedImageUrl) {
+      const prompt = `Create a clean, modern news visual related to this AI headline: "${topic}". Context: "${summary || top?.sampleTitles?.[0] || 'AI news update'}". Keep it realistic and editorial, no logos.`;
+      let generated: GeneratedContent | null = null;
+      try {
+        generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news image', imageCount: 1 });
+      } catch (error) {
+        console.warn('[autopost] related story image generation failed', error);
+      }
+      const generatedImages = this.resolveImageUrls(generated?.images ?? [], recentSet, false);
+      if (generatedImages.length) {
+        relatedImageUrl = generatedImages[0];
+      }
+    }
 
     const baseUrl = this.getPublicBaseUrl();
     let finalImages: string[] = [];
