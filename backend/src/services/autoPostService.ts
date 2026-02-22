@@ -621,8 +621,7 @@ export class AutoPostService {
       : job.storyIntervalHours && job.storyIntervalHours > 0
         ? job.storyIntervalHours
         : this.defaultStoryIntervalHours;
-    const nextRunDate = new Date();
-    nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
+    const nextRunDate = new Date(Date.now() + intervalHours * 60 * 60 * 1000);
     const platforms = this.getStoryPlatforms(job);
     if (!platforms.length) {
       return { posted: 0, failed: [{ platform: 'stories', error: 'no_story_platforms', status: 'failed' as const }], nextRun: nextRunDate.toISOString() };
@@ -771,8 +770,7 @@ export class AutoPostService {
 
   private async executeTrendPosts(userId: string, job: AutoPostJob) {
     const intervalHours = job.trendIntervalHours && job.trendIntervalHours > 0 ? job.trendIntervalHours : 4;
-    const nextRunDate = new Date();
-    nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
+    const nextRunDate = new Date(Date.now() + intervalHours * 60 * 60 * 1000);
 
     const platforms = this.getTrendPlatforms(job);
     if (!platforms.length) {
@@ -1011,8 +1009,7 @@ export class AutoPostService {
     const historyEntries: HistoryEntry[] = [];
 
     if (requireAiImages && imageUrls.length === 0) {
-      const nextRunDate = new Date();
-      nextRunDate.setHours(nextRunDate.getHours() + effectiveIntervalHours);
+      const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
       const failed = platforms.map(platform => ({
         platform,
         status: 'failed' as const,
@@ -1158,8 +1155,7 @@ export class AutoPostService {
       }
     }
 
-    const nextRunDate = new Date();
-    nextRunDate.setHours(nextRunDate.getHours() + effectiveIntervalHours);
+    const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
     const nextRecentImages = this.mergeRecentImages(recentImages, imageUrls);
     const nextRecentCaptions = this.mergeRecentCaptions(recentCaptions, usedCaptions);
 

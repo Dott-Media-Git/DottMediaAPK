@@ -458,8 +458,7 @@ export class AutoPostService {
             : job.storyIntervalHours && job.storyIntervalHours > 0
                 ? job.storyIntervalHours
                 : this.defaultStoryIntervalHours;
-        const nextRunDate = new Date();
-        nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
+        const nextRunDate = new Date(Date.now() + intervalHours * 60 * 60 * 1000);
         const platforms = this.getStoryPlatforms(job);
         if (!platforms.length) {
             return { posted: 0, failed: [{ platform: 'stories', error: 'no_story_platforms', status: 'failed' }], nextRun: nextRunDate.toISOString() };
@@ -597,8 +596,7 @@ export class AutoPostService {
     }
     async executeTrendPosts(userId, job) {
         const intervalHours = job.trendIntervalHours && job.trendIntervalHours > 0 ? job.trendIntervalHours : 4;
-        const nextRunDate = new Date();
-        nextRunDate.setHours(nextRunDate.getHours() + intervalHours);
+        const nextRunDate = new Date(Date.now() + intervalHours * 60 * 60 * 1000);
         const platforms = this.getTrendPlatforms(job);
         if (!platforms.length) {
             return {
@@ -820,8 +818,7 @@ export class AutoPostService {
         const usedCaptions = [];
         const historyEntries = [];
         if (requireAiImages && imageUrls.length === 0) {
-            const nextRunDate = new Date();
-            nextRunDate.setHours(nextRunDate.getHours() + effectiveIntervalHours);
+            const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
             const failed = platforms.map(platform => ({
                 platform,
                 status: 'failed',
@@ -956,8 +953,7 @@ export class AutoPostService {
                 historyEntries.push({ platform, status: 'failed', caption, errorMessage, videoUrl, videoTitle });
             }
         }
-        const nextRunDate = new Date();
-        nextRunDate.setHours(nextRunDate.getHours() + effectiveIntervalHours);
+        const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
         const nextRecentImages = this.mergeRecentImages(recentImages, imageUrls);
         const nextRecentCaptions = this.mergeRecentCaptions(recentCaptions, usedCaptions);
         if (usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number') {
