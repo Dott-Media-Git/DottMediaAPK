@@ -1,6 +1,7 @@
 import admin from 'firebase-admin';
 import fs from 'fs';
 import path from 'path';
+import { TwitterApi } from 'twitter-api-v2';
 import { firestore } from '../db/firestore.js';
 import { config } from '../config.js';
 import { contentGenerationService, GeneratedContent } from '../packages/services/contentGenerationService.js';
@@ -54,6 +55,9 @@ type AutoPostJob = {
   trendMaxCandidates?: number;
   trendRegion?: string;
   trendLanguage?: string;
+  xHighlightAccounts?: string[];
+  xLastHighlightTweetId?: string;
+  xHighlightMaxAgeHours?: number;
   active?: boolean;
   recentImageUrls?: string[];
   fallbackCaption?: string;
@@ -106,6 +110,7 @@ const platformPublishers: Record<
     caption: string;
     imageUrls: string[];
     videoUrl?: string;
+    quoteTweetId?: string;
     videoTitle?: string;
     privacyStatus?: 'private' | 'public' | 'unlisted';
     tags?: string[];
@@ -158,6 +163,17 @@ export class AutoPostService {
     'Want the demo link? Send a message.',
     "Ready to grow? Let's talk.",
     'Ask for a quick demo today.',
+  ];
+  private defaultXHighlightAccounts = [
+    'premierleague',
+    'SkySportsNews',
+    'SkySportsPL',
+    'ESPNFC',
+    'SerieA_EN',
+    'LaLigaEN',
+    'Ligue1_ENG',
+    'Bundesliga_EN',
+    'ChampionsLeague',
   ];
 
   async start(payload: {
@@ -887,10 +903,14 @@ export class AutoPostService {
       imageUrls = [];
     }
 
-    const fallbackVideoPool = this.getFallbackVideoPool();
-    const genericVideoSelection = this.selectNextGenericVideo(job, fallbackVideoPool);
+    // For trend posts, only use explicit per-job video URLs as fallback.
+    // Do not pull from global fallback directory to avoid off-brand/non-topic clips.
+    const genericVideoSelection = this.selectNextGenericVideo(job, []);
     const trendVideoUrl = sourceVideoUrls[0] || genericVideoSelection.videoUrl;
     const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'linkedin']);
+    const hasXPlatform = platforms.some(platform => platform === 'x' || platform === 'twitter');
+    const xHighlight = scope === 'football' && hasXPlatform ? await this.pickFootballHighlightForX(job, credentials) : null;
+    let usedXHighlightTweetId: string | null = null;
 
     const nextRecord: Partial<AutoPostJob> = {
       trendLastRunAt: admin.firestore.Timestamp.now(),
@@ -899,6 +919,7 @@ export class AutoPostService {
       ...(!sourceVideoUrls[0] && trendVideoUrl && typeof genericVideoSelection.nextCursor === 'number'
         ? { videoCursor: genericVideoSelection.nextCursor }
         : {}),
+      ...(xHighlight?.tweetId ? { xLastHighlightTweetId: xHighlight.tweetId } : {}),
     };
 
     for (const platform of platforms) {
@@ -915,6 +936,25 @@ export class AutoPostService {
       }
       try {
         const perPlatformCaption = trendCaptions[platform] || caption;
+        if ((platform === 'x' || platform === 'twitter') && xHighlight?.tweetId) {
+          const quoteCaption = `${perPlatformCaption}\n\n🎥 Highlight via @${xHighlight.username}`;
+          const response = await publisher({
+            caption: quoteCaption,
+            imageUrls,
+            quoteTweetId: xHighlight.tweetId,
+            credentials,
+          });
+          results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
+          historyEntries.push({
+            platform,
+            status: 'posted',
+            caption: quoteCaption,
+            remoteId: response.remoteId ?? null,
+          });
+          usedXHighlightTweetId = xHighlight.tweetId;
+          continue;
+        }
+
         const useVideo = Boolean(trendVideoUrl) && videoCapablePlatforms.has(platform);
         const response = await publisher({
           caption: perPlatformCaption,
@@ -940,6 +980,7 @@ export class AutoPostService {
     await autopostCollection.doc(userId).set(
       {
         ...nextRecord,
+        ...(usedXHighlightTweetId ? { xLastHighlightTweetId: usedXHighlightTweetId } : {}),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true },
@@ -1801,6 +1842,123 @@ export class AutoPostService {
   private buildCaptionSignature(platform: string, caption: string) {
     const normalized = caption.toLowerCase().replace(/\s+/g, ' ').trim();
     return `${platform}:${normalized}`;
+  }
+
+  private getXHighlightAccounts(job: AutoPostJob) {
+    if (Array.isArray(job.xHighlightAccounts) && job.xHighlightAccounts.length) {
+      const provided = job.xHighlightAccounts
+        .map(value => String(value || '').replace(/^@/, '').trim())
+        .filter(Boolean);
+      if (provided.length) return provided.slice(0, 15);
+    }
+    return this.defaultXHighlightAccounts;
+  }
+
+  private buildTwitterClient(credentials?: SocialAccounts) {
+    const accessToken = credentials?.twitter?.accessToken;
+    const accessSecret = credentials?.twitter?.accessSecret;
+    const appKey =
+      credentials?.twitter?.appKey ??
+      credentials?.twitter?.consumerKey ??
+      process.env.TWITTER_API_KEY ??
+      process.env.TWITTER_CONSUMER_KEY;
+    const appSecret =
+      credentials?.twitter?.appSecret ??
+      credentials?.twitter?.consumerSecret ??
+      process.env.TWITTER_API_SECRET ??
+      process.env.TWITTER_CONSUMER_SECRET;
+
+    if (!accessToken || !accessSecret || !appKey || !appSecret) return null;
+    return new TwitterApi({
+      appKey,
+      appSecret,
+      accessToken,
+      accessSecret,
+    });
+  }
+
+  private async pickFootballHighlightForX(job: AutoPostJob, credentials?: SocialAccounts) {
+    const client = this.buildTwitterClient(credentials);
+    if (!client) return null;
+
+    const readOnly = client.readOnly;
+    const accounts = this.getXHighlightAccounts(job);
+    const maxAgeHours = Math.max(job.xHighlightMaxAgeHours ?? 48, 6);
+    const minCreatedAt = Date.now() - maxAgeHours * 60 * 60 * 1000;
+    const lastTweetId = (job.xLastHighlightTweetId || '').trim();
+
+    const candidates: Array<{
+      tweetId: string;
+      username: string;
+      score: number;
+      createdAtMs: number;
+      tweetUrl: string;
+    }> = [];
+
+    for (const username of accounts) {
+      try {
+        const userLookup = await readOnly.v2.userByUsername(username);
+        const authorId = userLookup?.data?.id;
+        if (!authorId) continue;
+
+        const timeline = await readOnly.v2.userTimeline(authorId, {
+          max_results: 10,
+          exclude: ['replies', 'retweets'],
+          expansions: ['attachments.media_keys'],
+          'tweet.fields': ['created_at', 'public_metrics', 'attachments'],
+          'media.fields': ['type'],
+        } as any);
+
+        const realData = (timeline as any)?._realData ?? {};
+        const tweets: any[] = Array.isArray(realData?.data) ? realData.data : [];
+        const mediaItems: any[] = Array.isArray(realData?.includes?.media) ? realData.includes.media : [];
+        const mediaByKey = new Map<string, any>(
+          mediaItems
+            .filter(item => item?.media_key)
+            .map(item => [String(item.media_key), item]),
+        );
+
+        for (const tweet of tweets) {
+          const tweetId = String(tweet?.id || '').trim();
+          if (!tweetId || (lastTweetId && tweetId === lastTweetId)) continue;
+
+          const createdAtMs = Date.parse(String(tweet?.created_at || ''));
+          if (Number.isFinite(createdAtMs) && createdAtMs < minCreatedAt) continue;
+
+          const mediaKeys = Array.isArray(tweet?.attachments?.media_keys) ? tweet.attachments.media_keys : [];
+          const hasVideo = mediaKeys.some((key: string) => {
+            const media = mediaByKey.get(String(key));
+            const type = String(media?.type || '').toLowerCase();
+            return type === 'video' || type === 'animated_gif';
+          });
+          if (!hasVideo) continue;
+
+          const metrics = tweet?.public_metrics ?? {};
+          const score =
+            Number(metrics?.retweet_count ?? 0) * 1.2 +
+            Number(metrics?.like_count ?? 0) * 0.7 +
+            Number(metrics?.reply_count ?? 0) * 0.5 +
+            Number(metrics?.quote_count ?? 0) * 1.0;
+
+          candidates.push({
+            tweetId,
+            username,
+            score,
+            createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : 0,
+            tweetUrl: `https://x.com/${username}/status/${tweetId}`,
+          });
+        }
+      } catch (error) {
+        console.warn('[autopost] x highlight lookup failed', { username, error });
+      }
+    }
+
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return b.createdAtMs - a.createdAtMs;
+    });
+    return candidates[0];
   }
 
   private selectNextVideo(job: AutoPostJob, platform: VideoPlatform, fallbackVideos: string[] = []) {

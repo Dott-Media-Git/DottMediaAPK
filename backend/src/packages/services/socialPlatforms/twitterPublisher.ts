@@ -5,6 +5,7 @@ type PublishInput = {
   caption: string;
   imageUrls: string[];
   videoUrl?: string;
+  quoteTweetId?: string;
   credentials?: {
     twitter?: {
       accessToken?: string;
@@ -28,7 +29,7 @@ const inferVideoMimeType = (url: string, contentType?: string) => {
 };
 
 export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?: string }> {
-  const { caption, imageUrls = [], videoUrl, credentials } = input;
+  const { caption, imageUrls = [], videoUrl, quoteTweetId, credentials } = input;
   console.info('[twitter] posting', caption?.slice(0, 40));
 
   const accessToken = credentials?.twitter?.accessToken;
@@ -97,6 +98,7 @@ export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?
     // X's newer access tiers may block v1.1 tweet creation; use v2 for posting.
     const payload: any = { text: caption };
     if (mediaIds.length) payload.media = { media_ids: mediaIds };
+    if (quoteTweetId) payload.quote_tweet_id = quoteTweetId;
 
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
