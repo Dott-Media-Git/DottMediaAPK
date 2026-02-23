@@ -17,6 +17,16 @@ type PublishInput = {
   };
 };
 
+const inferVideoMimeType = (url: string, contentType?: string) => {
+  const normalized = (contentType || '').toLowerCase();
+  if (normalized.startsWith('video/')) return normalized;
+  const lower = url.toLowerCase();
+  if (lower.endsWith('.mov')) return 'video/quicktime';
+  if (lower.endsWith('.webm')) return 'video/webm';
+  if (lower.endsWith('.m4v')) return 'video/mp4';
+  return 'video/mp4';
+};
+
 export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?: string }> {
   const { caption, imageUrls = [], videoUrl, credentials } = input;
   console.info('[twitter] posting', caption?.slice(0, 40));
@@ -56,7 +66,7 @@ export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?
       try {
         const res = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: 120000 });
         const buffer = Buffer.from(res.data);
-        const contentType = res.headers['content-type'] ?? 'video/mp4';
+        const contentType = inferVideoMimeType(videoUrl, res.headers['content-type']);
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore
         const mediaId = await rw.v1.uploadMedia(buffer, { mimeType: contentType, target: 'tweet' });
