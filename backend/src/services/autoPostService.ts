@@ -22,6 +22,7 @@ import { getUserTrendConfig } from './userTrendSourceService.js';
 import { getTrendingCandidates as getFootballTrendingCandidates } from './footballTrendSources.js';
 import { footballTrendContentService } from './footballTrendContentService.js';
 import { resolveBrandIdForClient } from './brandKitService.js';
+import { renderLeagueTableImage } from './tableImageService.js';
 import type { TrendCandidate } from '../types/footballTrends.js';
 
 type AutoPostJob = {
@@ -955,6 +956,27 @@ export class AutoPostService {
     }
   }
 
+  private async createLeagueTableImageDataUrl(snapshot: LeagueTableSnapshot) {
+    try {
+      const buffer = await renderLeagueTableImage({
+        league: snapshot.league,
+        rows: snapshot.rows.slice(0, 8).map(row => ({
+          name: row.name,
+          points: row.points,
+          played: row.played,
+          goalDiff: row.goalDiff ?? null,
+        })),
+        source: snapshot.source,
+        cta: 'www.bwinbetug.info',
+        updatedAt: new Date().toISOString(),
+      });
+      return `data:image/png;base64,${buffer.toString('base64')}`;
+    } catch (error) {
+      console.warn('[autopost] table image generation failed', error);
+      return null;
+    }
+  }
+
   private async executeTrendStories(userId: string, job: AutoPostJob) {
     const onNewRelease = job.storyOnNewRelease === true;
     const defaultPollMinutes = Math.max(Number(process.env.AUTOPOST_STORY_POLL_MINUTES ?? 5), 1);
@@ -1337,14 +1359,19 @@ export class AutoPostService {
             trendContentKey = key;
             usedTrendKeys.push(key);
             setUnifiedCaption();
-            const tableImageUrl = await this.createLeagueTableImageUrl(userId, snapshot);
-            if (tableImageUrl) {
-              imageUrls = [tableImageUrl];
+            const tableImageDataUrl = await this.createLeagueTableImageDataUrl(snapshot);
+            if (tableImageDataUrl) {
+              imageUrls = [tableImageDataUrl];
             } else {
-              imageUrls = await this.generateFootballCardImage(
-                `Design a modern football league table card for ${snapshot.league}. Show top teams and points with strong readability.`,
-                new Set<string>(this.getRecentImageHistory(job)),
-              );
+              const tableImageUrl = await this.createLeagueTableImageUrl(userId, snapshot);
+              if (tableImageUrl) {
+                imageUrls = [tableImageUrl];
+              } else {
+                imageUrls = await this.generateFootballCardImage(
+                  `Design a modern football league table card for ${snapshot.league}. Show top teams and points with strong readability.`,
+                  new Set<string>(this.getRecentImageHistory(job)),
+                );
+              }
             }
           }
         } else {

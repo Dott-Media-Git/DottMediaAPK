@@ -28,6 +28,20 @@ const inferVideoMimeType = (url: string, contentType?: string) => {
   return 'video/mp4';
 };
 
+const parseDataImageUrl = (value: string): { buffer: Buffer; mimeType: string } | null => {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) return null;
+  try {
+    return {
+      mimeType: match[1],
+      buffer: Buffer.from(match[2], 'base64'),
+    };
+  } catch {
+    return null;
+  }
+};
+
 export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?: string }> {
   const { caption, imageUrls = [], videoUrl, quoteTweetId, credentials } = input;
   console.info('[twitter] posting', caption?.slice(0, 40));
@@ -79,9 +93,17 @@ export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?
     } else {
       for (const url of imageUrls) {
         try {
-          const res = await axios.get(url, { responseType: 'arraybuffer' });
-          const buffer = Buffer.from(res.data);
-          const contentType = res.headers['content-type'] ?? undefined;
+          const dataImage = parseDataImageUrl(url);
+          let buffer: Buffer;
+          let contentType: string | undefined;
+          if (dataImage) {
+            buffer = dataImage.buffer;
+            contentType = dataImage.mimeType;
+          } else {
+            const res = await axios.get(url, { responseType: 'arraybuffer' });
+            buffer = Buffer.from(res.data);
+            contentType = res.headers['content-type'] ?? undefined;
+          }
           // uploadMedia accepts Buffer and optional mimeType
           // returns media id string
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
