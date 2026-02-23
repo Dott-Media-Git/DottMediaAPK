@@ -827,6 +827,19 @@ export class AutoPostService {
         parsed.searchParams.set('q', '90');
         return parsed.toString();
       }
+      if (host.includes('i.guim.co.uk')) {
+        parsed.searchParams.set('width', '2000');
+        parsed.searchParams.set('quality', '90');
+        parsed.searchParams.set('auto', 'format');
+        parsed.searchParams.set('fit', 'max');
+        return parsed.toString();
+      }
+      if (host.includes('bbci.co.uk') || host.includes('bbc.co.uk') || host.includes('bbc.com')) {
+        parsed.searchParams.set('w', '1600');
+        parsed.searchParams.set('h', '900');
+        parsed.searchParams.set('quality', '90');
+        return parsed.toString();
+      }
       if (host.includes('espncdn.com') || host.includes('espn.com')) {
         parsed.searchParams.set('w', '1600');
         parsed.searchParams.set('h', '900');
@@ -837,6 +850,61 @@ export class AutoPostService {
     } catch {
       return value;
     }
+  }
+
+  private isLikelyLowResolutionUrl(rawUrl: string) {
+    try {
+      const parsed = new URL(rawUrl);
+      const width = Number.parseInt(parsed.searchParams.get('width') ?? parsed.searchParams.get('w') ?? '', 10);
+      const height = Number.parseInt(parsed.searchParams.get('height') ?? parsed.searchParams.get('h') ?? '', 10);
+      if (Number.isFinite(width) && width > 0 && width <= 500) return true;
+      if (Number.isFinite(height) && height > 0 && height <= 350) return true;
+      const url = rawUrl.toLowerCase();
+      if (url.includes('/thumb/') || url.includes('thumbnail') || url.includes('width=140')) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  private async fetchOpenGraphImage(articleUrl: string) {
+    try {
+      const response = await axios.get(articleUrl, {
+        timeout: 12000,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        },
+      });
+      const html = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+      const $ = cheerio.load(html);
+      const ogImage =
+        $('meta[property="og:image"]').attr('content')?.trim() ||
+        $('meta[property="og:image:secure_url"]').attr('content')?.trim() ||
+        $('meta[name="twitter:image"]').attr('content')?.trim() ||
+        $('link[rel="image_src"]').attr('href')?.trim();
+      if (!ogImage) return null;
+      try {
+        return new URL(ogImage, articleUrl).toString();
+      } catch {
+        return ogImage;
+      }
+    } catch (error) {
+      console.warn('[autopost] failed to fetch article OG image', { articleUrl, error });
+      return null;
+    }
+  }
+
+  private async resolveBestNewsImageUrl(imageUrl?: string, articleUrl?: string) {
+    const normalized = imageUrl ? this.toHighResolutionImageUrl(imageUrl) : '';
+    if (normalized && !this.isLikelyLowResolutionUrl(normalized)) {
+      return normalized;
+    }
+    if (articleUrl) {
+      const ogImage = await this.fetchOpenGraphImage(articleUrl);
+      if (ogImage) return this.toHighResolutionImageUrl(ogImage);
+    }
+    return normalized;
   }
 
   private async enhanceImageToDataUrl(url: string) {
@@ -873,6 +941,29 @@ export class AutoPostService {
     if (!xOnly) return normalized;
     const enhanced = await this.enhanceImageToDataUrl(normalized[0]);
     return enhanced ? [enhanced] : normalized;
+  }
+
+  private formatTrendClock(timezone = 'Africa/Kampala') {
+    try {
+      return new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(new Date());
+    } catch {
+      return new Date().toISOString().slice(11, 16);
+    }
+  }
+
+  private buildFootballFallbackCaption(
+    topic: string | undefined,
+    contentType: FootballTrendContentType,
+    timezone = 'Africa/Kampala',
+  ) {
+    const title = topic?.trim() || `${contentType.replace(/_/g, ' ')} update`;
+    const stamp = this.formatTrendClock(timezone);
+    return `${title}\n\nUpdate time: ${stamp} EAT\nMore football updates: www.bwinbetug.info`;
   }
 
   private async generateFootballCardImage(prompt: string, recentSet: Set<string>) {
@@ -1414,13 +1505,15 @@ export class AutoPostService {
         footballCandidates = candidates;
         const top = candidates[0];
         if (!top) {
-          caption = 'No football trends found right now. Checking again soon.';
+          caption = this.buildFootballFallbackCaption(undefined, selectedContentType, scheduleTimezone);
         } else {
           trendTopic = top.topic;
           const items = (top.items ?? []).slice(0, 6);
-          const topItemImages = items
-            .map(item => item.imageUrl?.trim())
-            .filter((url): url is string => Boolean(url));
+          const topItemImages: string[] = [];
+          for (const item of items.slice(0, 4)) {
+            const resolved = await this.resolveBestNewsImageUrl(item.imageUrl?.trim(), item.link?.trim());
+            if (resolved) topItemImages.push(resolved);
+          }
           const topItemVideos = items
             .map(item => item.videoUrl?.trim())
             .filter((url): url is string => Boolean(url));
@@ -1484,7 +1577,7 @@ export class AutoPostService {
         }
       } catch (error) {
         console.warn('[autopost] trend generation failed; using text fallback', error);
-        caption = 'Trending football update coming soon. Stay tuned.';
+        caption = this.buildFootballFallbackCaption(trendTopic, selectedContentType, scheduleTimezone);
         imageUrls = Array.from(new Set(sourceImageUrls)).slice(0, 4);
       }
     } else {
@@ -1685,7 +1778,7 @@ export class AutoPostService {
         if (!caption) {
           caption = topCandidate?.topic
             ? `${topCandidate.topic}\n\nMore football updates: www.bwinbetug.info`
-            : 'Trending football update coming soon. Stay tuned.';
+            : this.buildFootballFallbackCaption(undefined, selectedContentType, scheduleTimezone);
           setUnifiedCaption();
         }
         if (topCandidate) {
