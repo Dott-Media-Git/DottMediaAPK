@@ -57,6 +57,8 @@ type AutoPostJob = {
   trendLanguage?: string;
   xHighlightAccounts?: string[];
   xLastHighlightTweetId?: string;
+  xLastHighlightUsername?: string;
+  xHighlightAccountCursor?: number;
   xHighlightMaxAgeHours?: number;
   xWeeklyAwardsEnabled?: boolean;
   xWeeklyAwardsOnly?: boolean;
@@ -830,6 +832,7 @@ export class AutoPostService {
 
     // Currently optimized for football trend posting (bwinbetug). Other scopes fall back to a lightweight text post.
     let caption = '';
+    let trendTopic = '';
     let imageUrls: string[] = [];
     const sourceImageUrls: string[] = [];
     const sourceVideoUrls: string[] = [];
@@ -847,6 +850,7 @@ export class AutoPostService {
         if (!top) {
           caption = 'No football trends found right now. Checking again soon.';
         } else {
+          trendTopic = top.topic;
           const items = (top.items ?? []).slice(0, 6);
           const topItemImages = items
             .map(item => item.imageUrl?.trim())
@@ -922,6 +926,22 @@ export class AutoPostService {
       imageUrls = [];
     }
 
+    if (scope === 'football' && imageUrls.length === 0 && trendTopic) {
+      try {
+        const generatedImage = await contentGenerationService.generateContent({
+          prompt: `Create a realistic football news image for this trend: "${trendTopic}". Dynamic stadium energy, editorial sports style, no logos.`,
+          businessType: 'Football trend news visual',
+          imageCount: 1,
+        });
+        const resolvedImages = this.resolveImageUrls(generatedImage.images ?? [], new Set<string>(), false);
+        if (resolvedImages.length) {
+          imageUrls = resolvedImages.slice(0, 1);
+        }
+      } catch (error) {
+        console.warn('[autopost] trend image fallback generation failed', error);
+      }
+    }
+
     // For trend posts, only use explicit per-job video URLs as fallback.
     // Do not pull from global fallback directory to avoid off-brand/non-topic clips.
     const genericVideoSelection = this.selectNextGenericVideo(job, []);
@@ -935,9 +955,12 @@ export class AutoPostService {
         ? await this.pickFootballHighlightForX(job, credentials, {
             preferWeeklyAwards: weeklyAwardsEnabled,
             weeklyAwardsOnly,
+            rotateAccounts: true,
           })
         : null;
     let usedXHighlightTweetId: string | null = null;
+    let usedXHighlightUsername: string | null = null;
+    let usedXHighlightAccountCursor: number | null = null;
     let usedXWeeklyAwardTweetId: string | null = null;
 
     const nextRecord: Partial<AutoPostJob> = {
@@ -982,13 +1005,21 @@ export class AutoPostService {
             remoteId: response.remoteId ?? null,
           });
           usedXHighlightTweetId = xHighlight.tweetId;
+          usedXHighlightUsername = xHighlight.username;
+          if (typeof xHighlight.nextCursor === 'number') {
+            usedXHighlightAccountCursor = xHighlight.nextCursor;
+          }
           if (xHighlight.isWeeklyAward) {
             usedXWeeklyAwardTweetId = xHighlight.tweetId;
           }
           continue;
         }
 
-        const useVideo = Boolean(trendVideoUrl) && videoCapablePlatforms.has(platform);
+        const useVideo =
+          Boolean(trendVideoUrl) &&
+          videoCapablePlatforms.has(platform) &&
+          platform !== 'x' &&
+          platform !== 'twitter';
         const response = await publisher({
           caption: perPlatformCaption,
           imageUrls: useVideo ? [] : imageUrls,
@@ -1014,6 +1045,10 @@ export class AutoPostService {
       {
         ...nextRecord,
         ...(usedXHighlightTweetId ? { xLastHighlightTweetId: usedXHighlightTweetId } : {}),
+        ...(usedXHighlightUsername ? { xLastHighlightUsername: usedXHighlightUsername } : {}),
+        ...(typeof usedXHighlightAccountCursor === 'number'
+          ? { xHighlightAccountCursor: usedXHighlightAccountCursor }
+          : {}),
         ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
@@ -1026,6 +1061,10 @@ export class AutoPostService {
           ...current,
           ...nextRecord,
           ...(usedXHighlightTweetId ? { xLastHighlightTweetId: usedXHighlightTweetId } : {}),
+          ...(usedXHighlightUsername ? { xLastHighlightUsername: usedXHighlightUsername } : {}),
+          ...(typeof usedXHighlightAccountCursor === 'number'
+            ? { xHighlightAccountCursor: usedXHighlightAccountCursor }
+            : {}),
           ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
         });
       }
@@ -1935,7 +1974,7 @@ export class AutoPostService {
   private async pickFootballHighlightForX(
     job: AutoPostJob,
     credentials?: SocialAccounts,
-    options?: { preferWeeklyAwards?: boolean; weeklyAwardsOnly?: boolean },
+    options?: { preferWeeklyAwards?: boolean; weeklyAwardsOnly?: boolean; rotateAccounts?: boolean },
   ) {
     const client = this.buildTwitterClient(credentials);
     if (!client) return null;
@@ -1949,18 +1988,27 @@ export class AutoPostService {
     const weeklyAwardKeywords = this.getXWeeklyAwardKeywords(job);
     const preferWeeklyAwards = options?.preferWeeklyAwards === true;
     const weeklyAwardsOnly = options?.weeklyAwardsOnly === true;
+    const rotateAccounts = options?.rotateAccounts !== false;
+    const cursorRaw = Number.isFinite(job.xHighlightAccountCursor) ? (job.xHighlightAccountCursor as number) : 0;
+    const startCursor = accounts.length
+      ? ((Math.trunc(cursorRaw) % accounts.length) + accounts.length) % accounts.length
+      : 0;
 
     const candidates: Array<{
       tweetId: string;
       username: string;
+      usernameKey: string;
       score: number;
       createdAtMs: number;
       tweetUrl: string;
       isWeeklyAward: boolean;
       text: string;
+      accountIndex: number;
+      nextCursor: number;
     }> = [];
 
-    for (const username of accounts) {
+    for (let accountIndex = 0; accountIndex < accounts.length; accountIndex += 1) {
+      const username = accounts[accountIndex];
       try {
         const userLookup = await readOnly.v2.userByUsername(username);
         const authorId = userLookup?.data?.id;
@@ -2014,11 +2062,14 @@ export class AutoPostService {
           candidates.push({
             tweetId,
             username,
+            usernameKey: username.toLowerCase(),
             score,
             createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : 0,
             tweetUrl: `https://x.com/${username}/status/${tweetId}`,
             isWeeklyAward,
             text,
+            accountIndex,
+            nextCursor: accounts.length ? ((accountIndex + 1) % accounts.length) : 0,
           });
         }
       } catch (error) {
@@ -2031,6 +2082,26 @@ export class AutoPostService {
       if (b.score !== a.score) return b.score - a.score;
       return b.createdAtMs - a.createdAtMs;
     });
+    if (!rotateAccounts || !accounts.length) {
+      return candidates[0];
+    }
+
+    const byAccount = new Map<string, typeof candidates>();
+    for (const candidate of candidates) {
+      const list = byAccount.get(candidate.usernameKey) ?? [];
+      list.push(candidate);
+      byAccount.set(candidate.usernameKey, list);
+    }
+
+    for (let offset = 0; offset < accounts.length; offset += 1) {
+      const idx = (startCursor + offset) % accounts.length;
+      const account = accounts[idx];
+      const accountCandidates = byAccount.get(account.toLowerCase());
+      if (accountCandidates?.length) {
+        return accountCandidates[0];
+      }
+    }
+
     return candidates[0];
   }
 
