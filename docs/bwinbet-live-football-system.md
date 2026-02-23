@@ -8,6 +8,13 @@ Keep the Bwinbet UG football feed live, varied, and engaging every hour with:
 - Predictions (from bwin source)
 - League table updates (big leagues)
 
+## Source Alignment
+From `www.bwinbetug.com` / `m.bwinbetug.com`, football data presentation is widget-driven and sportsbook-style.
+The mobile build references Sportradar widget infrastructure, so the posting system mirrors that style by:
+- Keeping scoreboard/table content concise and odds-adjacent
+- Prioritizing fast, high-frequency table/result updates
+- Rendering branded table cards in Bwinbet yellow/black visual language
+
 ## Live Scheduler
 The trend engine runs every hour (`trendIntervalHours = 1`).
 
@@ -35,12 +42,16 @@ Rotation cursor is stored in `trendSlotCursor`.
 
 ### 2) Table Posts
 - Source: `api-football-standings.azharimm.dev`
+- Fallback source: ESPN standings API (`site.api.espn.com`) when primary source is unavailable
 - Rotates league by `trendTableCursor` through:
   - Premier League (`eng.1`)
   - La Liga (`esp.1`)
   - Serie A (`ita.1`)
   - Bundesliga (`ger.1`)
   - Ligue 1 (`fra.1`)
+- Output format:
+  - Text caption with top teams + points + played
+  - Branded live table image card (`/public/table-image/:id.png`) in Bwinbet yellow/black style
 
 ### 3) Result Posts
 - Source: football trend candidates
@@ -78,6 +89,7 @@ Additional tracking:
 For football structured posts:
 - If required imagery is missing, the system generates a football card image
 - Ensures news/results/tables/predictions remain visually engaging
+- For `table` slots, the system first attempts a dedicated live-table image template before generic fallback
 
 ## Operational Fields (Autopost Job)
 Key fields used by the live system:
@@ -106,5 +118,5 @@ Key fields used by the live system:
 
 ## Notes
 - Predictions extraction depends on source HTML availability and can fallback to other slot types if unavailable.
-- Table API availability can vary; on failure, system falls back to non-table slot content.
+- Table API availability can vary; ESPN fallback is used before falling back to non-table slot content.
 - Existing auto-replies remain active and can run independently of trend posting.

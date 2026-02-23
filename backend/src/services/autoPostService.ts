@@ -119,6 +119,20 @@ type ExecuteOptions = {
   useGenericVideoFallback?: boolean;
 };
 
+type LeagueTableRow = {
+  name: string;
+  points: number;
+  played: number;
+  goalDiff?: number | null;
+};
+
+type LeagueTableSnapshot = {
+  league: string;
+  rows: LeagueTableRow[];
+  nextCursor: number;
+  source: 'api-football-standings' | 'espn';
+};
+
 const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 
@@ -800,16 +814,32 @@ export class AutoPostService {
     return picks;
   }
 
-  private async fetchLeagueTableSnapshot(job: AutoPostJob) {
+  private async fetchLeagueTableSnapshot(job: AutoPostJob): Promise<LeagueTableSnapshot | null> {
     const leagues = [
-      { id: 'eng.1', label: 'Premier League' },
-      { id: 'esp.1', label: 'La Liga' },
-      { id: 'ita.1', label: 'Serie A' },
-      { id: 'ger.1', label: 'Bundesliga' },
-      { id: 'fra.1', label: 'Ligue 1' },
+      { id: 'eng.1', label: 'Premier League', espnId: 'eng.1' },
+      { id: 'esp.1', label: 'La Liga', espnId: 'esp.1' },
+      { id: 'ita.1', label: 'Serie A', espnId: 'ita.1' },
+      { id: 'ger.1', label: 'Bundesliga', espnId: 'ger.1' },
+      { id: 'fra.1', label: 'Ligue 1', espnId: 'fra.1' },
     ];
     const cursorRaw = Number.isFinite(job.trendTableCursor) ? (job.trendTableCursor as number) : 0;
     const start = ((Math.trunc(cursorRaw) % leagues.length) + leagues.length) % leagues.length;
+
+    const parseNumeric = (value: unknown) => {
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value === 'string') {
+        const parsed = Number.parseFloat(value.replace(/[^0-9.-]/g, ''));
+        if (Number.isFinite(parsed)) return parsed;
+      }
+      return 0;
+    };
+
+    type RawStat = {
+      name?: string;
+      displayName?: string;
+      value?: number | string;
+      displayValue?: string;
+    };
 
     for (let offset = 0; offset < leagues.length; offset += 1) {
       const index = (start + offset) % leagues.length;
@@ -819,37 +849,110 @@ export class AutoPostService {
           timeout: 15000,
         });
         const standings = Array.isArray(response.data?.data?.standings) ? response.data.data.standings : [];
-        const rows = standings
-          .slice(0, 5)
+        const rows: LeagueTableRow[] = standings
+          .slice(0, 8)
           .map((entry: any) => {
             const name = String(entry?.team?.displayName || entry?.team?.name || '').trim();
-            const stats = Array.isArray(entry?.stats) ? entry.stats : [];
+            const stats = Array.isArray(entry?.stats) ? (entry.stats as RawStat[]) : [];
             const pointsStat = stats.find(
-              (stat: any) =>
+              stat =>
                 String(stat?.name || '').toLowerCase() === 'points' ||
                 String(stat?.displayName || '').toLowerCase() === 'points',
             );
             const playedStat = stats.find(
-              (stat: any) =>
+              stat =>
                 String(stat?.name || '').toLowerCase() === 'gamesplayed' ||
                 String(stat?.displayName || '').toLowerCase() === 'games played',
             );
-            const points = Number(pointsStat?.value ?? pointsStat?.displayValue ?? 0);
-            const played = Number(playedStat?.value ?? playedStat?.displayValue ?? 0);
-            return { name, points, played };
+            const goalDiffStat = stats.find(
+              stat =>
+                String(stat?.name || '').toLowerCase() === 'pointdifferential' ||
+                String(stat?.displayName || '').toLowerCase() === 'goal difference',
+            );
+            const points = parseNumeric(pointsStat?.value ?? pointsStat?.displayValue ?? 0);
+            const played = parseNumeric(playedStat?.value ?? playedStat?.displayValue ?? 0);
+            const goalDiff = parseNumeric(goalDiffStat?.value ?? goalDiffStat?.displayValue ?? 0);
+            return { name, points, played, goalDiff };
           })
-          .filter((entry: any) => entry.name);
-        if (!rows.length) continue;
-        return {
-          league: league.label,
-          rows,
-          nextCursor: (index + 1) % leagues.length,
-        };
+          .filter((entry: LeagueTableRow) => entry.name);
+        if (rows.length) {
+          return {
+            league: league.label,
+            rows,
+            nextCursor: (index + 1) % leagues.length,
+            source: 'api-football-standings',
+          };
+        }
       } catch (error) {
-        console.warn('[autopost] standings fetch failed', { league: league.label, error });
+        console.warn('[autopost] standings fetch failed (primary source)', { league: league.label, error });
+      }
+
+      // Fallback source used when api-football-standings is unavailable.
+      try {
+        const response = await axios.get(`https://site.api.espn.com/apis/v2/sports/soccer/${league.espnId}/standings`, {
+          timeout: 20000,
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+          },
+        });
+        const entries = Array.isArray(response.data?.children?.[0]?.standings?.entries)
+          ? response.data.children[0].standings.entries
+          : [];
+        const rows: LeagueTableRow[] = entries
+          .slice(0, 8)
+          .map((entry: any) => {
+            const name = String(entry?.team?.displayName || entry?.team?.name || '').trim();
+            const stats = Array.isArray(entry?.stats) ? (entry.stats as RawStat[]) : [];
+            const getStat = (nameKey: string) =>
+              stats.find(stat => String(stat?.name || '').toLowerCase() === nameKey.toLowerCase());
+            const points = parseNumeric(getStat('points')?.value ?? getStat('points')?.displayValue ?? 0);
+            const played = parseNumeric(getStat('gamesPlayed')?.value ?? getStat('gamesPlayed')?.displayValue ?? 0);
+            const goalDiff = parseNumeric(
+              getStat('pointDifferential')?.value ?? getStat('pointDifferential')?.displayValue ?? 0,
+            );
+            return { name, points, played, goalDiff };
+          })
+          .filter((entry: LeagueTableRow) => entry.name);
+        if (rows.length) {
+          return {
+            league: league.label,
+            rows,
+            nextCursor: (index + 1) % leagues.length,
+            source: 'espn',
+          };
+        }
+      } catch (error) {
+        console.warn('[autopost] standings fetch failed (espn fallback)', { league: league.label, error });
       }
     }
     return null;
+  }
+
+  private async createLeagueTableImageUrl(userId: string, snapshot: LeagueTableSnapshot) {
+    const baseUrl = this.getPublicBaseUrl();
+    if (!baseUrl) return null;
+    try {
+      const draftRef = firestore.collection('tableImageDrafts').doc();
+      await draftRef.set({
+        userId,
+        league: snapshot.league,
+        rows: snapshot.rows.slice(0, 8).map(row => ({
+          name: row.name,
+          points: row.points,
+          played: row.played,
+          goalDiff: row.goalDiff ?? null,
+        })),
+        source: snapshot.source,
+        cta: 'www.bwinbetug.info',
+        updatedAt: new Date().toISOString(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return `${baseUrl}/public/table-image/${draftRef.id}.png`;
+    } catch (error) {
+      console.warn('[autopost] table image draft creation failed', error);
+      return null;
+    }
   }
 
   private async executeTrendStories(userId: string, job: AutoPostJob) {
@@ -1179,7 +1282,7 @@ export class AutoPostService {
             .map((pick, idx) => `${idx + 1}. ${pick.fixture}${pick.odds ? ` (${pick.odds})` : ''}`)
             .join('\n');
           caption = [
-            'Football predictions update 🔮',
+            'Football predictions update',
             picksLine,
             'For full markets and live odds: www.bwinbetug.info',
           ]
@@ -1211,10 +1314,13 @@ export class AutoPostService {
         const snapshot = await this.fetchLeagueTableSnapshot(job);
         if (snapshot?.rows?.length) {
           const rows = snapshot.rows
-            .slice(0, 5)
-            .map((row: { name: string; points: number }, idx: number) => `${idx + 1}. ${row.name} - ${row.points} pts`);
+            .slice(0, 6)
+            .map(
+              (row: LeagueTableRow, idx: number) =>
+                `${idx + 1}. ${row.name} - ${Math.trunc(row.points)} pts${row.played ? ` (${Math.trunc(row.played)}P)` : ''}`,
+            );
           caption = [
-            `${snapshot.league} table update 📊`,
+            `${snapshot.league} live table update`,
             ...rows,
             'For full tables and fixtures: www.bwinbetug.info',
           ]
@@ -1222,9 +1328,7 @@ export class AutoPostService {
             .join('\n');
           const key = this.buildTrendContentKey(
             'table',
-            `${snapshot.league}|${snapshot.rows
-              .map((row: { name: string; points: number }) => `${row.name}:${row.points}`)
-              .join('|')}`,
+            `${snapshot.league}|${snapshot.rows.map((row: LeagueTableRow) => `${row.name}:${row.points}:${row.played}`).join('|')}`,
           );
           usedTableCursor = snapshot.nextCursor;
           if (trendRecentSet.has(key)) {
@@ -1233,10 +1337,15 @@ export class AutoPostService {
             trendContentKey = key;
             usedTrendKeys.push(key);
             setUnifiedCaption();
-            imageUrls = await this.generateFootballCardImage(
-              `Design a modern football league table card for ${snapshot.league}. Show top teams and points with strong readability.`,
-              new Set<string>(this.getRecentImageHistory(job)),
-            );
+            const tableImageUrl = await this.createLeagueTableImageUrl(userId, snapshot);
+            if (tableImageUrl) {
+              imageUrls = [tableImageUrl];
+            } else {
+              imageUrls = await this.generateFootballCardImage(
+                `Design a modern football league table card for ${snapshot.league}. Show top teams and points with strong readability.`,
+                new Set<string>(this.getRecentImageHistory(job)),
+              );
+            }
           }
         } else {
           selectedContentType = 'news';
@@ -1249,7 +1358,7 @@ export class AutoPostService {
         if (selectedResult) {
           const source = selectedResult.item.sourceLabel || selectedResult.candidate.sources?.[0] || 'Football source';
           caption = [
-            'Latest result update ⚽',
+            'Latest result update',
             selectedResult.item.title,
             `Source: ${source}`,
             'More fixtures and updates: www.bwinbetug.info',

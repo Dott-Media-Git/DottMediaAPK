@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { firestore } from '../db/firestore';
 import { renderStoryImage } from '../services/storyImageService';
+import { LeagueTableRow, renderLeagueTableImage } from '../services/tableImageService';
 
 const router = Router();
 
@@ -87,6 +88,59 @@ router.get('/public/story-image/:id', async (req, res) => {
   } catch (error) {
     console.error('[story-image] failed to render', error);
     res.status(500).json({ ok: false, error: 'Failed to render story image.' });
+  }
+});
+
+router.get('/public/table-image/:id', async (req, res) => {
+  const rawId = req.params.id ?? '';
+  const id = rawId.replace(/\.png$/i, '').trim();
+  if (!id) {
+    res.status(400).json({ ok: false, error: 'Missing table image id.' });
+    return;
+  }
+  try {
+    const doc = await firestore.collection('tableImageDrafts').doc(id).get();
+    if (!doc.exists) {
+      res.status(404).json({ ok: false, error: 'Table image not found.' });
+      return;
+    }
+    const data = doc.data() as
+      | {
+          league?: string;
+          rows?: Array<{ name?: string; points?: number; played?: number }>;
+          source?: string;
+          cta?: string;
+          updatedAt?: string;
+        }
+      | undefined;
+    const rows: LeagueTableRow[] = Array.isArray(data?.rows)
+      ? data.rows
+          .map((row, index) => ({
+            name: String(row?.name || `Team ${index + 1}`).trim(),
+            points: Number(row?.points ?? 0),
+            played: Number(row?.played ?? 0),
+          }))
+          .filter(row => row.name)
+      : [];
+    if (!rows.length) {
+      res.status(404).json({ ok: false, error: 'Table rows unavailable.' });
+      return;
+    }
+    const buffer = await renderLeagueTableImage({
+      league: data?.league ?? 'League Table',
+      rows: rows.slice(0, 8),
+      source: data?.source ?? 'Live standings',
+      cta: data?.cta ?? 'www.bwinbetug.info',
+      updatedAt: data?.updatedAt ?? new Date().toISOString(),
+    });
+    res.set({
+      'Content-Type': 'image/png',
+      'Cache-Control': 'public, max-age=900',
+    });
+    res.end(buffer);
+  } catch (error) {
+    console.error('[table-image] failed to render', error);
+    res.status(500).json({ ok: false, error: 'Failed to render table image.' });
   }
 });
 
