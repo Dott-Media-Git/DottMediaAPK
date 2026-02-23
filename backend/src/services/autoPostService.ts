@@ -58,6 +58,10 @@ type AutoPostJob = {
   xHighlightAccounts?: string[];
   xLastHighlightTweetId?: string;
   xHighlightMaxAgeHours?: number;
+  xWeeklyAwardsEnabled?: boolean;
+  xWeeklyAwardsOnly?: boolean;
+  xWeeklyAwardKeywords?: string[];
+  xLastWeeklyAwardTweetId?: string;
   active?: boolean;
   recentImageUrls?: string[];
   fallbackCaption?: string;
@@ -174,6 +178,18 @@ export class AutoPostService {
     'Ligue1_ENG',
     'Bundesliga_EN',
     'ChampionsLeague',
+  ];
+  private defaultXWeeklyAwardKeywords = [
+    'player of the week',
+    'goal of the week',
+    'save of the week',
+    'team of the week',
+    'manager of the week',
+    'weekly awards',
+    'totw',
+    'best xi',
+    'goal of the month',
+    'player of the month',
   ];
 
   async start(payload: {
@@ -771,7 +787,10 @@ export class AutoPostService {
     if (this.useMemory) {
       const current = this.memoryStore.get(userId);
       if (current) {
-        this.memoryStore.set(userId, { ...current, ...nextRecord });
+        this.memoryStore.set(userId, {
+          ...current,
+          ...nextRecord,
+        });
       }
     }
 
@@ -909,8 +928,17 @@ export class AutoPostService {
     const trendVideoUrl = sourceVideoUrls[0] || genericVideoSelection.videoUrl;
     const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'linkedin']);
     const hasXPlatform = platforms.some(platform => platform === 'x' || platform === 'twitter');
-    const xHighlight = scope === 'football' && hasXPlatform ? await this.pickFootballHighlightForX(job, credentials) : null;
+    const weeklyAwardsEnabled = scope === 'football' && job.xWeeklyAwardsEnabled === true;
+    const weeklyAwardsOnly = weeklyAwardsEnabled && job.xWeeklyAwardsOnly === true;
+    const xHighlight =
+      scope === 'football' && hasXPlatform
+        ? await this.pickFootballHighlightForX(job, credentials, {
+            preferWeeklyAwards: weeklyAwardsEnabled,
+            weeklyAwardsOnly,
+          })
+        : null;
     let usedXHighlightTweetId: string | null = null;
+    let usedXWeeklyAwardTweetId: string | null = null;
 
     const nextRecord: Partial<AutoPostJob> = {
       trendLastRunAt: admin.firestore.Timestamp.now(),
@@ -919,7 +947,6 @@ export class AutoPostService {
       ...(!sourceVideoUrls[0] && trendVideoUrl && typeof genericVideoSelection.nextCursor === 'number'
         ? { videoCursor: genericVideoSelection.nextCursor }
         : {}),
-      ...(xHighlight?.tweetId ? { xLastHighlightTweetId: xHighlight.tweetId } : {}),
     };
 
     for (const platform of platforms) {
@@ -937,7 +964,10 @@ export class AutoPostService {
       try {
         const perPlatformCaption = trendCaptions[platform] || caption;
         if ((platform === 'x' || platform === 'twitter') && xHighlight?.tweetId) {
-          const quoteCaption = `${perPlatformCaption}\n\n🎥 Highlight via @${xHighlight.username}`;
+          const highlightLine = xHighlight.isWeeklyAward
+            ? `Weekly award update via @${xHighlight.username}`
+            : `Highlight via @${xHighlight.username}`;
+          const quoteCaption = `${perPlatformCaption}\n\n${highlightLine}`;
           const response = await publisher({
             caption: quoteCaption,
             imageUrls,
@@ -952,6 +982,9 @@ export class AutoPostService {
             remoteId: response.remoteId ?? null,
           });
           usedXHighlightTweetId = xHighlight.tweetId;
+          if (xHighlight.isWeeklyAward) {
+            usedXWeeklyAwardTweetId = xHighlight.tweetId;
+          }
           continue;
         }
 
@@ -981,6 +1014,7 @@ export class AutoPostService {
       {
         ...nextRecord,
         ...(usedXHighlightTweetId ? { xLastHighlightTweetId: usedXHighlightTweetId } : {}),
+        ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true },
@@ -988,7 +1022,12 @@ export class AutoPostService {
     if (this.useMemory) {
       const current = this.memoryStore.get(userId);
       if (current) {
-        this.memoryStore.set(userId, { ...current, ...nextRecord });
+        this.memoryStore.set(userId, {
+          ...current,
+          ...nextRecord,
+          ...(usedXHighlightTweetId ? { xLastHighlightTweetId: usedXHighlightTweetId } : {}),
+          ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
+        });
       }
     }
 
@@ -1854,6 +1893,22 @@ export class AutoPostService {
     return this.defaultXHighlightAccounts;
   }
 
+  private getXWeeklyAwardKeywords(job: AutoPostJob) {
+    if (Array.isArray(job.xWeeklyAwardKeywords) && job.xWeeklyAwardKeywords.length) {
+      const provided = job.xWeeklyAwardKeywords
+        .map(value => String(value || '').toLowerCase().trim())
+        .filter(Boolean);
+      if (provided.length) return provided.slice(0, 30);
+    }
+    return this.defaultXWeeklyAwardKeywords;
+  }
+
+  private isWeeklyAwardHighlight(text: string, keywords: string[]) {
+    const normalized = String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!normalized) return false;
+    return keywords.some(keyword => normalized.includes(keyword));
+  }
+
   private buildTwitterClient(credentials?: SocialAccounts) {
     const accessToken = credentials?.twitter?.accessToken;
     const accessSecret = credentials?.twitter?.accessSecret;
@@ -1877,7 +1932,11 @@ export class AutoPostService {
     });
   }
 
-  private async pickFootballHighlightForX(job: AutoPostJob, credentials?: SocialAccounts) {
+  private async pickFootballHighlightForX(
+    job: AutoPostJob,
+    credentials?: SocialAccounts,
+    options?: { preferWeeklyAwards?: boolean; weeklyAwardsOnly?: boolean },
+  ) {
     const client = this.buildTwitterClient(credentials);
     if (!client) return null;
 
@@ -1886,6 +1945,10 @@ export class AutoPostService {
     const maxAgeHours = Math.max(job.xHighlightMaxAgeHours ?? 48, 6);
     const minCreatedAt = Date.now() - maxAgeHours * 60 * 60 * 1000;
     const lastTweetId = (job.xLastHighlightTweetId || '').trim();
+    const lastWeeklyAwardTweetId = (job.xLastWeeklyAwardTweetId || '').trim();
+    const weeklyAwardKeywords = this.getXWeeklyAwardKeywords(job);
+    const preferWeeklyAwards = options?.preferWeeklyAwards === true;
+    const weeklyAwardsOnly = options?.weeklyAwardsOnly === true;
 
     const candidates: Array<{
       tweetId: string;
@@ -1893,6 +1956,8 @@ export class AutoPostService {
       score: number;
       createdAtMs: number;
       tweetUrl: string;
+      isWeeklyAward: boolean;
+      text: string;
     }> = [];
 
     for (const username of accounts) {
@@ -1921,9 +1986,14 @@ export class AutoPostService {
         for (const tweet of tweets) {
           const tweetId = String(tweet?.id || '').trim();
           if (!tweetId || (lastTweetId && tweetId === lastTweetId)) continue;
+          if (lastWeeklyAwardTweetId && tweetId === lastWeeklyAwardTweetId) continue;
 
           const createdAtMs = Date.parse(String(tweet?.created_at || ''));
           if (Number.isFinite(createdAtMs) && createdAtMs < minCreatedAt) continue;
+
+          const text = String(tweet?.text || '').trim();
+          const isWeeklyAward = this.isWeeklyAwardHighlight(text, weeklyAwardKeywords);
+          if (weeklyAwardsOnly && !isWeeklyAward) continue;
 
           const mediaKeys = Array.isArray(tweet?.attachments?.media_keys) ? tweet.attachments.media_keys : [];
           const hasVideo = mediaKeys.some((key: string) => {
@@ -1938,7 +2008,8 @@ export class AutoPostService {
             Number(metrics?.retweet_count ?? 0) * 1.2 +
             Number(metrics?.like_count ?? 0) * 0.7 +
             Number(metrics?.reply_count ?? 0) * 0.5 +
-            Number(metrics?.quote_count ?? 0) * 1.0;
+            Number(metrics?.quote_count ?? 0) * 1.0 +
+            (preferWeeklyAwards && isWeeklyAward ? 100000 : 0);
 
           candidates.push({
             tweetId,
@@ -1946,6 +2017,8 @@ export class AutoPostService {
             score,
             createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : 0,
             tweetUrl: `https://x.com/${username}/status/${tweetId}`,
+            isWeeklyAward,
+            text,
           });
         }
       } catch (error) {
