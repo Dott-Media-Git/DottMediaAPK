@@ -22,7 +22,7 @@ import { getUserTrendConfig } from './userTrendSourceService.js';
 import { getTrendingCandidates as getFootballTrendingCandidates } from './footballTrendSources.js';
 import { footballTrendContentService } from './footballTrendContentService.js';
 import { resolveBrandIdForClient } from './brandKitService.js';
-import { renderLeagueTableImage } from './tableImageService.js';
+import { renderLeagueTableImage, renderTopScorersImage } from './tableImageService.js';
 import type { TrendCandidate } from '../types/footballTrends.js';
 
 type AutoPostJob = {
@@ -110,7 +110,7 @@ type HistoryEntry = {
   videoTitle?: string;
 };
 type VideoPlatform = 'youtube' | 'tiktok' | 'instagram_reels';
-type FootballTrendContentType = 'news' | 'video' | 'result' | 'prediction' | 'table';
+type FootballTrendContentType = 'news' | 'video' | 'result' | 'prediction' | 'table' | 'top_scorer';
 type ExecuteOptions = {
   platforms?: string[];
   intervalHours?: number;
@@ -127,12 +127,41 @@ type LeagueTableRow = {
   goalDiff?: number | null;
 };
 
+type TopScorerRow = {
+  player: string;
+  team: string;
+  goals: number;
+  appearances?: number | null;
+};
+
+type LeagueDefinition = {
+  id: string;
+  label: string;
+  espnId: string;
+};
+
 type LeagueTableSnapshot = {
+  leagueId: string;
   league: string;
   rows: LeagueTableRow[];
   nextCursor: number;
   source: 'api-football-standings' | 'espn';
 };
+
+type TopScorersSnapshot = {
+  leagueId: string;
+  league: string;
+  rows: TopScorerRow[];
+  source: 'espn-statistics';
+};
+
+const TOP_FIVE_LEAGUES: LeagueDefinition[] = [
+  { id: 'eng.1', label: 'Premier League', espnId: 'eng.1' },
+  { id: 'esp.1', label: 'La Liga', espnId: 'esp.1' },
+  { id: 'ita.1', label: 'Serie A', espnId: 'ita.1' },
+  { id: 'ger.1', label: 'Bundesliga', espnId: 'ger.1' },
+  { id: 'fra.1', label: 'Ligue 1', espnId: 'fra.1' },
+];
 
 const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
@@ -707,16 +736,66 @@ export class AutoPostService {
     return date.getUTCHours();
   }
 
+  private getDateKeyForTimezone(date: Date, timezone: string) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).formatToParts(date);
+      const year = parts.find(part => part.type === 'year')?.value;
+      const month = parts.find(part => part.type === 'month')?.value;
+      const day = parts.find(part => part.type === 'day')?.value;
+      if (year && month && day) {
+        return `${year}-${month}-${day}`;
+      }
+    } catch (error) {
+      console.warn('[autopost] invalid trend timezone for date key; falling back to UTC', { timezone, error });
+    }
+    const year = date.getUTCFullYear();
+    const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
+    const day = `${date.getUTCDate()}`.padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private getDailyLeagueForDate(date: Date, timezone: string): LeagueDefinition {
+    const dateKey = this.getDateKeyForTimezone(date, timezone);
+    const [yearRaw, monthRaw, dayRaw] = dateKey.split('-');
+    const year = Number.parseInt(yearRaw, 10);
+    const month = Number.parseInt(monthRaw, 10);
+    const day = Number.parseInt(dayRaw, 10);
+    const daySerial =
+      Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)
+        ? Math.floor(Date.UTC(year, month - 1, day) / 86400000)
+        : Math.floor(date.getTime() / 86400000);
+    const idx = ((daySerial % TOP_FIVE_LEAGUES.length) + TOP_FIVE_LEAGUES.length) % TOP_FIVE_LEAGUES.length;
+    return TOP_FIVE_LEAGUES[idx];
+  }
+
+  private parseNumeric(value: unknown) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Number.parseFloat(value.replace(/[^0-9.-]/g, ''));
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return 0;
+  }
+
   private getStructuredFootballSlot(job: AutoPostJob, now: Date) {
     const timezone = job.trendTimezone?.trim() || process.env.AUTOPOST_FOOTBALL_TZ?.trim() || 'Africa/Kampala';
     const hour = this.getHourForTimezone(now, timezone);
     const predictionHours = new Set([9, 13, 17, 21]);
-    const tableHours = new Set([8, 16, 23]);
+    const tableHours = new Set([8]);
+    const topScorerHours = new Set([20]);
     if (predictionHours.has(hour)) {
       return { contentType: 'prediction' as FootballTrendContentType, timezone, hour };
     }
     if (tableHours.has(hour)) {
       return { contentType: 'table' as FootballTrendContentType, timezone, hour };
+    }
+    if (topScorerHours.has(hour)) {
+      return { contentType: 'top_scorer' as FootballTrendContentType, timezone, hour };
     }
     const cycle: FootballTrendContentType[] = ['result', 'news', 'video'];
     const cursor = Number.isFinite(job.trendSlotCursor) ? (job.trendSlotCursor as number) : hour % cycle.length;
@@ -815,25 +894,22 @@ export class AutoPostService {
     return picks;
   }
 
-  private async fetchLeagueTableSnapshot(job: AutoPostJob): Promise<LeagueTableSnapshot | null> {
-    const leagues = [
-      { id: 'eng.1', label: 'Premier League', espnId: 'eng.1' },
-      { id: 'esp.1', label: 'La Liga', espnId: 'esp.1' },
-      { id: 'ita.1', label: 'Serie A', espnId: 'ita.1' },
-      { id: 'ger.1', label: 'Bundesliga', espnId: 'ger.1' },
-      { id: 'fra.1', label: 'Ligue 1', espnId: 'fra.1' },
-    ];
+  private async fetchLeagueTableSnapshot(
+    job: AutoPostJob,
+    options: { preferredLeague?: LeagueDefinition; strictPreferred?: boolean } = {},
+  ): Promise<LeagueTableSnapshot | null> {
+    const leagues = TOP_FIVE_LEAGUES;
     const cursorRaw = Number.isFinite(job.trendTableCursor) ? (job.trendTableCursor as number) : 0;
     const start = ((Math.trunc(cursorRaw) % leagues.length) + leagues.length) % leagues.length;
 
-    const parseNumeric = (value: unknown) => {
-      if (typeof value === 'number' && Number.isFinite(value)) return value;
-      if (typeof value === 'string') {
-        const parsed = Number.parseFloat(value.replace(/[^0-9.-]/g, ''));
-        if (Number.isFinite(parsed)) return parsed;
-      }
-      return 0;
-    };
+    const orderedLeagues: LeagueDefinition[] = options.preferredLeague
+      ? options.strictPreferred
+        ? [options.preferredLeague]
+        : [
+            options.preferredLeague,
+            ...leagues.filter(league => league.id !== options.preferredLeague?.id),
+          ]
+      : [...leagues.slice(start), ...leagues.slice(0, start)];
 
     type RawStat = {
       name?: string;
@@ -842,9 +918,8 @@ export class AutoPostService {
       displayValue?: string;
     };
 
-    for (let offset = 0; offset < leagues.length; offset += 1) {
-      const index = (start + offset) % leagues.length;
-      const league = leagues[index];
+    for (const league of orderedLeagues) {
+      const index = leagues.findIndex(item => item.id === league.id);
       try {
         const response = await axios.get(`https://api-football-standings.azharimm.dev/leagues/${league.id}/standings`, {
           timeout: 15000,
@@ -870,17 +945,18 @@ export class AutoPostService {
                 String(stat?.name || '').toLowerCase() === 'pointdifferential' ||
                 String(stat?.displayName || '').toLowerCase() === 'goal difference',
             );
-            const points = parseNumeric(pointsStat?.value ?? pointsStat?.displayValue ?? 0);
-            const played = parseNumeric(playedStat?.value ?? playedStat?.displayValue ?? 0);
-            const goalDiff = parseNumeric(goalDiffStat?.value ?? goalDiffStat?.displayValue ?? 0);
+            const points = this.parseNumeric(pointsStat?.value ?? pointsStat?.displayValue ?? 0);
+            const played = this.parseNumeric(playedStat?.value ?? playedStat?.displayValue ?? 0);
+            const goalDiff = this.parseNumeric(goalDiffStat?.value ?? goalDiffStat?.displayValue ?? 0);
             return { name, points, played, goalDiff };
           })
           .filter((entry: LeagueTableRow) => entry.name);
         if (rows.length) {
           return {
+            leagueId: league.id,
             league: league.label,
             rows,
-            nextCursor: (index + 1) % leagues.length,
+            nextCursor: ((index >= 0 ? index : 0) + 1) % leagues.length,
             source: 'api-football-standings',
           };
         }
@@ -907,9 +983,9 @@ export class AutoPostService {
             const stats = Array.isArray(entry?.stats) ? (entry.stats as RawStat[]) : [];
             const getStat = (nameKey: string) =>
               stats.find(stat => String(stat?.name || '').toLowerCase() === nameKey.toLowerCase());
-            const points = parseNumeric(getStat('points')?.value ?? getStat('points')?.displayValue ?? 0);
-            const played = parseNumeric(getStat('gamesPlayed')?.value ?? getStat('gamesPlayed')?.displayValue ?? 0);
-            const goalDiff = parseNumeric(
+            const points = this.parseNumeric(getStat('points')?.value ?? getStat('points')?.displayValue ?? 0);
+            const played = this.parseNumeric(getStat('gamesPlayed')?.value ?? getStat('gamesPlayed')?.displayValue ?? 0);
+            const goalDiff = this.parseNumeric(
               getStat('pointDifferential')?.value ?? getStat('pointDifferential')?.displayValue ?? 0,
             );
             return { name, points, played, goalDiff };
@@ -917,9 +993,10 @@ export class AutoPostService {
           .filter((entry: LeagueTableRow) => entry.name);
         if (rows.length) {
           return {
+            leagueId: league.id,
             league: league.label,
             rows,
-            nextCursor: (index + 1) % leagues.length,
+            nextCursor: ((index >= 0 ? index : 0) + 1) % leagues.length,
             source: 'espn',
           };
         }
@@ -928,6 +1005,63 @@ export class AutoPostService {
       }
     }
     return null;
+  }
+
+  private async fetchTopScorersSnapshot(league: LeagueDefinition): Promise<TopScorersSnapshot | null> {
+    try {
+      const response = await axios.get(`https://site.api.espn.com/apis/site/v2/sports/soccer/${league.espnId}/statistics`, {
+        timeout: 20000,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        },
+      });
+      const stats = Array.isArray(response.data?.stats) ? response.data.stats : [];
+      const goalsBucket = stats.find((group: any) => {
+        const key = String(group?.name || '').toLowerCase();
+        const display = String(group?.displayName || '').toLowerCase();
+        return key.includes('goals') || display.includes('goal');
+      });
+      const leaders = Array.isArray(goalsBucket?.leaders) ? goalsBucket.leaders : [];
+      const rows: TopScorerRow[] = leaders
+        .slice(0, 10)
+        .map((entry: any) => {
+          const athlete = entry?.athlete ?? {};
+          const statsList = Array.isArray(athlete?.statistics) ? athlete.statistics : [];
+          const goalsStat = statsList.find((stat: any) => String(stat?.name || '').toLowerCase() === 'totalgoals');
+          const appearanceStat = statsList.find((stat: any) => String(stat?.name || '').toLowerCase() === 'appearances');
+          const player = String(athlete?.displayName || athlete?.shortName || '').trim();
+          const team = String(athlete?.team?.displayName || athlete?.team?.name || '').trim();
+          const goals = Math.trunc(
+            this.parseNumeric(entry?.value ?? goalsStat?.value ?? goalsStat?.displayValue ?? 0),
+          );
+
+          let appearances = this.parseNumeric(appearanceStat?.value ?? appearanceStat?.displayValue ?? 0);
+          if (!appearances && typeof entry?.displayValue === 'string') {
+            const match = entry.displayValue.match(/matches:\s*(\d{1,3})/i);
+            if (match) appearances = this.parseNumeric(match[1]);
+          }
+
+          return {
+            player,
+            team,
+            goals,
+            appearances: appearances > 0 ? Math.trunc(appearances) : null,
+          };
+        })
+        .filter((row: TopScorerRow) => row.player && row.goals > 0);
+
+      if (!rows.length) return null;
+      return {
+        leagueId: league.id,
+        league: league.label,
+        rows,
+        source: 'espn-statistics',
+      };
+    } catch (error) {
+      console.warn('[autopost] top scorers fetch failed', { league: league.label, error });
+      return null;
+    }
   }
 
   private async createLeagueTableImageUrl(userId: string, snapshot: LeagueTableSnapshot) {
@@ -973,6 +1107,27 @@ export class AutoPostService {
       return `data:image/png;base64,${buffer.toString('base64')}`;
     } catch (error) {
       console.warn('[autopost] table image generation failed', error);
+      return null;
+    }
+  }
+
+  private async createTopScorersImageDataUrl(snapshot: TopScorersSnapshot) {
+    try {
+      const buffer = await renderTopScorersImage({
+        league: snapshot.league,
+        rows: snapshot.rows.slice(0, 8).map(row => ({
+          player: row.player,
+          team: row.team,
+          goals: row.goals,
+          appearances: row.appearances ?? null,
+        })),
+        source: snapshot.source,
+        cta: 'www.bwinbetug.info',
+        updatedAt: new Date().toISOString(),
+      });
+      return `data:image/png;base64,${buffer.toString('base64')}`;
+    } catch (error) {
+      console.warn('[autopost] top scorers image generation failed', error);
       return null;
     }
   }
@@ -1164,6 +1319,9 @@ export class AutoPostService {
     const structuredScheduleEnabled = scope === 'football' && job.trendStructuredScheduleEnabled !== false;
     const structuredSlot = structuredScheduleEnabled ? this.getStructuredFootballSlot(job, now) : null;
     let selectedContentType: FootballTrendContentType = structuredSlot?.contentType ?? (scope === 'football' ? 'news' : 'news');
+    const scheduleTimezone = (structuredSlot?.timezone ?? job.trendTimezone?.trim()) || 'Africa/Kampala';
+    const trendDateKey = this.getDateKeyForTimezone(now, scheduleTimezone);
+    const dailyLeague = structuredScheduleEnabled ? this.getDailyLeagueForDate(now, scheduleTimezone) : null;
     let nextTrendSlotCursor: number | null =
       structuredScheduleEnabled && typeof structuredSlot?.nextSlotCursor === 'number'
         ? structuredSlot.nextSlotCursor
@@ -1333,7 +1491,10 @@ export class AutoPostService {
       }
 
       if (selectedContentType === 'table') {
-        const snapshot = await this.fetchLeagueTableSnapshot(job);
+        const snapshot = await this.fetchLeagueTableSnapshot(
+          job,
+          dailyLeague ? { preferredLeague: dailyLeague, strictPreferred: true } : {},
+        );
         if (snapshot?.rows?.length) {
           const rows = snapshot.rows
             .slice(0, 6)
@@ -1350,9 +1511,13 @@ export class AutoPostService {
             .join('\n');
           const key = this.buildTrendContentKey(
             'table',
-            `${snapshot.league}|${snapshot.rows.map((row: LeagueTableRow) => `${row.name}:${row.points}:${row.played}`).join('|')}`,
+            `${trendDateKey}|${snapshot.league}|${snapshot.rows
+              .map((row: LeagueTableRow) => `${row.name}:${row.points}:${row.played}`)
+              .join('|')}`,
           );
-          usedTableCursor = snapshot.nextCursor;
+          if (!dailyLeague) {
+            usedTableCursor = snapshot.nextCursor;
+          }
           if (trendRecentSet.has(key)) {
             selectedContentType = 'news';
           } else {
@@ -1372,6 +1537,52 @@ export class AutoPostService {
                   new Set<string>(this.getRecentImageHistory(job)),
                 );
               }
+            }
+          }
+        } else {
+          selectedContentType = 'news';
+        }
+      }
+
+      if (selectedContentType === 'top_scorer') {
+        const scorerLeague = dailyLeague ?? TOP_FIVE_LEAGUES[0];
+        const snapshot = await this.fetchTopScorersSnapshot(scorerLeague);
+        if (snapshot?.rows?.length) {
+          const rows = snapshot.rows
+            .slice(0, 6)
+            .map(
+              (row: TopScorerRow, idx: number) =>
+                `${idx + 1}. ${row.player} (${row.team}) - ${Math.trunc(row.goals)} goals${
+                  row.appearances ? ` in ${Math.trunc(row.appearances)} apps` : ''
+                }`,
+            );
+          caption = [
+            `${snapshot.league} top scorers update`,
+            ...rows,
+            'For full tables and fixtures: www.bwinbetug.info',
+          ]
+            .filter(Boolean)
+            .join('\n');
+          const key = this.buildTrendContentKey(
+            'top_scorer',
+            `${trendDateKey}|${snapshot.league}|${snapshot.rows
+              .map((row: TopScorerRow) => `${row.player}:${row.goals}:${row.appearances ?? '-'}`)
+              .join('|')}`,
+          );
+          if (trendRecentSet.has(key)) {
+            selectedContentType = 'news';
+          } else {
+            trendContentKey = key;
+            usedTrendKeys.push(key);
+            setUnifiedCaption();
+            const topScorersImageDataUrl = await this.createTopScorersImageDataUrl(snapshot);
+            if (topScorersImageDataUrl) {
+              imageUrls = [topScorersImageDataUrl];
+            } else {
+              imageUrls = await this.generateFootballCardImage(
+                `Design a modern ${snapshot.league} top scorers card with player names, clubs, and goals.`,
+                new Set<string>(this.getRecentImageHistory(job)),
+              );
             }
           }
         } else {

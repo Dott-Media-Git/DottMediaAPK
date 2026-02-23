@@ -38,13 +38,24 @@ The trend engine runs every hour (`trendIntervalHours = 1`).
 ### Slot Rules (Hourly)
 At each hourly run, the content type is selected by schedule:
 - `09:00, 13:00, 17:00, 21:00` -> `prediction`
-- `08:00, 16:00, 23:00` -> `table`
+- `08:00` -> `table` (daily league table)
+- `20:00` -> `top_scorer` (same daily league top scorers)
 - All other hours rotate in sequence:
   - `result`
   - `news`
   - `video`
 
 Rotation cursor is stored in `trendSlotCursor`.
+
+### Daily League Rotation (Top 5)
+For the two daily stat posts (`table` and `top_scorer`), league selection rotates by day across:
+1. Premier League
+2. La Liga
+3. Serie A
+4. Bundesliga
+5. Ligue 1
+
+Both daily posts use the **same league on the same day**, then move to the next league the following day.
 
 ## Content Types
 
@@ -56,28 +67,30 @@ Rotation cursor is stored in `trendSlotCursor`.
 ### 2) Table Posts
 - Source: `api-football-standings.azharimm.dev`
 - Fallback source: ESPN standings API (`site.api.espn.com`) when primary source is unavailable
-- Rotates league by `trendTableCursor` through:
-  - Premier League (`eng.1`)
-  - La Liga (`esp.1`)
-  - Serie A (`ita.1`)
-  - Bundesliga (`ger.1`)
-  - Ligue 1 (`fra.1`)
+- Daily league is selected from the top-5 rotation (same as top-scorers post for that day)
 - Output format:
   - Text caption with top teams + points + played
   - Branded live table image card (`/public/table-image/:id.png`) in Bwinbet yellow/black style
 
-### 3) Result Posts
+### 3) Top Scorers Posts
+- Source: ESPN soccer statistics API (`site.api.espn.com/apis/site/v2/.../statistics`)
+- Uses the same daily league selected for the table post
+- Output format:
+  - Text caption with top scorers, goals, appearances
+  - Branded top scorers image card in Bwinbet yellow/black style
+
+### 4) Result Posts
 - Source: football trend candidates
 - Detects scoreline titles using score patterns (`2-1`, `1:0`, etc.)
 - Posts latest valid result with source label
 
-### 4) News Posts
+### 5) News Posts
 - Source: football trend candidates (trusted feeds)
 - Uses generated football news copy
 - Uses related source image when available
 - If image is missing, generates a football news card image
 
-### 5) Video Posts
+### 6) Video Posts
 - Source: X highlight accounts
 - Quote-post mode on X with league account rotation
 - Weekly-award preference remains supported when enabled
@@ -103,6 +116,7 @@ For football structured posts:
 - If required imagery is missing, the system generates a football card image
 - Ensures news/results/tables/predictions remain visually engaging
 - For `table` slots, the system first attempts a dedicated live-table image template before generic fallback
+- For `top_scorer` slots, the system uses a dedicated top-scorers template before generic fallback
 
 ## Operational Fields (Autopost Job)
 Key fields used by the live system:
