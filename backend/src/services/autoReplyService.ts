@@ -3,11 +3,13 @@ import OpenAI from 'openai';
 import { config } from '../config.js';
 import { firestore } from '../db/firestore.js';
 import { pickFallbackReply, FallbackKind } from './fallbackReplyLibrary.js';
+import { resolveBrandIdForClient } from './brandKitService.js';
 import { OPENAI_REPLY_TIMEOUT_MS } from '../utils/openaiTimeout.js';
 
 const GRAPH_VERSION = 'v19.0';
 const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
 const replyPromptCache = new Map<string, { value: string; fetchedAt: number; loaded: boolean }>();
+const replyProfileCache = new Map<string, { value: string; fetchedAt: number; loaded: boolean }>();
 
 type Platform = 'instagram' | 'facebook';
 
@@ -41,16 +43,41 @@ const getAutoReplyPromptOverride = async (userId?: string) => {
   }
 };
 
+const getReplyProfile = async (userId?: string) => {
+  if (!userId) return null;
+  const now = Date.now();
+  const cached = replyProfileCache.get(userId);
+  if (cached?.loaded && now - cached.fetchedAt < SETTINGS_CACHE_TTL_MS) {
+    return cached.value || null;
+  }
+  try {
+    const snap = await firestore.collection('users').doc(userId).get();
+    const email = (snap.data()?.email as string | undefined)?.toLowerCase().trim() ?? '';
+    const brandId = email ? resolveBrandIdForClient(email) : null;
+    const profile = brandId === 'bwinbetug' ? 'bwinbetug' : '';
+    replyProfileCache.set(userId, { value: profile, fetchedAt: now, loaded: true });
+    return profile || null;
+  } catch (error) {
+    console.warn('Failed to load reply profile', (error as Error).message);
+    replyProfileCache.set(userId, { value: '', fetchedAt: now, loaded: true });
+    return null;
+  }
+};
+
 export async function generateReply(
   message: string,
   platform: Platform,
   userId?: string,
   kind: FallbackKind = 'message',
 ) {
-  const baseSystem = `You are Dotti, the Dott Media AI assistant. Reply briefly (1-2 sentences), friendly, and guide them to buy or book the Dott Media AI Sales Agent. Always include a clear CTA like 'Grab the AI Sales Agent' or 'Book a demo'. Platform: ${platform}.`;
+  const profile = await getReplyProfile(userId);
+  const baseSystem =
+    profile === 'bwinbetug'
+      ? `You are Bwinbet UG's sports assistant. Reply briefly (1-2 sentences), friendly, and sports-focused. Always direct users to www.bwinbetug.info for full details, fixtures, markets, or support. Platform: ${platform}.`
+      : `You are Dotti, the Dott Media AI assistant. Reply briefly (1-2 sentences), friendly, and guide them to buy or book the Dott Media AI Sales Agent. Always include a clear CTA like 'Grab the AI Sales Agent' or 'Book a demo'. Platform: ${platform}.`;
   const override = await getAutoReplyPromptOverride(userId);
   const system = override ? `${baseSystem}\nAdditional guidance: ${override}` : baseSystem;
-  const fallback = pickFallbackReply({ channel: platform, kind });
+  const fallback = pickFallbackReply({ channel: platform, kind, profile });
   try {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
