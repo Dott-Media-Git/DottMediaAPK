@@ -117,6 +117,7 @@ For football structured posts:
 - Ensures news/results/tables/predictions remain visually engaging
 - For `table` slots, the system first attempts a dedicated live-table image template before generic fallback
 - For `top_scorer` slots, the system uses a dedicated top-scorers template before generic fallback
+- For `news` slots, image URLs are normalized to higher-resolution variants, and X-only runs apply additional quality enhancement before posting
 
 ## Operational Fields (Autopost Job)
 Key fields used by the live system:

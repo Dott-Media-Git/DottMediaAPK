@@ -1,5 +1,6 @@
 import admin from 'firebase-admin';
 import axios from 'axios';
+import sharp from 'sharp';
 import * as cheerio from 'cheerio';
 import fs from 'fs';
 import path from 'path';
@@ -811,6 +812,67 @@ export class AutoPostService {
   private buildTrendContentKey(type: FootballTrendContentType, value: string) {
     const normalized = String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
     return `${type}:${normalized}`.slice(0, 320);
+  }
+
+  private toHighResolutionImageUrl(rawUrl: string) {
+    const value = String(rawUrl || '').trim();
+    if (!value) return '';
+    try {
+      const parsed = new URL(value);
+      const host = parsed.hostname.toLowerCase();
+      if (host.includes('images.unsplash.com')) {
+        parsed.searchParams.set('auto', 'format');
+        parsed.searchParams.set('fit', 'crop');
+        parsed.searchParams.set('w', '1800');
+        parsed.searchParams.set('q', '90');
+        return parsed.toString();
+      }
+      if (host.includes('espncdn.com') || host.includes('espn.com')) {
+        parsed.searchParams.set('w', '1600');
+        parsed.searchParams.set('h', '900');
+        parsed.searchParams.set('q', '90');
+        return parsed.toString();
+      }
+      return parsed.toString();
+    } catch {
+      return value;
+    }
+  }
+
+  private async enhanceImageToDataUrl(url: string) {
+    try {
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 20000,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        },
+      });
+      const source = Buffer.from(response.data);
+      const buffer = await sharp(source)
+        .rotate()
+        .resize(1600, 900, { fit: 'cover', position: 'attention' })
+        .sharpen()
+        .jpeg({ quality: 90, mozjpeg: true, chromaSubsampling: '4:4:4' })
+        .toBuffer();
+      return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+    } catch (error) {
+      console.warn('[autopost] image enhancement failed', { url, error });
+      return null;
+    }
+  }
+
+  private async improveNewsImageQuality(imageUrls: string[], platforms: string[]) {
+    const normalized = imageUrls
+      .map(url => this.toHighResolutionImageUrl(url))
+      .filter(Boolean)
+      .filter((value, index, arr) => arr.indexOf(value) === index);
+    if (!normalized.length) return [];
+    const xOnly = platforms.every(platform => platform === 'x' || platform === 'twitter');
+    if (!xOnly) return normalized;
+    const enhanced = await this.enhanceImageToDataUrl(normalized[0]);
+    return enhanced ? [enhanced] : normalized;
   }
 
   private async generateFootballCardImage(prompt: string, recentSet: Set<string>) {
@@ -1643,6 +1705,10 @@ export class AutoPostService {
           );
         }
       }
+    }
+
+    if (scope === 'football' && selectedContentType === 'news' && imageUrls.length) {
+      imageUrls = await this.improveNewsImageQuality(imageUrls, platforms);
     }
 
     // For trend posts, only use explicit per-job video URLs as fallback.
