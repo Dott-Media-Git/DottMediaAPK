@@ -15,6 +15,19 @@ The mobile build references Sportradar widget infrastructure, so the posting sys
 - Prioritizing fast, high-frequency table/result updates
 - Rendering branded table cards in Bwinbet yellow/black visual language
 
+### Source Domains Observed From Website Build
+The website scripts currently reference these sports-relevant providers/domains:
+- `widgets.sir.sportradar.com` (widget delivery)
+- `s5.sir.sportradar.com` (Sportradar feed path used by widgets)
+- `livetracker.live/widgets` (match/event tracking widgets)
+- `resources.betx.bet` (supporting sportsbook resources)
+- `evonaapiint.betx.bet/print` (platform-side print/export endpoint)
+
+In Dott posting, these are treated as style and source-alignment signals.
+For table reliability, posting uses:
+- Primary: `api-football-standings.azharimm.dev`
+- Fallback: ESPN standings API (`site.api.espn.com`)
+
 ## Live Scheduler
 The trend engine runs every hour (`trendIntervalHours = 1`).
 
