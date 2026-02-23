@@ -796,6 +796,7 @@ export class AutoPostService {
     // Currently optimized for football trend posting (bwinbetug). Other scopes fall back to a lightweight text post.
     let caption = '';
     let imageUrls: string[] = [];
+    const sourceImageUrls: string[] = [];
     const trendCaptions: Record<string, string> = {};
 
     if (scope === 'football') {
@@ -811,6 +812,10 @@ export class AutoPostService {
           caption = 'No football trends found right now. Checking again soon.';
         } else {
           const items = (top.items ?? []).slice(0, 6);
+          const topItemImages = items
+            .map(item => item.imageUrl?.trim())
+            .filter((url): url is string => Boolean(url));
+          sourceImageUrls.push(...topItemImages);
           const contextLines = [
             `topic: ${top.topic}`,
             top.sources?.length ? `sources: ${top.sources.join(', ')}` : '',
@@ -855,7 +860,8 @@ export class AutoPostService {
 
           // Default caption for history and for platforms that don't override further down.
           caption = [gen.content.captions.instagram, tags].filter(Boolean).join('\n\n').trim();
-          imageUrls = gen.images ?? [];
+          const mergedImages = [...sourceImageUrls, ...(gen.images ?? [])].filter(Boolean);
+          imageUrls = Array.from(new Set(mergedImages)).slice(0, 4);
 
           for (const p of platforms) {
             const base = baseCaptionByPlatform(p);
@@ -869,7 +875,7 @@ export class AutoPostService {
       } catch (error) {
         console.warn('[autopost] trend generation failed; using text fallback', error);
         caption = 'Trending football update coming soon. Stay tuned.';
-        imageUrls = [];
+        imageUrls = Array.from(new Set(sourceImageUrls)).slice(0, 4);
       }
     } else {
       caption = 'Trending update coming soon.';

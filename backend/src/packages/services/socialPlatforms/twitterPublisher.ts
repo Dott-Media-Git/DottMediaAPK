@@ -75,7 +75,7 @@ export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
     const tweet = await rw.v2.tweet(payload);
-    const rawId = tweet?.data?.id ?? tweet?.id;
+    const rawId = tweet?.data?.id;
     const remoteId = rawId !== undefined && rawId !== null ? String(rawId) : undefined;
     return { remoteId };
   } catch (error) {
