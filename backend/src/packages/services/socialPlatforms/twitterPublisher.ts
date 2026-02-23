@@ -4,6 +4,7 @@ import { TwitterApi } from 'twitter-api-v2';
 type PublishInput = {
   caption: string;
   imageUrls: string[];
+  videoUrl?: string;
   credentials?: {
     twitter?: {
       accessToken?: string;
@@ -17,7 +18,7 @@ type PublishInput = {
 };
 
 export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?: string }> {
-  const { caption, imageUrls = [], credentials } = input;
+  const { caption, imageUrls = [], videoUrl, credentials } = input;
   console.info('[twitter] posting', caption?.slice(0, 40));
 
   const accessToken = credentials?.twitter?.accessToken;
@@ -51,20 +52,35 @@ export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?
 
   try {
     const mediaIds: string[] = [];
-    for (const url of imageUrls) {
+    if (videoUrl) {
       try {
-        const res = await axios.get(url, { responseType: 'arraybuffer' });
+        const res = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: 120000 });
         const buffer = Buffer.from(res.data);
-        const contentType = res.headers['content-type'] ?? undefined;
-        // uploadMedia accepts Buffer and optional mimeType
-        // returns media id string
+        const contentType = res.headers['content-type'] ?? 'video/mp4';
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore
-        const mediaId = await rw.v1.uploadMedia(buffer, { mimeType: contentType });
+        const mediaId = await rw.v1.uploadMedia(buffer, { mimeType: contentType, target: 'tweet' });
         mediaIds.push(String(mediaId));
       } catch (err) {
-        console.warn('[twitter] media upload failed for', url, err instanceof Error ? err.message : err);
+        console.warn('[twitter] video upload failed for', videoUrl, err instanceof Error ? err.message : err);
         throw err;
+      }
+    } else {
+      for (const url of imageUrls) {
+        try {
+          const res = await axios.get(url, { responseType: 'arraybuffer' });
+          const buffer = Buffer.from(res.data);
+          const contentType = res.headers['content-type'] ?? undefined;
+          // uploadMedia accepts Buffer and optional mimeType
+          // returns media id string
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore
+          const mediaId = await rw.v1.uploadMedia(buffer, { mimeType: contentType });
+          mediaIds.push(String(mediaId));
+        } catch (err) {
+          console.warn('[twitter] media upload failed for', url, err instanceof Error ? err.message : err);
+          throw err;
+        }
       }
     }
 

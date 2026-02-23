@@ -23,6 +23,7 @@ export type TrendItem = {
   link?: string;
   summary?: string;
   imageUrl?: string;
+  videoUrl?: string;
   publishedAt?: string;
   sourceId: string;
   sourceLabel: string;

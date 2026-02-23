@@ -797,6 +797,7 @@ export class AutoPostService {
     let caption = '';
     let imageUrls: string[] = [];
     const sourceImageUrls: string[] = [];
+    const sourceVideoUrls: string[] = [];
     const trendCaptions: Record<string, string> = {};
 
     if (scope === 'football') {
@@ -815,7 +816,11 @@ export class AutoPostService {
           const topItemImages = items
             .map(item => item.imageUrl?.trim())
             .filter((url): url is string => Boolean(url));
+          const topItemVideos = items
+            .map(item => item.videoUrl?.trim())
+            .filter((url): url is string => Boolean(url));
           sourceImageUrls.push(...topItemImages);
+          sourceVideoUrls.push(...topItemVideos);
           const contextLines = [
             `topic: ${top.topic}`,
             top.sources?.length ? `sources: ${top.sources.join(', ')}` : '',
@@ -882,6 +887,20 @@ export class AutoPostService {
       imageUrls = [];
     }
 
+    const fallbackVideoPool = this.getFallbackVideoPool();
+    const genericVideoSelection = this.selectNextGenericVideo(job, fallbackVideoPool);
+    const trendVideoUrl = sourceVideoUrls[0] || genericVideoSelection.videoUrl;
+    const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'linkedin']);
+
+    const nextRecord: Partial<AutoPostJob> = {
+      trendLastRunAt: admin.firestore.Timestamp.now(),
+      trendNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+      trendLastResult: results,
+      ...(!sourceVideoUrls[0] && trendVideoUrl && typeof genericVideoSelection.nextCursor === 'number'
+        ? { videoCursor: genericVideoSelection.nextCursor }
+        : {}),
+    };
+
     for (const platform of platforms) {
       const publisher = platformPublishers[platform];
       if (!publisher) {
@@ -896,9 +915,21 @@ export class AutoPostService {
       }
       try {
         const perPlatformCaption = trendCaptions[platform] || caption;
-        const response = await publisher({ caption: perPlatformCaption, imageUrls, credentials });
+        const useVideo = Boolean(trendVideoUrl) && videoCapablePlatforms.has(platform);
+        const response = await publisher({
+          caption: perPlatformCaption,
+          imageUrls: useVideo ? [] : imageUrls,
+          videoUrl: useVideo ? trendVideoUrl : undefined,
+          credentials,
+        });
         results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
-        historyEntries.push({ platform, status: 'posted', caption: perPlatformCaption, remoteId: response.remoteId ?? null });
+        historyEntries.push({
+          platform,
+          status: 'posted',
+          caption: perPlatformCaption,
+          remoteId: response.remoteId ?? null,
+          videoUrl: useVideo ? trendVideoUrl : undefined,
+        });
       } catch (error: any) {
         const message = error?.message ?? 'publish_failed';
         results.push({ platform, status: 'failed', error: message });
@@ -906,11 +937,6 @@ export class AutoPostService {
       }
     }
 
-    const nextRecord: Partial<AutoPostJob> = {
-      trendLastRunAt: admin.firestore.Timestamp.now(),
-      trendNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
-      trendLastResult: results,
-    };
     await autopostCollection.doc(userId).set(
       {
         ...nextRecord,

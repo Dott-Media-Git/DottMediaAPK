@@ -171,6 +171,18 @@ const extractImageFromHtmlFragment = (value: string, baseUrl?: string) => {
   }
 };
 
+const extractVideoFromHtmlFragment = (value: string, baseUrl?: string) => {
+  try {
+    const $ = cheerio.load(value);
+    const sourceSrc = $('video source').first().attr('src')?.trim();
+    if (sourceSrc) return toAbsoluteUrl(sourceSrc, baseUrl);
+    const videoSrc = $('video').first().attr('src')?.trim();
+    return toAbsoluteUrl(videoSrc, baseUrl);
+  } catch (error) {
+    return undefined;
+  }
+};
+
 const extractRssImage = ($: cheerio.CheerioAPI, entry: any, source: TrendSource) => {
   const mediaContent =
     $(entry).find('media\\:content').first().attr('url')?.trim() ||
@@ -214,6 +226,57 @@ const extractRssImage = ($: cheerio.CheerioAPI, entry: any, source: TrendSource)
   const contentRaw = $(entry).find('content\\:encoded').first().text().trim();
   const contentImage = contentRaw ? extractImageFromHtmlFragment(contentRaw, source.url) : undefined;
   if (contentImage) return contentImage;
+
+  return undefined;
+};
+
+const extractRssVideo = ($: cheerio.CheerioAPI, entry: any, source: TrendSource) => {
+  const mediaVideo = $(entry)
+    .find('media\\:content')
+    .toArray()
+    .map(node => {
+      const medium = ($(node).attr('medium') || '').toLowerCase();
+      const type = ($(node).attr('type') || '').toLowerCase();
+      if (medium === 'video' || type.startsWith('video/')) {
+        return $(node).attr('url')?.trim();
+      }
+      return undefined;
+    })
+    .find(Boolean);
+  if (mediaVideo) return toAbsoluteUrl(mediaVideo, source.url);
+
+  const enclosureVideo = $(entry)
+    .find('enclosure')
+    .toArray()
+    .map(node => {
+      const type = ($(node).attr('type') || '').toLowerCase();
+      if (type.startsWith('video/')) return $(node).attr('url')?.trim();
+      return undefined;
+    })
+    .find(Boolean);
+  if (enclosureVideo) return toAbsoluteUrl(enclosureVideo, source.url);
+
+  const atomVideo = $(entry)
+    .find('link')
+    .toArray()
+    .map(node => {
+      const rel = ($(node).attr('rel') || '').toLowerCase();
+      const type = ($(node).attr('type') || '').toLowerCase();
+      if (rel === 'enclosure' && type.startsWith('video/')) {
+        return $(node).attr('href')?.trim();
+      }
+      return undefined;
+    })
+    .find(Boolean);
+  if (atomVideo) return toAbsoluteUrl(atomVideo, source.url);
+
+  const descriptionRaw = $(entry).find('description').first().text().trim();
+  const descriptionVideo = descriptionRaw ? extractVideoFromHtmlFragment(descriptionRaw, source.url) : undefined;
+  if (descriptionVideo) return descriptionVideo;
+
+  const contentRaw = $(entry).find('content\\:encoded').first().text().trim();
+  const contentVideo = contentRaw ? extractVideoFromHtmlFragment(contentRaw, source.url) : undefined;
+  if (contentVideo) return contentVideo;
 
   return undefined;
 };
@@ -294,12 +357,14 @@ const parseRssItems = (body: string, source: TrendSource): TrendItem[] => {
         $(entry).find('updated').first().text().trim();
       const publishedAt = parseDate(publishedRaw);
       const imageUrl = extractRssImage($, entry, source);
+      const videoUrl = extractRssVideo($, entry, source);
       if (!title) return null;
       return {
         title,
         link: toAbsoluteUrl(link, source.url) || link || undefined,
         summary,
         imageUrl,
+        videoUrl,
         publishedAt,
         sourceId: source.id,
         sourceLabel: source.label,
@@ -319,6 +384,7 @@ const parseHtmlItems = (body: string, source: TrendSource): TrendItem[] => {
     const link = selectors.link ? $(element).find(selectors.link).first().attr('href')?.trim() : undefined;
     const summaryRaw = selectors.summary ? $(element).find(selectors.summary).first().text().trim() : undefined;
     const imageRaw = $(element).find('img').first().attr('src')?.trim();
+    const videoRaw = $(element).find('video source').first().attr('src')?.trim() || $(element).find('video').first().attr('src')?.trim();
     const publishedRaw = selectors.published
       ? $(element).find(selectors.published).first().text().trim()
       : undefined;
@@ -328,6 +394,7 @@ const parseHtmlItems = (body: string, source: TrendSource): TrendItem[] => {
       link: toAbsoluteUrl(link, source.url) || link,
       summary: normalizeText(summaryRaw),
       imageUrl: toAbsoluteUrl(imageRaw, source.url) || imageRaw,
+      videoUrl: toAbsoluteUrl(videoRaw, source.url) || videoRaw,
       publishedAt,
       sourceId: source.id,
       sourceLabel: source.label,
