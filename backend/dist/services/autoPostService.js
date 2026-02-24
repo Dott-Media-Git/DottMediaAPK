@@ -2530,7 +2530,7 @@ export class AutoPostService {
             return null;
         const readOnly = client.readOnly;
         const accounts = this.getXHighlightAccounts(job);
-        const maxAgeHours = Math.max(job.xHighlightMaxAgeHours ?? 48, 6);
+        const maxAgeHours = Math.max(job.xHighlightMaxAgeHours ?? 72, 6);
         const minCreatedAt = Date.now() - maxAgeHours * 60 * 60 * 1000;
         const lastTweetId = (job.xLastHighlightTweetId || '').trim();
         const lastWeeklyAwardTweetId = (job.xLastWeeklyAwardTweetId || '').trim();
@@ -2551,8 +2551,8 @@ export class AutoPostService {
                 if (!authorId)
                     continue;
                 const timeline = await readOnly.v2.userTimeline(authorId, {
-                    max_results: 10,
-                    exclude: ['replies', 'retweets'],
+                    max_results: 30,
+                    exclude: ['replies'],
                     expansions: ['attachments.media_keys'],
                     'tweet.fields': ['created_at', 'public_metrics', 'attachments'],
                     'media.fields': ['type'],
