@@ -84,7 +84,11 @@ export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?
         const contentType = inferVideoMimeType(videoUrl, res.headers['content-type']);
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore
-        const mediaId = await rw.v1.uploadMedia(buffer, { mimeType: contentType, target: 'tweet' });
+        const mediaId = await rw.v1.uploadMedia(buffer, {
+          mimeType: contentType,
+          type: contentType,
+          target: 'tweet',
+        });
         mediaIds.push(String(mediaId));
       } catch (err) {
         console.warn('[twitter] video upload failed for', videoUrl, err instanceof Error ? err.message : err);
@@ -104,11 +108,12 @@ export async function publishToTwitter(input: PublishInput): Promise<{ remoteId?
             buffer = Buffer.from(res.data);
             contentType = res.headers['content-type'] ?? undefined;
           }
+          const imageType = contentType || 'image/png';
           // uploadMedia accepts Buffer and optional mimeType
           // returns media id string
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-ignore
-          const mediaId = await rw.v1.uploadMedia(buffer, { mimeType: contentType });
+          const mediaId = await rw.v1.uploadMedia(buffer, { mimeType: imageType, type: imageType });
           mediaIds.push(String(mediaId));
         } catch (err) {
           console.warn('[twitter] media upload failed for', url, err instanceof Error ? err.message : err);
