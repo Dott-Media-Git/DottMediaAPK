@@ -1907,7 +1907,7 @@ export class AutoPostService {
           const quoteCaption = `${perPlatformCaption}\n\n${highlightLine}`;
           const response = await publisher({
             caption: quoteCaption,
-            imageUrls,
+            imageUrls: [],
             quoteTweetId: xHighlight.tweetId,
             credentials,
           });
