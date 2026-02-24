@@ -1222,6 +1222,9 @@ export class AutoPostService {
         const sourceImageUrls = [];
         const sourceVideoUrls = [];
         const trendCaptions = {};
+        let newsBaselineCaption = '';
+        let newsBaselineImages = [];
+        let newsBaselineCaptions = {};
         let footballCandidates = [];
         let usedTableCursor = null;
         let trendContentKey = null;
@@ -1236,7 +1239,7 @@ export class AutoPostService {
                 footballCandidates = candidates;
                 const top = candidates[0];
                 if (!top) {
-                    caption = this.buildFootballFallbackCaption(undefined, selectedContentType, scheduleTimezone);
+                    caption = this.buildFootballFallbackCaption(undefined, 'news', scheduleTimezone);
                 }
                 else {
                     trendTopic = top.topic;
@@ -1308,7 +1311,7 @@ export class AutoPostService {
             }
             catch (error) {
                 console.warn('[autopost] trend generation failed; using text fallback', error);
-                caption = this.buildFootballFallbackCaption(trendTopic, selectedContentType, scheduleTimezone);
+                caption = this.buildFootballFallbackCaption(trendTopic, 'news', scheduleTimezone);
                 imageUrls = Array.from(new Set(sourceImageUrls)).slice(0, 4);
             }
         }
@@ -1332,12 +1335,28 @@ export class AutoPostService {
                 console.warn('[autopost] trend image fallback generation failed', error);
             }
         }
+        if (scope === 'football') {
+            newsBaselineCaption = caption.trim();
+            newsBaselineImages = [...imageUrls];
+            newsBaselineCaptions = { ...trendCaptions };
+        }
         if (structuredScheduleEnabled && scope === 'football') {
             const topCandidate = footballCandidates[0];
             const topItem = topCandidate?.items?.[0];
             const setUnifiedCaption = () => {
                 for (const platform of platforms) {
                     trendCaptions[platform] = caption;
+                }
+            };
+            const restoreNewsBaseline = () => {
+                caption = newsBaselineCaption || this.buildFootballFallbackCaption(trendTopic, 'news', scheduleTimezone);
+                imageUrls = newsBaselineImages.length ? [...newsBaselineImages] : Array.from(new Set(sourceImageUrls)).slice(0, 4);
+                for (const platform of platforms) {
+                    delete trendCaptions[platform];
+                    const baselineCaption = newsBaselineCaptions[platform]?.trim();
+                    if (baselineCaption) {
+                        trendCaptions[platform] = baselineCaption;
+                    }
                 }
             };
             if (selectedContentType === 'prediction') {
@@ -1356,6 +1375,7 @@ export class AutoPostService {
                     const key = this.buildTrendContentKey('prediction', `${job.trendPredictionsUrl || 'https://www.bwinbetug.com'}|${picks.map(pick => `${pick.fixture}|${pick.odds || ''}`).join('|')}`);
                     if (trendRecentSet.has(key)) {
                         selectedContentType = 'news';
+                        restoreNewsBaseline();
                     }
                     else {
                         trendContentKey = key;
@@ -1391,6 +1411,7 @@ export class AutoPostService {
                     }
                     if (trendRecentSet.has(key)) {
                         selectedContentType = 'news';
+                        restoreNewsBaseline();
                     }
                     else {
                         trendContentKey = key;
@@ -1434,6 +1455,7 @@ export class AutoPostService {
                         .join('|')}`);
                     if (trendRecentSet.has(key)) {
                         selectedContentType = 'news';
+                        restoreNewsBaseline();
                     }
                     else {
                         trendContentKey = key;
@@ -1480,6 +1502,10 @@ export class AutoPostService {
                 }
             }
             if (selectedContentType === 'news') {
+                const staleStructuredCaption = /(live table update|top scorers update|football predictions update|latest result update)/i.test(caption);
+                if (staleStructuredCaption) {
+                    restoreNewsBaseline();
+                }
                 if (!caption) {
                     caption = topCandidate?.topic
                         ? `${topCandidate.topic}\n\nMore football updates: www.bwinbetug.info`
