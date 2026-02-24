@@ -1506,7 +1506,12 @@ export class AutoPostService {
           maxAgeHours: job.trendMaxAgeHours ?? 48,
         });
         footballCandidates = candidates;
-        const top = candidates[0];
+        const top =
+          selectedContentType === 'video'
+            ? candidates.find(candidate =>
+                (candidate.items ?? []).some(item => Boolean(item.videoUrl?.trim())),
+              ) ?? candidates[0]
+            : candidates[0];
         if (!top) {
           caption = this.buildFootballFallbackCaption(undefined, 'news', scheduleTimezone);
         } else {
@@ -1517,11 +1522,16 @@ export class AutoPostService {
             const resolved = await this.resolveBestNewsImageUrl(item.imageUrl?.trim(), item.link?.trim());
             if (resolved) topItemImages.push(resolved);
           }
-          const topItemVideos = items
-            .map(item => item.videoUrl?.trim())
-            .filter((url): url is string => Boolean(url));
+          const videoPool = selectedContentType === 'video' ? footballCandidates.flatMap(item => item.items ?? []) : items;
+          const topItemVideos = Array.from(
+            new Set(
+              videoPool
+                .map(item => item.videoUrl?.trim())
+                .filter((url): url is string => Boolean(url)),
+            ),
+          );
           sourceImageUrls.push(...topItemImages);
-          sourceVideoUrls.push(...topItemVideos);
+          sourceVideoUrls.push(...topItemVideos.slice(0, 10));
           const contextLines = [
             `topic: ${top.topic}`,
             top.sources?.length ? `sources: ${top.sources.join(', ')}` : '',
