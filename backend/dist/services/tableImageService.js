@@ -165,3 +165,55 @@ export async function renderTopScorersImage(input) {
     const output = await sharp(Buffer.from(svg)).jpeg({ quality: 88, mozjpeg: true }).toBuffer();
     return addLogoOverlay(output, 'top-scorers-image');
 }
+export async function renderPredictionsImage(input) {
+    const rows = (input.rows ?? []).slice(0, 8);
+    const source = input.source?.trim() || 'Bwinbet fixture scan';
+    const cta = input.cta?.trim() || 'www.bwinbetug.info';
+    const updatedLabel = parseTimestampLabel(input.updatedAt);
+    const headerY = 120;
+    const tableTop = 240;
+    const rowHeight = 64;
+    const rowsSvg = rows
+        .map((row, index) => {
+        const y = tableTop + index * rowHeight;
+        const fill = index % 2 === 0 ? '#141414' : '#1d1d1d';
+        const odds = row.odds?.trim() || '-';
+        return `
+        <rect x="120" y="${y}" width="1360" height="${rowHeight - 4}" rx="12" fill="${fill}"/>
+        <text x="155" y="${y + 42}" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#ffca08">${index + 1}</text>
+        <text x="240" y="${y + 42}" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="600" fill="#ffffff">${escapeXml(clampText(row.fixture, 42))}</text>
+        <rect x="1240" y="${y + 14}" width="180" height="34" rx="17" fill="#ffca08"/>
+        <text x="1330" y="${y + 39}" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="800" fill="#111111" text-anchor="middle">${escapeXml(clampText(odds, 16))}</text>
+      `;
+    })
+        .join('');
+    const svg = `
+    <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#ffca08"/>
+          <stop offset="100%" stop-color="#f1b900"/>
+        </linearGradient>
+      </defs>
+      <rect width="${WIDTH}" height="${HEIGHT}" fill="url(#bg)"/>
+      <rect x="40" y="36" width="1520" height="828" rx="40" fill="#0b0b0b"/>
+      <rect x="40" y="36" width="1520" height="120" rx="40" fill="#111111"/>
+      <rect x="40" y="126" width="1520" height="2" fill="#ffca08"/>
+
+      <text x="120" y="${headerY}" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="800" fill="#ffca08">BWINBET MATCH PICKS</text>
+      <text x="120" y="${headerY + 42}" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="500" fill="#f2f2f2">PREDICTIONS BOARD - Updated ${escapeXml(updatedLabel)} EAT</text>
+
+      <rect x="120" y="188" width="1360" height="44" rx="10" fill="#171717"/>
+      <text x="155" y="218" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#ffca08">#</text>
+      <text x="240" y="218" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#ffca08">FIXTURE</text>
+      <text x="1420" y="218" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#ffca08" text-anchor="end">PICK / ODDS</text>
+
+      ${rowsSvg}
+
+      <text x="120" y="828" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="500" fill="#d4d4d4">Source: ${escapeXml(source)}</text>
+      <text x="1480" y="828" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#ffca08" text-anchor="end">${escapeXml(cta)}</text>
+    </svg>
+  `;
+    const output = await sharp(Buffer.from(svg)).jpeg({ quality: 88, mozjpeg: true }).toBuffer();
+    return addLogoOverlay(output, 'predictions-image');
+}

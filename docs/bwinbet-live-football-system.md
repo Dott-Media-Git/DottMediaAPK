@@ -63,6 +63,9 @@ Both daily posts use the **same league on the same day**, then move to the next 
 - Source: `trendPredictionsUrl` (default `https://www.bwinbetug.com`), fallback `https://m.bwinbetug.com`
 - Extracts fixture-like entries and available odds patterns
 - CTA always includes: `www.bwinbetug.info`
+- Output format:
+  - Text caption with latest picks
+  - Branded predictions image card (`BWINBET MATCH PICKS`) in the same yellow/black style family as table and top-scorers cards
 
 ### 2) Table Posts
 - Source: `api-football-standings.azharimm.dev`
@@ -117,6 +120,7 @@ For football structured posts:
 - Ensures news/results/tables/predictions remain visually engaging
 - For `table` slots, the system first attempts a dedicated live-table image template before generic fallback
 - For `top_scorer` slots, the system uses a dedicated top-scorers template before generic fallback
+- For `prediction` slots, the system uses a dedicated branded predictions template before generic fallback
 - For `news` slots, image URLs are normalized to higher-resolution variants, and X-only runs apply additional quality enhancement before posting
 
 ## Operational Fields (Autopost Job)

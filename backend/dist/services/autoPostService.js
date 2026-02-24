@@ -22,7 +22,7 @@ import { getUserTrendConfig } from './userTrendSourceService.js';
 import { getTrendingCandidates as getFootballTrendingCandidates } from './footballTrendSources.js';
 import { footballTrendContentService } from './footballTrendContentService.js';
 import { resolveBrandIdForClient } from './brandKitService.js';
-import { renderLeagueTableImage, renderTopScorersImage } from './tableImageService.js';
+import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage } from './tableImageService.js';
 const TOP_FIVE_LEAGUES = [
     { id: 'eng.1', label: 'Premier League', espnId: 'eng.1' },
     { id: 'esp.1', label: 'La Liga', espnId: 'esp.1' },
@@ -1052,6 +1052,24 @@ export class AutoPostService {
             return null;
         }
     }
+    async createPredictionsImageDataUrl(picks) {
+        try {
+            const buffer = await renderPredictionsImage({
+                rows: picks.slice(0, 8).map(pick => ({
+                    fixture: pick.fixture,
+                    odds: pick.odds ?? null,
+                })),
+                source: 'Bwinbet fixture scan',
+                cta: 'www.bwinbetug.info',
+                updatedAt: new Date().toISOString(),
+            });
+            return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+        }
+        catch (error) {
+            console.warn('[autopost] predictions image generation failed', error);
+            return null;
+        }
+    }
     async executeTrendStories(userId, job) {
         const onNewRelease = job.storyOnNewRelease === true;
         const defaultPollMinutes = Math.max(Number(process.env.AUTOPOST_STORY_POLL_MINUTES ?? 5), 1);
@@ -1410,7 +1428,11 @@ export class AutoPostService {
                         trendContentKey = key;
                         usedTrendKeys.push(key);
                         setUnifiedCaption();
-                        if (!imageUrls.length) {
+                        const predictionsImageDataUrl = await this.createPredictionsImageDataUrl(picks);
+                        if (predictionsImageDataUrl) {
+                            imageUrls = [predictionsImageDataUrl];
+                        }
+                        else {
                             imageUrls = await this.generateFootballCardImage(`Create a clean football prediction card with readable fixture list and odds style layout. Highlight: "${picks[0]?.fixture || 'Top fixtures'}". No sportsbook logos.`, new Set(this.getRecentImageHistory(job)));
                         }
                     }
