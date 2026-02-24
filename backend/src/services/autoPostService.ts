@@ -1842,14 +1842,26 @@ export class AutoPostService {
     const shouldUseVideoMode = scope === 'football' && selectedContentType === 'video';
     const weeklyAwardsEnabled = scope === 'football' && job.xWeeklyAwardsEnabled === true;
     const weeklyAwardsOnly = weeklyAwardsEnabled && job.xWeeklyAwardsOnly === true;
-    const xHighlight =
-      shouldUseVideoMode && hasXPlatform
-        ? await this.pickFootballHighlightForX(job, credentials, {
-            preferWeeklyAwards: weeklyAwardsEnabled,
-            weeklyAwardsOnly,
-            rotateAccounts: true,
-          })
-        : null;
+    let xHighlight: {
+      tweetId: string;
+      username: string;
+      nextCursor?: number;
+      isWeeklyAward?: boolean;
+    } | null = null;
+    if (shouldUseVideoMode && hasXPlatform) {
+      try {
+        xHighlight = await this.pickFootballHighlightForX(job, credentials, {
+          preferWeeklyAwards: weeklyAwardsEnabled,
+          weeklyAwardsOnly,
+          rotateAccounts: true,
+        });
+      } catch (error) {
+        console.warn(
+          '[autopost] x highlight lookup failed; continuing with direct video fallback',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
     let usedXHighlightTweetId: string | null = null;
     let usedXHighlightUsername: string | null = null;
     let usedXHighlightAccountCursor: number | null = null;
@@ -1914,9 +1926,7 @@ export class AutoPostService {
         const useVideo =
           shouldUseVideoMode &&
           Boolean(trendVideoUrl) &&
-          videoCapablePlatforms.has(platform) &&
-          platform !== 'x' &&
-          platform !== 'twitter';
+          videoCapablePlatforms.has(platform);
         const response = await publisher({
           caption: perPlatformCaption,
           imageUrls: useVideo ? [] : imageUrls,
