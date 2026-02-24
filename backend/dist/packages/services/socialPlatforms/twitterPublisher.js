@@ -56,6 +56,7 @@ export async function publishToTwitter(input) {
     const rw = client.readWrite;
     try {
         const mediaIds = [];
+        let mediaUploadBlocked = false;
         if (videoUrl) {
             try {
                 const res = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: 120000 });
@@ -72,7 +73,7 @@ export async function publishToTwitter(input) {
             }
             catch (err) {
                 console.warn('[twitter] video upload failed for', videoUrl, err instanceof Error ? err.message : err);
-                throw err;
+                mediaUploadBlocked = true;
             }
         }
         else {
@@ -100,25 +101,51 @@ export async function publishToTwitter(input) {
                 }
                 catch (err) {
                     console.warn('[twitter] media upload failed for', url, err instanceof Error ? err.message : err);
-                    throw err;
+                    mediaUploadBlocked = true;
+                    break;
                 }
             }
         }
         // X's newer access tiers may block v1.1 tweet creation; use v2 for posting.
         const payload = { text: caption };
-        if (mediaIds.length)
+        if (mediaIds.length && !mediaUploadBlocked)
             payload.media = { media_ids: mediaIds };
         if (quoteTweetId)
             payload.quote_tweet_id = quoteTweetId;
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        const tweet = await rw.v2.tweet(payload);
-        const rawId = tweet?.data?.id;
-        const remoteId = rawId !== undefined && rawId !== null ? String(rawId) : undefined;
-        return { remoteId };
+        try {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-ignore
+            const tweet = await rw.v2.tweet(payload);
+            const rawId = tweet?.data?.id;
+            const remoteId = rawId !== undefined && rawId !== null ? String(rawId) : undefined;
+            return { remoteId };
+        }
+        catch (publishError) {
+            const errAny = publishError;
+            const mediaAttached = Boolean(payload.media?.media_ids?.length);
+            const forbidden = Number(errAny?.code ?? errAny?.status) === 403;
+            if (mediaAttached && forbidden) {
+                console.warn('[twitter] media tweet forbidden; retrying text-only');
+                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                // @ts-ignore
+                const retryTweet = await rw.v2.tweet({ text: caption });
+                const rawRetryId = retryTweet?.data?.id;
+                const remoteRetryId = rawRetryId !== undefined && rawRetryId !== null ? String(rawRetryId) : undefined;
+                return { remoteId: remoteRetryId };
+            }
+            throw publishError;
+        }
     }
     catch (error) {
-        console.error('[twitter] publish error', error instanceof Error ? error.message : error);
+        const errAny = error;
+        console.error('[twitter] publish error', {
+            message: error instanceof Error ? error.message : String(error),
+            code: errAny?.code,
+            status: errAny?.code ?? errAny?.status,
+            data: errAny?.data ?? errAny?.response?.data,
+            errors: errAny?.errors,
+            rateLimit: errAny?.rateLimitError,
+        });
         throw error;
     }
 }

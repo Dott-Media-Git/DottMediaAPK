@@ -81,7 +81,7 @@ async function addLogoOverlay(buffer: Buffer, logTag: string): Promise<Buffer> {
     const logo = await sharp(logoPath).resize({ width: 280, withoutEnlargement: true }).png().toBuffer();
     return sharp(buffer)
       .composite([{ input: logo, left: WIDTH - 340, top: 44 }])
-      .png()
+      .jpeg({ quality: 88, mozjpeg: true })
       .toBuffer();
   } catch (error) {
     console.warn(`[${logTag}] failed to load logo`, (error as Error).message);
@@ -146,7 +146,7 @@ export async function renderLeagueTableImage(input: LeagueTableImageInput): Prom
     </svg>
   `;
 
-  const output = await sharp(Buffer.from(svg)).png().toBuffer();
+  const output = await sharp(Buffer.from(svg)).jpeg({ quality: 88, mozjpeg: true }).toBuffer();
   return addLogoOverlay(output, 'table-image');
 }
 
@@ -219,6 +219,6 @@ export async function renderTopScorersImage(input: TopScorersImageInput): Promis
     </svg>
   `;
 
-  const output = await sharp(Buffer.from(svg)).png().toBuffer();
+  const output = await sharp(Buffer.from(svg)).jpeg({ quality: 88, mozjpeg: true }).toBuffer();
   return addLogoOverlay(output, 'top-scorers-image');
 }

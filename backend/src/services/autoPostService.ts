@@ -703,6 +703,23 @@ export class AutoPostService {
     return trimmed;
   }
 
+  private normalizeXCaption(caption: string, maxChars = 270) {
+    const cleaned = String(caption || '').replace(/\s+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    if (cleaned.length <= maxChars) return cleaned;
+    const lines = cleaned.split('\n').map(line => line.trim()).filter(Boolean);
+    const cta = lines.find(line => /bwinbetug\.info/i.test(line));
+    let compactLines = lines.slice(0, 5);
+    if (cta && !compactLines.includes(cta)) {
+      compactLines.push(cta);
+    }
+    let compact = compactLines.join('\n');
+    if (compact.length <= maxChars) return compact;
+    const truncated = compact.slice(0, maxChars - 3).trimEnd();
+    const lastBreak = Math.max(truncated.lastIndexOf('\n'), truncated.lastIndexOf(' '));
+    const base = lastBreak > 80 ? truncated.slice(0, lastBreak) : truncated;
+    return `${base.trimEnd()}...`;
+  }
+
   private getTrendRecentKeys(job: AutoPostJob): string[] {
     if (!Array.isArray(job.trendRecentKeys)) return [];
     return job.trendRecentKeys.filter(Boolean).map(value => String(value).toLowerCase().trim()).filter(Boolean);
@@ -1257,7 +1274,7 @@ export class AutoPostService {
         cta: 'www.bwinbetug.info',
         updatedAt: new Date().toISOString(),
       });
-      return `data:image/png;base64,${buffer.toString('base64')}`;
+      return `data:image/jpeg;base64,${buffer.toString('base64')}`;
     } catch (error) {
       console.warn('[autopost] table image generation failed', error);
       return null;
@@ -1278,7 +1295,7 @@ export class AutoPostService {
         cta: 'www.bwinbetug.info',
         updatedAt: new Date().toISOString(),
       });
-      return `data:image/png;base64,${buffer.toString('base64')}`;
+      return `data:image/jpeg;base64,${buffer.toString('base64')}`;
     } catch (error) {
       console.warn('[autopost] top scorers image generation failed', error);
       return null;
@@ -1643,11 +1660,19 @@ export class AutoPostService {
       if (selectedContentType === 'prediction') {
         const picks = await this.fetchBwinPredictionPicks(job, 3);
         if (picks.length) {
+          const updatedStamp = new Date().toLocaleTimeString('en-GB', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            timeZone: scheduleTimezone,
+          });
           const picksLine = picks
             .map((pick, idx) => `${idx + 1}. ${pick.fixture}${pick.odds ? ` (${pick.odds})` : ''}`)
             .join('\n');
           caption = [
             'Football predictions update',
+            `Updated: ${updatedStamp} (${scheduleTimezone})`,
             picksLine,
             'For full markets and live odds: www.bwinbetug.info',
           ]
@@ -1682,6 +1707,13 @@ export class AutoPostService {
           dailyLeague ? { preferredLeague: dailyLeague, strictPreferred: true } : {},
         );
         if (snapshot?.rows?.length) {
+          const updatedStamp = new Date().toLocaleTimeString('en-GB', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            timeZone: scheduleTimezone,
+          });
           const rows = snapshot.rows
             .slice(0, 6)
             .map(
@@ -1690,6 +1722,7 @@ export class AutoPostService {
             );
           caption = [
             `${snapshot.league} live table update`,
+            `Updated: ${updatedStamp} (${scheduleTimezone})`,
             ...rows,
             'For full tables and fixtures: www.bwinbetug.info',
           ]
@@ -1711,13 +1744,13 @@ export class AutoPostService {
             trendContentKey = key;
             usedTrendKeys.push(key);
             setUnifiedCaption();
-            const tableImageDataUrl = await this.createLeagueTableImageDataUrl(snapshot);
-            if (tableImageDataUrl) {
-              imageUrls = [tableImageDataUrl];
+            const tableImageUrl = await this.createLeagueTableImageUrl(userId, snapshot);
+            if (tableImageUrl) {
+              imageUrls = [tableImageUrl];
             } else {
-              const tableImageUrl = await this.createLeagueTableImageUrl(userId, snapshot);
-              if (tableImageUrl) {
-                imageUrls = [tableImageUrl];
+              const tableImageDataUrl = await this.createLeagueTableImageDataUrl(snapshot);
+              if (tableImageDataUrl) {
+                imageUrls = [tableImageDataUrl];
               } else {
                 imageUrls = await this.generateFootballCardImage(
                   `Design a modern football league table card for ${snapshot.league}. Show top teams and points with strong readability.`,
@@ -1735,6 +1768,13 @@ export class AutoPostService {
         const scorerLeague = dailyLeague ?? TOP_FIVE_LEAGUES[0];
         const snapshot = await this.fetchTopScorersSnapshot(scorerLeague);
         if (snapshot?.rows?.length) {
+          const updatedStamp = new Date().toLocaleTimeString('en-GB', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            timeZone: scheduleTimezone,
+          });
           const rows = snapshot.rows
             .slice(0, 6)
             .map(
@@ -1745,6 +1785,7 @@ export class AutoPostService {
             );
           caption = [
             `${snapshot.league} top scorers update`,
+            `Updated: ${updatedStamp} (${scheduleTimezone})`,
             ...rows,
             'For full tables and fixtures: www.bwinbetug.info',
           ]
@@ -1782,9 +1823,17 @@ export class AutoPostService {
         const resultEntries = this.extractResultEntries(footballCandidates, trendRecentSet);
         const selectedResult = resultEntries[0];
         if (selectedResult) {
+          const updatedStamp = new Date().toLocaleTimeString('en-GB', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            timeZone: scheduleTimezone,
+          });
           const source = selectedResult.item.sourceLabel || selectedResult.candidate.sources?.[0] || 'Football source';
           caption = [
             'Latest result update',
+            `Updated: ${updatedStamp} (${scheduleTimezone})`,
             selectedResult.item.title,
             `Source: ${source}`,
             'More fixtures and updates: www.bwinbetug.info',
@@ -1899,7 +1948,11 @@ export class AutoPostService {
         continue;
       }
       try {
-        const perPlatformCaption = trendCaptions[platform] || caption;
+        const rawPerPlatformCaption = trendCaptions[platform] || caption;
+        const perPlatformCaption =
+          platform === 'x' || platform === 'twitter'
+            ? this.normalizeXCaption(rawPerPlatformCaption)
+            : rawPerPlatformCaption;
         if (shouldUseVideoMode && (platform === 'x' || platform === 'twitter') && xHighlight?.tweetId) {
           const highlightLine = xHighlight.isWeeklyAward
             ? `Weekly award update via @${xHighlight.username}`

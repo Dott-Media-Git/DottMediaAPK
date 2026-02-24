@@ -45,7 +45,7 @@ async function addLogoOverlay(buffer, logTag) {
         const logo = await sharp(logoPath).resize({ width: 280, withoutEnlargement: true }).png().toBuffer();
         return sharp(buffer)
             .composite([{ input: logo, left: WIDTH - 340, top: 44 }])
-            .png()
+            .jpeg({ quality: 88, mozjpeg: true })
             .toBuffer();
     }
     catch (error) {
@@ -104,7 +104,7 @@ export async function renderLeagueTableImage(input) {
       <text x="1480" y="828" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#ffca08" text-anchor="end">${escapeXml(cta)}</text>
     </svg>
   `;
-    const output = await sharp(Buffer.from(svg)).png().toBuffer();
+    const output = await sharp(Buffer.from(svg)).jpeg({ quality: 88, mozjpeg: true }).toBuffer();
     return addLogoOverlay(output, 'table-image');
 }
 export async function renderTopScorersImage(input) {
@@ -162,6 +162,6 @@ export async function renderTopScorersImage(input) {
       <text x="1480" y="828" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#ffca08" text-anchor="end">${escapeXml(cta)}</text>
     </svg>
   `;
-    const output = await sharp(Buffer.from(svg)).png().toBuffer();
+    const output = await sharp(Buffer.from(svg)).jpeg({ quality: 88, mozjpeg: true }).toBuffer();
     return addLogoOverlay(output, 'top-scorers-image');
 }
