@@ -1,6 +1,10 @@
 import admin from 'firebase-admin';
+import axios from 'axios';
+import sharp from 'sharp';
+import * as cheerio from 'cheerio';
 import fs from 'fs';
 import path from 'path';
+import { TwitterApi } from 'twitter-api-v2';
 import { firestore } from '../db/firestore.js';
 import { config } from '../config.js';
 import { contentGenerationService } from '../packages/services/contentGenerationService.js';
@@ -18,6 +22,14 @@ import { getUserTrendConfig } from './userTrendSourceService.js';
 import { getTrendingCandidates as getFootballTrendingCandidates } from './footballTrendSources.js';
 import { footballTrendContentService } from './footballTrendContentService.js';
 import { resolveBrandIdForClient } from './brandKitService.js';
+import { renderLeagueTableImage, renderTopScorersImage } from './tableImageService.js';
+const TOP_FIVE_LEAGUES = [
+    { id: 'eng.1', label: 'Premier League', espnId: 'eng.1' },
+    { id: 'esp.1', label: 'La Liga', espnId: 'esp.1' },
+    { id: 'ita.1', label: 'Serie A', espnId: 'ita.1' },
+    { id: 'ger.1', label: 'Bundesliga', espnId: 'ger.1' },
+    { id: 'fra.1', label: 'Ligue 1', espnId: 'fra.1' },
+];
 const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const platformPublishers = {
@@ -58,6 +70,29 @@ export class AutoPostService {
             'Want the demo link? Send a message.',
             "Ready to grow? Let's talk.",
             'Ask for a quick demo today.',
+        ];
+        this.defaultXHighlightAccounts = [
+            'premierleague',
+            'SkySportsNews',
+            'SkySportsPL',
+            'ESPNFC',
+            'SerieA_EN',
+            'LaLigaEN',
+            'Ligue1_ENG',
+            'Bundesliga_EN',
+            'ChampionsLeague',
+        ];
+        this.defaultXWeeklyAwardKeywords = [
+            'player of the week',
+            'goal of the week',
+            'save of the week',
+            'team of the week',
+            'manager of the week',
+            'weekly awards',
+            'totw',
+            'best xi',
+            'goal of the month',
+            'player of the month',
         ];
     }
     getFallbackImagePool() {
@@ -449,6 +484,556 @@ export class AutoPostService {
             return `${trimmed}.`;
         return trimmed;
     }
+    getTrendRecentKeys(job) {
+        if (!Array.isArray(job.trendRecentKeys))
+            return [];
+        return job.trendRecentKeys.filter(Boolean).map(value => String(value).toLowerCase().trim()).filter(Boolean);
+    }
+    mergeTrendRecentKeys(existing, used) {
+        const maxHistory = Math.max(Number(process.env.AUTOPOST_TREND_KEY_HISTORY ?? 80), 20);
+        const next = [...used, ...existing]
+            .map(value => String(value || '').toLowerCase().trim())
+            .filter(Boolean);
+        const seen = new Set();
+        const unique = next.filter(value => {
+            if (seen.has(value))
+                return false;
+            seen.add(value);
+            return true;
+        });
+        return unique.slice(0, maxHistory);
+    }
+    getHourForTimezone(date, timezone) {
+        try {
+            const formatted = new Intl.DateTimeFormat('en-GB', {
+                timeZone: timezone,
+                hour: '2-digit',
+                hour12: false,
+            }).format(date);
+            const parsed = Number.parseInt(formatted, 10);
+            if (Number.isFinite(parsed))
+                return parsed;
+        }
+        catch (error) {
+            console.warn('[autopost] invalid trend timezone, falling back to UTC', { timezone, error });
+        }
+        return date.getUTCHours();
+    }
+    getDateKeyForTimezone(date, timezone) {
+        try {
+            const parts = new Intl.DateTimeFormat('en-GB', {
+                timeZone: timezone,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+            }).formatToParts(date);
+            const year = parts.find(part => part.type === 'year')?.value;
+            const month = parts.find(part => part.type === 'month')?.value;
+            const day = parts.find(part => part.type === 'day')?.value;
+            if (year && month && day) {
+                return `${year}-${month}-${day}`;
+            }
+        }
+        catch (error) {
+            console.warn('[autopost] invalid trend timezone for date key; falling back to UTC', { timezone, error });
+        }
+        const year = date.getUTCFullYear();
+        const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
+        const day = `${date.getUTCDate()}`.padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+    getDailyLeagueForDate(date, timezone) {
+        const dateKey = this.getDateKeyForTimezone(date, timezone);
+        const [yearRaw, monthRaw, dayRaw] = dateKey.split('-');
+        const year = Number.parseInt(yearRaw, 10);
+        const month = Number.parseInt(monthRaw, 10);
+        const day = Number.parseInt(dayRaw, 10);
+        const daySerial = Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)
+            ? Math.floor(Date.UTC(year, month - 1, day) / 86400000)
+            : Math.floor(date.getTime() / 86400000);
+        const idx = ((daySerial % TOP_FIVE_LEAGUES.length) + TOP_FIVE_LEAGUES.length) % TOP_FIVE_LEAGUES.length;
+        return TOP_FIVE_LEAGUES[idx];
+    }
+    parseNumeric(value) {
+        if (typeof value === 'number' && Number.isFinite(value))
+            return value;
+        if (typeof value === 'string') {
+            const parsed = Number.parseFloat(value.replace(/[^0-9.-]/g, ''));
+            if (Number.isFinite(parsed))
+                return parsed;
+        }
+        return 0;
+    }
+    getStructuredFootballSlot(job, now) {
+        const timezone = job.trendTimezone?.trim() || process.env.AUTOPOST_FOOTBALL_TZ?.trim() || 'Africa/Kampala';
+        const hour = this.getHourForTimezone(now, timezone);
+        const predictionHours = new Set([9, 13, 17, 21]);
+        const tableHours = new Set([8]);
+        const topScorerHours = new Set([20]);
+        if (predictionHours.has(hour)) {
+            return { contentType: 'prediction', timezone, hour };
+        }
+        if (tableHours.has(hour)) {
+            return { contentType: 'table', timezone, hour };
+        }
+        if (topScorerHours.has(hour)) {
+            return { contentType: 'top_scorer', timezone, hour };
+        }
+        const cycle = ['result', 'news', 'video'];
+        const cursor = Number.isFinite(job.trendSlotCursor) ? job.trendSlotCursor : hour % cycle.length;
+        const idx = ((Math.trunc(cursor) % cycle.length) + cycle.length) % cycle.length;
+        return {
+            contentType: cycle[idx],
+            timezone,
+            hour,
+            nextSlotCursor: (idx + 1) % cycle.length,
+        };
+    }
+    buildTrendContentKey(type, value) {
+        const normalized = String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        return `${type}:${normalized}`.slice(0, 320);
+    }
+    toHighResolutionImageUrl(rawUrl) {
+        const value = String(rawUrl || '').trim();
+        if (!value)
+            return '';
+        try {
+            const parsed = new URL(value);
+            const host = parsed.hostname.toLowerCase();
+            if (host.includes('images.unsplash.com')) {
+                parsed.searchParams.set('auto', 'format');
+                parsed.searchParams.set('fit', 'crop');
+                parsed.searchParams.set('w', '1800');
+                parsed.searchParams.set('q', '90');
+                return parsed.toString();
+            }
+            if (host.includes('i.guim.co.uk')) {
+                parsed.searchParams.set('width', '2000');
+                parsed.searchParams.set('quality', '90');
+                parsed.searchParams.set('auto', 'format');
+                parsed.searchParams.set('fit', 'max');
+                return parsed.toString();
+            }
+            if (host.includes('bbci.co.uk') || host.includes('bbc.co.uk') || host.includes('bbc.com')) {
+                parsed.searchParams.set('w', '1600');
+                parsed.searchParams.set('h', '900');
+                parsed.searchParams.set('quality', '90');
+                return parsed.toString();
+            }
+            if (host.includes('espncdn.com') || host.includes('espn.com')) {
+                parsed.searchParams.set('w', '1600');
+                parsed.searchParams.set('h', '900');
+                parsed.searchParams.set('q', '90');
+                return parsed.toString();
+            }
+            return parsed.toString();
+        }
+        catch {
+            return value;
+        }
+    }
+    isLikelyLowResolutionUrl(rawUrl) {
+        try {
+            const parsed = new URL(rawUrl);
+            const width = Number.parseInt(parsed.searchParams.get('width') ?? parsed.searchParams.get('w') ?? '', 10);
+            const height = Number.parseInt(parsed.searchParams.get('height') ?? parsed.searchParams.get('h') ?? '', 10);
+            if (Number.isFinite(width) && width > 0 && width <= 500)
+                return true;
+            if (Number.isFinite(height) && height > 0 && height <= 350)
+                return true;
+            const url = rawUrl.toLowerCase();
+            if (url.includes('/thumb/') || url.includes('thumbnail') || url.includes('width=140'))
+                return true;
+            return false;
+        }
+        catch {
+            return false;
+        }
+    }
+    async fetchOpenGraphImage(articleUrl) {
+        try {
+            const response = await axios.get(articleUrl, {
+                timeout: 12000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+                },
+            });
+            const html = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+            const $ = cheerio.load(html);
+            const ogImage = $('meta[property="og:image"]').attr('content')?.trim() ||
+                $('meta[property="og:image:secure_url"]').attr('content')?.trim() ||
+                $('meta[name="twitter:image"]').attr('content')?.trim() ||
+                $('link[rel="image_src"]').attr('href')?.trim();
+            if (!ogImage)
+                return null;
+            try {
+                return new URL(ogImage, articleUrl).toString();
+            }
+            catch {
+                return ogImage;
+            }
+        }
+        catch (error) {
+            console.warn('[autopost] failed to fetch article OG image', { articleUrl, error });
+            return null;
+        }
+    }
+    async resolveBestNewsImageUrl(imageUrl, articleUrl) {
+        const normalized = imageUrl ? this.toHighResolutionImageUrl(imageUrl) : '';
+        if (normalized && !this.isLikelyLowResolutionUrl(normalized)) {
+            return normalized;
+        }
+        if (articleUrl) {
+            const ogImage = await this.fetchOpenGraphImage(articleUrl);
+            if (ogImage)
+                return this.toHighResolutionImageUrl(ogImage);
+        }
+        return normalized;
+    }
+    async enhanceImageToDataUrl(url) {
+        try {
+            const response = await axios.get(url, {
+                responseType: 'arraybuffer',
+                timeout: 20000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+                },
+            });
+            const source = Buffer.from(response.data);
+            const buffer = await sharp(source)
+                .rotate()
+                .resize(1600, 900, { fit: 'cover', position: 'attention' })
+                .sharpen()
+                .jpeg({ quality: 90, mozjpeg: true, chromaSubsampling: '4:4:4' })
+                .toBuffer();
+            return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+        }
+        catch (error) {
+            console.warn('[autopost] image enhancement failed', { url, error });
+            return null;
+        }
+    }
+    async improveNewsImageQuality(imageUrls, platforms) {
+        const normalized = imageUrls
+            .map(url => this.toHighResolutionImageUrl(url))
+            .filter(Boolean)
+            .filter((value, index, arr) => arr.indexOf(value) === index);
+        if (!normalized.length)
+            return [];
+        const xOnly = platforms.every(platform => platform === 'x' || platform === 'twitter');
+        if (!xOnly)
+            return normalized;
+        const enhanced = await this.enhanceImageToDataUrl(normalized[0]);
+        return enhanced ? [enhanced] : normalized;
+    }
+    formatTrendClock(timezone = 'Africa/Kampala') {
+        try {
+            return new Intl.DateTimeFormat('en-GB', {
+                timeZone: timezone,
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+            }).format(new Date());
+        }
+        catch {
+            return new Date().toISOString().slice(11, 16);
+        }
+    }
+    buildFootballFallbackCaption(topic, contentType, timezone = 'Africa/Kampala') {
+        const title = topic?.trim() || `${contentType.replace(/_/g, ' ')} update`;
+        const stamp = this.formatTrendClock(timezone);
+        return `${title}\n\nUpdate time: ${stamp} EAT\nMore football updates: www.bwinbetug.info`;
+    }
+    async generateFootballCardImage(prompt, recentSet) {
+        try {
+            const generated = await contentGenerationService.generateContent({
+                prompt,
+                businessType: 'Football content card',
+                imageCount: 1,
+            });
+            const images = this.resolveImageUrls(generated.images ?? [], recentSet, false);
+            return images.slice(0, 1);
+        }
+        catch (error) {
+            console.warn('[autopost] football card image generation failed', error);
+            return [];
+        }
+    }
+    extractResultEntries(candidates, recentSet) {
+        const scorePattern = /\b\d{1,2}\s*[-:]\s*\d{1,2}\b/;
+        const entries = candidates.flatMap(candidate => {
+            const itemMatches = (candidate.items ?? [])
+                .filter(item => scorePattern.test(item.title))
+                .map(item => {
+                const key = this.buildTrendContentKey('result', `${item.title}|${item.link || ''}|${item.publishedAt || ''}`);
+                return { candidate, item, key };
+            })
+                .filter(entry => !recentSet.has(entry.key));
+            return itemMatches;
+        });
+        return entries.slice(0, 10);
+    }
+    async fetchBwinPredictionPicks(job, limit = 3) {
+        const configured = job.trendPredictionsUrl?.trim() || 'https://www.bwinbetug.com';
+        const targets = [configured, 'https://m.bwinbetug.com'].filter((value, index, arr) => arr.indexOf(value) === index);
+        const picks = [];
+        const seen = new Set();
+        for (const target of targets) {
+            try {
+                const response = await axios.get(target, {
+                    timeout: 15000,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+                    },
+                });
+                const html = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+                const $ = cheerio.load(html);
+                const candidates = [];
+                const selectors = ['[class*="event"]', '[class*="match"]', '[class*="fixture"]', 'li', 'a', 'div'];
+                for (const selector of selectors) {
+                    $(selector)
+                        .slice(0, 800)
+                        .each((_, element) => {
+                        const text = $(element).text().replace(/\s+/g, ' ').trim();
+                        if (text.length >= 12 && text.length <= 180 && /( vs | v | - )/i.test(text)) {
+                            candidates.push(text);
+                        }
+                    });
+                    if (candidates.length >= 100)
+                        break;
+                }
+                for (const raw of candidates) {
+                    const fixtureMatch = raw.match(/([A-Za-z0-9 .'-]{2,})\s(?:vs|v|-)\s([A-Za-z0-9 .'-]{2,})/i);
+                    if (!fixtureMatch)
+                        continue;
+                    const fixture = `${fixtureMatch[1].trim()} vs ${fixtureMatch[2].trim()}`.replace(/\s+/g, ' ');
+                    const oddsMatches = raw.match(/\b\d{1,2}\.\d{1,2}\b/g) ?? [];
+                    const odds = oddsMatches.slice(0, 3).join(' / ') || undefined;
+                    const dedupeKey = `${fixture.toLowerCase()}|${odds || ''}`;
+                    if (seen.has(dedupeKey))
+                        continue;
+                    seen.add(dedupeKey);
+                    picks.push({ fixture, odds });
+                    if (picks.length >= limit)
+                        return picks;
+                }
+            }
+            catch (error) {
+                console.warn('[autopost] prediction source fetch failed', { target, error });
+            }
+        }
+        return picks;
+    }
+    async fetchLeagueTableSnapshot(job, options = {}) {
+        const leagues = TOP_FIVE_LEAGUES;
+        const cursorRaw = Number.isFinite(job.trendTableCursor) ? job.trendTableCursor : 0;
+        const start = ((Math.trunc(cursorRaw) % leagues.length) + leagues.length) % leagues.length;
+        const orderedLeagues = options.preferredLeague
+            ? options.strictPreferred
+                ? [options.preferredLeague]
+                : [
+                    options.preferredLeague,
+                    ...leagues.filter(league => league.id !== options.preferredLeague?.id),
+                ]
+            : [...leagues.slice(start), ...leagues.slice(0, start)];
+        for (const league of orderedLeagues) {
+            const index = leagues.findIndex(item => item.id === league.id);
+            try {
+                const response = await axios.get(`https://api-football-standings.azharimm.dev/leagues/${league.id}/standings`, {
+                    timeout: 15000,
+                });
+                const standings = Array.isArray(response.data?.data?.standings) ? response.data.data.standings : [];
+                const rows = standings
+                    .slice(0, 8)
+                    .map((entry) => {
+                    const name = String(entry?.team?.displayName || entry?.team?.name || '').trim();
+                    const stats = Array.isArray(entry?.stats) ? entry.stats : [];
+                    const pointsStat = stats.find(stat => String(stat?.name || '').toLowerCase() === 'points' ||
+                        String(stat?.displayName || '').toLowerCase() === 'points');
+                    const playedStat = stats.find(stat => String(stat?.name || '').toLowerCase() === 'gamesplayed' ||
+                        String(stat?.displayName || '').toLowerCase() === 'games played');
+                    const goalDiffStat = stats.find(stat => String(stat?.name || '').toLowerCase() === 'pointdifferential' ||
+                        String(stat?.displayName || '').toLowerCase() === 'goal difference');
+                    const points = this.parseNumeric(pointsStat?.value ?? pointsStat?.displayValue ?? 0);
+                    const played = this.parseNumeric(playedStat?.value ?? playedStat?.displayValue ?? 0);
+                    const goalDiff = this.parseNumeric(goalDiffStat?.value ?? goalDiffStat?.displayValue ?? 0);
+                    return { name, points, played, goalDiff };
+                })
+                    .filter((entry) => entry.name);
+                if (rows.length) {
+                    return {
+                        leagueId: league.id,
+                        league: league.label,
+                        rows,
+                        nextCursor: ((index >= 0 ? index : 0) + 1) % leagues.length,
+                        source: 'api-football-standings',
+                    };
+                }
+            }
+            catch (error) {
+                console.warn('[autopost] standings fetch failed (primary source)', { league: league.label, error });
+            }
+            // Fallback source used when api-football-standings is unavailable.
+            try {
+                const response = await axios.get(`https://site.api.espn.com/apis/v2/sports/soccer/${league.espnId}/standings`, {
+                    timeout: 20000,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+                    },
+                });
+                const entries = Array.isArray(response.data?.children?.[0]?.standings?.entries)
+                    ? response.data.children[0].standings.entries
+                    : [];
+                const rows = entries
+                    .slice(0, 8)
+                    .map((entry) => {
+                    const name = String(entry?.team?.displayName || entry?.team?.name || '').trim();
+                    const stats = Array.isArray(entry?.stats) ? entry.stats : [];
+                    const getStat = (nameKey) => stats.find(stat => String(stat?.name || '').toLowerCase() === nameKey.toLowerCase());
+                    const points = this.parseNumeric(getStat('points')?.value ?? getStat('points')?.displayValue ?? 0);
+                    const played = this.parseNumeric(getStat('gamesPlayed')?.value ?? getStat('gamesPlayed')?.displayValue ?? 0);
+                    const goalDiff = this.parseNumeric(getStat('pointDifferential')?.value ?? getStat('pointDifferential')?.displayValue ?? 0);
+                    return { name, points, played, goalDiff };
+                })
+                    .filter((entry) => entry.name);
+                if (rows.length) {
+                    return {
+                        leagueId: league.id,
+                        league: league.label,
+                        rows,
+                        nextCursor: ((index >= 0 ? index : 0) + 1) % leagues.length,
+                        source: 'espn',
+                    };
+                }
+            }
+            catch (error) {
+                console.warn('[autopost] standings fetch failed (espn fallback)', { league: league.label, error });
+            }
+        }
+        return null;
+    }
+    async fetchTopScorersSnapshot(league) {
+        try {
+            const response = await axios.get(`https://site.api.espn.com/apis/site/v2/sports/soccer/${league.espnId}/statistics`, {
+                timeout: 20000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+                },
+            });
+            const stats = Array.isArray(response.data?.stats) ? response.data.stats : [];
+            const goalsBucket = stats.find((group) => {
+                const key = String(group?.name || '').toLowerCase();
+                const display = String(group?.displayName || '').toLowerCase();
+                return key.includes('goals') || display.includes('goal');
+            });
+            const leaders = Array.isArray(goalsBucket?.leaders) ? goalsBucket.leaders : [];
+            const rows = leaders
+                .slice(0, 10)
+                .map((entry) => {
+                const athlete = entry?.athlete ?? {};
+                const statsList = Array.isArray(athlete?.statistics) ? athlete.statistics : [];
+                const goalsStat = statsList.find((stat) => String(stat?.name || '').toLowerCase() === 'totalgoals');
+                const appearanceStat = statsList.find((stat) => String(stat?.name || '').toLowerCase() === 'appearances');
+                const player = String(athlete?.displayName || athlete?.shortName || '').trim();
+                const team = String(athlete?.team?.displayName || athlete?.team?.name || '').trim();
+                const goals = Math.trunc(this.parseNumeric(entry?.value ?? goalsStat?.value ?? goalsStat?.displayValue ?? 0));
+                let appearances = this.parseNumeric(appearanceStat?.value ?? appearanceStat?.displayValue ?? 0);
+                if (!appearances && typeof entry?.displayValue === 'string') {
+                    const match = entry.displayValue.match(/matches:\s*(\d{1,3})/i);
+                    if (match)
+                        appearances = this.parseNumeric(match[1]);
+                }
+                return {
+                    player,
+                    team,
+                    goals,
+                    appearances: appearances > 0 ? Math.trunc(appearances) : null,
+                };
+            })
+                .filter((row) => row.player && row.goals > 0);
+            if (!rows.length)
+                return null;
+            return {
+                leagueId: league.id,
+                league: league.label,
+                rows,
+                source: 'espn-statistics',
+            };
+        }
+        catch (error) {
+            console.warn('[autopost] top scorers fetch failed', { league: league.label, error });
+            return null;
+        }
+    }
+    async createLeagueTableImageUrl(userId, snapshot) {
+        const baseUrl = this.getPublicBaseUrl();
+        if (!baseUrl)
+            return null;
+        try {
+            const draftRef = firestore.collection('tableImageDrafts').doc();
+            await draftRef.set({
+                userId,
+                league: snapshot.league,
+                rows: snapshot.rows.slice(0, 8).map(row => ({
+                    name: row.name,
+                    points: row.points,
+                    played: row.played,
+                    goalDiff: row.goalDiff ?? null,
+                })),
+                source: snapshot.source,
+                cta: 'www.bwinbetug.info',
+                updatedAt: new Date().toISOString(),
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            return `${baseUrl}/public/table-image/${draftRef.id}.png`;
+        }
+        catch (error) {
+            console.warn('[autopost] table image draft creation failed', error);
+            return null;
+        }
+    }
+    async createLeagueTableImageDataUrl(snapshot) {
+        try {
+            const buffer = await renderLeagueTableImage({
+                league: snapshot.league,
+                rows: snapshot.rows.slice(0, 8).map(row => ({
+                    name: row.name,
+                    points: row.points,
+                    played: row.played,
+                    goalDiff: row.goalDiff ?? null,
+                })),
+                source: snapshot.source,
+                cta: 'www.bwinbetug.info',
+                updatedAt: new Date().toISOString(),
+            });
+            return `data:image/png;base64,${buffer.toString('base64')}`;
+        }
+        catch (error) {
+            console.warn('[autopost] table image generation failed', error);
+            return null;
+        }
+    }
+    async createTopScorersImageDataUrl(snapshot) {
+        try {
+            const buffer = await renderTopScorersImage({
+                league: snapshot.league,
+                rows: snapshot.rows.slice(0, 8).map(row => ({
+                    player: row.player,
+                    team: row.team,
+                    goals: row.goals,
+                    appearances: row.appearances ?? null,
+                })),
+                source: snapshot.source,
+                cta: 'www.bwinbetug.info',
+                updatedAt: new Date().toISOString(),
+            });
+            return `data:image/png;base64,${buffer.toString('base64')}`;
+        }
+        catch (error) {
+            console.warn('[autopost] top scorers image generation failed', error);
+            return null;
+        }
+    }
     async executeTrendStories(userId, job) {
         const onNewRelease = job.storyOnNewRelease === true;
         const defaultPollMinutes = Math.max(Number(process.env.AUTOPOST_STORY_POLL_MINUTES ?? 5), 1);
@@ -584,7 +1169,10 @@ export class AutoPostService {
         if (this.useMemory) {
             const current = this.memoryStore.get(userId);
             if (current) {
-                this.memoryStore.set(userId, { ...current, ...nextRecord });
+                this.memoryStore.set(userId, {
+                    ...current,
+                    ...nextRecord,
+                });
             }
         }
         await this.recordHistory(userId, historyEntries, finalImages);
@@ -614,10 +1202,29 @@ export class AutoPostService {
         const normalizedEmail = email?.toLowerCase().trim() ?? '';
         const brandId = normalizedEmail ? resolveBrandIdForClient(normalizedEmail) : null;
         const scope = brandId === 'bwinbetug' ? 'football' : 'global';
+        const now = new Date();
+        const structuredScheduleEnabled = scope === 'football' && job.trendStructuredScheduleEnabled !== false;
+        const structuredSlot = structuredScheduleEnabled ? this.getStructuredFootballSlot(job, now) : null;
+        let selectedContentType = structuredSlot?.contentType ?? (scope === 'football' ? 'news' : 'news');
+        const scheduleTimezone = (structuredSlot?.timezone ?? job.trendTimezone?.trim()) || 'Africa/Kampala';
+        const trendDateKey = this.getDateKeyForTimezone(now, scheduleTimezone);
+        const dailyLeague = structuredScheduleEnabled ? this.getDailyLeagueForDate(now, scheduleTimezone) : null;
+        let nextTrendSlotCursor = structuredScheduleEnabled && typeof structuredSlot?.nextSlotCursor === 'number'
+            ? structuredSlot.nextSlotCursor
+            : null;
+        const trendRecentKeys = this.getTrendRecentKeys(job);
+        const trendRecentSet = new Set(trendRecentKeys);
+        const usedTrendKeys = [];
         // Currently optimized for football trend posting (bwinbetug). Other scopes fall back to a lightweight text post.
         let caption = '';
+        let trendTopic = '';
         let imageUrls = [];
+        const sourceImageUrls = [];
+        const sourceVideoUrls = [];
         const trendCaptions = {};
+        let footballCandidates = [];
+        let usedTableCursor = null;
+        let trendContentKey = null;
         if (scope === 'football') {
             try {
                 const { sources } = await getUserTrendConfig(userId);
@@ -626,12 +1233,25 @@ export class AutoPostService {
                     maxCandidates: job.trendMaxCandidates ?? 6,
                     maxAgeHours: job.trendMaxAgeHours ?? 48,
                 });
+                footballCandidates = candidates;
                 const top = candidates[0];
                 if (!top) {
-                    caption = 'No football trends found right now. Checking again soon.';
+                    caption = this.buildFootballFallbackCaption(undefined, selectedContentType, scheduleTimezone);
                 }
                 else {
+                    trendTopic = top.topic;
                     const items = (top.items ?? []).slice(0, 6);
+                    const topItemImages = [];
+                    for (const item of items.slice(0, 4)) {
+                        const resolved = await this.resolveBestNewsImageUrl(item.imageUrl?.trim(), item.link?.trim());
+                        if (resolved)
+                            topItemImages.push(resolved);
+                    }
+                    const topItemVideos = items
+                        .map(item => item.videoUrl?.trim())
+                        .filter((url) => Boolean(url));
+                    sourceImageUrls.push(...topItemImages);
+                    sourceVideoUrls.push(...topItemVideos);
                     const contextLines = [
                         `topic: ${top.topic}`,
                         top.sources?.length ? `sources: ${top.sources.join(', ')}` : '',
@@ -673,7 +1293,8 @@ export class AutoPostService {
                     };
                     // Default caption for history and for platforms that don't override further down.
                     caption = [gen.content.captions.instagram, tags].filter(Boolean).join('\n\n').trim();
-                    imageUrls = gen.images ?? [];
+                    const mergedImages = [...sourceImageUrls, ...(gen.images ?? [])].filter(Boolean);
+                    imageUrls = Array.from(new Set(mergedImages)).slice(0, 4);
                     for (const p of platforms) {
                         const base = baseCaptionByPlatform(p);
                         const combined = [base, tags]
@@ -687,14 +1308,227 @@ export class AutoPostService {
             }
             catch (error) {
                 console.warn('[autopost] trend generation failed; using text fallback', error);
-                caption = 'Trending football update coming soon. Stay tuned.';
-                imageUrls = [];
+                caption = this.buildFootballFallbackCaption(trendTopic, selectedContentType, scheduleTimezone);
+                imageUrls = Array.from(new Set(sourceImageUrls)).slice(0, 4);
             }
         }
         else {
             caption = 'Trending update coming soon.';
             imageUrls = [];
         }
+        if (scope === 'football' && imageUrls.length === 0 && trendTopic) {
+            try {
+                const generatedImage = await contentGenerationService.generateContent({
+                    prompt: `Create a realistic football news image for this trend: "${trendTopic}". Dynamic stadium energy, editorial sports style, no logos.`,
+                    businessType: 'Football trend news visual',
+                    imageCount: 1,
+                });
+                const resolvedImages = this.resolveImageUrls(generatedImage.images ?? [], new Set(), false);
+                if (resolvedImages.length) {
+                    imageUrls = resolvedImages.slice(0, 1);
+                }
+            }
+            catch (error) {
+                console.warn('[autopost] trend image fallback generation failed', error);
+            }
+        }
+        if (structuredScheduleEnabled && scope === 'football') {
+            const topCandidate = footballCandidates[0];
+            const topItem = topCandidate?.items?.[0];
+            const setUnifiedCaption = () => {
+                for (const platform of platforms) {
+                    trendCaptions[platform] = caption;
+                }
+            };
+            if (selectedContentType === 'prediction') {
+                const picks = await this.fetchBwinPredictionPicks(job, 3);
+                if (picks.length) {
+                    const picksLine = picks
+                        .map((pick, idx) => `${idx + 1}. ${pick.fixture}${pick.odds ? ` (${pick.odds})` : ''}`)
+                        .join('\n');
+                    caption = [
+                        'Football predictions update',
+                        picksLine,
+                        'For full markets and live odds: www.bwinbetug.info',
+                    ]
+                        .filter(Boolean)
+                        .join('\n');
+                    const key = this.buildTrendContentKey('prediction', `${job.trendPredictionsUrl || 'https://www.bwinbetug.com'}|${picks.map(pick => `${pick.fixture}|${pick.odds || ''}`).join('|')}`);
+                    if (trendRecentSet.has(key)) {
+                        selectedContentType = 'news';
+                    }
+                    else {
+                        trendContentKey = key;
+                        usedTrendKeys.push(key);
+                        setUnifiedCaption();
+                        if (!imageUrls.length) {
+                            imageUrls = await this.generateFootballCardImage(`Create a clean football prediction card with readable fixture list and odds style layout. Highlight: "${picks[0]?.fixture || 'Top fixtures'}". No sportsbook logos.`, new Set(this.getRecentImageHistory(job)));
+                        }
+                    }
+                }
+                else {
+                    selectedContentType = 'news';
+                }
+            }
+            if (selectedContentType === 'table') {
+                const snapshot = await this.fetchLeagueTableSnapshot(job, dailyLeague ? { preferredLeague: dailyLeague, strictPreferred: true } : {});
+                if (snapshot?.rows?.length) {
+                    const rows = snapshot.rows
+                        .slice(0, 6)
+                        .map((row, idx) => `${idx + 1}. ${row.name} - ${Math.trunc(row.points)} pts${row.played ? ` (${Math.trunc(row.played)}P)` : ''}`);
+                    caption = [
+                        `${snapshot.league} live table update`,
+                        ...rows,
+                        'For full tables and fixtures: www.bwinbetug.info',
+                    ]
+                        .filter(Boolean)
+                        .join('\n');
+                    const key = this.buildTrendContentKey('table', `${trendDateKey}|${snapshot.league}|${snapshot.rows
+                        .map((row) => `${row.name}:${row.points}:${row.played}`)
+                        .join('|')}`);
+                    if (!dailyLeague) {
+                        usedTableCursor = snapshot.nextCursor;
+                    }
+                    if (trendRecentSet.has(key)) {
+                        selectedContentType = 'news';
+                    }
+                    else {
+                        trendContentKey = key;
+                        usedTrendKeys.push(key);
+                        setUnifiedCaption();
+                        const tableImageDataUrl = await this.createLeagueTableImageDataUrl(snapshot);
+                        if (tableImageDataUrl) {
+                            imageUrls = [tableImageDataUrl];
+                        }
+                        else {
+                            const tableImageUrl = await this.createLeagueTableImageUrl(userId, snapshot);
+                            if (tableImageUrl) {
+                                imageUrls = [tableImageUrl];
+                            }
+                            else {
+                                imageUrls = await this.generateFootballCardImage(`Design a modern football league table card for ${snapshot.league}. Show top teams and points with strong readability.`, new Set(this.getRecentImageHistory(job)));
+                            }
+                        }
+                    }
+                }
+                else {
+                    selectedContentType = 'news';
+                }
+            }
+            if (selectedContentType === 'top_scorer') {
+                const scorerLeague = dailyLeague ?? TOP_FIVE_LEAGUES[0];
+                const snapshot = await this.fetchTopScorersSnapshot(scorerLeague);
+                if (snapshot?.rows?.length) {
+                    const rows = snapshot.rows
+                        .slice(0, 6)
+                        .map((row, idx) => `${idx + 1}. ${row.player} (${row.team}) - ${Math.trunc(row.goals)} goals${row.appearances ? ` in ${Math.trunc(row.appearances)} apps` : ''}`);
+                    caption = [
+                        `${snapshot.league} top scorers update`,
+                        ...rows,
+                        'For full tables and fixtures: www.bwinbetug.info',
+                    ]
+                        .filter(Boolean)
+                        .join('\n');
+                    const key = this.buildTrendContentKey('top_scorer', `${trendDateKey}|${snapshot.league}|${snapshot.rows
+                        .map((row) => `${row.player}:${row.goals}:${row.appearances ?? '-'}`)
+                        .join('|')}`);
+                    if (trendRecentSet.has(key)) {
+                        selectedContentType = 'news';
+                    }
+                    else {
+                        trendContentKey = key;
+                        usedTrendKeys.push(key);
+                        setUnifiedCaption();
+                        const topScorersImageDataUrl = await this.createTopScorersImageDataUrl(snapshot);
+                        if (topScorersImageDataUrl) {
+                            imageUrls = [topScorersImageDataUrl];
+                        }
+                        else {
+                            imageUrls = await this.generateFootballCardImage(`Design a modern ${snapshot.league} top scorers card with player names, clubs, and goals.`, new Set(this.getRecentImageHistory(job)));
+                        }
+                    }
+                }
+                else {
+                    selectedContentType = 'news';
+                }
+            }
+            if (selectedContentType === 'result') {
+                const resultEntries = this.extractResultEntries(footballCandidates, trendRecentSet);
+                const selectedResult = resultEntries[0];
+                if (selectedResult) {
+                    const source = selectedResult.item.sourceLabel || selectedResult.candidate.sources?.[0] || 'Football source';
+                    caption = [
+                        'Latest result update',
+                        selectedResult.item.title,
+                        `Source: ${source}`,
+                        'More fixtures and updates: www.bwinbetug.info',
+                    ]
+                        .filter(Boolean)
+                        .join('\n');
+                    trendContentKey = selectedResult.key;
+                    usedTrendKeys.push(selectedResult.key);
+                    setUnifiedCaption();
+                    if (selectedResult.item.imageUrl?.trim()) {
+                        imageUrls = [selectedResult.item.imageUrl.trim()];
+                    }
+                    else {
+                        imageUrls = await this.generateFootballCardImage(`Create a football scorecard image for this result: "${selectedResult.item.title}". Editorial sports style, clear score emphasis.`, new Set(this.getRecentImageHistory(job)));
+                    }
+                }
+                else {
+                    selectedContentType = 'news';
+                }
+            }
+            if (selectedContentType === 'news') {
+                if (!caption) {
+                    caption = topCandidate?.topic
+                        ? `${topCandidate.topic}\n\nMore football updates: www.bwinbetug.info`
+                        : this.buildFootballFallbackCaption(undefined, selectedContentType, scheduleTimezone);
+                    setUnifiedCaption();
+                }
+                if (topCandidate) {
+                    const key = this.buildTrendContentKey('news', `${topCandidate.topic}|${topItem?.link || ''}|${topItem?.publishedAt || topCandidate.publishedAt || ''}`);
+                    if (!trendRecentSet.has(key)) {
+                        trendContentKey = key;
+                        usedTrendKeys.push(key);
+                    }
+                }
+                if (!imageUrls.length && trendTopic) {
+                    imageUrls = await this.generateFootballCardImage(`Create a football breaking-news poster image for "${trendTopic}". Clean typography space, dynamic stadium atmosphere.`, new Set(this.getRecentImageHistory(job)));
+                }
+            }
+        }
+        if (scope === 'football' && selectedContentType === 'news' && imageUrls.length) {
+            imageUrls = await this.improveNewsImageQuality(imageUrls, platforms);
+        }
+        // For trend posts, only use explicit per-job video URLs as fallback.
+        // Do not pull from global fallback directory to avoid off-brand/non-topic clips.
+        const genericVideoSelection = this.selectNextGenericVideo(job, []);
+        const trendVideoUrl = sourceVideoUrls[0] || genericVideoSelection.videoUrl;
+        const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'linkedin']);
+        const hasXPlatform = platforms.some(platform => platform === 'x' || platform === 'twitter');
+        const shouldUseVideoMode = scope === 'football' && selectedContentType === 'video';
+        const weeklyAwardsEnabled = scope === 'football' && job.xWeeklyAwardsEnabled === true;
+        const weeklyAwardsOnly = weeklyAwardsEnabled && job.xWeeklyAwardsOnly === true;
+        const xHighlight = shouldUseVideoMode && hasXPlatform
+            ? await this.pickFootballHighlightForX(job, credentials, {
+                preferWeeklyAwards: weeklyAwardsEnabled,
+                weeklyAwardsOnly,
+                rotateAccounts: true,
+            })
+            : null;
+        let usedXHighlightTweetId = null;
+        let usedXHighlightUsername = null;
+        let usedXHighlightAccountCursor = null;
+        let usedXWeeklyAwardTweetId = null;
+        const nextRecord = {
+            trendLastRunAt: admin.firestore.Timestamp.now(),
+            trendNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+            trendLastResult: results,
+            ...(!sourceVideoUrls[0] && trendVideoUrl && typeof genericVideoSelection.nextCursor === 'number'
+                ? { videoCursor: genericVideoSelection.nextCursor }
+                : {}),
+        };
         for (const platform of platforms) {
             const publisher = platformPublishers[platform];
             if (!publisher) {
@@ -709,9 +1543,57 @@ export class AutoPostService {
             }
             try {
                 const perPlatformCaption = trendCaptions[platform] || caption;
-                const response = await publisher({ caption: perPlatformCaption, imageUrls, credentials });
+                if (shouldUseVideoMode && (platform === 'x' || platform === 'twitter') && xHighlight?.tweetId) {
+                    const highlightLine = xHighlight.isWeeklyAward
+                        ? `Weekly award update via @${xHighlight.username}`
+                        : `Highlight via @${xHighlight.username}`;
+                    const quoteCaption = `${perPlatformCaption}\n\n${highlightLine}`;
+                    const response = await publisher({
+                        caption: quoteCaption,
+                        imageUrls,
+                        quoteTweetId: xHighlight.tweetId,
+                        credentials,
+                    });
+                    results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
+                    historyEntries.push({
+                        platform,
+                        status: 'posted',
+                        caption: quoteCaption,
+                        remoteId: response.remoteId ?? null,
+                    });
+                    usedXHighlightTweetId = xHighlight.tweetId;
+                    usedXHighlightUsername = xHighlight.username;
+                    if (typeof xHighlight.nextCursor === 'number') {
+                        usedXHighlightAccountCursor = xHighlight.nextCursor;
+                    }
+                    if (xHighlight.isWeeklyAward) {
+                        usedXWeeklyAwardTweetId = xHighlight.tweetId;
+                    }
+                    if (!trendContentKey) {
+                        trendContentKey = this.buildTrendContentKey('video', `${xHighlight.username}|${xHighlight.tweetId}`);
+                        usedTrendKeys.push(trendContentKey);
+                    }
+                    continue;
+                }
+                const useVideo = shouldUseVideoMode &&
+                    Boolean(trendVideoUrl) &&
+                    videoCapablePlatforms.has(platform) &&
+                    platform !== 'x' &&
+                    platform !== 'twitter';
+                const response = await publisher({
+                    caption: perPlatformCaption,
+                    imageUrls: useVideo ? [] : imageUrls,
+                    videoUrl: useVideo ? trendVideoUrl : undefined,
+                    credentials,
+                });
                 results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
-                historyEntries.push({ platform, status: 'posted', caption: perPlatformCaption, remoteId: response.remoteId ?? null });
+                historyEntries.push({
+                    platform,
+                    status: 'posted',
+                    caption: perPlatformCaption,
+                    remoteId: response.remoteId ?? null,
+                    videoUrl: useVideo ? trendVideoUrl : undefined,
+                });
             }
             catch (error) {
                 const message = error?.message ?? 'publish_failed';
@@ -719,19 +1601,42 @@ export class AutoPostService {
                 historyEntries.push({ platform, status: 'failed', caption, errorMessage: message });
             }
         }
-        const nextRecord = {
-            trendLastRunAt: admin.firestore.Timestamp.now(),
-            trendNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
-            trendLastResult: results,
-        };
+        const nextRecentTrendKeys = usedTrendKeys.length
+            ? this.mergeTrendRecentKeys(trendRecentKeys, usedTrendKeys)
+            : trendRecentKeys;
         await autopostCollection.doc(userId).set({
             ...nextRecord,
+            trendLastContentType: selectedContentType,
+            ...(trendContentKey ? { trendLastContentKey: trendContentKey } : {}),
+            ...(nextRecentTrendKeys.length ? { trendRecentKeys: nextRecentTrendKeys } : {}),
+            ...(typeof nextTrendSlotCursor === 'number' ? { trendSlotCursor: nextTrendSlotCursor } : {}),
+            ...(typeof usedTableCursor === 'number' ? { trendTableCursor: usedTableCursor } : {}),
+            ...(usedXHighlightTweetId ? { xLastHighlightTweetId: usedXHighlightTweetId } : {}),
+            ...(usedXHighlightUsername ? { xLastHighlightUsername: usedXHighlightUsername } : {}),
+            ...(typeof usedXHighlightAccountCursor === 'number'
+                ? { xHighlightAccountCursor: usedXHighlightAccountCursor }
+                : {}),
+            ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         if (this.useMemory) {
             const current = this.memoryStore.get(userId);
             if (current) {
-                this.memoryStore.set(userId, { ...current, ...nextRecord });
+                this.memoryStore.set(userId, {
+                    ...current,
+                    ...nextRecord,
+                    trendLastContentType: selectedContentType,
+                    ...(trendContentKey ? { trendLastContentKey: trendContentKey } : {}),
+                    ...(nextRecentTrendKeys.length ? { trendRecentKeys: nextRecentTrendKeys } : {}),
+                    ...(typeof nextTrendSlotCursor === 'number' ? { trendSlotCursor: nextTrendSlotCursor } : {}),
+                    ...(typeof usedTableCursor === 'number' ? { trendTableCursor: usedTableCursor } : {}),
+                    ...(usedXHighlightTweetId ? { xLastHighlightTweetId: usedXHighlightTweetId } : {}),
+                    ...(usedXHighlightUsername ? { xLastHighlightUsername: usedXHighlightUsername } : {}),
+                    ...(typeof usedXHighlightAccountCursor === 'number'
+                        ? { xHighlightAccountCursor: usedXHighlightAccountCursor }
+                        : {}),
+                    ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
+                });
             }
         }
         await this.recordHistory(userId, historyEntries, imageUrls);
@@ -1539,6 +2444,162 @@ export class AutoPostService {
     buildCaptionSignature(platform, caption) {
         const normalized = caption.toLowerCase().replace(/\s+/g, ' ').trim();
         return `${platform}:${normalized}`;
+    }
+    getXHighlightAccounts(job) {
+        if (Array.isArray(job.xHighlightAccounts) && job.xHighlightAccounts.length) {
+            const provided = job.xHighlightAccounts
+                .map(value => String(value || '').replace(/^@/, '').trim())
+                .filter(Boolean);
+            if (provided.length)
+                return provided.slice(0, 15);
+        }
+        return this.defaultXHighlightAccounts;
+    }
+    getXWeeklyAwardKeywords(job) {
+        if (Array.isArray(job.xWeeklyAwardKeywords) && job.xWeeklyAwardKeywords.length) {
+            const provided = job.xWeeklyAwardKeywords
+                .map(value => String(value || '').toLowerCase().trim())
+                .filter(Boolean);
+            if (provided.length)
+                return provided.slice(0, 30);
+        }
+        return this.defaultXWeeklyAwardKeywords;
+    }
+    isWeeklyAwardHighlight(text, keywords) {
+        const normalized = String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        if (!normalized)
+            return false;
+        return keywords.some(keyword => normalized.includes(keyword));
+    }
+    buildTwitterClient(credentials) {
+        const accessToken = credentials?.twitter?.accessToken;
+        const accessSecret = credentials?.twitter?.accessSecret;
+        const appKey = credentials?.twitter?.appKey ??
+            credentials?.twitter?.consumerKey ??
+            process.env.TWITTER_API_KEY ??
+            process.env.TWITTER_CONSUMER_KEY;
+        const appSecret = credentials?.twitter?.appSecret ??
+            credentials?.twitter?.consumerSecret ??
+            process.env.TWITTER_API_SECRET ??
+            process.env.TWITTER_CONSUMER_SECRET;
+        if (!accessToken || !accessSecret || !appKey || !appSecret)
+            return null;
+        return new TwitterApi({
+            appKey,
+            appSecret,
+            accessToken,
+            accessSecret,
+        });
+    }
+    async pickFootballHighlightForX(job, credentials, options) {
+        const client = this.buildTwitterClient(credentials);
+        if (!client)
+            return null;
+        const readOnly = client.readOnly;
+        const accounts = this.getXHighlightAccounts(job);
+        const maxAgeHours = Math.max(job.xHighlightMaxAgeHours ?? 48, 6);
+        const minCreatedAt = Date.now() - maxAgeHours * 60 * 60 * 1000;
+        const lastTweetId = (job.xLastHighlightTweetId || '').trim();
+        const lastWeeklyAwardTweetId = (job.xLastWeeklyAwardTweetId || '').trim();
+        const weeklyAwardKeywords = this.getXWeeklyAwardKeywords(job);
+        const preferWeeklyAwards = options?.preferWeeklyAwards === true;
+        const weeklyAwardsOnly = options?.weeklyAwardsOnly === true;
+        const rotateAccounts = options?.rotateAccounts !== false;
+        const cursorRaw = Number.isFinite(job.xHighlightAccountCursor) ? job.xHighlightAccountCursor : 0;
+        const startCursor = accounts.length
+            ? ((Math.trunc(cursorRaw) % accounts.length) + accounts.length) % accounts.length
+            : 0;
+        const candidates = [];
+        for (let accountIndex = 0; accountIndex < accounts.length; accountIndex += 1) {
+            const username = accounts[accountIndex];
+            try {
+                const userLookup = await readOnly.v2.userByUsername(username);
+                const authorId = userLookup?.data?.id;
+                if (!authorId)
+                    continue;
+                const timeline = await readOnly.v2.userTimeline(authorId, {
+                    max_results: 10,
+                    exclude: ['replies', 'retweets'],
+                    expansions: ['attachments.media_keys'],
+                    'tweet.fields': ['created_at', 'public_metrics', 'attachments'],
+                    'media.fields': ['type'],
+                });
+                const realData = timeline?._realData ?? {};
+                const tweets = Array.isArray(realData?.data) ? realData.data : [];
+                const mediaItems = Array.isArray(realData?.includes?.media) ? realData.includes.media : [];
+                const mediaByKey = new Map(mediaItems
+                    .filter(item => item?.media_key)
+                    .map(item => [String(item.media_key), item]));
+                for (const tweet of tweets) {
+                    const tweetId = String(tweet?.id || '').trim();
+                    if (!tweetId || (lastTweetId && tweetId === lastTweetId))
+                        continue;
+                    if (lastWeeklyAwardTweetId && tweetId === lastWeeklyAwardTweetId)
+                        continue;
+                    const createdAtMs = Date.parse(String(tweet?.created_at || ''));
+                    if (Number.isFinite(createdAtMs) && createdAtMs < minCreatedAt)
+                        continue;
+                    const text = String(tweet?.text || '').trim();
+                    const isWeeklyAward = this.isWeeklyAwardHighlight(text, weeklyAwardKeywords);
+                    if (weeklyAwardsOnly && !isWeeklyAward)
+                        continue;
+                    const mediaKeys = Array.isArray(tweet?.attachments?.media_keys) ? tweet.attachments.media_keys : [];
+                    const hasVideo = mediaKeys.some((key) => {
+                        const media = mediaByKey.get(String(key));
+                        const type = String(media?.type || '').toLowerCase();
+                        return type === 'video' || type === 'animated_gif';
+                    });
+                    if (!hasVideo)
+                        continue;
+                    const metrics = tweet?.public_metrics ?? {};
+                    const score = Number(metrics?.retweet_count ?? 0) * 1.2 +
+                        Number(metrics?.like_count ?? 0) * 0.7 +
+                        Number(metrics?.reply_count ?? 0) * 0.5 +
+                        Number(metrics?.quote_count ?? 0) * 1.0 +
+                        (preferWeeklyAwards && isWeeklyAward ? 100000 : 0);
+                    candidates.push({
+                        tweetId,
+                        username,
+                        usernameKey: username.toLowerCase(),
+                        score,
+                        createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : 0,
+                        tweetUrl: `https://x.com/${username}/status/${tweetId}`,
+                        isWeeklyAward,
+                        text,
+                        accountIndex,
+                        nextCursor: accounts.length ? ((accountIndex + 1) % accounts.length) : 0,
+                    });
+                }
+            }
+            catch (error) {
+                console.warn('[autopost] x highlight lookup failed', { username, error });
+            }
+        }
+        if (!candidates.length)
+            return null;
+        candidates.sort((a, b) => {
+            if (b.score !== a.score)
+                return b.score - a.score;
+            return b.createdAtMs - a.createdAtMs;
+        });
+        if (!rotateAccounts || !accounts.length) {
+            return candidates[0];
+        }
+        const byAccount = new Map();
+        for (const candidate of candidates) {
+            const list = byAccount.get(candidate.usernameKey) ?? [];
+            list.push(candidate);
+            byAccount.set(candidate.usernameKey, list);
+        }
+        for (let offset = 0; offset < accounts.length; offset += 1) {
+            const idx = (startCursor + offset) % accounts.length;
+            const account = accounts[idx];
+            const accountCandidates = byAccount.get(account.toLowerCase());
+            if (accountCandidates?.length) {
+                return accountCandidates[0];
+            }
+        }
+        return candidates[0];
     }
     selectNextVideo(job, platform, fallbackVideos = []) {
         const list = platform === 'youtube'
