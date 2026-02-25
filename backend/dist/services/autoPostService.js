@@ -511,7 +511,6 @@ export class AutoPostService {
         const headline = headlineSeed.length > 140 ? `${headlineSeed.slice(0, 137).trimEnd()}...` : headlineSeed;
         return [
             `Video: ${headline}`,
-            `Source: @${username}`,
             `Update time: ${this.formatTrendClock(timezone)} EAT`,
             'More football updates: www.bwinbetug.info',
         ]
@@ -1801,7 +1800,7 @@ export class AutoPostService {
                         const sourceVideoUrl = await this.resolveVideoUrlFromTweet(xHighlight.tweetId, credentials);
                         if (!sourceVideoUrl)
                             throw quoteError;
-                        finalCaption = this.normalizeXCaption(`${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nVideo source: @${xHighlight.username}`);
+                        finalCaption = this.normalizeXCaption(this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone));
                         response = await publisher({
                             caption: finalCaption,
                             imageUrls: [],
