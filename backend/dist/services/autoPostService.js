@@ -611,6 +611,36 @@ export class AutoPostService {
         const normalized = String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
         return `${type}:${normalized}`.slice(0, 320);
     }
+    buildNewsCandidateKey(candidate, item = candidate.items?.[0]) {
+        const topic = candidate.topic || '';
+        const headline = item?.title || candidate.sampleTitles?.[0] || topic;
+        const link = item?.link || '';
+        return this.buildTrendContentKey('news', `${topic}|${headline}|${link}`);
+    }
+    pickFreshNewsCandidate(candidates, recentSet) {
+        for (const candidate of candidates) {
+            const item = candidate.items?.[0];
+            const key = this.buildNewsCandidateKey(candidate, item);
+            if (!recentSet.has(key)) {
+                return { candidate, item, key };
+            }
+        }
+        return null;
+    }
+    pickFreshVideoCandidate(candidates, recentSet) {
+        for (const candidate of candidates) {
+            for (const item of candidate.items ?? []) {
+                const videoUrl = item.videoUrl?.trim();
+                if (!videoUrl)
+                    continue;
+                const key = this.buildTrendContentKey('video', `${item.link || videoUrl}|${item.title || ''}`);
+                if (!recentSet.has(key)) {
+                    return { candidate, item, key };
+                }
+            }
+        }
+        return null;
+    }
     toHighResolutionImageUrl(rawUrl) {
         const value = String(rawUrl || '').trim();
         if (!value)
@@ -1262,6 +1292,7 @@ export class AutoPostService {
         let newsBaselineImages = [];
         let newsBaselineCaptions = {};
         let footballCandidates = [];
+        let baselineCandidate = null;
         let usedTableCursor = null;
         let trendContentKey = null;
         if (scope === 'football') {
@@ -1275,7 +1306,8 @@ export class AutoPostService {
                 footballCandidates = candidates;
                 const top = selectedContentType === 'video'
                     ? candidates.find(candidate => (candidate.items ?? []).some(item => Boolean(item.videoUrl?.trim()))) ?? candidates[0]
-                    : candidates[0];
+                    : this.pickFreshNewsCandidate(candidates, trendRecentSet)?.candidate ?? candidates[0];
+                baselineCandidate = top ?? null;
                 if (!top) {
                     caption = this.buildFootballFallbackCaption(undefined, 'news', scheduleTimezone);
                 }
@@ -1380,7 +1412,7 @@ export class AutoPostService {
             newsBaselineCaptions = { ...trendCaptions };
         }
         if (structuredScheduleEnabled && scope === 'football') {
-            const topCandidate = footballCandidates[0];
+            const topCandidate = baselineCandidate ?? footballCandidates[0];
             const topItem = topCandidate?.items?.[0];
             const setUnifiedCaption = () => {
                 for (const platform of platforms) {
@@ -1541,6 +1573,63 @@ export class AutoPostService {
                     selectedContentType = 'news';
                 }
             }
+            if (selectedContentType === 'video') {
+                const videoSelection = this.pickFreshVideoCandidate(footballCandidates, trendRecentSet);
+                if (videoSelection) {
+                    const updatedStamp = new Date().toLocaleTimeString('en-GB', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                        timeZone: scheduleTimezone,
+                    });
+                    const source = videoSelection.item.sourceLabel || videoSelection.candidate.sources?.[0] || 'Football source';
+                    const title = videoSelection.item.title || videoSelection.candidate.topic || 'Football highlight';
+                    caption = [
+                        'Football video highlight',
+                        title,
+                        `Source: ${source}`,
+                        `Updated: ${updatedStamp} (${scheduleTimezone})`,
+                        'More football updates: www.bwinbetug.info',
+                    ]
+                        .filter(Boolean)
+                        .join('\n');
+                    setUnifiedCaption();
+                    trendContentKey = videoSelection.key;
+                    usedTrendKeys.push(videoSelection.key);
+                    const pickedVideoUrl = videoSelection.item.videoUrl?.trim();
+                    if (pickedVideoUrl) {
+                        const nextVideoPool = [pickedVideoUrl, ...sourceVideoUrls].filter(Boolean);
+                        sourceVideoUrls.length = 0;
+                        sourceVideoUrls.push(...Array.from(new Set(nextVideoPool)).slice(0, 10));
+                    }
+                    const resolvedImage = await this.resolveBestNewsImageUrl(videoSelection.item.imageUrl?.trim(), videoSelection.item.link?.trim());
+                    if (resolvedImage) {
+                        imageUrls = [resolvedImage];
+                    }
+                    else if (!imageUrls.length) {
+                        imageUrls = await this.generateFootballCardImage(`Create a football highlight poster image for "${title}". High-energy action style with clean headline space.`, new Set(this.getRecentImageHistory(job)));
+                    }
+                }
+                else {
+                    const updatedStamp = new Date().toLocaleTimeString('en-GB', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                        timeZone: scheduleTimezone,
+                    });
+                    caption = [
+                        'Football video highlight',
+                        'Top clip from trusted football sources',
+                        `Updated: ${updatedStamp} (${scheduleTimezone})`,
+                        'More football updates: www.bwinbetug.info',
+                    ]
+                        .filter(Boolean)
+                        .join('\n');
+                    setUnifiedCaption();
+                }
+            }
             if (selectedContentType === 'result') {
                 const resultEntries = this.extractResultEntries(footballCandidates, trendRecentSet);
                 const selectedResult = resultEntries[0];
@@ -1581,18 +1670,39 @@ export class AutoPostService {
                 if (staleStructuredCaption) {
                     restoreNewsBaseline();
                 }
+                const currentNewsKey = topCandidate ? this.buildNewsCandidateKey(topCandidate, topItem) : '';
+                const currentNewsFresh = Boolean(currentNewsKey) && !trendRecentSet.has(currentNewsKey);
+                const freshNews = this.pickFreshNewsCandidate(footballCandidates, trendRecentSet);
+                const effectiveNewsCandidate = currentNewsFresh ? topCandidate : freshNews?.candidate;
+                const effectiveNewsItem = currentNewsFresh ? topItem : freshNews?.item;
+                const effectiveNewsKey = currentNewsFresh ? currentNewsKey : freshNews?.key;
+                if (effectiveNewsCandidate && (!caption || !currentNewsFresh || staleStructuredCaption)) {
+                    const source = effectiveNewsItem?.sourceLabel || effectiveNewsCandidate.sources?.[0] || 'Football source';
+                    const headline = effectiveNewsItem?.title || effectiveNewsCandidate.topic;
+                    trendTopic = effectiveNewsCandidate.topic || trendTopic;
+                    caption = [
+                        headline,
+                        `Source: ${source}`,
+                        `Update time: ${this.formatTrendClock(scheduleTimezone)} EAT`,
+                        'More football updates: www.bwinbetug.info',
+                    ]
+                        .filter(Boolean)
+                        .join('\n');
+                    setUnifiedCaption();
+                    const resolvedImage = await this.resolveBestNewsImageUrl(effectiveNewsItem?.imageUrl?.trim(), effectiveNewsItem?.link?.trim());
+                    if (resolvedImage) {
+                        imageUrls = [resolvedImage];
+                    }
+                }
                 if (!caption) {
                     caption = topCandidate?.topic
                         ? `${topCandidate.topic}\n\nMore football updates: www.bwinbetug.info`
                         : this.buildFootballFallbackCaption(undefined, selectedContentType, scheduleTimezone);
                     setUnifiedCaption();
                 }
-                if (topCandidate) {
-                    const key = this.buildTrendContentKey('news', `${topCandidate.topic}|${topItem?.link || ''}|${topItem?.publishedAt || topCandidate.publishedAt || ''}`);
-                    if (!trendRecentSet.has(key)) {
-                        trendContentKey = key;
-                        usedTrendKeys.push(key);
-                    }
+                if (effectiveNewsKey && !trendRecentSet.has(effectiveNewsKey)) {
+                    trendContentKey = effectiveNewsKey;
+                    usedTrendKeys.push(effectiveNewsKey);
                 }
                 if (!imageUrls.length && trendTopic) {
                     imageUrls = await this.generateFootballCardImage(`Create a football breaking-news poster image for "${trendTopic}". Clean typography space, dynamic stadium atmosphere.`, new Set(this.getRecentImageHistory(job)));
