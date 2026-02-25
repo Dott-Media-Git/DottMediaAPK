@@ -720,6 +720,23 @@ export class AutoPostService {
     return `${base.trimEnd()}...`;
   }
 
+  private buildVideoCaptionFromHighlight(rawText: string, username: string, timezone: string) {
+    const cleaned = String(rawText || '')
+      .replace(/https?:\/\/\S+/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const headlineSeed = cleaned || `Latest football clip from @${username}`;
+    const headline = headlineSeed.length > 140 ? `${headlineSeed.slice(0, 137).trimEnd()}...` : headlineSeed;
+    return [
+      `Video: ${headline}`,
+      `Source: @${username}`,
+      `Update time: ${this.formatTrendClock(timezone)} EAT`,
+      'More football updates: www.bwinbetug.info',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
   private getTrendRecentKeys(job: AutoPostJob): string[] {
     if (!Array.isArray(job.trendRecentKeys)) return [];
     return job.trendRecentKeys.filter(Boolean).map(value => String(value).toLowerCase().trim()).filter(Boolean);
@@ -2042,6 +2059,7 @@ export class AutoPostService {
     let xHighlight: {
       tweetId: string;
       username: string;
+      text?: string;
       nextCursor?: number;
       isWeeklyAward?: boolean;
     } | null = null;
@@ -2092,10 +2110,12 @@ export class AutoPostService {
             ? this.normalizeXCaption(rawPerPlatformCaption)
             : rawPerPlatformCaption;
         if (shouldUseVideoMode && (platform === 'x' || platform === 'twitter') && xHighlight?.tweetId) {
-          const highlightLine = xHighlight.isWeeklyAward
-            ? `Weekly award update via @${xHighlight.username}`
-            : `Highlight via @${xHighlight.username}`;
-          const quoteCaption = `${perPlatformCaption}\n\n${highlightLine}`;
+          const relatedCaption = this.normalizeXCaption(
+            xHighlight.isWeeklyAward
+              ? `${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nWeekly award clip`
+              : this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone),
+          );
+          const quoteCaption = relatedCaption;
           let response: { remoteId?: string } | null = null;
           let finalCaption = quoteCaption;
           try {
@@ -2110,7 +2130,9 @@ export class AutoPostService {
             if (!forbidden) throw quoteError;
             const sourceVideoUrl = await this.resolveVideoUrlFromTweet(xHighlight.tweetId, credentials);
             if (!sourceVideoUrl) throw quoteError;
-            finalCaption = `${perPlatformCaption}\n\nVideo source: @${xHighlight.username}`;
+            finalCaption = this.normalizeXCaption(
+              `${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nVideo source: @${xHighlight.username}`,
+            );
             response = await publisher({
               caption: finalCaption,
               imageUrls: [],
