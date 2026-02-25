@@ -1712,10 +1712,10 @@ export class AutoPostService {
         if (scope === 'football' && selectedContentType === 'news' && imageUrls.length) {
             imageUrls = await this.improveNewsImageQuality(imageUrls, platforms);
         }
-        // For trend posts, only use explicit per-job video URLs as fallback.
-        // Do not pull from global fallback directory to avoid off-brand/non-topic clips.
+        // Football trend videos must come from approved source feeds/highlight tweets only.
+        // No local/static fallback videos are allowed in this path.
         const genericVideoSelection = this.selectNextGenericVideo(job, []);
-        const trendVideoUrl = sourceVideoUrls[0] || genericVideoSelection.videoUrl;
+        const trendVideoUrl = sourceVideoUrls[0] || (scope === 'football' ? undefined : genericVideoSelection.videoUrl);
         const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'linkedin']);
         const hasXPlatform = platforms.some(platform => platform === 'x' || platform === 'twitter');
         const shouldUseVideoMode = scope === 'football' && selectedContentType === 'video';
@@ -1768,17 +1768,36 @@ export class AutoPostService {
                         ? `Weekly award update via @${xHighlight.username}`
                         : `Highlight via @${xHighlight.username}`;
                     const quoteCaption = `${perPlatformCaption}\n\n${highlightLine}`;
-                    const response = await publisher({
-                        caption: quoteCaption,
-                        imageUrls: [],
-                        quoteTweetId: xHighlight.tweetId,
-                        credentials,
-                    });
+                    let response = null;
+                    let finalCaption = quoteCaption;
+                    try {
+                        response = await publisher({
+                            caption: quoteCaption,
+                            imageUrls: [],
+                            quoteTweetId: xHighlight.tweetId,
+                            credentials,
+                        });
+                    }
+                    catch (quoteError) {
+                        const forbidden = Number(quoteError?.code ?? quoteError?.status) === 403;
+                        if (!forbidden)
+                            throw quoteError;
+                        const sourceVideoUrl = await this.resolveVideoUrlFromTweet(xHighlight.tweetId, credentials);
+                        if (!sourceVideoUrl)
+                            throw quoteError;
+                        finalCaption = `${perPlatformCaption}\n\nVideo source: @${xHighlight.username}`;
+                        response = await publisher({
+                            caption: finalCaption,
+                            imageUrls: [],
+                            videoUrl: sourceVideoUrl,
+                            credentials,
+                        });
+                    }
                     results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
                     historyEntries.push({
                         platform,
                         status: 'posted',
-                        caption: quoteCaption,
+                        caption: finalCaption,
                         remoteId: response.remoteId ?? null,
                     });
                     usedXHighlightTweetId = xHighlight.tweetId;
@@ -2708,6 +2727,35 @@ export class AutoPostService {
             accessToken,
             accessSecret,
         });
+    }
+    async resolveVideoUrlFromTweet(tweetId, credentials) {
+        const client = this.buildTwitterClient(credentials);
+        if (!client)
+            return null;
+        try {
+            const detail = await client.readOnly.v2.singleTweet(tweetId, {
+                expansions: ['attachments.media_keys'],
+                'tweet.fields': ['attachments'],
+                'media.fields': ['type', 'variants', 'url', 'preview_image_url'],
+            });
+            const mediaItems = Array.isArray(detail?.includes?.media) ? detail.includes.media : [];
+            for (const media of mediaItems) {
+                const type = String(media?.type || '').toLowerCase();
+                if (type !== 'video' && type !== 'animated_gif')
+                    continue;
+                const variants = Array.isArray(media?.variants) ? media.variants : [];
+                const mp4Variants = variants
+                    .filter((variant) => String(variant?.content_type || '').toLowerCase() === 'video/mp4' && variant?.url)
+                    .sort((a, b) => Number(b?.bit_rate || 0) - Number(a?.bit_rate || 0));
+                if (mp4Variants.length) {
+                    return String(mp4Variants[0].url).trim();
+                }
+            }
+        }
+        catch (error) {
+            console.warn('[autopost] failed to resolve source video URL from tweet', { tweetId, error });
+        }
+        return null;
     }
     async pickFootballHighlightForX(job, credentials, options) {
         const client = this.buildTwitterClient(credentials);

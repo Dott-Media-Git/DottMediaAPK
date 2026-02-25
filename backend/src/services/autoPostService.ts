@@ -2030,10 +2030,10 @@ export class AutoPostService {
       imageUrls = await this.improveNewsImageQuality(imageUrls, platforms);
     }
 
-    // For trend posts, only use explicit per-job video URLs as fallback.
-    // Do not pull from global fallback directory to avoid off-brand/non-topic clips.
+    // Football trend videos must come from approved source feeds/highlight tweets only.
+    // No local/static fallback videos are allowed in this path.
     const genericVideoSelection = this.selectNextGenericVideo(job, []);
-    const trendVideoUrl = sourceVideoUrls[0] || genericVideoSelection.videoUrl;
+    const trendVideoUrl = sourceVideoUrls[0] || (scope === 'football' ? undefined : genericVideoSelection.videoUrl);
     const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'linkedin']);
     const hasXPlatform = platforms.some(platform => platform === 'x' || platform === 'twitter');
     const shouldUseVideoMode = scope === 'football' && selectedContentType === 'video';
@@ -2096,17 +2096,33 @@ export class AutoPostService {
             ? `Weekly award update via @${xHighlight.username}`
             : `Highlight via @${xHighlight.username}`;
           const quoteCaption = `${perPlatformCaption}\n\n${highlightLine}`;
-          const response = await publisher({
-            caption: quoteCaption,
-            imageUrls: [],
-            quoteTweetId: xHighlight.tweetId,
-            credentials,
-          });
+          let response: { remoteId?: string } | null = null;
+          let finalCaption = quoteCaption;
+          try {
+            response = await publisher({
+              caption: quoteCaption,
+              imageUrls: [],
+              quoteTweetId: xHighlight.tweetId,
+              credentials,
+            });
+          } catch (quoteError: any) {
+            const forbidden = Number(quoteError?.code ?? quoteError?.status) === 403;
+            if (!forbidden) throw quoteError;
+            const sourceVideoUrl = await this.resolveVideoUrlFromTweet(xHighlight.tweetId, credentials);
+            if (!sourceVideoUrl) throw quoteError;
+            finalCaption = `${perPlatformCaption}\n\nVideo source: @${xHighlight.username}`;
+            response = await publisher({
+              caption: finalCaption,
+              imageUrls: [],
+              videoUrl: sourceVideoUrl,
+              credentials,
+            });
+          }
           results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
           historyEntries.push({
             platform,
             status: 'posted',
-            caption: quoteCaption,
+            caption: finalCaption,
             remoteId: response.remoteId ?? null,
           });
           usedXHighlightTweetId = xHighlight.tweetId;
@@ -3091,6 +3107,33 @@ export class AutoPostService {
       accessToken,
       accessSecret,
     });
+  }
+
+  private async resolveVideoUrlFromTweet(tweetId: string, credentials?: SocialAccounts) {
+    const client = this.buildTwitterClient(credentials);
+    if (!client) return null;
+    try {
+      const detail = await client.readOnly.v2.singleTweet(tweetId, {
+        expansions: ['attachments.media_keys'],
+        'tweet.fields': ['attachments'],
+        'media.fields': ['type', 'variants', 'url', 'preview_image_url'],
+      } as any);
+      const mediaItems: any[] = Array.isArray((detail as any)?.includes?.media) ? (detail as any).includes.media : [];
+      for (const media of mediaItems) {
+        const type = String(media?.type || '').toLowerCase();
+        if (type !== 'video' && type !== 'animated_gif') continue;
+        const variants = Array.isArray(media?.variants) ? media.variants : [];
+        const mp4Variants = variants
+          .filter((variant: any) => String(variant?.content_type || '').toLowerCase() === 'video/mp4' && variant?.url)
+          .sort((a: any, b: any) => Number(b?.bit_rate || 0) - Number(a?.bit_rate || 0));
+        if (mp4Variants.length) {
+          return String(mp4Variants[0].url).trim();
+        }
+      }
+    } catch (error) {
+      console.warn('[autopost] failed to resolve source video URL from tweet', { tweetId, error });
+    }
+    return null;
   }
 
   private async pickFootballHighlightForX(
