@@ -512,7 +512,7 @@ export class AutoPostService {
         return [
             `Video: ${headline}`,
             `Update time: ${this.formatTrendClock(timezone)} EAT`,
-            'More football updates: www.bwinbetug.com',
+            'Bet now: www.bwinbetug.com | More info: www.bwinbetug.info',
         ]
             .filter(Boolean)
             .join('\n');
@@ -805,7 +805,7 @@ export class AutoPostService {
     buildFootballFallbackCaption(topic, contentType, timezone = 'Africa/Kampala') {
         const title = topic?.trim() || `${contentType.replace(/_/g, ' ')} update`;
         const stamp = this.formatTrendClock(timezone);
-        return `${title}\n\nUpdate time: ${stamp} EAT\nMore football updates: www.bwinbetug.com`;
+        return `${title}\n\nUpdate time: ${stamp} EAT\nBet now: www.bwinbetug.com | More info: www.bwinbetug.info`;
     }
     async generateFootballCardImage(prompt, recentSet) {
         try {
@@ -1044,7 +1044,7 @@ export class AutoPostService {
                     goalDiff: row.goalDiff ?? null,
                 })),
                 source: snapshot.source,
-                cta: 'www.bwinbetug.com',
+                cta: 'Bet: www.bwinbetug.com | Info: www.bwinbetug.info',
                 updatedAt: new Date().toISOString(),
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
             });
@@ -1066,7 +1066,7 @@ export class AutoPostService {
                     goalDiff: row.goalDiff ?? null,
                 })),
                 source: snapshot.source,
-                cta: 'www.bwinbetug.com',
+                cta: 'Bet: www.bwinbetug.com | Info: www.bwinbetug.info',
                 updatedAt: new Date().toISOString(),
             });
             return `data:image/jpeg;base64,${buffer.toString('base64')}`;
@@ -1087,7 +1087,7 @@ export class AutoPostService {
                     appearances: row.appearances ?? null,
                 })),
                 source: snapshot.source,
-                cta: 'www.bwinbetug.com',
+                cta: 'Bet: www.bwinbetug.com | Info: www.bwinbetug.info',
                 updatedAt: new Date().toISOString(),
             });
             return `data:image/jpeg;base64,${buffer.toString('base64')}`;
@@ -1105,7 +1105,7 @@ export class AutoPostService {
                     odds: pick.odds ?? null,
                 })),
                 source: 'Bwinbet fixture scan',
-                cta: 'www.bwinbetug.com',
+                cta: 'Bet: www.bwinbetug.com | Info: www.bwinbetug.info',
                 updatedAt: new Date().toISOString(),
             });
             return `data:image/jpeg;base64,${buffer.toString('base64')}`;
@@ -1462,7 +1462,7 @@ export class AutoPostService {
                         'Football predictions update',
                         `Updated: ${updatedStamp} (${scheduleTimezone})`,
                         picksLine,
-                        'For full markets and live odds: www.bwinbetug.com',
+                        'Place your bet: www.bwinbetug.com | More info: www.bwinbetug.info',
                     ]
                         .filter(Boolean)
                         .join('\n');
@@ -1505,7 +1505,7 @@ export class AutoPostService {
                         `${snapshot.league} live table update`,
                         `Updated: ${updatedStamp} (${scheduleTimezone})`,
                         ...rows,
-                        'For full tables and fixtures: www.bwinbetug.com',
+                        'Bet now: www.bwinbetug.com | More info: www.bwinbetug.info',
                     ]
                         .filter(Boolean)
                         .join('\n');
@@ -1560,7 +1560,7 @@ export class AutoPostService {
                         `${snapshot.league} top scorers update`,
                         `Updated: ${updatedStamp} (${scheduleTimezone})`,
                         ...rows,
-                        'For full tables and fixtures: www.bwinbetug.com',
+                        'Bet now: www.bwinbetug.com | More info: www.bwinbetug.info',
                     ]
                         .filter(Boolean)
                         .join('\n');
@@ -1605,7 +1605,7 @@ export class AutoPostService {
                         title,
                         `Source: ${source}`,
                         `Updated: ${updatedStamp} (${scheduleTimezone})`,
-                        'More football updates: www.bwinbetug.com',
+                        'Bet now: www.bwinbetug.com | More info: www.bwinbetug.info',
                     ]
                         .filter(Boolean)
                         .join('\n');
@@ -1638,7 +1638,7 @@ export class AutoPostService {
                         'Football video highlight',
                         'Top clip from trusted football sources',
                         `Updated: ${updatedStamp} (${scheduleTimezone})`,
-                        'More football updates: www.bwinbetug.com',
+                        'Bet now: www.bwinbetug.com | More info: www.bwinbetug.info',
                     ]
                         .filter(Boolean)
                         .join('\n');
@@ -1662,7 +1662,7 @@ export class AutoPostService {
                         `Updated: ${updatedStamp} (${scheduleTimezone})`,
                         selectedResult.item.title,
                         `Source: ${source}`,
-                        'More fixtures and updates: www.bwinbetug.com',
+                        'Bet now: www.bwinbetug.com | More info: www.bwinbetug.info',
                     ]
                         .filter(Boolean)
                         .join('\n');
@@ -1699,7 +1699,7 @@ export class AutoPostService {
                         headline,
                         `Source: ${source}`,
                         `Update time: ${this.formatTrendClock(scheduleTimezone)} EAT`,
-                        'More football updates: www.bwinbetug.com',
+                        'Bet now: www.bwinbetug.com | More info: www.bwinbetug.info',
                     ]
                         .filter(Boolean)
                         .join('\n');
@@ -1711,7 +1711,7 @@ export class AutoPostService {
                 }
                 if (!caption) {
                     caption = topCandidate?.topic
-                        ? `${topCandidate.topic}\n\nMore football updates: www.bwinbetug.com`
+                        ? `${topCandidate.topic}\n\nBet now: www.bwinbetug.com | More info: www.bwinbetug.info`
                         : this.buildFootballFallbackCaption(undefined, selectedContentType, scheduleTimezone);
                     setUnifiedCaption();
                 }
