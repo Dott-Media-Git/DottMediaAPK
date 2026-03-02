@@ -82,6 +82,11 @@ export const DashboardScreen: React.FC = () => {
   const { t, locale } = useI18n();
   const hasConnectedSocials = Boolean(state.crmData?.instagram || state.crmData?.facebook || state.crmData?.linkedin);
   const orgId = (state.user as any)?.orgId ?? state.crmData?.orgId;
+  const isBwinbetAccount = useMemo(() => {
+    const primary = (state.user?.email ?? '').toLowerCase();
+    const crmEmail = (state.crmData?.email ?? '').toLowerCase();
+    return primary.includes('bwinbet') || crmEmail.includes('bwinbet');
+  }, [state.crmData?.email, state.user?.email]);
   const analyticsScopeId = useMemo(
     () => resolveAnalyticsScopeId(state.user?.uid, orgId),
     [state.user?.uid, orgId]
@@ -244,8 +249,12 @@ export const DashboardScreen: React.FC = () => {
     [historySeries]
   );
 
+  const heroPrimaryValue = isBwinbetAccount
+    ? Math.round(liveSocialStats.summary.interactions).toLocaleString()
+    : latestHistoryPoint.leads;
+
   const heroStats = [
-    { label: t('Leads'), value: latestHistoryPoint.leads },
+    { label: isBwinbetAccount ? t('Interactions') : t('Leads'), value: heroPrimaryValue },
     { label: t('Engagement'), value: `${latestHistoryPoint.engagement}%` },
     { label: t('Conversions'), value: latestHistoryPoint.conversions },
     { label: t('Feedback'), value: `${latestHistoryPoint.feedbackScore}/5` }
@@ -263,10 +272,14 @@ export const DashboardScreen: React.FC = () => {
 
   const handleDrilldown = (metric: ChartMetric) => {
     const metricMap: Record<ChartMetric, string> = {
-      leads: t(
-        "You're averaging {{value}} new leads per automation cycle. Activate or duplicate high-performing scenarios to scale.",
-        { value: latestHistoryPoint.leads }
-      ),
+      leads: isBwinbetAccount
+        ? t('Live social interactions are at {{value}}. Keep publishing high-engagement content to sustain momentum.', {
+            value: Math.round(liveSocialStats.summary.interactions).toLocaleString(),
+          })
+        : t(
+            "You're averaging {{value}} new leads per automation cycle. Activate or duplicate high-performing scenarios to scale.",
+            { value: latestHistoryPoint.leads }
+          ),
       engagement: t(
         'Engagement is at {{value}}%. Test fresh creatives or prompts to push beyond current reach.',
         { value: latestHistoryPoint.engagement }
@@ -296,7 +309,14 @@ export const DashboardScreen: React.FC = () => {
       };
 
       return [
-        { key: 'leads', label: t('Leads'), value: `${latestHistoryPoint.leads}`, hint: computeHint('leads') },
+        {
+          key: 'leads',
+          label: isBwinbetAccount ? t('Interactions') : t('Leads'),
+          value: isBwinbetAccount
+            ? Math.round(liveSocialStats.summary.interactions).toLocaleString()
+            : `${latestHistoryPoint.leads}`,
+          hint: isBwinbetAccount ? t('Live social data') : computeHint('leads'),
+        },
         {
           key: 'engagement',
           label: t('Engagement'),
@@ -311,7 +331,7 @@ export const DashboardScreen: React.FC = () => {
         }
       ] as const;
     },
-    [latestHistoryPoint, previousHistoryPoint, t]
+    [isBwinbetAccount, latestHistoryPoint, liveSocialStats.summary.interactions, previousHistoryPoint, t]
   );
 
   const outboundMetrics = useMemo(
@@ -482,8 +502,12 @@ export const DashboardScreen: React.FC = () => {
       <DMCard title={t('Daily Reviews')} subtitle={loading ? t('Refreshing data...') : t('Pulse across the last 24h')}>
         <View style={styles.kpiRow}>
           <View style={styles.kpiItem}>
-            <Text style={styles.kpiLabel}>{t('Leads')}</Text>
-            <Text style={styles.kpiValue}>{latestHistoryPoint.leads}</Text>
+            <Text style={styles.kpiLabel}>{isBwinbetAccount ? t('Interactions') : t('Leads')}</Text>
+            <Text style={styles.kpiValue}>
+              {isBwinbetAccount
+                ? Math.round(liveSocialStats.summary.interactions).toLocaleString()
+                : latestHistoryPoint.leads}
+            </Text>
           </View>
           <View style={styles.kpiItem}>
             <Text style={styles.kpiLabel}>{t('Engagement')}</Text>

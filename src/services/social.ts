@@ -66,6 +66,8 @@ export type SocialPost = {
   postedAt?: { seconds: number };
   errorMessage?: string;
   createdAt?: { seconds: number };
+  videoUrl?: string;
+  imageUrls?: string[];
 };
 
 export type SocialHistory = {
@@ -77,6 +79,7 @@ export type SocialHistory = {
 export type SocialConnectionStatus = {
   facebook: boolean;
   instagram: boolean;
+  threads: boolean;
   linkedin: boolean;
   twitter: boolean;
   tiktok: boolean;

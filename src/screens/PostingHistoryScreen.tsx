@@ -113,14 +113,26 @@ export const PostingHistoryScreen: React.FC = () => {
   );
 
   const platformSummary = useMemo(() => {
-    const counts: Record<string, number> = { facebook: 0, instagram: 0, linkedin: 0 };
+    const counts: Record<string, number> = {
+      facebook: 0,
+      instagram: 0,
+      linkedin: 0,
+      threads: 0,
+      youtube: 0,
+      tiktok: 0,
+      x: 0,
+    };
     postedToday.forEach(post => {
       const rawPlatform = post.platform?.toLowerCase();
       const platform =
         rawPlatform === 'instagram_story'
           ? 'instagram'
+          : rawPlatform === 'instagram_reels'
+            ? 'instagram'
           : rawPlatform === 'facebook_story'
             ? 'facebook'
+            : rawPlatform === 'twitter'
+              ? 'x'
             : rawPlatform;
       if (platform && Object.prototype.hasOwnProperty.call(counts, platform)) {
         counts[platform] += 1;
@@ -148,6 +160,10 @@ export const PostingHistoryScreen: React.FC = () => {
     { key: 'facebook', label: t('Facebook'), color: colors.accentMuted, count: platformSummary.facebook ?? 0 },
     { key: 'instagram', label: t('Instagram'), color: colors.accentSecondary, count: platformSummary.instagram ?? 0 },
     { key: 'linkedin', label: t('LinkedIn'), color: colors.accent, count: platformSummary.linkedin ?? 0 },
+    { key: 'threads', label: t('Threads'), color: '#9B5DE5', count: platformSummary.threads ?? 0 },
+    { key: 'youtube', label: t('YouTube'), color: '#EF4444', count: platformSummary.youtube ?? 0 },
+    { key: 'tiktok', label: t('TikTok'), color: '#14B8A6', count: platformSummary.tiktok ?? 0 },
+    { key: 'x', label: t('X'), color: '#F59E0B', count: platformSummary.x ?? 0 },
   ];
 
   const formatTime = (value: Date | number) => {
