@@ -11,6 +11,8 @@ import {
   DashboardAnalytics,
   fetchOrgDashboardAnalytics,
   fetchOutboundStats,
+  fetchLiveSocialStats,
+  LiveSocialStats,
   OutboundStats,
   subscribeOrgDashboardAnalytics,
   subscribeOutboundStats,
@@ -44,6 +46,23 @@ const emptyOutboundStats: OutboundStats = {
   conversionRate: 0
 };
 
+const emptyLiveSocialStats: LiveSocialStats = {
+  generatedAt: new Date(0).toISOString(),
+  lookbackHours: 72,
+  summary: {
+    views: 0,
+    interactions: 0,
+    engagementRate: 0,
+    conversions: 0,
+  },
+  platforms: {
+    facebook: { connected: false, views: 0, interactions: 0, engagementRate: 0, postsAnalyzed: 0 },
+    instagram: { connected: false, views: 0, interactions: 0, engagementRate: 0, postsAnalyzed: 0 },
+    threads: { connected: false, views: 0, interactions: 0, engagementRate: 0, postsAnalyzed: 0 },
+    x: { connected: false, views: 0, interactions: 0, engagementRate: 0, postsAnalyzed: 0 },
+  },
+};
+
 const formatDateLabel = (date: string) => {
   const parsed = new Date(date);
   if (!Number.isNaN(parsed.getTime())) {
@@ -73,6 +92,8 @@ export const DashboardScreen: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [chartMetric, setChartMetric] = useState<ChartMetric>('leads');
   const [outboundStats, setOutboundStats] = useState<OutboundStats>(() => emptyOutboundStats);
+  const [liveSocialStats, setLiveSocialStats] = useState<LiveSocialStats>(() => emptyLiveSocialStats);
+  const [liveSocialLoading, setLiveSocialLoading] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -169,6 +190,36 @@ export const DashboardScreen: React.FC = () => {
       outboundUnsub?.();
     };
   }, [analyticsScopeId, hasConnectedSocials, state.user?.uid]);
+
+  useEffect(() => {
+    let mounted = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const refreshLiveSocial = async () => {
+      if (!state.user?.uid) return;
+      setLiveSocialLoading(true);
+      try {
+        const stats = await fetchLiveSocialStats(state.user.uid, analyticsScopeId, 72);
+        if (mounted && stats) {
+          setLiveSocialStats(stats);
+        }
+      } finally {
+        if (mounted) setLiveSocialLoading(false);
+      }
+    };
+
+    if (state.user?.uid) {
+      void refreshLiveSocial();
+      timer = setInterval(() => {
+        void refreshLiveSocial();
+      }, 120000);
+    }
+
+    return () => {
+      mounted = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [analyticsScopeId, state.user?.uid]);
 
   const historySeries = useMemo(
     () => analytics.history ?? [],
@@ -291,6 +342,34 @@ export const DashboardScreen: React.FC = () => {
     [outboundStats, t]
   );
 
+  const formatCount = (value: number) => {
+    const rounded = Number.isFinite(value) ? Math.round(value) : 0;
+    return rounded.toLocaleString();
+  };
+
+  const livePlatformRows = useMemo(
+    () =>
+      [
+        { key: 'facebook', label: 'Facebook', ...liveSocialStats.platforms.facebook },
+        { key: 'instagram', label: 'Instagram', ...liveSocialStats.platforms.instagram },
+        { key: 'threads', label: 'Threads', ...liveSocialStats.platforms.threads },
+        { key: 'x', label: 'X', ...liveSocialStats.platforms.x },
+      ].filter(
+        row =>
+          row.connected ||
+          row.postsAnalyzed > 0 ||
+          row.views > 0 ||
+          row.interactions > 0,
+      ),
+    [liveSocialStats],
+  );
+
+  const liveUpdatedLabel = useMemo(() => {
+    const parsed = new Date(liveSocialStats.generatedAt);
+    if (Number.isNaN(parsed.getTime())) return t('Live data');
+    return `${t('Updated')}: ${parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }, [liveSocialStats.generatedAt, t]);
+
   const heatmapSeries = useMemo(
     () =>
       [...historySeries]
@@ -351,6 +430,54 @@ export const DashboardScreen: React.FC = () => {
             ))}
           </View>
         )}
+      </DMCard>
+      <DMCard
+        title={t('Live Social Performance')}
+        subtitle={
+          liveSocialLoading
+            ? t('Pulling latest social metrics...')
+            : t('Meta + X across the last {{hours}}h', { hours: liveSocialStats.lookbackHours })
+        }
+      >
+        <View style={styles.liveSummaryRow}>
+          <View style={styles.liveSummaryItem}>
+            <Text style={styles.liveSummaryLabel}>{t('Views')}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(liveSocialStats.summary.views)}</Text>
+          </View>
+          <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
+            <Text style={styles.liveSummaryLabel}>{t('Interactions')}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(liveSocialStats.summary.interactions)}</Text>
+          </View>
+        </View>
+        <View style={styles.liveSummaryRow}>
+          <View style={styles.liveSummaryItem}>
+            <Text style={styles.liveSummaryLabel}>{t('Engagement')}</Text>
+            <Text style={styles.liveSummaryValue}>{liveSocialStats.summary.engagementRate.toFixed(2)}%</Text>
+          </View>
+          <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
+            <Text style={styles.liveSummaryLabel}>{t('Conversions')}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(liveSocialStats.summary.conversions)}</Text>
+          </View>
+        </View>
+        {livePlatformRows.length ? (
+          <View style={styles.livePlatformList}>
+            {livePlatformRows.map(row => (
+              <View key={row.key} style={styles.livePlatformRow}>
+                <View style={styles.livePlatformHeader}>
+                  <Text style={styles.livePlatformName}>{row.label}</Text>
+                  <Text style={styles.livePlatformPosts}>{t('{{count}} posts', { count: row.postsAnalyzed })}</Text>
+                </View>
+                <Text style={styles.livePlatformMetrics}>
+                  {t('Views')}: {formatCount(row.views)} | {t('Interactions')}: {formatCount(row.interactions)} | {t('Engagement')}:{' '}
+                  {row.engagementRate.toFixed(2)}%
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.emptyState}>{t('No connected social channels with live metrics yet.')}</Text>
+        )}
+        <Text style={styles.liveUpdatedAt}>{liveUpdatedLabel}</Text>
       </DMCard>
       <DMCard title={t('Daily Reviews')} subtitle={loading ? t('Refreshing data...') : t('Pulse across the last 24h')}>
         <View style={styles.kpiRow}>
@@ -640,6 +767,71 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4
   },
+  liveSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  liveSummaryItem: {
+    flex: 1,
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 12,
+    marginRight: 10,
+  },
+  liveSummaryItemLast: {
+    marginRight: 0,
+  },
+  liveSummaryLabel: {
+    color: colors.subtext,
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  liveSummaryValue: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: 6,
+  },
+  livePlatformList: {
+    marginTop: 4,
+  },
+  livePlatformRow: {
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 12,
+    marginBottom: 10,
+  },
+  livePlatformHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  livePlatformName: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  livePlatformPosts: {
+    color: colors.subtext,
+    fontSize: 11,
+  },
+  livePlatformMetrics: {
+    color: colors.subtext,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  liveUpdatedAt: {
+    color: colors.subtext,
+    fontSize: 11,
+    marginTop: 6,
+  },
   emptyState: {
     color: colors.subtext,
     marginTop: 8,
@@ -650,3 +842,4 @@ const styles = StyleSheet.create({
     marginBottom: 8
   }
 });
+

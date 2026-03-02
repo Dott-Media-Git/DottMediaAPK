@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireFirebase } from '../middleware/firebaseAuth.js';
 import { AnalyticsService, getOutboundStats, getInboundStats, getEngagementStats, getFollowupStats, getWebLeadStats, } from '../services/analyticsService.js';
+import { getLiveSocialMetrics } from '../services/liveSocialMetricsService.js';
 const router = Router();
 const analytics = new AnalyticsService();
 router.get('/analytics', requireFirebase, async (req, res, next) => {
@@ -71,4 +72,23 @@ router.get('/stats/webLeads', requireFirebase, async (req, res, next) => {
         next(error);
     }
 });
+router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        if (!authUser)
+            return res.status(401).json({ message: 'Unauthorized' });
+        const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+        const lookbackRaw = typeof req.query.lookbackHours === 'string' ? Number(req.query.lookbackHours) : undefined;
+        const lookbackHours = Number.isFinite(lookbackRaw) && lookbackRaw > 0 ? Number(lookbackRaw) : undefined;
+        const stats = await getLiveSocialMetrics(authUser.uid, {
+            lookbackHours,
+            scope: { userId: authUser.uid, scopeId },
+        });
+        res.json({ stats });
+    }
+    catch (error) {
+        next(error);
+    }
+});
 export default router;
+

@@ -42,6 +42,31 @@ export type OutboundStats = {
   conversionRate: number;
 };
 
+export type LiveSocialPlatformStats = {
+  connected: boolean;
+  views: number;
+  interactions: number;
+  engagementRate: number;
+  postsAnalyzed: number;
+};
+
+export type LiveSocialStats = {
+  generatedAt: string;
+  lookbackHours: number;
+  summary: {
+    views: number;
+    interactions: number;
+    engagementRate: number;
+    conversions: number;
+  };
+  platforms: {
+    facebook: LiveSocialPlatformStats;
+    instagram: LiveSocialPlatformStats;
+    threads: LiveSocialPlatformStats;
+    x: LiveSocialPlatformStats;
+  };
+};
+
 const buildApiUrl = (path: string) => {
   const base = env.apiUrl?.replace(/\/$/, '') ?? '';
   if (!base) return '';
@@ -471,6 +496,17 @@ export const fetchFollowupStats = (userId?: string, scopeId?: string) =>
   simpleFetch<FollowupStats>('/api/stats/followups', userId, scopeId);
 export const fetchWebLeadStats = (userId?: string, scopeId?: string) =>
   simpleFetch<WebLeadStats>('/api/stats/webLeads', userId, scopeId);
+
+export const fetchLiveSocialStats = (
+  userId?: string,
+  scopeId?: string,
+  lookbackHours?: number
+) => {
+  const query = Number.isFinite(lookbackHours)
+    ? `/api/stats/socialLive?lookbackHours=${encodeURIComponent(String(lookbackHours))}`
+    : '/api/stats/socialLive';
+  return simpleFetch<LiveSocialStats>(query, userId, scopeId);
+};
 
 export const subscribeWebLeadStats = (
   scopeId: string | undefined,

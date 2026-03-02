@@ -8,6 +8,7 @@ import {
   getFollowupStats,
   getWebLeadStats,
 } from '../services/analyticsService';
+import { getLiveSocialMetrics } from '../services/liveSocialMetricsService';
 
 const router = Router();
 const analytics = new AnalyticsService();
@@ -74,6 +75,23 @@ router.get('/stats/webLeads', requireFirebase, async (req, res, next) => {
     const authUser = (req as AuthedRequest).authUser;
     const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
     const stats = await getWebLeadStats({ userId: authUser?.uid, scopeId });
+    res.json({ stats });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+    const lookbackRaw = typeof req.query.lookbackHours === 'string' ? Number(req.query.lookbackHours) : undefined;
+    const lookbackHours = Number.isFinite(lookbackRaw) && (lookbackRaw as number) > 0 ? Number(lookbackRaw) : undefined;
+    const stats = await getLiveSocialMetrics(authUser.uid, {
+      lookbackHours,
+      scope: { userId: authUser.uid, scopeId },
+    });
     res.json({ stats });
   } catch (error) {
     next(error);
