@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
+import { firestore } from '../db/firestore';
 import {
   AnalyticsService,
   incrementWebTrafficAnalytics,
@@ -105,10 +106,20 @@ router.post('/stats/webTrack', async (req, res, next) => {
       return res.status(400).json({ message: 'Invalid event' });
     }
 
-    const scopeId = typeof req.body?.scopeId === 'string' ? req.body.scopeId.trim() : '';
-    const ownerId = typeof req.body?.ownerId === 'string' ? req.body.ownerId.trim() : '';
+    let scopeId = typeof req.body?.scopeId === 'string' ? req.body.scopeId.trim() : '';
+    let ownerId = typeof req.body?.ownerId === 'string' ? req.body.ownerId.trim() : '';
+    const ownerEmailRaw = typeof req.body?.ownerEmail === 'string' ? req.body.ownerEmail.trim().toLowerCase() : '';
+    if (!scopeId && !ownerId && ownerEmailRaw) {
+      const userSnap = await firestore.collection('users').where('email', '==', ownerEmailRaw).limit(1).get();
+      if (!userSnap.empty) {
+        const userDoc = userSnap.docs[0];
+        const userData = userDoc.data() as { orgId?: string };
+        ownerId = userDoc.id;
+        scopeId = (userData.orgId ?? '').trim();
+      }
+    }
     if (!scopeId && !ownerId) {
-      return res.status(400).json({ message: 'scopeId or ownerId is required' });
+      return res.status(400).json({ message: 'scopeId, ownerId, or ownerEmail is required' });
     }
 
     const targetUrl = typeof req.body?.targetUrl === 'string' ? req.body.targetUrl : '';

@@ -9,7 +9,8 @@ Use this snippet on `bwinbetug.info` to send:
 <script>
 (() => {
   const API_URL = 'https://api.dott-media.com/api/stats/webTrack'; // replace if needed
-  const SCOPE_ID = 'REPLACE_WITH_BWINBET_SCOPE_ID'; // required
+  const OWNER_EMAIL = 'bwinbetug25@gmail.com'; // preferred (no manual scope needed)
+  const SCOPE_ID = ''; // optional override if you have a known analytics scope ID
   const TRACKING_KEY = ''; // optional: set if WEB_TRACK_SHARED_SECRET is enabled
 
   const headers = { 'Content-Type': 'application/json' };
@@ -26,7 +27,8 @@ Use this snippet on `bwinbetug.info` to send:
         headers,
         body: JSON.stringify({
           event,
-          scopeId: SCOPE_ID,
+          ownerEmail: OWNER_EMAIL,
+          scopeId: SCOPE_ID || undefined,
           source: utmSource,
           utmSource,
           referrer,
@@ -75,4 +77,3 @@ Use this snippet on `bwinbetug.info` to send:
 })();
 </script>
 ```
-
