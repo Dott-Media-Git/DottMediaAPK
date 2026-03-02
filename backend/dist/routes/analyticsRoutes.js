@@ -1,9 +1,61 @@
 import { Router } from 'express';
 import { requireFirebase } from '../middleware/firebaseAuth.js';
-import { AnalyticsService, getOutboundStats, getInboundStats, getEngagementStats, getFollowupStats, getWebLeadStats, } from '../services/analyticsService.js';
+import { AnalyticsService, incrementWebTrafficAnalytics, getOutboundStats, getInboundStats, getEngagementStats, getFollowupStats, getWebLeadStats, } from '../services/analyticsService.js';
 import { getLiveSocialMetrics } from '../services/liveSocialMetricsService.js';
 const router = Router();
 const analytics = new AnalyticsService();
+const webTrackAllowedHosts = (process.env.WEB_TRACK_ALLOWED_HOSTS ?? 'bwinbetug.info,www.bwinbetug.info')
+    .split(',')
+    .map(host => host.trim().toLowerCase())
+    .filter(Boolean);
+const webTrackSharedSecret = process.env.WEB_TRACK_SHARED_SECRET?.trim() || '';
+const extractHostname = (value) => {
+    if (!value)
+        return '';
+    try {
+        return new URL(value).hostname.toLowerCase();
+    }
+    catch {
+        return '';
+    }
+};
+const isAllowedWebTrackHost = (value) => {
+    const hostname = extractHostname(value);
+    if (!hostname)
+        return false;
+    return webTrackAllowedHosts.some(allowed => hostname === allowed || hostname.endsWith(`.${allowed}`));
+};
+const normalizeTrafficSource = (value) => {
+    const raw = (value ?? '').trim().toLowerCase();
+    if (!raw)
+        return 'web';
+    if (raw.includes('instagram') || raw === 'ig')
+        return 'instagram';
+    if (raw.includes('facebook') || raw === 'fb')
+        return 'facebook';
+    if (raw.includes('threads'))
+        return 'threads';
+    if (raw.includes('twitter') || raw === 'x' || raw.includes('x.com') || raw.includes('t.co'))
+        return 'x';
+    if (raw.includes('web') || raw.includes('direct'))
+        return 'web';
+    return 'other';
+};
+const inferTrafficSource = (input) => {
+    const direct = normalizeTrafficSource(input.source || input.utmSource);
+    if (direct !== 'web' || input.source || input.utmSource)
+        return direct;
+    const referrer = (input.referrer ?? '').toLowerCase();
+    if (referrer.includes('instagram'))
+        return 'instagram';
+    if (referrer.includes('facebook'))
+        return 'facebook';
+    if (referrer.includes('threads'))
+        return 'threads';
+    if (referrer.includes('t.co') || referrer.includes('x.com') || referrer.includes('twitter'))
+        return 'x';
+    return 'web';
+};
 router.get('/analytics', requireFirebase, async (req, res, next) => {
     try {
         const authUser = req.authUser;
@@ -26,6 +78,57 @@ router.get('/stats/outbound', requireFirebase, async (req, res, next) => {
     }
     catch (err) {
         next(err);
+    }
+});
+router.post('/stats/webTrack', async (req, res, next) => {
+    try {
+        const token = (req.get('x-web-track-key') ?? '').trim();
+        if (webTrackSharedSecret) {
+            if (!token || token !== webTrackSharedSecret) {
+                return res.status(401).json({ message: 'Invalid tracking key' });
+            }
+        }
+        else {
+            const origin = req.get('origin') ?? '';
+            const referer = req.get('referer') ?? '';
+            const bodyReferrer = typeof req.body?.referrer === 'string' ? req.body.referrer : '';
+            if (!isAllowedWebTrackHost(origin) &&
+                !isAllowedWebTrackHost(referer) &&
+                !isAllowedWebTrackHost(bodyReferrer)) {
+                return res.status(403).json({ message: 'Untrusted origin' });
+            }
+        }
+        const event = typeof req.body?.event === 'string' ? req.body.event.trim().toLowerCase() : '';
+        if (!['visit', 'interaction', 'redirect_click'].includes(event)) {
+            return res.status(400).json({ message: 'Invalid event' });
+        }
+        const scopeId = typeof req.body?.scopeId === 'string' ? req.body.scopeId.trim() : '';
+        const ownerId = typeof req.body?.ownerId === 'string' ? req.body.ownerId.trim() : '';
+        if (!scopeId && !ownerId) {
+            return res.status(400).json({ message: 'scopeId or ownerId is required' });
+        }
+        const targetUrl = typeof req.body?.targetUrl === 'string' ? req.body.targetUrl : '';
+        const source = inferTrafficSource({
+            source: typeof req.body?.source === 'string' ? req.body.source : undefined,
+            utmSource: typeof req.body?.utmSource === 'string' ? req.body.utmSource : undefined,
+            referrer: typeof req.body?.referrer === 'string' ? req.body.referrer : req.get('referer') ?? undefined,
+        });
+        const isBwinRedirect = event !== 'redirect_click' || /(^|\/|\.)bwinbetug\.com(\/|$)/i.test(targetUrl);
+        const visitors = event === 'visit' ? 1 : 0;
+        const interactions = event === 'interaction' ? 1 : 0;
+        const redirectClicks = event === 'redirect_click' && isBwinRedirect ? 1 : 0;
+        if (visitors || interactions || redirectClicks) {
+            await incrementWebTrafficAnalytics({
+                visitors,
+                interactions,
+                redirectClicks,
+                source,
+            }, { scopeId: scopeId || undefined, userId: ownerId || undefined });
+        }
+        res.json({ ok: true, source, tracked: Boolean(visitors || interactions || redirectClicks) });
+    }
+    catch (error) {
+        next(error);
     }
 });
 router.get('/stats/inbound', requireFirebase, async (req, res, next) => {
@@ -91,4 +194,3 @@ router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
     }
 });
 export default router;
-

@@ -17,6 +17,8 @@ const followupAnalyticsCollection = (scope) => analyticsRoot(scope).collection('
 const followupSummaryDoc = (scope) => analyticsRoot(scope).collection('summaries').doc('followups');
 const webLeadAnalyticsCollection = (scope) => analyticsRoot(scope).collection('webLeadsDaily');
 const webLeadSummaryDoc = (scope) => analyticsRoot(scope).collection('summaries').doc('webLeads');
+const webTrafficAnalyticsCollection = (scope) => analyticsRoot(scope).collection('webTrafficDaily');
+const webTrafficSummaryDoc = (scope) => analyticsRoot(scope).collection('summaries').doc('webTraffic');
 export class AnalyticsService {
     async getSummary(userId) {
         // Mock Data Logic
@@ -328,6 +330,85 @@ export async function incrementWebLeadAnalytics(update, scope) {
         messages: update.messages ?? 0,
     });
 }
+const normalizeCounterMap = (value) => {
+    if (!value || typeof value !== 'object')
+        return {};
+    const entries = Object.entries(value).map(([key, raw]) => {
+        const count = Number(raw ?? 0);
+        return [key, Number.isFinite(count) ? count : 0];
+    });
+    return Object.fromEntries(entries.filter((entry) => entry[1] > 0));
+};
+const normalizeWebTrafficSource = (value) => {
+    const raw = (value ?? '').trim().toLowerCase();
+    if (!raw)
+        return 'web';
+    if (raw.includes('instagram') || raw === 'ig')
+        return 'instagram';
+    if (raw.includes('facebook') || raw === 'fb')
+        return 'facebook';
+    if (raw.includes('threads'))
+        return 'threads';
+    if (raw.includes('twitter') || raw === 'x' || raw.includes('x.com') || raw.includes('t.co'))
+        return 'x';
+    if (raw.includes('web') || raw.includes('direct'))
+        return 'web';
+    return 'other';
+};
+export async function incrementWebTrafficAnalytics(update, scope) {
+    const visitors = Number(update.visitors ?? 0);
+    const interactions = Number(update.interactions ?? 0);
+    const redirectClicks = Number(update.redirectClicks ?? 0);
+    if (!visitors && !interactions && !redirectClicks)
+        return;
+    const sourceKey = normalizeWebTrafficSource(update.source);
+    const date = new Date().toISOString().slice(0, 10);
+    const docRef = webTrafficAnalyticsCollection(scope).doc(date);
+    await firestore.runTransaction(async (tx) => {
+        const snap = await tx.get(docRef);
+        const existing = snap.exists
+            ? snap.data()
+            : {};
+        const sourceVisitors = { ...(existing.sourceVisitors ?? {}) };
+        const sourceInteractions = { ...(existing.sourceInteractions ?? {}) };
+        const sourceRedirectClicks = { ...(existing.sourceRedirectClicks ?? {}) };
+        if (visitors > 0) {
+            sourceVisitors[sourceKey] = (sourceVisitors[sourceKey] ?? 0) + visitors;
+        }
+        if (interactions > 0) {
+            sourceInteractions[sourceKey] = (sourceInteractions[sourceKey] ?? 0) + interactions;
+        }
+        if (redirectClicks > 0) {
+            sourceRedirectClicks[sourceKey] = (sourceRedirectClicks[sourceKey] ?? 0) + redirectClicks;
+        }
+        tx.set(docRef, {
+            date,
+            visitors: (existing.visitors ?? 0) + visitors,
+            interactions: (existing.interactions ?? 0) + interactions,
+            redirectClicks: (existing.redirectClicks ?? 0) + redirectClicks,
+            sourceVisitors,
+            sourceInteractions,
+            sourceRedirectClicks,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+    });
+    const summaryPayload = {
+        visitors: admin.firestore.FieldValue.increment(visitors),
+        interactions: admin.firestore.FieldValue.increment(interactions),
+        redirectClicks: admin.firestore.FieldValue.increment(redirectClicks),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (visitors > 0) {
+        summaryPayload[`sourceVisitors.${sourceKey}`] = admin.firestore.FieldValue.increment(visitors);
+    }
+    if (interactions > 0) {
+        summaryPayload[`sourceInteractions.${sourceKey}`] = admin.firestore.FieldValue.increment(interactions);
+    }
+    if (redirectClicks > 0) {
+        summaryPayload[`sourceRedirectClicks.${sourceKey}`] = admin.firestore.FieldValue.increment(redirectClicks);
+    }
+    await webTrafficSummaryDoc(scope).set(summaryPayload, { merge: true });
+}
 async function writeDailySummary(collection, summaryDoc, counters) {
     const date = new Date().toISOString().slice(0, 10);
     const docRef = collection.doc(date);
@@ -397,5 +478,22 @@ export async function getWebLeadStats(scope) {
         leads,
         messages,
         conversionRate: Number(conversionRate.toFixed(2)),
+    };
+}
+export async function getWebTrafficStats(scope) {
+    const doc = await webTrafficSummaryDoc(scope).get();
+    const data = doc.data() ?? {};
+    const visitors = Number(data.visitors ?? 0);
+    const interactions = Number(data.interactions ?? 0);
+    const redirectClicks = Number(data.redirectClicks ?? 0);
+    const engagementRate = visitors > 0 ? (interactions / visitors) * 100 : 0;
+    return {
+        visitors,
+        interactions,
+        redirectClicks,
+        engagementRate: Number(engagementRate.toFixed(2)),
+        sourceVisitors: normalizeCounterMap(data.sourceVisitors),
+        sourceInteractions: normalizeCounterMap(data.sourceInteractions),
+        sourceRedirectClicks: normalizeCounterMap(data.sourceRedirectClicks),
     };
 }
