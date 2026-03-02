@@ -56,6 +56,10 @@ const webLeadAnalyticsCollection = (scope?: AnalyticsScope) =>
   analyticsRoot(scope).collection('webLeadsDaily');
 const webLeadSummaryDoc = (scope?: AnalyticsScope) =>
   analyticsRoot(scope).collection('summaries').doc('webLeads');
+const webTrafficAnalyticsCollection = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('webTrafficDaily');
+const webTrafficSummaryDoc = (scope?: AnalyticsScope) =>
+  analyticsRoot(scope).collection('summaries').doc('webTraffic');
 
 export class AnalyticsService {
   async getSummary(userId: string): Promise<AnalyticsSummary> {
@@ -462,6 +466,123 @@ export async function incrementWebLeadAnalytics(update: WebLeadAnalyticsUpdate, 
   });
 }
 
+export type WebTrafficSource =
+  | 'facebook'
+  | 'instagram'
+  | 'threads'
+  | 'x'
+  | 'web'
+  | 'other';
+
+export type WebTrafficAnalyticsUpdate = {
+  visitors?: number;
+  interactions?: number;
+  redirectClicks?: number;
+  source?: string;
+};
+
+export type WebTrafficStats = {
+  visitors: number;
+  interactions: number;
+  redirectClicks: number;
+  engagementRate: number;
+  sourceVisitors: Record<string, number>;
+  sourceInteractions: Record<string, number>;
+  sourceRedirectClicks: Record<string, number>;
+};
+
+const normalizeCounterMap = (value: unknown) => {
+  if (!value || typeof value !== 'object') return {};
+  const entries = Object.entries(value as Record<string, unknown>).map(([key, raw]) => {
+    const count = Number(raw ?? 0);
+    return [key, Number.isFinite(count) ? count : 0] as const;
+  });
+  return Object.fromEntries(entries.filter((entry) => entry[1] > 0));
+};
+
+const normalizeWebTrafficSource = (value?: string): WebTrafficSource => {
+  const raw = (value ?? '').trim().toLowerCase();
+  if (!raw) return 'web';
+  if (raw.includes('instagram') || raw === 'ig') return 'instagram';
+  if (raw.includes('facebook') || raw === 'fb') return 'facebook';
+  if (raw.includes('threads')) return 'threads';
+  if (raw.includes('twitter') || raw === 'x' || raw.includes('x.com') || raw.includes('t.co')) return 'x';
+  if (raw.includes('web') || raw.includes('direct')) return 'web';
+  return 'other';
+};
+
+export async function incrementWebTrafficAnalytics(update: WebTrafficAnalyticsUpdate, scope?: AnalyticsScope) {
+  const visitors = Number(update.visitors ?? 0);
+  const interactions = Number(update.interactions ?? 0);
+  const redirectClicks = Number(update.redirectClicks ?? 0);
+  if (!visitors && !interactions && !redirectClicks) return;
+
+  const sourceKey = normalizeWebTrafficSource(update.source);
+  const date = new Date().toISOString().slice(0, 10);
+  const docRef = webTrafficAnalyticsCollection(scope).doc(date);
+
+  await firestore.runTransaction(async tx => {
+    const snap = await tx.get(docRef);
+    const existing = snap.exists
+      ? (snap.data() as {
+          visitors?: number;
+          interactions?: number;
+          redirectClicks?: number;
+          sourceVisitors?: Record<string, number>;
+          sourceInteractions?: Record<string, number>;
+          sourceRedirectClicks?: Record<string, number>;
+        })
+      : {};
+
+    const sourceVisitors = { ...(existing.sourceVisitors ?? {}) };
+    const sourceInteractions = { ...(existing.sourceInteractions ?? {}) };
+    const sourceRedirectClicks = { ...(existing.sourceRedirectClicks ?? {}) };
+
+    if (visitors > 0) {
+      sourceVisitors[sourceKey] = (sourceVisitors[sourceKey] ?? 0) + visitors;
+    }
+    if (interactions > 0) {
+      sourceInteractions[sourceKey] = (sourceInteractions[sourceKey] ?? 0) + interactions;
+    }
+    if (redirectClicks > 0) {
+      sourceRedirectClicks[sourceKey] = (sourceRedirectClicks[sourceKey] ?? 0) + redirectClicks;
+    }
+
+    tx.set(
+      docRef,
+      {
+        date,
+        visitors: (existing.visitors ?? 0) + visitors,
+        interactions: (existing.interactions ?? 0) + interactions,
+        redirectClicks: (existing.redirectClicks ?? 0) + redirectClicks,
+        sourceVisitors,
+        sourceInteractions,
+        sourceRedirectClicks,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+
+  const summaryPayload: Record<string, unknown> = {
+    visitors: admin.firestore.FieldValue.increment(visitors),
+    interactions: admin.firestore.FieldValue.increment(interactions),
+    redirectClicks: admin.firestore.FieldValue.increment(redirectClicks),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  if (visitors > 0) {
+    summaryPayload[`sourceVisitors.${sourceKey}`] = admin.firestore.FieldValue.increment(visitors);
+  }
+  if (interactions > 0) {
+    summaryPayload[`sourceInteractions.${sourceKey}`] = admin.firestore.FieldValue.increment(interactions);
+  }
+  if (redirectClicks > 0) {
+    summaryPayload[`sourceRedirectClicks.${sourceKey}`] = admin.firestore.FieldValue.increment(redirectClicks);
+  }
+
+  await webTrafficSummaryDoc(scope).set(summaryPayload, { merge: true });
+}
+
 type SummaryDoc = admin.firestore.DocumentReference<admin.firestore.DocumentData>;
 
 async function writeDailySummary(collection: FirebaseFirestore.CollectionReference, summaryDoc: SummaryDoc, counters: Record<string, number>) {
@@ -572,5 +693,23 @@ export async function getWebLeadStats(scope?: AnalyticsScope): Promise<WebLeadSt
     leads,
     messages,
     conversionRate: Number(conversionRate.toFixed(2)),
+  };
+}
+
+export async function getWebTrafficStats(scope?: AnalyticsScope): Promise<WebTrafficStats> {
+  const doc = await webTrafficSummaryDoc(scope).get();
+  const data = doc.data() ?? {};
+  const visitors = Number(data.visitors ?? 0);
+  const interactions = Number(data.interactions ?? 0);
+  const redirectClicks = Number(data.redirectClicks ?? 0);
+  const engagementRate = visitors > 0 ? (interactions / visitors) * 100 : 0;
+  return {
+    visitors,
+    interactions,
+    redirectClicks,
+    engagementRate: Number(engagementRate.toFixed(2)),
+    sourceVisitors: normalizeCounterMap(data.sourceVisitors),
+    sourceInteractions: normalizeCounterMap(data.sourceInteractions),
+    sourceRedirectClicks: normalizeCounterMap(data.sourceRedirectClicks),
   };
 }

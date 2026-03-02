@@ -47,6 +47,7 @@ export type LiveSocialPlatformStats = {
   views: number;
   interactions: number;
   engagementRate: number;
+  conversions: number;
   postsAnalyzed: number;
 };
 
@@ -59,11 +60,18 @@ export type LiveSocialStats = {
     engagementRate: number;
     conversions: number;
   };
+  web: {
+    visitors: number;
+    interactions: number;
+    redirectClicks: number;
+    engagementRate: number;
+  };
   platforms: {
     facebook: LiveSocialPlatformStats;
     instagram: LiveSocialPlatformStats;
     threads: LiveSocialPlatformStats;
     x: LiveSocialPlatformStats;
+    web: LiveSocialPlatformStats;
   };
 };
 

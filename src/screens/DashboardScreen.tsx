@@ -55,11 +55,18 @@ const emptyLiveSocialStats: LiveSocialStats = {
     engagementRate: 0,
     conversions: 0,
   },
+  web: {
+    visitors: 0,
+    interactions: 0,
+    redirectClicks: 0,
+    engagementRate: 0,
+  },
   platforms: {
-    facebook: { connected: false, views: 0, interactions: 0, engagementRate: 0, postsAnalyzed: 0 },
-    instagram: { connected: false, views: 0, interactions: 0, engagementRate: 0, postsAnalyzed: 0 },
-    threads: { connected: false, views: 0, interactions: 0, engagementRate: 0, postsAnalyzed: 0 },
-    x: { connected: false, views: 0, interactions: 0, engagementRate: 0, postsAnalyzed: 0 },
+    facebook: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
+    instagram: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
+    threads: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
+    x: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
+    web: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
   },
 };
 
@@ -374,14 +381,28 @@ export const DashboardScreen: React.FC = () => {
         { key: 'instagram', label: 'Instagram', ...liveSocialStats.platforms.instagram },
         { key: 'threads', label: 'Threads', ...liveSocialStats.platforms.threads },
         { key: 'x', label: 'X', ...liveSocialStats.platforms.x },
+        { key: 'web', label: 'Web', ...liveSocialStats.platforms.web },
       ].filter(
         row =>
           row.connected ||
           row.postsAnalyzed > 0 ||
           row.views > 0 ||
-          row.interactions > 0,
+          row.interactions > 0 ||
+          row.conversions > 0,
       ),
     [liveSocialStats],
+  );
+
+  const channelPerformanceRows = useMemo(
+    () =>
+      livePlatformRows.map(row => ({
+        key: row.key,
+        label: row.label,
+        interactions: row.interactions,
+        engagementRate: row.engagementRate,
+        conversions: row.conversions ?? 0,
+      })),
+    [livePlatformRows],
   );
 
   const liveUpdatedLabel = useMemo(() => {
@@ -479,17 +500,33 @@ export const DashboardScreen: React.FC = () => {
             <Text style={styles.liveSummaryValue}>{formatCount(liveSocialStats.summary.conversions)}</Text>
           </View>
         </View>
+        {isBwinbetAccount ? (
+          <View style={styles.liveSummaryRow}>
+            <View style={styles.liveSummaryItem}>
+              <Text style={styles.liveSummaryLabel}>{t('Web visitors')}</Text>
+              <Text style={styles.liveSummaryValue}>{formatCount(liveSocialStats.web.visitors)}</Text>
+            </View>
+            <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
+              <Text style={styles.liveSummaryLabel}>{t('Bet button clicks')}</Text>
+              <Text style={styles.liveSummaryValue}>{formatCount(liveSocialStats.web.redirectClicks)}</Text>
+            </View>
+          </View>
+        ) : null}
         {livePlatformRows.length ? (
           <View style={styles.livePlatformList}>
             {livePlatformRows.map(row => (
               <View key={row.key} style={styles.livePlatformRow}>
                 <View style={styles.livePlatformHeader}>
                   <Text style={styles.livePlatformName}>{row.label}</Text>
-                  <Text style={styles.livePlatformPosts}>{t('{{count}} posts', { count: row.postsAnalyzed })}</Text>
+                  <Text style={styles.livePlatformPosts}>
+                    {row.key === 'web'
+                      ? t('{{count}} visits', { count: row.views })
+                      : t('{{count}} posts', { count: row.postsAnalyzed })}
+                  </Text>
                 </View>
                 <Text style={styles.livePlatformMetrics}>
                   {t('Views')}: {formatCount(row.views)} | {t('Interactions')}: {formatCount(row.interactions)} | {t('Engagement')}:{' '}
-                  {row.engagementRate.toFixed(2)}%
+                  {row.engagementRate.toFixed(2)}% | {t('Conversions')}: {formatCount(row.conversions)}
                 </Text>
               </View>
             ))}
@@ -497,6 +534,20 @@ export const DashboardScreen: React.FC = () => {
         ) : (
           <Text style={styles.emptyState}>{t('No connected social channels with live metrics yet.')}</Text>
         )}
+        {isBwinbetAccount ? (
+          <View style={styles.channelMatrix}>
+            <Text style={styles.channelMatrixTitle}>{t('Channel Performance (Interactions, Engagement, Conversions)')}</Text>
+            {channelPerformanceRows.map(row => (
+              <View key={`matrix-${row.key}`} style={styles.channelMatrixRow}>
+                <Text style={styles.channelMatrixName}>{row.label}</Text>
+                <Text style={styles.channelMatrixValue}>
+                  {t('Interactions')}: {formatCount(row.interactions)} | {t('Engagement')}: {row.engagementRate.toFixed(2)}% | {t('Conversions')}:{' '}
+                  {formatCount(row.conversions)}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
         <Text style={styles.liveUpdatedAt}>{liveUpdatedLabel}</Text>
       </DMCard>
       <DMCard title={t('Daily Reviews')} subtitle={loading ? t('Refreshing data...') : t('Pulse across the last 24h')}>
@@ -855,6 +906,38 @@ const styles = StyleSheet.create({
     color: colors.subtext,
     fontSize: 11,
     marginTop: 6,
+  },
+  channelMatrix: {
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 10,
+  },
+  channelMatrixTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  channelMatrixRow: {
+    backgroundColor: colors.backgroundAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+  },
+  channelMatrixName: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  channelMatrixValue: {
+    color: colors.subtext,
+    fontSize: 12,
+    lineHeight: 18,
   },
   emptyState: {
     color: colors.subtext,

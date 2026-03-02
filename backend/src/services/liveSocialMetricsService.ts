@@ -45,6 +45,7 @@ export type PlatformLiveMetric = {
   views: number;
   interactions: number;
   engagementRate: number;
+  conversions: number;
   postsAnalyzed: number;
 };
 
@@ -57,11 +58,18 @@ export type LiveSocialMetrics = {
     engagementRate: number;
     conversions: number;
   };
+  web: {
+    visitors: number;
+    interactions: number;
+    redirectClicks: number;
+    engagementRate: number;
+  };
   platforms: {
     facebook: PlatformLiveMetric;
     instagram: PlatformLiveMetric;
     threads: PlatformLiveMetric;
     x: PlatformLiveMetric;
+    web: PlatformLiveMetric;
   };
 };
 
@@ -70,6 +78,7 @@ const emptyPlatformMetric = (): PlatformLiveMetric => ({
   views: 0,
   interactions: 0,
   engagementRate: 0,
+  conversions: 0,
   postsAnalyzed: 0,
 });
 
@@ -108,6 +117,20 @@ const parseInsightArrayValue = (entries: any[], metricName: string) => {
 const toUniqueIds = (items: string[]) => Array.from(new Set(items.filter(Boolean)));
 
 const sum = (values: number[]) => values.reduce((acc, value) => acc + value, 0);
+
+const toNumber = (value: unknown) => {
+  const numeric = Number(value ?? 0);
+  return Number.isFinite(numeric) ? numeric : 0;
+};
+
+const mergeCounterMap = (target: Record<string, number>, raw: unknown) => {
+  if (!raw || typeof raw !== 'object') return;
+  Object.entries(raw as Record<string, unknown>).forEach(([key, value]) => {
+    const counter = toNumber(value);
+    if (counter <= 0) return;
+    target[key] = (target[key] ?? 0) + counter;
+  });
+};
 
 const formatRate = (interactions: number, views: number) =>
   views > 0 ? Number(((interactions / views) * 100).toFixed(2)) : 0;
@@ -348,11 +371,20 @@ export async function getLiveSocialMetrics(
   }
 
   const cutoffMs = Date.now() - lookbackHours * 60 * 60 * 1000;
+  const lookbackDays = Math.max(Math.ceil(lookbackHours / 24) + 1, 2);
+  const minDate = new Date(cutoffMs).toISOString().slice(0, 10);
 
-  const [userDoc, postsSnap, outbound] = await Promise.all([
+  const [userDoc, postsSnap, outbound, webTrafficSnap] = await Promise.all([
     firestore.collection('users').doc(userId).get(),
     firestore.collection('scheduledPosts').where('userId', '==', userId).limit(500).get(),
     getOutboundStats(options?.scope ?? { userId }),
+    firestore
+      .collection('analytics')
+      .doc(scopeKey)
+      .collection('webTrafficDaily')
+      .orderBy('date', 'desc')
+      .limit(lookbackDays)
+      .get(),
   ]);
 
   const userData = userDoc.data() as { email?: string | null; socialAccounts?: UserSocialAccounts } | undefined;
@@ -366,6 +398,17 @@ export async function getLiveSocialMetrics(
   const instagramIds = collectRemoteIds(recentPosted, ['instagram', 'instagram_reels', 'instagram_story']);
   const threadsIds = collectRemoteIds(recentPosted, ['threads']);
   const xIds = collectRemoteIds(recentPosted, ['x', 'twitter']);
+  const sourceRedirectClicks: Record<string, number> = {};
+  const recentWebTrafficRows = webTrafficSnap.docs
+    .map(doc => doc.data() as any)
+    .filter(row => {
+      const date = typeof row.date === 'string' ? row.date : '';
+      return date && date >= minDate;
+    });
+  const webVisitors = sum(recentWebTrafficRows.map(row => toNumber(row.visitors)));
+  const webInteractions = sum(recentWebTrafficRows.map(row => toNumber(row.interactions)));
+  const webRedirectClicks = sum(recentWebTrafficRows.map(row => toNumber(row.redirectClicks)));
+  recentWebTrafficRows.forEach(row => mergeCounterMap(sourceRedirectClicks, row.sourceRedirectClicks));
 
   const output: LiveSocialMetrics = {
     generatedAt: new Date().toISOString(),
@@ -375,6 +418,12 @@ export async function getLiveSocialMetrics(
       interactions: 0,
       engagementRate: 0,
       conversions: Number(outbound?.conversions ?? 0),
+    },
+    web: {
+      visitors: webVisitors,
+      interactions: webInteractions,
+      redirectClicks: webRedirectClicks,
+      engagementRate: formatRate(webInteractions, webVisitors),
     },
     platforms: {
       facebook: {
@@ -396,6 +445,15 @@ export async function getLiveSocialMetrics(
         ...emptyPlatformMetric(),
         connected: Boolean(getTwitterCredential(accounts)),
         postsAnalyzed: xIds.length,
+      },
+      web: {
+        ...emptyPlatformMetric(),
+        connected: webVisitors > 0 || webInteractions > 0 || webRedirectClicks > 0,
+        views: webVisitors,
+        interactions: webInteractions,
+        engagementRate: formatRate(webInteractions, webVisitors),
+        conversions: webRedirectClicks,
+        postsAnalyzed: webVisitors,
       },
     },
   };
@@ -447,11 +505,20 @@ export async function getLiveSocialMetrics(
     );
   }
 
+  output.platforms.facebook.conversions = toNumber(sourceRedirectClicks.facebook);
+  output.platforms.instagram.conversions = toNumber(sourceRedirectClicks.instagram);
+  output.platforms.threads.conversions = toNumber(sourceRedirectClicks.threads);
+  output.platforms.x.conversions =
+    toNumber(sourceRedirectClicks.x) + toNumber(sourceRedirectClicks.twitter);
+
   const totalViews = sum(Object.values(output.platforms).map(platform => platform.views));
   const totalInteractions = sum(Object.values(output.platforms).map(platform => platform.interactions));
   output.summary.views = totalViews;
   output.summary.interactions = totalInteractions;
   output.summary.engagementRate = formatRate(totalInteractions, totalViews);
+  if (webRedirectClicks > 0) {
+    output.summary.conversions = webRedirectClicks;
+  }
   liveMetricsCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, data: output });
 
   return output;
