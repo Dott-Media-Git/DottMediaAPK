@@ -75,6 +75,80 @@ export type LiveSocialStats = {
   };
 };
 
+const emptyLiveSocialPlatformStats: LiveSocialPlatformStats = {
+  connected: false,
+  views: 0,
+  interactions: 0,
+  engagementRate: 0,
+  conversions: 0,
+  postsAnalyzed: 0,
+};
+
+const emptyLiveSocialStats: LiveSocialStats = {
+  generatedAt: new Date(0).toISOString(),
+  lookbackHours: 72,
+  summary: {
+    views: 0,
+    interactions: 0,
+    engagementRate: 0,
+    conversions: 0,
+  },
+  web: {
+    visitors: 0,
+    interactions: 0,
+    redirectClicks: 0,
+    engagementRate: 0,
+  },
+  platforms: {
+    facebook: { ...emptyLiveSocialPlatformStats },
+    instagram: { ...emptyLiveSocialPlatformStats },
+    threads: { ...emptyLiveSocialPlatformStats },
+    x: { ...emptyLiveSocialPlatformStats },
+    web: { ...emptyLiveSocialPlatformStats },
+  },
+};
+
+const toFiniteNumber = (value: unknown, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const normalizePlatform = (value: any): LiveSocialPlatformStats => ({
+  connected: Boolean(value?.connected),
+  views: toFiniteNumber(value?.views),
+  interactions: toFiniteNumber(value?.interactions),
+  engagementRate: toFiniteNumber(value?.engagementRate),
+  conversions: toFiniteNumber(value?.conversions),
+  postsAnalyzed: toFiniteNumber(value?.postsAnalyzed),
+});
+
+const normalizeLiveSocialStats = (value: any): LiveSocialStats => ({
+  generatedAt:
+    typeof value?.generatedAt === 'string' && value.generatedAt
+      ? value.generatedAt
+      : new Date().toISOString(),
+  lookbackHours: Math.max(toFiniteNumber(value?.lookbackHours, 72), 1),
+  summary: {
+    views: toFiniteNumber(value?.summary?.views),
+    interactions: toFiniteNumber(value?.summary?.interactions),
+    engagementRate: toFiniteNumber(value?.summary?.engagementRate),
+    conversions: toFiniteNumber(value?.summary?.conversions),
+  },
+  web: {
+    visitors: toFiniteNumber(value?.web?.visitors),
+    interactions: toFiniteNumber(value?.web?.interactions),
+    redirectClicks: toFiniteNumber(value?.web?.redirectClicks),
+    engagementRate: toFiniteNumber(value?.web?.engagementRate),
+  },
+  platforms: {
+    facebook: normalizePlatform(value?.platforms?.facebook),
+    instagram: normalizePlatform(value?.platforms?.instagram),
+    threads: normalizePlatform(value?.platforms?.threads),
+    x: normalizePlatform(value?.platforms?.x),
+    web: normalizePlatform(value?.platforms?.web),
+  },
+});
+
 const buildApiUrl = (path: string) => {
   const base = env.apiUrl?.replace(/\/$/, '') ?? '';
   if (!base) return '';
@@ -513,7 +587,9 @@ export const fetchLiveSocialStats = (
   const query = Number.isFinite(lookbackHours)
     ? `/api/stats/socialLive?lookbackHours=${encodeURIComponent(String(lookbackHours))}`
     : '/api/stats/socialLive';
-  return simpleFetch<LiveSocialStats>(query, userId, scopeId);
+  return simpleFetch<LiveSocialStats>(query, userId, scopeId).then(stats =>
+    stats ? normalizeLiveSocialStats(stats) : { ...emptyLiveSocialStats },
+  );
 };
 
 export const subscribeWebLeadStats = (
