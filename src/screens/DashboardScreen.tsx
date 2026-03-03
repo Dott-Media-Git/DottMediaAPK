@@ -264,7 +264,12 @@ export const DashboardScreen: React.FC = () => {
     { label: isBwinbetAccount ? t('Interactions') : t('Leads'), value: heroPrimaryValue },
     { label: t('Engagement'), value: `${latestHistoryPoint.engagement}%` },
     { label: t('Conversions'), value: latestHistoryPoint.conversions },
-    { label: t('Feedback'), value: `${latestHistoryPoint.feedbackScore}/5` }
+    {
+      label: isBwinbetAccount ? t('Bet button clicks') : t('Feedback'),
+      value: isBwinbetAccount
+        ? formatCount(liveSocialStats.web.redirectClicks)
+        : `${latestHistoryPoint.feedbackScore}/5`,
+    }
   ];
 
   const logItems =
@@ -571,8 +576,10 @@ export const DashboardScreen: React.FC = () => {
             <Text style={styles.kpiValue}>{latestHistoryPoint.conversions}</Text>
           </View>
           <View style={styles.kpiItem}>
-            <Text style={styles.kpiLabel}>{t('Feedback')}</Text>
-            <Text style={styles.kpiValue}>{latestHistoryPoint.feedbackScore}/5</Text>
+            <Text style={styles.kpiLabel}>{isBwinbetAccount ? t('Bet button clicks') : t('Feedback')}</Text>
+            <Text style={styles.kpiValue}>
+              {isBwinbetAccount ? formatCount(liveSocialStats.web.redirectClicks) : `${latestHistoryPoint.feedbackScore}/5`}
+            </Text>
           </View>
         </View>
         <View style={styles.metricSummaryRow}>

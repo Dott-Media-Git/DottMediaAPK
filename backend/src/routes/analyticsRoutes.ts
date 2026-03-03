@@ -14,7 +14,10 @@ import { getLiveSocialMetrics } from '../services/liveSocialMetricsService';
 
 const router = Router();
 const analytics = new AnalyticsService();
-const webTrackAllowedHosts = (process.env.WEB_TRACK_ALLOWED_HOSTS ?? 'bwinbetug.info,www.bwinbetug.info')
+const webTrackAllowedHosts = (
+  process.env.WEB_TRACK_ALLOWED_HOSTS ??
+  'bwinbetug.info,www.bwinbetug.info,bwinbetug.com,www.bwinbetug.com'
+)
   .split(',')
   .map(host => host.trim().toLowerCase())
   .filter(Boolean);
