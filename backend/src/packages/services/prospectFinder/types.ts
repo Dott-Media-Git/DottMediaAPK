@@ -1,4 +1,4 @@
-export type ProspectChannel = 'linkedin' | 'instagram' | 'web' | 'csv' | 'whatsapp';
+export type ProspectChannel = 'linkedin' | 'instagram' | 'web' | 'csv' | 'whatsapp' | 'x';
 
 export interface Prospect {
   id: string;
@@ -24,6 +24,8 @@ export interface Prospect {
   lastChannel?: string;
   notes?: string;
   tags?: string[];
+  ownerId?: string;
+  orgId?: string;
 }
 
 export type ProspectSeed = Omit<Prospect, 'id' | 'score' | 'createdAt' | 'status' | 'lastContactedAt'> & {

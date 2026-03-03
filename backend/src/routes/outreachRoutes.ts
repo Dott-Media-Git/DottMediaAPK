@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { OutreachController } from '../controllers/outreachController';
+import { requireFirebase } from '../middleware/firebaseAuth';
 
 const router = Router();
 const controller = new OutreachController();
 
-router.post('/outreach/search', controller.search);
-router.post('/outreach/send', controller.send);
-router.get('/outreach/stats', controller.stats);
-router.post('/outreach/run', controller.run);
-router.get('/outreach/logs', controller.logs);
+router.post('/outreach/search', requireFirebase, controller.search);
+router.post('/outreach/send', requireFirebase, controller.send);
+router.get('/outreach/stats', requireFirebase, controller.stats);
+router.post('/outreach/run', requireFirebase, controller.run);
+router.get('/outreach/logs', requireFirebase, controller.logs);
 
 export default router;

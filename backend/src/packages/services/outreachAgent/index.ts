@@ -6,23 +6,44 @@ import { Prospect } from '../prospectFinder';
 import { sendLinkedInMessage } from './senders/linkedinSender';
 import { sendInstagramMessage, likeInstagramMedia, commentInstagramMedia } from './senders/instagramSender';
 import { sendWhatsAppMessage } from './senders/whatsappSender';
+import { XDmCredentials, sendXDirectMessage } from './senders/xSender';
 import { incrementMetric } from '../../../services/analyticsService';
+import { canUsePrimarySocialDefaults } from '../../../utils/socialAccess';
 
 const prospectsCollection = firestore.collection('prospects');
 const outreachCollection = firestore.collection('outreach');
 const leadsCollection = firestore.collection('leads');
+const suppressionCollection = firestore.collection('outreachSuppression');
 const outboundLogsCollection = firestore.collection('logs').doc('outbound').collection('runs');
 const SETTINGS_CACHE_TTL_MS = 10 * 60 * 1000;
 const complianceFooterCache = new Map<string, { value: string; fetchedAt: number; loaded: boolean }>();
 
-const outboundChannels = ['linkedin', 'instagram', 'whatsapp'] as const;
+const outboundChannels = ['linkedin', 'instagram', 'whatsapp', 'x'] as const;
 type OutboundChannel = (typeof outboundChannels)[number];
+
+const X_DAILY_CAP_HARD_LIMIT = 299;
+const X_OPT_OUT_KEYWORDS = ['stop', 'unsubscribe', 'opt out', 'remove me', 'no dm', 'no message'];
+const X_OPT_IN_TAGS = ['x_opt_in', 'dm_opt_in', 'opted_in_dm', 'requested_dm', 'inbound_opt_in'];
+
+type XPolicyConfig = {
+  requireOptIn: boolean;
+  dailyCap: number;
+  minDelayMs: number;
+};
+
+type RunContext = {
+  userId?: string;
+  xCredentials: XDmCredentials | null;
+  xSuppressedHandles: Set<string>;
+  xPolicy: XPolicyConfig;
+  isSportsBrand: boolean;
+};
 
 type OutboundReplyPayload = {
   prospectId: string;
   message: string;
   sentiment: 'positive' | 'neutral' | 'negative';
-  channel: 'linkedin' | 'instagram' | 'whatsapp';
+  channel: 'linkedin' | 'instagram' | 'whatsapp' | 'x';
   metadata?: Record<string, unknown>;
 };
 
@@ -35,11 +56,14 @@ export class OutreachAgent {
   async runDailyOutreach(seedProspects: Prospect[] = [], options?: { userId?: string }) {
     const userId = options?.userId;
     const perChannelCap = Math.max(0, Number(process.env.OUTBOUND_DAILY_CAP_PER_CHANNEL ?? 20));
+    const runContext = await this.buildRunContext(userId, perChannelCap);
+    const perChannelCaps = this.resolvePerChannelCaps(perChannelCap, runContext.xPolicy.dailyCap);
     const startOfDay = new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
-    const sentToday = await this.getSentTodayCounts(startOfDay.getTime());
+    const sentToday = await this.getSentTodayCounts(startOfDay.getTime(), userId);
     const remainingCaps = outboundChannels.reduce<Record<OutboundChannel, number>>((acc, channel) => {
-      acc[channel] = Math.max(0, perChannelCap - (sentToday[channel] ?? 0));
+      const configuredCap = perChannelCaps[channel] ?? 0;
+      acc[channel] = Math.max(0, configuredCap - (sentToday[channel] ?? 0));
       return acc;
     }, {} as Record<OutboundChannel, number>);
     const totalRemaining = Object.values(remainingCaps).reduce((sum, value) => sum + value, 0);
@@ -51,7 +75,9 @@ export class OutreachAgent {
         messagesSent: 0,
         skipped: 0,
         errors: [],
+        userId: userId ?? null,
         perChannelCap,
+        perChannelCaps,
         sentToday,
         remainingCaps,
         limitReached: true,
@@ -59,9 +85,10 @@ export class OutreachAgent {
       return { messagesSent: 0, skipped: 0, errors: [] };
     }
 
-    const targetPool = Math.min(Math.max(30, perChannelCap * outboundChannels.length * 2), 200);
+    const totalConfiguredCap = outboundChannels.reduce((sum, channel) => sum + (perChannelCaps[channel] ?? 0), 0);
+    const targetPool = Math.min(Math.max(50, totalConfiguredCap * 2), 2000);
     const alreadyQueued = new Map(seedProspects.map(prospect => [prospect.id, prospect]));
-    const queued = await this.fetchUncontactedProspects(targetPool);
+    const queued = await this.fetchUncontactedProspects(targetPool, userId);
     queued.forEach(prospect => {
       if (!alreadyQueued.has(prospect.id)) {
         alreadyQueued.set(prospect.id, prospect);
@@ -71,7 +98,7 @@ export class OutreachAgent {
     const candidates = Array.from(alreadyQueued.values())
       .filter(prospect => prospect.status === 'new')
       .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-      .slice(0, Math.max(targetPool, perChannelCap * outboundChannels.length));
+      .slice(0, Math.max(targetPool, totalConfiguredCap));
 
     let sent = 0;
     const errors: Array<{ prospectId: string; error: string }> = [];
@@ -81,9 +108,10 @@ export class OutreachAgent {
       linkedin: [],
       instagram: [],
       whatsapp: [],
+      x: [],
     };
     for (const prospect of candidates) {
-      const reason = this.skipReason(prospect);
+      const reason = this.skipReason(prospect, runContext);
       if (reason) {
         skipped.push({ prospectId: prospect.id, reason });
         continue;
@@ -113,11 +141,14 @@ export class OutreachAgent {
     for (const prospect of sendable) {
       const analyticsScope = resolveAnalyticsScope(userId, prospect);
       try {
-        const message = await this.generateFirstMessage(prospect, userId);
-        const channelUsed = await this.dispatchMessage(prospect, message);
-        await this.recordMessage(prospect, message, channelUsed);
+        const message = await this.generateFirstMessage(prospect, runContext);
+        const channelUsed = await this.dispatchMessage(prospect, message, runContext);
+        await this.recordMessage(prospect, message, channelUsed, userId);
         await incrementMetric('outbound_sent', 1, { industry: prospect.industry }, analyticsScope);
         sent += 1;
+        if (channelUsed === 'x' && runContext.xPolicy.minDelayMs > 0) {
+          await this.sleep(runContext.xPolicy.minDelayMs);
+        }
       } catch (error) {
         console.error('Outbound send failed', error);
         errors.push({ prospectId: prospect.id, error: (error as Error).message });
@@ -130,10 +161,14 @@ export class OutreachAgent {
       messagesSent: sent,
       skipped: skipped.length,
       errors,
+      userId: userId ?? null,
       perChannelCap,
+      perChannelCaps,
       sentToday,
       remainingCaps,
       candidatePool: targetPool,
+      xRequireOptIn: runContext.xPolicy.requireOptIn,
+      xMinDelayMs: runContext.xPolicy.minDelayMs,
     });
 
     return { messagesSent: sent, skipped: skipped.length, errors };
@@ -146,6 +181,7 @@ export class OutreachAgent {
     const snapshot = await prospectsCollection.doc(payload.prospectId).get();
     if (!snapshot.exists) return;
     const prospect = snapshot.data() as Prospect;
+    const userId = this.extractUserId(payload.metadata, prospect);
 
     await outreachCollection.add({
       prospectId: payload.prospectId,
@@ -155,6 +191,7 @@ export class OutreachAgent {
       status: 'reply',
       sentiment: payload.sentiment,
       direction: 'inbound',
+      ...(userId ? { userId } : {}),
     });
 
     await prospectsCollection.doc(payload.prospectId).set(
@@ -169,30 +206,50 @@ export class OutreachAgent {
 
     await incrementMetric('outbound_reply', 1, { industry: prospect.industry }, analyticsScope);
 
+    if (payload.channel === 'x' && this.isXOptOutMessage(payload.message)) {
+      await this.suppressXProspect(prospect, userId, 'recipient_opt_out');
+      return;
+    }
+
     if (payload.sentiment === 'positive') {
       await this.createLeadFromProspect(prospect, payload);
       await incrementMetric('outbound_converted', 1, { industry: prospect.industry }, analyticsScope);
     }
   }
 
-  private async fetchUncontactedProspects(limit = 20): Promise<Prospect[]> {
+  private async fetchUncontactedProspects(limit = 20, userId?: string): Promise<Prospect[]> {
+    const normalizeRows = (rows: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>) =>
+      rows.docs.map(doc => {
+        const data = doc.data() as Prospect;
+        return {
+          ...data,
+          id: doc.id,
+        };
+      });
+
+    if (userId) {
+      const scoped = await prospectsCollection.where('status', '==', 'new').where('ownerId', '==', userId).limit(limit).get();
+      if (!scoped.empty) {
+        return normalizeRows(scoped);
+      }
+    }
+
     const snap = await prospectsCollection.where('status', '==', 'new').limit(limit).get();
-    return snap.docs.map(doc => {
-      const data = doc.data() as Prospect;
-      return {
-        ...data,
-        id: doc.id,
-      };
-    });
+    return normalizeRows(snap);
   }
 
-  private async getSentTodayCounts(startOfDayMs: number): Promise<Record<OutboundChannel, number>> {
+  private async getSentTodayCounts(startOfDayMs: number, userId?: string): Promise<Record<OutboundChannel, number>> {
     const counts: Record<OutboundChannel, number> = {
       linkedin: 0,
       instagram: 0,
       whatsapp: 0,
+      x: 0,
     };
-    const snap = await outreachCollection.where('sentAt', '>=', startOfDayMs).get();
+    let query: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = outreachCollection.where('sentAt', '>=', startOfDayMs);
+    if (userId) {
+      query = query.where('userId', '==', userId);
+    }
+    const snap = await query.get();
     snap.forEach(doc => {
       const data = doc.data() as { channel?: string; status?: string };
       if (data.status !== 'sent') return;
@@ -203,7 +260,13 @@ export class OutreachAgent {
     return counts;
   }
 
-  private async generateFirstMessage(prospect: Prospect, userId?: string) {
+  private async generateFirstMessage(prospect: Prospect, context: RunContext) {
+    if (prospect.channel === 'x') {
+      const template = this.generateXOutreachMessage(prospect, context.isSportsBrand);
+      const withOptOut = this.appendXComplianceLine(template);
+      return this.appendComplianceFooter(withOptOut, context.userId);
+    }
+
     const prompt = `
 You are Dotti, an AI Sales Agent representing Dott-Media.
 Write a short, friendly, professional message to ${prospect.name} from ${prospect.company ?? 'their company'}.
@@ -225,10 +288,10 @@ Max 3 sentences. Add natural emoji if suitable.
         ],
       });
       const base = completion.choices?.[0]?.message?.content?.trim() ?? this.fallbackMessage(prospect);
-      return this.appendComplianceFooter(base, userId);
+      return this.appendComplianceFooter(base, context.userId);
     } catch (error) {
       console.error('Failed to generate outreach copy', error);
-      return this.appendComplianceFooter(this.fallbackMessage(prospect), userId);
+      return this.appendComplianceFooter(this.fallbackMessage(prospect), context.userId);
     }
   }
 
@@ -236,6 +299,40 @@ Max 3 sentences. Add natural emoji if suitable.
     return `Hi ${prospect.name ?? 'there'}! I'm Dotti with Dott Media. We build AI automations that help ${
       prospect.company ?? 'sales teams'
     } capture and convert more leads. Want a quick walkthrough?`;
+  }
+
+  private generateXOutreachMessage(prospect: Prospect, sportsBrand: boolean) {
+    const firstName = prospect.name?.trim()?.split(' ')[0] ?? 'there';
+    if (sportsBrand) {
+      const templates = [
+        `Hi ${firstName}! Thanks for engaging with our football updates. We share daily match insights, value picks, and timing alerts. More info: www.bwinbetug.info | Bets: www.bwinbetug.com`,
+        `Hi ${firstName}, great to connect! We post curated football insights and smart bet angles across major leagues. For full details visit www.bwinbetug.info, then place your bet at www.bwinbetug.com`,
+        `Hi ${firstName}! If you want structured football tips (form, odds context, and key fixtures), we can share today's board. Info: www.bwinbetug.info | Place bets: www.bwinbetug.com`,
+      ];
+      const seed = `${prospect.id}:${new Date().toISOString().slice(0, 10)}`;
+      return templates[this.hashSeed(seed) % templates.length];
+    }
+
+    const templates = [
+      `Hi ${firstName}! We help teams automate outreach, responses, and lead follow-up. Happy to share a fast walkthrough tailored to your workflow.`,
+      `Hi ${firstName}, great to connect. We build practical AI automation for sales and social workflows. Want a quick demo?`,
+      `Hi ${firstName}! If scaling replies and lead conversion is a priority, we can share a simple automation blueprint for your team.`,
+    ];
+    const seed = `${prospect.id}:${prospect.channel}:${new Date().toISOString().slice(0, 10)}`;
+    return templates[this.hashSeed(seed) % templates.length];
+  }
+
+  private appendXComplianceLine(message: string) {
+    if (message.toLowerCase().includes('reply stop to opt out')) return message;
+    return `${message}\n\nReply STOP to opt out.`;
+  }
+
+  private hashSeed(seed: string) {
+    let hash = 0;
+    for (let index = 0; index < seed.length; index += 1) {
+      hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
+    }
+    return hash;
   }
 
   private async getComplianceFooter(userId?: string) {
@@ -264,7 +361,7 @@ Max 3 sentences. Add natural emoji if suitable.
     return `${message}\n\n${footer}`;
   }
 
-  private async dispatchMessage(prospect: Prospect, text: string) {
+  private async dispatchMessage(prospect: Prospect, text: string, context: RunContext) {
     if (prospect.channel === 'linkedin') {
       await sendLinkedInMessage(prospect.profileUrl, text);
       return 'linkedin';
@@ -294,10 +391,21 @@ Max 3 sentences. Add natural emoji if suitable.
       await sendWhatsAppMessage(prospect.phone, text);
       return 'whatsapp';
     }
+    if (prospect.channel === 'x') {
+      const recipient = this.resolveXRecipient(prospect.profileUrl);
+      if (!recipient) {
+        throw new Error('X recipient missing for prospect.');
+      }
+      if (!context.xCredentials) {
+        throw new Error('X credentials are not configured for this user.');
+      }
+      await sendXDirectMessage(recipient, text, context.xCredentials);
+      return 'x';
+    }
     throw new Error(`Unsupported outreach channel ${prospect.channel}`);
   }
 
-  private async recordMessage(prospect: Prospect, message: string, channel: string) {
+  private async recordMessage(prospect: Prospect, message: string, channel: string, userId?: string) {
     const sentAt = Date.now();
     await outreachCollection.add({
       prospectId: prospect.id,
@@ -305,6 +413,7 @@ Max 3 sentences. Add natural emoji if suitable.
       channel,
       sentAt,
       status: 'sent',
+      ...(userId ? { userId } : {}),
     });
 
     await prospectsCollection.doc(prospect.id).set(
@@ -326,8 +435,8 @@ Max 3 sentences. Add natural emoji if suitable.
     return `${base} | Grab the Dott Media AI Sales Agent for more demos.`;
   }
 
-  private skipReason(prospect: Prospect) {
-    if (!['linkedin', 'instagram', 'whatsapp'].includes(prospect.channel)) {
+  private skipReason(prospect: Prospect, context: RunContext) {
+    if (!['linkedin', 'instagram', 'whatsapp', 'x'].includes(prospect.channel)) {
       return 'unsupported_channel';
     }
     if (prospect.channel === 'linkedin' && !prospect.profileUrl) {
@@ -338,6 +447,22 @@ Max 3 sentences. Add natural emoji if suitable.
     }
     if (prospect.channel === 'whatsapp' && !prospect.phone) {
       return 'missing_whatsapp_phone';
+    }
+    if (prospect.channel === 'x') {
+      const recipient = this.resolveXRecipient(prospect.profileUrl);
+      if (!recipient) {
+        return 'missing_x_profile';
+      }
+      if (!context.xCredentials) {
+        return 'missing_x_credentials';
+      }
+      const handle = this.resolveXHandle(prospect.profileUrl);
+      if (handle && context.xSuppressedHandles.has(handle)) {
+        return 'x_recipient_opted_out';
+      }
+      if (context.xPolicy.requireOptIn && !this.hasExplicitXOptIn(prospect)) {
+        return 'x_opt_in_required';
+      }
     }
     return null;
   }
@@ -360,6 +485,179 @@ Max 3 sentences. Add natural emoji if suitable.
     if (match?.[1]) return match[1];
     if (/^[a-z0-9._]+$/i.test(trimmed)) return trimmed;
     return null;
+  }
+
+  private resolveXRecipient(profileUrl?: string) {
+    if (!profileUrl) return null;
+    const trimmed = profileUrl.trim();
+    if (/^\d+$/.test(trimmed)) return trimmed;
+    const urlMatch = trimmed.match(/(?:x|twitter)\.com\/([a-z0-9_]{1,15})/i);
+    if (urlMatch?.[1]) return urlMatch[1];
+    const handleMatch = trimmed.match(/^@?([a-z0-9_]{1,15})$/i);
+    if (handleMatch?.[1]) return handleMatch[1];
+    return null;
+  }
+
+  private resolveXHandle(profileUrl?: string) {
+    const recipient = this.resolveXRecipient(profileUrl);
+    if (!recipient) return null;
+    if (/^\d+$/.test(recipient)) return null;
+    return recipient.toLowerCase();
+  }
+
+  private async buildRunContext(userId: string | undefined, perChannelCap: number): Promise<RunContext> {
+    const xPolicy = this.resolveXPolicy(perChannelCap);
+    const [xCredentials, xSuppressedHandles, isSportsBrand] = await Promise.all([
+      this.resolveXCredentials(userId),
+      this.loadSuppressedXHandles(userId),
+      this.resolveSportsBrandContext(userId),
+    ]);
+    return {
+      userId,
+      xCredentials,
+      xSuppressedHandles,
+      xPolicy,
+      isSportsBrand,
+    };
+  }
+
+  private resolvePerChannelCaps(perChannelCap: number, xDailyCap: number): Record<OutboundChannel, number> {
+    const base = Math.max(0, perChannelCap);
+    return {
+      linkedin: base,
+      instagram: base,
+      whatsapp: base,
+      x: xDailyCap,
+    };
+  }
+
+  private resolveXPolicy(perChannelCap: number): XPolicyConfig {
+    const requestedCap = Number(process.env.OUTBOUND_DAILY_CAP_X ?? perChannelCap);
+    const dailyCap = Math.min(Math.max(Number.isFinite(requestedCap) ? requestedCap : perChannelCap, 0), X_DAILY_CAP_HARD_LIMIT);
+    const requestedDelaySeconds = Number(process.env.OUTBOUND_X_MIN_SECONDS_BETWEEN_DMS ?? 4);
+    const safeDelaySeconds = Math.min(Math.max(Number.isFinite(requestedDelaySeconds) ? requestedDelaySeconds : 4, 0), 300);
+    const requireOptIn = process.env.OUTBOUND_X_REQUIRE_OPT_IN !== 'false';
+    return { dailyCap, requireOptIn, minDelayMs: safeDelaySeconds * 1000 };
+  }
+
+  private hasExplicitXOptIn(prospect: Prospect) {
+    const tags = (prospect.tags ?? []).map(value => value.toLowerCase());
+    if (tags.some(tag => X_OPT_IN_TAGS.includes(tag))) return true;
+    const notes = (prospect.notes ?? '').toLowerCase();
+    if (notes && (notes.includes('opt in') || notes.includes('opt-in') || notes.includes('consent'))) {
+      return true;
+    }
+    if (prospect.status === 'replied' && prospect.lastChannel === 'x') {
+      return true;
+    }
+    return false;
+  }
+
+  private isXOptOutMessage(message: string) {
+    const text = message.toLowerCase();
+    return X_OPT_OUT_KEYWORDS.some(keyword => text.includes(keyword));
+  }
+
+  private async loadSuppressedXHandles(userId?: string) {
+    let query: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = suppressionCollection.where('channel', '==', 'x');
+    if (userId) {
+      query = query.where('userId', '==', userId);
+    }
+    const snap = await query.limit(2000).get();
+    const handles = new Set<string>();
+    snap.forEach(doc => {
+      const data = doc.data() as { handle?: string };
+      const handle = (data.handle ?? '').trim().replace(/^@/, '').toLowerCase();
+      if (handle) handles.add(handle);
+    });
+    return handles;
+  }
+
+  private async suppressXProspect(prospect: Prospect, userId: string | undefined, reason: string) {
+    const handle = this.resolveXHandle(prospect.profileUrl);
+    if (!handle) return;
+    const docId = userId ? `${userId}:x:${handle}` : `x:${handle}`;
+    await suppressionCollection.doc(docId).set(
+      {
+        channel: 'x',
+        handle,
+        reason,
+        prospectId: prospect.id,
+        userId: userId ?? null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  }
+
+  private async resolveSportsBrandContext(userId?: string) {
+    if (!userId) return false;
+    try {
+      const userDoc = await firestore.collection('users').doc(userId).get();
+      const data = userDoc.data() as { email?: string | null; crmData?: { companyName?: string } } | undefined;
+      const email = (data?.email ?? '').toLowerCase();
+      const companyName = (data?.crmData?.companyName ?? '').toLowerCase();
+      return email.includes('bwinbet') || companyName.includes('bwinbet') || email.includes('sports');
+    } catch {
+      return false;
+    }
+  }
+
+  private async resolveXCredentials(userId?: string): Promise<XDmCredentials | null> {
+    if (!userId) return null;
+    const userDoc = await firestore.collection('users').doc(userId).get();
+    const data = userDoc.data() as {
+      email?: string | null;
+      socialAccounts?: {
+        twitter?: {
+          accessToken?: string;
+          accessSecret?: string;
+          appKey?: string;
+          appSecret?: string;
+          consumerKey?: string;
+          consumerSecret?: string;
+        };
+      };
+    } | undefined;
+    const twitter = data?.socialAccounts?.twitter;
+    if (!twitter?.accessToken || !twitter?.accessSecret) return null;
+
+    const allowDefaults = canUsePrimarySocialDefaults({ email: data?.email ?? null });
+    const appKey =
+      twitter.appKey ??
+      twitter.consumerKey ??
+      (allowDefaults ? process.env.TWITTER_API_KEY ?? process.env.TWITTER_CONSUMER_KEY : undefined);
+    const appSecret =
+      twitter.appSecret ??
+      twitter.consumerSecret ??
+      (allowDefaults ? process.env.TWITTER_API_SECRET ?? process.env.TWITTER_CONSUMER_SECRET : undefined);
+
+    if (!appKey || !appSecret) return null;
+    return {
+      appKey,
+      appSecret,
+      accessToken: twitter.accessToken,
+      accessSecret: twitter.accessSecret,
+    };
+  }
+
+  private extractUserId(metadata: Record<string, unknown> | undefined, prospect: Prospect): string | undefined {
+    const values: Array<unknown> = [
+      metadata?.userId,
+      metadata?.ownerId,
+      metadata?.orgId,
+      (prospect as any)?.ownerId,
+      (prospect as any)?.userId,
+      (prospect as any)?.orgId,
+    ];
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return undefined;
+  }
+
+  private sleep(ms: number) {
+    return new Promise<void>(resolve => setTimeout(resolve, ms));
   }
 
   private async createLeadFromProspect(prospect: Prospect, payload: OutboundReplyPayload) {
@@ -409,3 +707,4 @@ function pickScopeId(...candidates: Array<unknown>) {
 }
 
 export const outreachAgent = new OutreachAgent();
+
