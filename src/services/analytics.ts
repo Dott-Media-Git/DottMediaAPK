@@ -76,6 +76,14 @@ export type LiveSocialStats = {
   };
 };
 
+export type ActivityHeatmapDaily = {
+  date: string;
+  views: number;
+  interactions: number;
+  outbound: number;
+  conversions: number;
+};
+
 const emptyLiveSocialPlatformStats: LiveSocialPlatformStats = {
   connected: false,
   views: 0,
@@ -317,6 +325,8 @@ type InboundDailyDoc = {
 
 type OutboundDailyDoc = {
   date?: string;
+  messagesSent?: number;
+  replies?: number;
   conversions?: number;
 };
 
@@ -324,6 +334,20 @@ type WebLeadDailyDoc = {
   date?: string;
   leads?: number;
   messages?: number;
+};
+
+type WebTrafficDailyDoc = {
+  date?: string;
+  visitors?: number;
+  interactions?: number;
+  redirectClicks?: number;
+};
+
+type EngagementDailyDoc = {
+  date?: string;
+  comments?: number;
+  replies?: number;
+  conversions?: number;
 };
 
 const toScore = (avgSentiment: number) => {
@@ -613,4 +637,125 @@ export const subscribeWebLeadStats = (
     },
     err => onError?.(err)
   );
+};
+
+const buildActivityHeatmap = (
+  webTraffic: WebTrafficDailyDoc[],
+  outbound: OutboundDailyDoc[],
+  engagement: EngagementDailyDoc[]
+): ActivityHeatmapDaily[] => {
+  const byDate = new Map<
+    string,
+    {
+      views: number;
+      interactions: number;
+      outbound: number;
+      conversions: number;
+    }
+  >();
+
+  const ensureDate = (date?: string) => {
+    if (!date) return null;
+    const existing = byDate.get(date) ?? { views: 0, interactions: 0, outbound: 0, conversions: 0 };
+    byDate.set(date, existing);
+    return existing;
+  };
+
+  webTraffic.forEach(entry => {
+    const row = ensureDate(entry.date);
+    if (!row) return;
+    row.views += Number(entry.visitors ?? 0);
+    row.interactions += Number(entry.interactions ?? 0);
+  });
+
+  outbound.forEach(entry => {
+    const row = ensureDate(entry.date);
+    if (!row) return;
+    row.outbound += Number(entry.messagesSent ?? entry.replies ?? 0);
+    row.conversions += Number(entry.conversions ?? 0);
+  });
+
+  engagement.forEach(entry => {
+    const row = ensureDate(entry.date);
+    if (!row) return;
+    row.interactions += Number(entry.comments ?? 0) + Number(entry.replies ?? 0);
+    row.conversions += Number(entry.conversions ?? 0);
+  });
+
+  return Array.from(byDate.entries())
+    .sort((a, b) => `${a[0]}`.localeCompare(`${b[0]}`))
+    .slice(-14)
+    .map(([date, values]) => ({
+      date,
+      views: values.views,
+      interactions: values.interactions,
+      outbound: values.outbound,
+      conversions: values.conversions,
+    }));
+};
+
+export const subscribeLiveActivityHeatmap = (
+  scopeId: string | undefined,
+  onData: (rows: ActivityHeatmapDaily[]) => void,
+  onError?: (err: unknown) => void
+): Unsubscribe | null => {
+  if (!isFirebaseEnabled || !realtimeDb) return null;
+
+  const scopeKey = resolveScopeKey(scopeId);
+  const webTrafficRef = query(
+    collection(realtimeDb, 'analytics', scopeKey, 'webTrafficDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+  const outboundRef = query(
+    collection(realtimeDb, 'analytics', scopeKey, 'outboundDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+  const engagementRef = query(
+    collection(realtimeDb, 'analytics', scopeKey, 'engagementDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+
+  let webTraffic: WebTrafficDailyDoc[] = [];
+  let outbound: OutboundDailyDoc[] = [];
+  let engagement: EngagementDailyDoc[] = [];
+
+  const emit = () => {
+    onData(buildActivityHeatmap(webTraffic, outbound, engagement));
+  };
+
+  const unsubWebTraffic = onSnapshot(
+    webTrafficRef,
+    snap => {
+      webTraffic = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as WebTrafficDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
+
+  const unsubOutbound = onSnapshot(
+    outboundRef,
+    snap => {
+      outbound = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as OutboundDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
+
+  const unsubEngagement = onSnapshot(
+    engagementRef,
+    snap => {
+      engagement = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as EngagementDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
+
+  return () => {
+    unsubWebTraffic();
+    unsubOutbound();
+    unsubEngagement();
+  };
 };

@@ -42,17 +42,22 @@ import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
 import { autoPostService } from './services/autoPostService';
 
 const initializeAutomation = async () => {
-  try {
-    await Promise.all([
-      import('./workers/automationWorker.js'),
-      import('./jobs/prospectJob.js'),
-      import('./jobs/followupJob.js'),
-      import('./jobs/autoPostJob.js'),
-      import('./jobs/instagramCommentPollJob.js'),
-      import('./workers/youtubeWorker.js'),
-    ]);
-  } catch (error) {
-    console.error('Failed to initialize automation background jobs', error);
+  const modules = [
+    './workers/automationWorker.js',
+    './jobs/prospectJob.js',
+    './jobs/followupJob.js',
+    './jobs/autoPostJob.js',
+    './jobs/instagramCommentPollJob.js',
+    './workers/youtubeWorker.js',
+  ] as const;
+
+  for (const modulePath of modules) {
+    try {
+      await import(modulePath);
+      console.info(`[automation] initialized ${modulePath}`);
+    } catch (error) {
+      console.error(`[automation] failed to initialize ${modulePath}`, error);
+    }
   }
 };
 
@@ -202,6 +207,64 @@ app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
       reelsIntervalHours,
     });
     res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Manual server-side trigger for due autopost jobs.
+app.post('/api/autopost/runDue', async (req, res, next) => {
+  try {
+    const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
+    const providedToken =
+      req.header('x-autopost-token') ??
+      req.header('x-cron-token') ??
+      (req.query.token as string | undefined) ??
+      req.body?.token;
+    if (triggerToken && providedToken !== triggerToken) {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+
+    const result = await autoPostService.runDueJobs();
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Manual server-side trigger for outbound discovery + messaging.
+app.post('/api/outbound/runNow', async (req, res, next) => {
+  try {
+    const triggerToken = process.env.OUTBOUND_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
+    const providedToken =
+      req.header('x-outbound-token') ??
+      req.header('x-cron-token') ??
+      (req.query.token as string | undefined) ??
+      req.body?.token;
+    if (triggerToken && providedToken !== triggerToken) {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+
+    const requestedUserId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : '';
+    const { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } = await import('./services/outboundTargetingService.js');
+    const { runProspectDiscovery } = await import('./packages/services/prospectFinder/index.js');
+    const { outreachAgent } = await import('./packages/services/outreachAgent/index.js');
+
+    const target = await resolveOutboundDiscoveryTarget();
+    const limit = resolveDiscoveryLimit();
+    const prospects = await runProspectDiscovery({ industry: target.industry, country: target.country, limit });
+    const outreach = await outreachAgent.runDailyOutreach(
+      prospects,
+      requestedUserId ? { userId: requestedUserId } : undefined,
+    );
+
+    res.json({
+      ok: true,
+      target,
+      discovered: prospects.length,
+      outreach,
+      userId: requestedUserId || null,
+    });
   } catch (error) {
     next(error);
   }

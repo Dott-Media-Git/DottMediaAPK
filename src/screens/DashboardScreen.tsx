@@ -7,6 +7,7 @@ import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
 import {
+  ActivityHeatmapDaily,
   fetchAnalytics,
   DashboardAnalytics,
   fetchOrgDashboardAnalytics,
@@ -14,14 +15,14 @@ import {
   fetchLiveSocialStats,
   LiveSocialStats,
   OutboundStats,
+  subscribeLiveActivityHeatmap,
   subscribeOrgDashboardAnalytics,
   subscribeOutboundStats,
   subscribeAnalytics,
   resolveAnalyticsScopeId
 } from '@services/analytics';
 
-type ChartMetric = 'leads' | 'engagement' | 'conversions' | 'feedbackScore';
-type MetricSnapshot = DashboardAnalytics['history'][number];
+type ChartMetric = 'views' | 'interactions' | 'outbound' | 'conversions';
 
 const createEmptyAnalytics = (seed?: Partial<DashboardAnalytics>): DashboardAnalytics => ({
   leads: seed?.leads ?? 0,
@@ -104,9 +105,10 @@ export const DashboardScreen: React.FC = () => {
     createEmptyAnalytics(state.crmData?.analytics)
   );
   const [loading, setLoading] = useState(false);
-  const [chartMetric, setChartMetric] = useState<ChartMetric>('leads');
+  const [chartMetric, setChartMetric] = useState<ChartMetric>('views');
   const [outboundStats, setOutboundStats] = useState<OutboundStats>(() => emptyOutboundStats);
   const [liveSocialStats, setLiveSocialStats] = useState<LiveSocialStats>(() => emptyLiveSocialStats);
+  const [activityHeatmapRows, setActivityHeatmapRows] = useState<ActivityHeatmapDaily[]>([]);
   const [liveSocialLoading, setLiveSocialLoading] = useState(false);
 
   useEffect(() => {
@@ -202,6 +204,23 @@ export const DashboardScreen: React.FC = () => {
   }, [analyticsScopeId, state.user?.uid]);
 
   useEffect(() => {
+    let active = true;
+    const unsubscribe =
+      subscribeLiveActivityHeatmap(
+        analyticsScopeId,
+        rows => {
+          if (!active) return;
+          setActivityHeatmapRows(rows);
+        },
+        error => console.warn('Realtime activity heatmap subscription failed', error)
+      ) ?? null;
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [analyticsScopeId]);
+
+  useEffect(() => {
     let mounted = true;
     let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -236,42 +255,18 @@ export const DashboardScreen: React.FC = () => {
     [analytics]
   );
 
-  const latestHistoryPoint: MetricSnapshot = useMemo(() => {
-    if (historySeries.length > 0) {
-      return historySeries[historySeries.length - 1];
-    }
-    return {
-      date: new Date().toISOString().slice(0, 10),
-      leads: analytics.leads,
-      engagement: analytics.engagement,
-      conversions: analytics.conversions,
-      feedbackScore: analytics.feedbackScore
-    };
-  }, [analytics, historySeries]);
-
-  const previousHistoryPoint = useMemo<MetricSnapshot | null>(
-    () => (historySeries.length > 1 ? historySeries[historySeries.length - 2] : null),
-    [historySeries]
-  );
-
   const formatCount = (value: number) => {
     const rounded = Number.isFinite(value) ? Math.round(value) : 0;
     return rounded.toLocaleString();
   };
 
-  const heroPrimaryValue = isBwinbetAccount
-    ? Math.round(liveSocialStats.summary.interactions).toLocaleString()
-    : latestHistoryPoint.leads;
-
   const heroStats = [
-    { label: isBwinbetAccount ? t('Interactions') : t('Leads'), value: heroPrimaryValue },
-    { label: t('Engagement'), value: `${latestHistoryPoint.engagement}%` },
+    { label: t('Interactions'), value: formatCount(liveSocialStats.summary.interactions) },
+    { label: t('Outbound'), value: formatCount(outboundStats.prospectsContacted) },
     { label: t('Views'), value: formatCount(liveSocialStats.summary.views) },
     {
-      label: isBwinbetAccount ? t('Bet button clicks') : t('Feedback'),
-      value: isBwinbetAccount
-        ? formatCount(liveSocialStats.web.redirectClicks)
-        : `${latestHistoryPoint.feedbackScore}/5`,
+      label: isBwinbetAccount ? t('Bet button clicks') : t('Conversions'),
+      value: isBwinbetAccount ? formatCount(liveSocialStats.web.redirectClicks) : formatCount(outboundStats.conversions),
     }
   ];
 
@@ -287,66 +282,52 @@ export const DashboardScreen: React.FC = () => {
 
   const handleDrilldown = (metric: ChartMetric) => {
     const metricMap: Record<ChartMetric, string> = {
-      leads: isBwinbetAccount
-        ? t('Live social interactions are at {{value}}. Keep publishing high-engagement content to sustain momentum.', {
-            value: Math.round(liveSocialStats.summary.interactions).toLocaleString(),
-          })
-        : t(
-            "You're averaging {{value}} new leads per automation cycle. Activate or duplicate high-performing scenarios to scale.",
-            { value: latestHistoryPoint.leads }
-          ),
-      engagement: t(
-        'Engagement is at {{value}}%. Test fresh creatives or prompts to push beyond current reach.',
-        { value: latestHistoryPoint.engagement }
-      ),
+      views: t('Live visibility is {{value}} views across connected channels.', {
+        value: formatCount(liveSocialStats.summary.views),
+      }),
+      interactions: t('Live interaction volume is {{value}}. Keep content cadence consistent to sustain engagement.', {
+        value: formatCount(liveSocialStats.summary.interactions),
+      }),
+      outbound: t('Outbound has contacted {{value}} prospects. Keep reply handling fast for best conversion.', {
+        value: formatCount(outboundStats.prospectsContacted),
+      }),
       conversions: t(
         'Conversions are currently {{value}}. Tighten your follow-up cadence or revise offers for better results.',
-        { value: latestHistoryPoint.conversions }
-      ),
-      feedbackScore: t(
-        'Your feedback score is {{value}}/5. Keep replying quickly to maintain sentiment.',
-        { value: latestHistoryPoint.feedbackScore }
+        { value: formatCount(outboundStats.conversions) }
       )
     };
     Alert.alert(t('Metric details'), metricMap[metric]);
   };
 
   const metricButtons = useMemo(
-    () => {
-      const computeHint = (metric: ChartMetric) => {
-        if (!previousHistoryPoint) return t('Live data');
-        const delta = latestHistoryPoint[metric] - previousHistoryPoint[metric];
-        if (Math.abs(delta) < 0.001) return t('No change vs prior day');
-        const formattedDelta = Number.isInteger(delta) ? delta : Number(delta.toFixed(1));
-        const suffix = metric === 'engagement' ? '%' : '';
-        const value = `${delta > 0 ? '+' : ''}${formattedDelta}${suffix}`;
-        return t('{{value}} vs prior day', { value });
-      };
-
-      return [
+    () =>
+      [
         {
-          key: 'leads',
-          label: isBwinbetAccount ? t('Interactions') : t('Leads'),
-          value: isBwinbetAccount
-            ? Math.round(liveSocialStats.summary.interactions).toLocaleString()
-            : `${latestHistoryPoint.leads}`,
-          hint: isBwinbetAccount ? t('Live social data') : computeHint('leads'),
+          key: 'views' as const,
+          label: t('Views'),
+          value: formatCount(liveSocialStats.summary.views),
+          hint: t('Live channel visibility'),
         },
         {
-          key: 'engagement',
-          label: t('Engagement'),
-          value: `${latestHistoryPoint.engagement}%`,
-          hint: computeHint('engagement')
+          key: 'interactions' as const,
+          label: t('Interactions'),
+          value: formatCount(liveSocialStats.summary.interactions),
+          hint: t('Cross-channel interactions'),
         },
         {
-          key: 'conversions',
+          key: 'outbound' as const,
+          label: t('Outbound'),
+          value: formatCount(outboundStats.prospectsContacted),
+          hint: t('Prospects contacted'),
+        },
+        {
+          key: 'conversions' as const,
           label: t('Conversions'),
-          value: `${latestHistoryPoint.conversions}`,
-          hint: computeHint('conversions')
-        }
-      ] as const;
-    },
-    [isBwinbetAccount, latestHistoryPoint, liveSocialStats.summary.interactions, previousHistoryPoint, t]
+          value: formatCount(outboundStats.conversions),
+          hint: t('Live conversion count'),
+        },
+      ],
+    [liveSocialStats.summary.interactions, liveSocialStats.summary.views, outboundStats.conversions, outboundStats.prospectsContacted, t]
   );
 
   const outboundMetrics = useMemo(
@@ -420,22 +401,35 @@ export const DashboardScreen: React.FC = () => {
   }, [liveSocialStats.generatedAt, t]);
 
   const heatmapSeries = useMemo(
-    () =>
-      [...historySeries]
+    () => {
+      const source =
+        activityHeatmapRows.length > 0
+          ? activityHeatmapRows
+          : [...historySeries]
+              .slice(-7)
+              .map(day => ({
+                date: day.date,
+                views: day.leads,
+                interactions: day.engagement,
+                outbound: day.conversions,
+                conversions: day.conversions,
+              }));
+      return [...source]
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
         .slice(-7)
         .map((day, index, arr) => ({
           label: index === arr.length - 1 ? t('Today') : formatDayOfWeek(day.date, locale),
           value:
-            chartMetric === 'leads'
-              ? day.leads
-              : chartMetric === 'engagement'
-              ? day.engagement
-              : chartMetric === 'conversions'
-              ? day.conversions
-              : day.feedbackScore
-        })),
-    [chartMetric, historySeries]
+            chartMetric === 'views'
+              ? day.views
+              : chartMetric === 'interactions'
+              ? day.interactions
+              : chartMetric === 'outbound'
+              ? day.outbound
+              : day.conversions
+        }));
+    },
+    [activityHeatmapRows, chartMetric, historySeries, locale, t]
   );
 
   const heatmapTicks = useMemo(() => {
@@ -557,27 +551,23 @@ export const DashboardScreen: React.FC = () => {
       <DMCard title={t('Daily Reviews')} subtitle={loading ? t('Refreshing data...') : t('Pulse across the last 24h')}>
         <View style={styles.kpiRow}>
           <View style={styles.kpiItem}>
-            <Text style={styles.kpiLabel}>{isBwinbetAccount ? t('Interactions') : t('Leads')}</Text>
-            <Text style={styles.kpiValue}>
-              {isBwinbetAccount
-                ? Math.round(liveSocialStats.summary.interactions).toLocaleString()
-                : latestHistoryPoint.leads}
-            </Text>
+            <Text style={styles.kpiLabel}>{t('Views')}</Text>
+            <Text style={styles.kpiValue}>{formatCount(liveSocialStats.summary.views)}</Text>
           </View>
           <View style={styles.kpiItem}>
-            <Text style={styles.kpiLabel}>{t('Engagement')}</Text>
-            <Text style={styles.kpiValue}>{latestHistoryPoint.engagement}%</Text>
+            <Text style={styles.kpiLabel}>{t('Interactions')}</Text>
+            <Text style={styles.kpiValue}>{formatCount(liveSocialStats.summary.interactions)}</Text>
           </View>
         </View>
         <View style={styles.kpiRow}>
           <View style={styles.kpiItem}>
-            <Text style={styles.kpiLabel}>{t('Conversions')}</Text>
-            <Text style={styles.kpiValue}>{latestHistoryPoint.conversions}</Text>
+            <Text style={styles.kpiLabel}>{t('Outbound')}</Text>
+            <Text style={styles.kpiValue}>{formatCount(outboundStats.prospectsContacted)}</Text>
           </View>
           <View style={styles.kpiItem}>
-            <Text style={styles.kpiLabel}>{isBwinbetAccount ? t('Bet button clicks') : t('Feedback')}</Text>
+            <Text style={styles.kpiLabel}>{isBwinbetAccount ? t('Bet button clicks') : t('Conversions')}</Text>
             <Text style={styles.kpiValue}>
-              {isBwinbetAccount ? formatCount(liveSocialStats.web.redirectClicks) : `${latestHistoryPoint.feedbackScore}/5`}
+              {isBwinbetAccount ? formatCount(liveSocialStats.web.redirectClicks) : formatCount(outboundStats.conversions)}
             </Text>
           </View>
         </View>
@@ -599,14 +589,11 @@ export const DashboardScreen: React.FC = () => {
         title={t('Activity Heatmap')}
         subtitle={t('Last {{count}} days of {{metric}}', {
           count: Math.min(heatmapSeries.length, 7),
-          metric:
-            chartMetric === 'feedbackScore'
-              ? t('feedback')
-              : t(chartMetric.charAt(0).toUpperCase() + chartMetric.slice(1))
+          metric: t(chartMetric.charAt(0).toUpperCase() + chartMetric.slice(1))
         })}
       >
         <View style={styles.chartMetricRow}>
-          {(['leads', 'engagement', 'conversions', 'feedbackScore'] as const).map(metric => (
+          {(['views', 'interactions', 'outbound', 'conversions'] as const).map(metric => (
             <TouchableOpacity
               key={metric}
               style={[
@@ -621,9 +608,7 @@ export const DashboardScreen: React.FC = () => {
                   chartMetric === metric && styles.metricChipTextActive
                 ]}
               >
-                {metric === 'feedbackScore'
-                  ? t('Feedback')
-                  : t(metric.charAt(0).toUpperCase() + metric.slice(1))}
+                {t(metric.charAt(0).toUpperCase() + metric.slice(1))}
               </Text>
             </TouchableOpacity>
           ))}
@@ -638,7 +623,7 @@ export const DashboardScreen: React.FC = () => {
           />
           <VictoryAxis
             dependentAxis
-            label={t('People')}
+            label={t('Count')}
             tickValues={heatmapTicks}
             style={{
               axisLabel: { padding: 32, fill: colors.subtext },
