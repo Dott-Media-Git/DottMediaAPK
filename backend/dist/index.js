@@ -5,54 +5,58 @@ import morgan from 'morgan';
 import createHttpError from 'http-errors';
 import fs from 'fs';
 import path from 'path';
-import { config } from './config.js';
-import automationRoutes from './routes/automationRoutes.js';
-import assistantRoutes from './routes/assistantRoutes.js';
-import analyticsRoutes from './routes/analyticsRoutes.js';
-import whatsappRoutes from './routes/whatsappRoutes.js';
-import facebookRoutes from './routes/facebookRoutes.js';
-import instagramRoutes from './routes/instagramRoutes.js';
-import threadsRoutes from './routes/threadsRoutes.js';
-import linkedinRoutes from './routes/linkedinRoutes.js';
-import widgetRoutes from './routes/widgetRoutes.js';
-import outreachRoutes from './routes/outreachRoutes.js';
-import followUpRoutes from './routes/followUpRoutes.js';
-import schedulerRoutes from './routes/schedulerRoutes.js';
-import offerRoutes from './routes/offerRoutes.js';
-import knowledgeRoutes from './routes/knowledgeRoutes.js';
-import botRoutes from './routes/botRoutes.js';
-import webhookReplyRoutes from './routes/webhookReplyRoutes.js';
-import inboundWebhookRoutes from './routes/inboundWebhookRoutes.js';
-import engagementWebhookRoutes from './routes/engagementWebhookRoutes.js';
-import webWidgetRoutes from './routes/webWidgetRoutes.js';
-import adminRoutes from './routes/adminRoutes.js';
-import contentRoutes from './routes/contentRoutes.js';
-import footballTrendRoutes from './routes/footballTrendRoutes.js';
-import trendRoutes from './routes/trendRoutes.js';
-import socialRoutes from './routes/socialRoutes.js';
-import metaWebhookRoutes from './routes/metaWebhookRoutes.js';
-import authRoutes from './routes/authRoutes.js';
-import youtubeIntegrationRoutes from './routes/youtubeIntegrationRoutes.js';
-import tiktokIntegrationRoutes from './routes/tiktokIntegrationRoutes.js';
-import instagramReelsSoraRoutes from './routes/instagramReelsSoraRoutes.js';
-import publicMediaRoutes from './routes/publicMediaRoutes.js';
-import { NotificationDispatcher } from './packages/services/notificationDispatcher.js';
-import stripeRoutes from './routes/stripeRoutes.js';
-import { requireFirebase } from './middleware/firebaseAuth.js';
-import { autoPostService } from './services/autoPostService.js';
+import { config } from './config';
+import automationRoutes from './routes/automationRoutes';
+import assistantRoutes from './routes/assistantRoutes';
+import analyticsRoutes from './routes/analyticsRoutes';
+import whatsappRoutes from './routes/whatsappRoutes';
+import facebookRoutes from './routes/facebookRoutes';
+import instagramRoutes from './routes/instagramRoutes';
+import threadsRoutes from './routes/threadsRoutes';
+import linkedinRoutes from './routes/linkedinRoutes';
+import widgetRoutes from './routes/widgetRoutes';
+import outreachRoutes from './routes/outreachRoutes';
+import followUpRoutes from './routes/followUpRoutes';
+import schedulerRoutes from './routes/schedulerRoutes';
+import offerRoutes from './routes/offerRoutes';
+import knowledgeRoutes from './routes/knowledgeRoutes';
+import botRoutes from './routes/botRoutes';
+import webhookReplyRoutes from './routes/webhookReplyRoutes';
+import inboundWebhookRoutes from './routes/inboundWebhookRoutes';
+import engagementWebhookRoutes from './routes/engagementWebhookRoutes';
+import webWidgetRoutes from './routes/webWidgetRoutes';
+import adminRoutes from './routes/adminRoutes';
+import contentRoutes from './routes/contentRoutes';
+import footballTrendRoutes from './routes/footballTrendRoutes';
+import trendRoutes from './routes/trendRoutes';
+import socialRoutes from './routes/socialRoutes';
+import metaWebhookRoutes from './routes/metaWebhookRoutes';
+import authRoutes from './routes/authRoutes';
+import youtubeIntegrationRoutes from './routes/youtubeIntegrationRoutes';
+import tiktokIntegrationRoutes from './routes/tiktokIntegrationRoutes';
+import instagramReelsSoraRoutes from './routes/instagramReelsSoraRoutes';
+import publicMediaRoutes from './routes/publicMediaRoutes';
+import { NotificationDispatcher } from './packages/services/notificationDispatcher';
+import stripeRoutes from './routes/stripeRoutes';
+import { requireFirebase } from './middleware/firebaseAuth';
+import { autoPostService } from './services/autoPostService';
 const initializeAutomation = async () => {
-    try {
-        await Promise.all([
-            import('./workers/automationWorker.js'),
-            import('./jobs/prospectJob.js'),
-            import('./jobs/followupJob.js'),
-            import('./jobs/autoPostJob.js'),
-            import('./jobs/instagramCommentPollJob.js'),
-            import('./workers/youtubeWorker.js'),
-        ]);
-    }
-    catch (error) {
-        console.error('Failed to initialize automation background jobs', error);
+    const modules = [
+        './workers/automationWorker.js',
+        './jobs/prospectJob.js',
+        './jobs/followupJob.js',
+        './jobs/autoPostJob.js',
+        './jobs/instagramCommentPollJob.js',
+        './workers/youtubeWorker.js',
+    ];
+    for (const modulePath of modules) {
+        try {
+            await import(modulePath);
+            console.info(`[automation] initialized ${modulePath}`);
+        }
+        catch (error) {
+            console.error(`[automation] failed to initialize ${modulePath}`, error);
+        }
     }
 };
 if (config.security.allowMockAuth) {
@@ -179,6 +183,55 @@ app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
             reelsIntervalHours,
         });
         res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+// Manual server-side trigger for due autopost jobs.
+app.post('/api/autopost/runDue', async (req, res, next) => {
+    try {
+        const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
+        const providedToken = req.header('x-autopost-token') ??
+            req.header('x-cron-token') ??
+            req.query.token ??
+            req.body?.token;
+        if (triggerToken && providedToken !== triggerToken) {
+            return res.status(401).json({ message: 'Invalid token' });
+        }
+        const result = await autoPostService.runDueJobs();
+        res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+// Manual server-side trigger for outbound discovery + messaging.
+app.post('/api/outbound/runNow', async (req, res, next) => {
+    try {
+        const triggerToken = process.env.OUTBOUND_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
+        const providedToken = req.header('x-outbound-token') ??
+            req.header('x-cron-token') ??
+            req.query.token ??
+            req.body?.token;
+        if (triggerToken && providedToken !== triggerToken) {
+            return res.status(401).json({ message: 'Invalid token' });
+        }
+        const requestedUserId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : '';
+        const { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } = await import('./services/outboundTargetingService.js');
+        const { runProspectDiscovery } = await import('./packages/services/prospectFinder/index.js');
+        const { outreachAgent } = await import('./packages/services/outreachAgent/index.js');
+        const target = await resolveOutboundDiscoveryTarget();
+        const limit = resolveDiscoveryLimit();
+        const prospects = await runProspectDiscovery({ industry: target.industry, country: target.country, limit });
+        const outreach = await outreachAgent.runDailyOutreach(prospects, requestedUserId ? { userId: requestedUserId } : undefined);
+        res.json({
+            ok: true,
+            target,
+            discovered: prospects.length,
+            outreach,
+            userId: requestedUserId || null,
+        });
     }
     catch (error) {
         next(error);
