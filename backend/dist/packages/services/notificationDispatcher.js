@@ -10,8 +10,11 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 export class NotificationDispatcher {
     constructor() {
         this.isFlushing = false;
+        this.quotaBackoffUntilMs = 0;
+        this.defaultIntervalMs = Math.max(Number(process.env.NOTIFICATION_DISPATCH_INTERVAL_MS ?? 60000), 10000);
+        this.quotaBackoffMs = Math.max(Number(process.env.NOTIFICATION_QUOTA_BACKOFF_MS ?? 900000), 60000);
     }
-    start(intervalMs = 10000) {
+    start(intervalMs = this.defaultIntervalMs) {
         if (this.timer)
             return;
         this.timer = setInterval(() => this.flush(), intervalMs);
@@ -24,6 +27,8 @@ export class NotificationDispatcher {
     }
     async flush() {
         if (this.isFlushing)
+            return;
+        if (Date.now() < this.quotaBackoffUntilMs)
             return;
         this.isFlushing = true;
         try {
@@ -55,11 +60,22 @@ export class NotificationDispatcher {
             }
         }
         catch (error) {
+            if (this.isFirestoreQuotaError(error)) {
+                this.quotaBackoffUntilMs = Date.now() + this.quotaBackoffMs;
+                console.warn(`Notification dispatcher entering quota backoff for ${Math.round(this.quotaBackoffMs / 60000)}m due to Firestore RESOURCE_EXHAUSTED.`);
+            }
             console.error('Notification dispatcher flush failed', error);
         }
         finally {
             this.isFlushing = false;
         }
+    }
+    isFirestoreQuotaError(error) {
+        const raw = error;
+        if (raw?.code === 8)
+            return true;
+        const message = (raw?.message ?? '').toLowerCase();
+        return message.includes('resource_exhausted') || message.includes('quota exceeded');
     }
     async dispatch(message) {
         const text = message.payload.text;
