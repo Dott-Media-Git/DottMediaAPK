@@ -18,6 +18,8 @@ export function scheduleProspectJob() {
         await runProspectJob();
     });
     console.info(`Outbound prospect job scheduled (${scheduleExpression}) using ${targetMode} targeting.`);
+    // Run once on startup so outreach resumes immediately after restarts/deploys.
+    void runProspectJob();
 }
 /**
  * Runs one full discovery + outreach pass immediately.
