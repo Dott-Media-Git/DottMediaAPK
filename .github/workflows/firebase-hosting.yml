@@ -19,12 +19,38 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: 18
+          cache: npm
+
+      - name: Show runtime versions
+        run: |
+          node --version
+          npm --version
+
+      - name: Remove checked-in node_modules
+        run: |
+          rm -rf node_modules
+          rm -rf backend/node_modules
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps --no-audit --no-fund --include=dev
+        run: npm ci --legacy-peer-deps --no-audit --no-fund --include=dev
 
       - name: Build Expo web app
-        run: npm run build:web
+        run: |
+          set -o pipefail
+          npm run build:web 2>&1 | tee build-web.log
+
+      - name: Print build error tail
+        if: failure()
+        run: |
+          echo "Build failed. Last 200 log lines:"
+          tail -n 200 build-web.log || true
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-web-log
+          path: build-web.log
 
       - name: Verify Firebase CLI
         run: npx firebase --version
