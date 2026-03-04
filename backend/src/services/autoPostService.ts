@@ -250,6 +250,145 @@ export class AutoPostService {
     'goal of the month',
     'player of the month',
   ];
+  private emergencyXLastRunAt = 0;
+  private emergencyXLastKey: string | null = null;
+
+  private isFirestoreQuotaError(error: unknown) {
+    if (!error || typeof error !== 'object') return false;
+    const candidate = error as { code?: unknown; details?: unknown; message?: unknown };
+    const code = typeof candidate.code === 'number' ? candidate.code : Number(candidate.code ?? NaN);
+    if (Number.isFinite(code) && code === 8) return true;
+    const details = String(candidate.details ?? '').toLowerCase();
+    const message = String(candidate.message ?? '').toLowerCase();
+    return details.includes('quota exceeded') || message.includes('quota exceeded') || message.includes('resource_exhausted');
+  }
+
+  private getEmergencyTwitterCredentials(): SocialAccounts | null {
+    const accessToken =
+      process.env.BWIN_X_ACCESS_TOKEN ??
+      process.env.BWIN_TWITTER_ACCESS_TOKEN ??
+      process.env.TWITTER_ACCESS_TOKEN ??
+      '';
+    const accessSecret =
+      process.env.BWIN_X_ACCESS_SECRET ??
+      process.env.BWIN_TWITTER_ACCESS_SECRET ??
+      process.env.TWITTER_ACCESS_SECRET ??
+      '';
+    const appKey =
+      process.env.BWIN_X_APP_KEY ??
+      process.env.BWIN_TWITTER_APP_KEY ??
+      process.env.TWITTER_API_KEY ??
+      process.env.TWITTER_CONSUMER_KEY ??
+      '';
+    const appSecret =
+      process.env.BWIN_X_APP_SECRET ??
+      process.env.BWIN_TWITTER_APP_SECRET ??
+      process.env.TWITTER_API_SECRET ??
+      process.env.TWITTER_CONSUMER_SECRET ??
+      '';
+    if (!accessToken || !accessSecret || !appKey || !appSecret) return null;
+    return {
+      twitter: {
+        accessToken,
+        accessSecret,
+        appKey,
+        appSecret,
+      },
+    };
+  }
+
+  private async runBwinXEmergencyPost(now: Date) {
+    const enabled = process.env.BWIN_X_EMERGENCY_ENABLED !== 'false';
+    if (!enabled) {
+      return { attempted: false, posted: false, reason: 'disabled' };
+    }
+
+    const intervalMinutes = Math.max(Number(process.env.BWIN_X_EMERGENCY_INTERVAL_MINUTES ?? 60), 10);
+    if (this.emergencyXLastRunAt) {
+      const elapsedMs = now.getTime() - this.emergencyXLastRunAt;
+      if (elapsedMs < intervalMinutes * 60 * 1000) {
+        return {
+          attempted: false,
+          posted: false,
+          reason: 'cooldown',
+          nextRunAt: new Date(this.emergencyXLastRunAt + intervalMinutes * 60 * 1000).toISOString(),
+        };
+      }
+    }
+
+    const credentials = this.getEmergencyTwitterCredentials();
+    if (!credentials) {
+      return { attempted: true, posted: false, reason: 'missing_x_credentials' };
+    }
+
+    try {
+      const maxAgeHours = Math.min(Math.max(Number(process.env.BWIN_X_EMERGENCY_MAX_AGE_HOURS ?? 24), 6), 72);
+      const candidates = await getFootballTrendingCandidates({
+        maxCandidates: 10,
+        maxAgeHours,
+      });
+      if (!candidates.length) {
+        return { attempted: true, posted: false, reason: 'no_trends' };
+      }
+
+      let selectedTitle = '';
+      let selectedLink = '';
+      let selectedImage = '';
+      let selectedKey = '';
+
+      for (const candidate of candidates) {
+        const item = (candidate.items ?? []).find(entry => Boolean(entry.title?.trim())) ?? candidate.items?.[0];
+        const title = (item?.title?.trim() || candidate.topic || '').trim();
+        if (!title) continue;
+        const link = item?.link?.trim() || '';
+        const key = `${title}|${link}`.toLowerCase();
+        if (key && key === this.emergencyXLastKey) continue;
+        selectedTitle = title;
+        selectedLink = link;
+        selectedKey = key;
+        selectedImage =
+          (await this.resolveBestNewsImageUrl(item?.imageUrl?.trim(), item?.link?.trim())) ??
+          '';
+        break;
+      }
+
+      if (!selectedTitle) {
+        return { attempted: true, posted: false, reason: 'duplicate_only' };
+      }
+
+      const caption = this.normalizeXCaption(
+        [
+          selectedTitle,
+          selectedLink ? selectedLink : '',
+          'Bet now: www.bwinbetug.com | More info: www.bwinbetug.info',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      );
+      const imageUrls = selectedImage ? [selectedImage] : [];
+      const response = await publishToTwitter({
+        caption,
+        imageUrls,
+        credentials,
+      });
+
+      this.emergencyXLastRunAt = now.getTime();
+      if (selectedKey) this.emergencyXLastKey = selectedKey;
+
+      return {
+        attempted: true,
+        posted: true,
+        remoteId: response.remoteId ?? null,
+        caption,
+      };
+    } catch (error: any) {
+      return {
+        attempted: true,
+        posted: false,
+        reason: error?.message ?? 'emergency_x_post_failed',
+      };
+    }
+  }
 
   async start(payload: {
     userId: string;
@@ -458,140 +597,152 @@ export class AutoPostService {
       return { processed, results: Array.from(results.values()) };
     }
 
-    // Query only by nextRun to avoid composite index requirement, then filter active in memory.
-    const [standardSnap, reelsSnap, storiesSnap, trendSnap, missingReelsSnap, missingStoriesSnap] = await Promise.all([
-      autopostCollection.where('nextRun', '<=', now).get(),
-      autopostCollection.where('reelsNextRun', '<=', now).get(),
-      autopostCollection.where('storyNextRun', '<=', now).get(),
-      autopostCollection.where('trendNextRun', '<=', now).get(),
-      autopostCollection.where('reelsNextRun', '==', null).get(),
-      autopostCollection.where('storyNextRun', '==', null).get(),
-    ]);
-    if (!missingReelsSnap.empty) {
-      const selfHealWrites = missingReelsSnap.docs.map(doc => {
-        const data = doc.data() as AutoPostJob;
-        if (data.active === false) return null;
-        const hasReelsConfig = Boolean(
-          data.reelsVideoUrl ||
-            (data.reelsVideoUrls && data.reelsVideoUrls.length) ||
-            data.reelsIntervalHours ||
-            data.reelsLastRunAt ||
-            data.reelsLastResult
-        );
-        if (!hasReelsConfig) return null;
-        const reelsIntervalHours = data.reelsIntervalHours ?? this.defaultReelsIntervalHours;
-        return autopostCollection.doc(doc.id).set(
-          {
-            reelsIntervalHours,
-            reelsNextRun: now,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-      }).filter(Boolean) as Array<Promise<FirebaseFirestore.WriteResult>>;
-      if (selfHealWrites.length) {
-        await Promise.all(selfHealWrites);
-      }
-    }
-    if (!missingStoriesSnap.empty) {
-      const selfHealWrites = missingStoriesSnap.docs
-        .map(doc => {
+    try {
+      // Query only by nextRun to avoid composite index requirement, then filter active in memory.
+      const [standardSnap, reelsSnap, storiesSnap, trendSnap, missingReelsSnap, missingStoriesSnap] = await Promise.all([
+        autopostCollection.where('nextRun', '<=', now).get(),
+        autopostCollection.where('reelsNextRun', '<=', now).get(),
+        autopostCollection.where('storyNextRun', '<=', now).get(),
+        autopostCollection.where('trendNextRun', '<=', now).get(),
+        autopostCollection.where('reelsNextRun', '==', null).get(),
+        autopostCollection.where('storyNextRun', '==', null).get(),
+      ]);
+      if (!missingReelsSnap.empty) {
+        const selfHealWrites = missingReelsSnap.docs.map(doc => {
           const data = doc.data() as AutoPostJob;
-          if (data.active === false || data.storyTrendEnabled !== true) return null;
-          const intervalHours = data.storyIntervalHours ?? this.defaultStoryIntervalHours;
+          if (data.active === false) return null;
+          const hasReelsConfig = Boolean(
+            data.reelsVideoUrl ||
+              (data.reelsVideoUrls && data.reelsVideoUrls.length) ||
+              data.reelsIntervalHours ||
+              data.reelsLastRunAt ||
+              data.reelsLastResult
+          );
+          if (!hasReelsConfig) return null;
+          const reelsIntervalHours = data.reelsIntervalHours ?? this.defaultReelsIntervalHours;
           return autopostCollection.doc(doc.id).set(
             {
-              storyIntervalHours: intervalHours,
-              storyNextRun: now,
+              reelsIntervalHours,
+              reelsNextRun: now,
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             },
-            { merge: true },
+            { merge: true }
           );
-        })
-        .filter(Boolean) as Array<Promise<FirebaseFirestore.WriteResult>>;
-      if (selfHealWrites.length) {
-        await Promise.all(selfHealWrites);
+        }).filter(Boolean) as Array<Promise<FirebaseFirestore.WriteResult>>;
+        if (selfHealWrites.length) {
+          await Promise.all(selfHealWrites);
+        }
       }
-    }
-    if (standardSnap.empty && reelsSnap.empty && storiesSnap.empty && trendSnap.empty) return { processed: 0 };
-    let processed = 0;
-    const results = new Map<
-      string,
-      {
-        userId: string;
-        posted: number;
-        failed: number;
-        nextRun?: string | null;
-        reelsPosted?: number;
-        reelsFailed?: number;
-        reelsNextRun?: string | null;
-        storyPosted?: number;
-        storyFailed?: number;
-        storyNextRun?: string | null;
-        trendPosted?: number;
-        trendFailed?: number;
-        trendNextRun?: string | null;
+      if (!missingStoriesSnap.empty) {
+        const selfHealWrites = missingStoriesSnap.docs
+          .map(doc => {
+            const data = doc.data() as AutoPostJob;
+            if (data.active === false || data.storyTrendEnabled !== true) return null;
+            const intervalHours = data.storyIntervalHours ?? this.defaultStoryIntervalHours;
+            return autopostCollection.doc(doc.id).set(
+              {
+                storyIntervalHours: intervalHours,
+                storyNextRun: now,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            );
+          })
+          .filter(Boolean) as Array<Promise<FirebaseFirestore.WriteResult>>;
+        if (selfHealWrites.length) {
+          await Promise.all(selfHealWrites);
+        }
       }
-    >();
-    for (const doc of standardSnap.docs) {
-      const data = doc.data() as AutoPostJob;
-      if (data.active === false) continue;
-      const outcome = await this.executeJob(doc.id, data);
-      processed += 1;
-      results.set(doc.id, {
-        userId: doc.id,
-        posted: outcome.posted,
-        failed: outcome.failed.length,
-        nextRun: outcome.nextRun,
-      });
+      if (standardSnap.empty && reelsSnap.empty && storiesSnap.empty && trendSnap.empty) return { processed: 0 };
+      let processed = 0;
+      const results = new Map<
+        string,
+        {
+          userId: string;
+          posted: number;
+          failed: number;
+          nextRun?: string | null;
+          reelsPosted?: number;
+          reelsFailed?: number;
+          reelsNextRun?: string | null;
+          storyPosted?: number;
+          storyFailed?: number;
+          storyNextRun?: string | null;
+          trendPosted?: number;
+          trendFailed?: number;
+          trendNextRun?: string | null;
+        }
+      >();
+      for (const doc of standardSnap.docs) {
+        const data = doc.data() as AutoPostJob;
+        if (data.active === false) continue;
+        const outcome = await this.executeJob(doc.id, data);
+        processed += 1;
+        results.set(doc.id, {
+          userId: doc.id,
+          posted: outcome.posted,
+          failed: outcome.failed.length,
+          nextRun: outcome.nextRun,
+        });
+      }
+      for (const doc of reelsSnap.docs) {
+        const data = doc.data() as AutoPostJob;
+        if (data.active === false) continue;
+        const outcome = await this.executeJob(doc.id, data, {
+          platforms: ['instagram_reels'],
+          intervalHours: data.reelsIntervalHours ?? this.defaultReelsIntervalHours,
+          nextRunField: 'reelsNextRun',
+          lastRunField: 'reelsLastRunAt',
+          resultField: 'reelsLastResult',
+          useGenericVideoFallback: false,
+        });
+        processed += 1;
+        const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
+        results.set(doc.id, {
+          ...existing,
+          reelsPosted: outcome.posted,
+          reelsFailed: outcome.failed.length,
+          reelsNextRun: outcome.nextRun,
+        });
+      }
+      for (const doc of storiesSnap.docs) {
+        const data = doc.data() as AutoPostJob;
+        if (data.active === false || data.storyTrendEnabled !== true) continue;
+        const outcome = await this.executeTrendStories(doc.id, data);
+        processed += 1;
+        const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
+        results.set(doc.id, {
+          ...existing,
+          storyPosted: outcome.posted,
+          storyFailed: outcome.failed.length,
+          storyNextRun: outcome.nextRun,
+        });
+      }
+      for (const doc of trendSnap.docs) {
+        const data = doc.data() as AutoPostJob;
+        if (data.active === false || data.trendEnabled !== true) continue;
+        const outcome = await this.executeTrendPosts(doc.id, data);
+        processed += 1;
+        const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
+        results.set(doc.id, {
+          ...existing,
+          trendPosted: outcome.posted,
+          trendFailed: outcome.failed.length,
+          trendNextRun: outcome.nextRun,
+        });
+      }
+      return { processed, results: Array.from(results.values()) };
+    } catch (error) {
+      if (this.isFirestoreQuotaError(error)) {
+        console.warn('[autopost] Firestore quota exceeded; running emergency Bwin X posting path.');
+        const emergency = await this.runBwinXEmergencyPost(new Date());
+        return {
+          processed: emergency.posted ? 1 : 0,
+          emergency,
+        };
+      }
+      throw error;
     }
-    for (const doc of reelsSnap.docs) {
-      const data = doc.data() as AutoPostJob;
-      if (data.active === false) continue;
-      const outcome = await this.executeJob(doc.id, data, {
-        platforms: ['instagram_reels'],
-        intervalHours: data.reelsIntervalHours ?? this.defaultReelsIntervalHours,
-        nextRunField: 'reelsNextRun',
-        lastRunField: 'reelsLastRunAt',
-        resultField: 'reelsLastResult',
-        useGenericVideoFallback: false,
-      });
-      processed += 1;
-      const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
-      results.set(doc.id, {
-        ...existing,
-        reelsPosted: outcome.posted,
-        reelsFailed: outcome.failed.length,
-        reelsNextRun: outcome.nextRun,
-      });
-    }
-    for (const doc of storiesSnap.docs) {
-      const data = doc.data() as AutoPostJob;
-      if (data.active === false || data.storyTrendEnabled !== true) continue;
-      const outcome = await this.executeTrendStories(doc.id, data);
-      processed += 1;
-      const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
-      results.set(doc.id, {
-        ...existing,
-        storyPosted: outcome.posted,
-        storyFailed: outcome.failed.length,
-        storyNextRun: outcome.nextRun,
-      });
-    }
-    for (const doc of trendSnap.docs) {
-      const data = doc.data() as AutoPostJob;
-      if (data.active === false || data.trendEnabled !== true) continue;
-      const outcome = await this.executeTrendPosts(doc.id, data);
-      processed += 1;
-      const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
-      results.set(doc.id, {
-        ...existing,
-        trendPosted: outcome.posted,
-        trendFailed: outcome.failed.length,
-        trendNextRun: outcome.nextRun,
-      });
-    }
-    return { processed, results: Array.from(results.values()) };
   }
 
   async runForUser(userId: string) {
