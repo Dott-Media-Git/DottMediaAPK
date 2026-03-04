@@ -42,22 +42,17 @@ import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
 import { autoPostService } from './services/autoPostService';
 
 const initializeAutomation = async () => {
-  const modules = [
-    './workers/automationWorker.js',
-    './jobs/prospectJob.js',
-    './jobs/followupJob.js',
-    './jobs/autoPostJob.js',
-    './jobs/instagramCommentPollJob.js',
-    './workers/youtubeWorker.js',
-  ] as const;
-
-  for (const modulePath of modules) {
-    try {
-      await import(modulePath);
-      console.info(`[automation] initialized ${modulePath}`);
-    } catch (error) {
-      console.error(`[automation] failed to initialize ${modulePath}`, error);
-    }
+  try {
+    await Promise.all([
+      import('./workers/automationWorker.js'),
+      import('./jobs/prospectJob.js'),
+      import('./jobs/followupJob.js'),
+      import('./jobs/autoPostJob.js'),
+      import('./jobs/instagramCommentPollJob.js'),
+      import('./workers/youtubeWorker.js'),
+    ]);
+  } catch (error) {
+    console.error('Failed to initialize automation background jobs', error);
   }
 };
 
