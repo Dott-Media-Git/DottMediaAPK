@@ -1,13 +1,13 @@
 import cron from 'node-cron';
-import { runProspectDiscovery } from '../packages/services/prospectFinder/index.js';
-import { outreachAgent } from '../packages/services/outreachAgent/index.js';
-import { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } from '../services/outboundTargetingService.js';
-const scheduleExpression = process.env.OUTBOUND_CRON ?? '0 9 * * *';
+import { runProspectDiscovery } from '../packages/services/prospectFinder';
+import { outreachAgent } from '../packages/services/outreachAgent';
+import { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } from '../services/outboundTargetingService';
+const scheduleExpression = process.env.OUTBOUND_CRON ?? '0 * * * *';
 const manualIndustry = process.env.OUTBOUND_TARGET_INDUSTRY ?? process.env.OUTBOUND_TARGET_INDUSTRIES;
 const manualCountry = process.env.OUTBOUND_TARGET_COUNTRY ?? process.env.OUTBOUND_TARGET_COUNTRIES;
 const targetMode = manualIndustry || manualCountry ? 'manual' : 'auto';
 /**
- * Schedules the daily autonomous prospect discovery + outreach routine.
+ * Schedules the autonomous prospect discovery + outreach routine.
  */
 export function scheduleProspectJob() {
     if (process.env.DISABLE_OUTBOUND_AUTOMATION === 'true') {
