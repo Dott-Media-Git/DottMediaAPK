@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bwinbet UG Outbound CEO Brief - Dott Media</title>
+    <style>
+      :root {
+        --ink: #121212;
+        --muted: #3e3e3e;
+        --brand-yellow: #ffcc00;
+        --brand-charcoal: #1e1e1e;
+        --border: #e6e6e6;
+        --panel: #fffdf4;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        background: #f7f7f7;
+        color: var(--ink);
+        font-family: "Segoe UI", Arial, sans-serif;
+      }
+
+      @page {
+        size: A4;
+        margin: 14mm;
+      }
+
+      @media print {
+        body {
+          background: #ffffff;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+
+        .page {
+          margin: 0;
+          border: none;
+          box-shadow: none;
+        }
+
+        .download-box {
+          display: none;
+        }
+      }
+
+      .page {
+        max-width: 940px;
+        margin: 20px auto;
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.08);
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        padding: 24px 30px 18px 30px;
+        background: linear-gradient(120deg, #fff6cc, #ffe680);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .brand img {
+        width: 58px;
+        height: 58px;
+        object-fit: contain;
+      }
+
+      .brand-title {
+        font-size: 22px;
+        font-weight: 800;
+        color: var(--brand-charcoal);
+        line-height: 1.2;
+      }
+
+      .brand-subtitle {
+        font-size: 12px;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .doc-title-wrap {
+        text-align: right;
+      }
+
+      .doc-title {
+        margin: 0;
+        font-size: 22px;
+        color: var(--brand-charcoal);
+      }
+
+      .doc-subtitle {
+        margin-top: 6px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .accent-bar {
+        height: 6px;
+        background: linear-gradient(90deg, var(--brand-charcoal), var(--brand-yellow));
+      }
+
+      .download-box {
+        padding: 14px 30px 0 30px;
+      }
+
+      .download-link {
+        display: inline-block;
+        text-decoration: none;
+        background: var(--brand-charcoal);
+        color: #ffffff;
+        font-size: 13px;
+        font-weight: 700;
+        border-radius: 999px;
+        padding: 10px 16px;
+      }
+
+      main {
+        padding: 22px 30px 22px 30px;
+      }
+
+      .section {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px 16px;
+        margin-bottom: 14px;
+      }
+
+      .section h2 {
+        margin: 0 0 8px 0;
+        font-size: 17px;
+        color: var(--brand-charcoal);
+      }
+
+      .section p {
+        margin: 0 0 8px 0;
+        color: var(--muted);
+        line-height: 1.58;
+      }
+
+      .columns {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+      }
+
+      ul,
+      ol {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.58;
+      }
+
+      li + li {
+        margin-top: 5px;
+      }
+
+      .pill {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+        background: #fff0b3;
+        color: #5f4d00;
+        border-radius: 999px;
+        padding: 4px 9px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 13px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--border);
+        text-align: left;
+        vertical-align: top;
+        padding: 10px 8px;
+        word-break: break-word;
+      }
+
+      th {
+        background: #fff4bf;
+        color: #2b2b2b;
+      }
+
+      .example {
+        background: #ffffff;
+        border: 1px solid #ecdca2;
+        border-radius: 8px;
+        padding: 10px;
+        margin-top: 8px;
+        font-size: 13px;
+        color: #2f2f2f;
+      }
+
+      .example strong {
+        color: #111111;
+      }
+
+      footer {
+        border-top: 1px solid var(--border);
+        padding: 16px 30px 22px 30px;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        background: #fafafa;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .footer-title {
+        font-weight: 700;
+        color: var(--brand-charcoal);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="brand">
+          <img src="logo.png" alt="Dott Media logo" />
+          <div>
+            <div class="brand-title">Dott-Media</div>
+            <div class="brand-subtitle">AI-Powered Digital Solutions</div>
+          </div>
+        </div>
+        <div class="doc-title-wrap">
+          <h1 class="doc-title">Bwinbet UG Outbound CEO Brief</h1>
+          <div class="doc-subtitle">How outreach works, how prospects are sourced, and what messages are sent</div>
+        </div>
+      </header>
+      <div class="accent-bar"></div>
+
+      <div class="download-box">
+        <a class="download-link" href="bwinbet-outbound-ceo-brief.pdf" download>Download PDF</a>
+      </div>
+
+      <main>
+        <section class="section">
+          <h2>1. Executive Summary</h2>
+          <p>
+            The outbound engine identifies sports-relevant audiences, sends compliant first-touch messages, tracks replies and
+            positive intent, and converts qualified conversations into leads. This is managed with strict channel caps and
+            anti-spam controls so growth stays reliable and platform-safe.
+          </p>
+          <span class="pill">Live KPI tracking enabled in dashboard</span>
+        </section>
+
+        <section class="section">
+          <h2>2. How People Are Gotten (Prospect Acquisition)</h2>
+          <div class="columns">
+            <div>
+              <p><strong>Source channels</strong></p>
+              <ul>
+                <li>X football/sports communities and engagement audiences.</li>
+                <li>Instagram sports pages, active fan accounts, and creators.</li>
+                <li>LinkedIn business operators for B2B automation opportunities.</li>
+                <li>WhatsApp-ready contacts where direct permission exists.</li>
+              </ul>
+            </div>
+            <div>
+              <p><strong>Targeting logic</strong></p>
+              <ul>
+                <li>Industry and geography rotation to avoid stale targeting.</li>
+                <li>Per-channel daily caps to protect deliverability and compliance.</li>
+                <li>Prospect scoring and de-duplication before any send.</li>
+                <li>Suppression lists for opt-outs and prior declines.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>3. Outbound Workflow (Step-by-Step)</h2>
+          <ol>
+            <li>Discover and score prospects from configured sources.</li>
+            <li>Apply compliance filters (eligibility, opt-in rules, suppression checks).</li>
+            <li>Generate channel-appropriate first-touch copy.</li>
+            <li>Send and log each outbound message in real time.</li>
+            <li>Monitor replies, classify sentiment, and detect buying signals.</li>
+            <li>Escalate positive responders to lead/conversion flow.</li>
+          </ol>
+        </section>
+
+        <section class="section">
+          <h2>4. Message Strategy</h2>
+          <p>
+            Messaging is short, context-aware, and action-oriented. Tone is professional and sports-native for Bwinbet. Every
+            message avoids abusive language and supports opt-out expectations.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Message Type</th>
+                <th>Purpose</th>
+                <th>Structure</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>First-touch DM</td>
+                <td>Start interest with relevance and trust.</td>
+                <td>Personal opening + value line + soft CTA.</td>
+              </tr>
+              <tr>
+                <td>Reply follow-up</td>
+                <td>Move conversation from curiosity to action.</td>
+                <td>Answer + proof/value + next step link.</td>
+              </tr>
+              <tr>
+                <td>Conversion close</td>
+                <td>Direct user to action pages.</td>
+                <td>Decision prompt + bet/info route.</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="section">
+          <h2>5. Message Examples</h2>
+          <div class="example">
+            <strong>Example A - First-touch (sports audience)</strong><br />
+            Hi [Name], thanks for following our football updates. We share high-signal match insights and smart picks daily.
+            For full breakdowns visit <strong>www.bwinbetug.info</strong>, then place bets on
+            <strong>www.bwinbetug.com</strong>.
+          </div>
+          <div class="example">
+            <strong>Example B - Follow-up after response</strong><br />
+            Great question, [Name]. Today’s strongest angle is built from form + timing + market movement. If you want the full
+            board and reasoning, check <strong>www.bwinbetug.info</strong>, then lock your picks at
+            <strong>www.bwinbetug.com</strong>.
+          </div>
+          <div class="example">
+            <strong>Example C - Conversion push</strong><br />
+            If you’re ready to play today’s opportunities, go straight to <strong>www.bwinbetug.com</strong>. If you want context
+            first, we’ve posted the full insights on <strong>www.bwinbetug.info</strong>.
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>6. Compliance and Safety Controls</h2>
+          <ul>
+            <li>Daily limits per platform (kept below high-risk thresholds).</li>
+            <li>No abusive, offensive, or manipulative language.</li>
+            <li>Opt-out handling and suppression for do-not-contact users.</li>
+            <li>Channel-specific policies respected before and during sending.</li>
+          </ul>
+        </section>
+
+        <section class="section">
+          <h2>7. Live Outbound Metrics (Dashboard)</h2>
+          <p>For Bwinbet, outbound cards now report live values:</p>
+          <ul>
+            <li><strong>Prospects Contacted:</strong> total outbound sends.</li>
+            <li><strong>People Responding:</strong> unique responders (not just raw reply events).</li>
+            <li><strong>Replies:</strong> all inbound reply events.</li>
+            <li><strong>Conversions:</strong> responder-to-conversion outcomes.</li>
+            <li><strong>Demo Bookings:</strong> booked actions where applicable.</li>
+            <li><strong>Conversion Rate:</strong> conversions divided by contacted prospects.</li>
+          </ul>
+        </section>
+      </main>
+
+      <footer>
+        <div>
+          <div class="footer-title">Dott-Media AI-Powered Digital Solutions</div>
+          <div>Outbound Operations Brief (CEO View)</div>
+        </div>
+        <div>
+          <div class="footer-title">Contact</div>
+          <div>+256-775067216</div>
+          <div>info@dott-media.org</div>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>

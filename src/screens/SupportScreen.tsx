@@ -29,7 +29,10 @@ const HELP_DOCS = [
   { key: 'youtube', titleKey: 'YouTube onboarding', file: 'youtube-onboarding.html' },
   { key: 'threads', titleKey: 'Threads onboarding', file: 'threads-onboarding.html' },
   { key: 'whatsapp', titleKey: 'WhatsApp onboarding', file: 'whatsapp-onboarding.html' },
+  { key: 'bwinbet-outbound-ceo', titleKey: 'Bwinbet outbound CEO brief', file: 'bwinbet-outbound-ceo-brief.html' },
 ];
+
+const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
 
 export const SupportScreen: React.FC = () => {
   const { state } = useAuth();
@@ -42,7 +45,7 @@ export const SupportScreen: React.FC = () => {
   const [selectedHelpDoc, setSelectedHelpDoc] = useState<(typeof HELP_DOCS)[number] | null>(null);
   const currentLabel = `${LOCALE_FLAGS[locale]} ${LOCALE_LABELS[locale]}`;
   const helpDocLabel = selectedHelpDoc ? t(selectedHelpDoc.titleKey) : t('Select a platform');
-  const isMainAccount = (state.user?.email ?? '').toLowerCase() === 'brasioxirin@gmail.com';
+  const isMainAccount = normalizeLower(state.user?.email) === 'brasioxirin@gmail.com';
   const helpDocBaseUrl = env.helpDocsUrl
     ? env.helpDocsUrl.replace(/\/$/, '')
     : env.apiUrl

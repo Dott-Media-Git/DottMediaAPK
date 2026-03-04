@@ -213,6 +213,7 @@ export class AnalyticsService {
 export type OutboundAnalyticsUpdate = {
   prospectsFound?: number;
   messagesSent?: number;
+  responders?: number;
   replies?: number;
   positiveReplies?: number;
   conversions?: number;
@@ -223,6 +224,7 @@ export type OutboundAnalyticsUpdate = {
 export type OutboundMetric =
   | 'outbound_prospects'
   | 'outbound_sent'
+  | 'outbound_responder'
   | 'outbound_reply'
   | 'outbound_positive_reply'
   | 'outbound_converted'
@@ -242,6 +244,7 @@ export async function incrementMetric(
   const update: OutboundAnalyticsUpdate = {};
   if (metric === 'outbound_prospects') update.prospectsFound = amount;
   if (metric === 'outbound_sent') update.messagesSent = amount;
+  if (metric === 'outbound_responder') update.responders = amount;
   if (metric === 'outbound_reply') update.replies = amount;
   if (metric === 'outbound_positive_reply') update.positiveReplies = amount;
   if (metric === 'outbound_converted') update.conversions = amount;
@@ -264,6 +267,7 @@ export async function incrementOutboundAnalytics(update: OutboundAnalyticsUpdate
   if (
     !update.prospectsFound &&
     !update.messagesSent &&
+    !update.responders &&
     !update.replies &&
     !update.positiveReplies &&
     !update.conversions &&
@@ -282,6 +286,7 @@ export async function incrementOutboundAnalytics(update: OutboundAnalyticsUpdate
       ? (snap.data() as {
           prospectsFound?: number;
           messagesSent?: number;
+          responders?: number;
           replies?: number;
           positiveReplies?: number;
           conversions?: number;
@@ -312,6 +317,7 @@ export async function incrementOutboundAnalytics(update: OutboundAnalyticsUpdate
       date,
       prospectsFound: (existing.prospectsFound ?? 0) + (update.prospectsFound ?? 0),
       messagesSent: (existing.messagesSent ?? 0) + (update.messagesSent ?? 0),
+      responders: (existing.responders ?? 0) + (update.responders ?? 0),
       replies: (existing.replies ?? 0) + (update.replies ?? 0),
       positiveReplies: (existing.positiveReplies ?? 0) + (update.positiveReplies ?? 0),
       conversions: (existing.conversions ?? 0) + (update.conversions ?? 0),
@@ -329,6 +335,7 @@ export async function incrementOutboundAnalytics(update: OutboundAnalyticsUpdate
     {
       prospectsFound: admin.firestore.FieldValue.increment(update.prospectsFound ?? 0),
       messagesSent: admin.firestore.FieldValue.increment(update.messagesSent ?? 0),
+      responders: admin.firestore.FieldValue.increment(update.responders ?? 0),
       replies: admin.firestore.FieldValue.increment(update.replies ?? 0),
       positiveReplies: admin.firestore.FieldValue.increment(update.positiveReplies ?? 0),
       conversions: admin.firestore.FieldValue.increment(update.conversions ?? 0),
@@ -349,6 +356,7 @@ function sanitizeIndustryKey(industry?: string) {
 
 export type OutboundStats = {
   prospectsContacted: number;
+  responders: number;
   replies: number;
   positiveReplies: number;
   conversions: number;
@@ -360,6 +368,7 @@ export async function getOutboundStats(scope?: AnalyticsScope): Promise<Outbound
   if (process.env.ALLOW_MOCK_AUTH === 'true') {
     return {
       prospectsContacted: 1250,
+      responders: 295,
       replies: 340,
       positiveReplies: 85,
       conversions: 42,
@@ -374,6 +383,7 @@ export async function getOutboundStats(scope?: AnalyticsScope): Promise<Outbound
       ? (doc.data() as {
           prospectsFound?: number;
           messagesSent?: number;
+          responders?: number;
           replies?: number;
           positiveReplies?: number;
           conversions?: number;
@@ -381,6 +391,7 @@ export async function getOutboundStats(scope?: AnalyticsScope): Promise<Outbound
         })
       : {};
     const prospectsContacted = data.messagesSent ?? 0;
+    const responders = data.responders ?? data.replies ?? 0;
     const replies = data.replies ?? 0;
     const positiveReplies = data.positiveReplies ?? 0;
     const conversions = data.conversions ?? 0;
@@ -388,6 +399,7 @@ export async function getOutboundStats(scope?: AnalyticsScope): Promise<Outbound
     const conversionRate = prospectsContacted ? conversions / prospectsContacted : 0;
     return {
       prospectsContacted,
+      responders,
       replies,
       positiveReplies,
       conversions,
@@ -398,6 +410,7 @@ export async function getOutboundStats(scope?: AnalyticsScope): Promise<Outbound
     console.warn('Firestore outbound stats fetch failed', error);
     return {
       prospectsContacted: 0,
+      responders: 0,
       replies: 0,
       positiveReplies: 0,
       conversions: 0,

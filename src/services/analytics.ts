@@ -35,6 +35,7 @@ export type DashboardAnalytics = CRMAnalytics & {
 
 export type OutboundStats = {
   prospectsContacted: number;
+  responders: number;
   replies: number;
   positiveReplies: number;
   conversions: number;
@@ -506,6 +507,7 @@ export const subscribeOutboundStats = (
       const prospectsContacted = Number(
         data.prospectsContacted ?? data.messagesSent ?? data.prospectsFound ?? 0
       );
+      const responders = Number(data.responders ?? data.replies ?? 0);
       const replies = Number(data.replies ?? 0);
       const conversions = Number(data.conversions ?? 0);
       const positiveReplies = Number(data.positiveReplies ?? replies);
@@ -513,6 +515,7 @@ export const subscribeOutboundStats = (
       const conversionRate = prospectsContacted ? conversions / prospectsContacted : 0;
       onData({
         prospectsContacted,
+        responders,
         replies,
         positiveReplies,
         conversions,

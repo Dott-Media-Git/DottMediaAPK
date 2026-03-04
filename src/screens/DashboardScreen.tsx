@@ -39,6 +39,7 @@ const createEmptyAnalytics = (seed?: Partial<DashboardAnalytics>): DashboardAnal
 
 const emptyOutboundStats: OutboundStats = {
   prospectsContacted: 0,
+  responders: 0,
   replies: 0,
   positiveReplies: 0,
   conversions: 0,
@@ -84,14 +85,15 @@ const formatDayOfWeek = (date: string, locale?: string) => {
   return parsed.toLocaleDateString(locale ?? undefined, { weekday: 'short' });
 };
 
+const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
+
 export const DashboardScreen: React.FC = () => {
   const { state } = useAuth();
   const { t, locale } = useI18n();
-  const hasConnectedSocials = Boolean(state.crmData?.instagram || state.crmData?.facebook || state.crmData?.linkedin);
   const orgId = (state.user as any)?.orgId ?? state.crmData?.orgId;
   const isBwinbetAccount = useMemo(() => {
-    const primary = (state.user?.email ?? '').toLowerCase();
-    const crmEmail = (state.crmData?.email ?? '').toLowerCase();
+    const primary = normalizeLower(state.user?.email);
+    const crmEmail = normalizeLower(state.crmData?.email);
     return primary.includes('bwinbet') || crmEmail.includes('bwinbet');
   }, [state.crmData?.email, state.user?.email]);
   const analyticsScopeId = useMemo(
@@ -180,28 +182,24 @@ export const DashboardScreen: React.FC = () => {
     let mounted = true;
     let outboundUnsub: (() => void) | null = null;
 
-    if (!hasConnectedSocials) {
-      setOutboundStats(emptyOutboundStats);
-    } else {
-      outboundUnsub =
-        subscribeOutboundStats(
-          analyticsScopeId,
-          stats => mounted && setOutboundStats(stats),
-          error => console.warn('Realtime outbound stats failed', error)
-        ) ?? null;
+    outboundUnsub =
+      subscribeOutboundStats(
+        analyticsScopeId,
+        stats => mounted && setOutboundStats(stats),
+        error => console.warn('Realtime outbound stats failed', error)
+      ) ?? null;
 
-      if (!outboundUnsub) {
-        void fetchOutboundStats(state.user?.uid, analyticsScopeId).then(stats => {
-          if (stats && mounted) setOutboundStats(stats);
-        });
-      }
+    if (!outboundUnsub) {
+      void fetchOutboundStats(state.user?.uid, analyticsScopeId).then(stats => {
+        if (stats && mounted) setOutboundStats(stats);
+      });
     }
 
     return () => {
       mounted = false;
       outboundUnsub?.();
     };
-  }, [analyticsScopeId, hasConnectedSocials, state.user?.uid]);
+  }, [analyticsScopeId, state.user?.uid]);
 
   useEffect(() => {
     let mounted = true;
@@ -256,6 +254,11 @@ export const DashboardScreen: React.FC = () => {
     [historySeries]
   );
 
+  const formatCount = (value: number) => {
+    const rounded = Number.isFinite(value) ? Math.round(value) : 0;
+    return rounded.toLocaleString();
+  };
+
   const heroPrimaryValue = isBwinbetAccount
     ? Math.round(liveSocialStats.summary.interactions).toLocaleString()
     : latestHistoryPoint.leads;
@@ -263,7 +266,7 @@ export const DashboardScreen: React.FC = () => {
   const heroStats = [
     { label: isBwinbetAccount ? t('Interactions') : t('Leads'), value: heroPrimaryValue },
     { label: t('Engagement'), value: `${latestHistoryPoint.engagement}%` },
-    { label: t('Conversions'), value: latestHistoryPoint.conversions },
+    { label: t('Views'), value: formatCount(liveSocialStats.summary.views) },
     {
       label: isBwinbetAccount ? t('Bet button clicks') : t('Feedback'),
       value: isBwinbetAccount
@@ -353,6 +356,11 @@ export const DashboardScreen: React.FC = () => {
         value: outboundStats.prospectsContacted.toString()
       },
       {
+        label: t('People responding'),
+        value: outboundStats.responders.toString(),
+        hint: t('unique responders')
+      },
+      {
         label: t('Replies'),
         value: outboundStats.replies.toString(),
         hint: t('{{count}} positive', { count: outboundStats.positiveReplies })
@@ -373,11 +381,6 @@ export const DashboardScreen: React.FC = () => {
     ],
     [outboundStats, t]
   );
-
-  const formatCount = (value: number) => {
-    const rounded = Number.isFinite(value) ? Math.round(value) : 0;
-    return rounded.toLocaleString();
-  };
 
   const livePlatformRows = useMemo(
     () =>
@@ -448,7 +451,7 @@ export const DashboardScreen: React.FC = () => {
         <Text style={styles.heroEyebrow}>{t('Live cockpit')}</Text>
         <Text style={styles.heroTitle}>{t('Analytics overview')}</Text>
         <Text style={styles.heroSubtitle}>
-          {t('High-impact gradients and typography inspired by dott-media.com, now wrapped around realtime CRM signals.')}
+          {t('Realtime CRM signals across your connected channels.')}
         </Text>
         <View style={styles.heroStatRow}>
           {heroStats.map(stat => (
@@ -460,22 +463,18 @@ export const DashboardScreen: React.FC = () => {
         </View>
       </LinearGradient>
       <DMCard title={t('Outbound Pipeline')} subtitle={t('Prospecting + booking overview')}>
-        {!hasConnectedSocials ? (
-          <Text style={styles.emptyState}>{t('Connect a social account to unlock outbound metrics.')}</Text>
-        ) : (
-          <View style={styles.outboundGrid}>
-            {outboundMetrics.map((metric, index) => (
-              <View
-                key={metric.label}
-                style={[styles.outboundMetric, (index + 1) % 2 === 0 && styles.outboundMetricLast]}
-              >
-                <Text style={styles.outboundLabel}>{metric.label}</Text>
-                <Text style={styles.outboundValue}>{metric.value}</Text>
-                {metric.hint ? <Text style={styles.outboundHint}>{metric.hint}</Text> : null}
-              </View>
-            ))}
-          </View>
-        )}
+        <View style={styles.outboundGrid}>
+          {outboundMetrics.map((metric, index) => (
+            <View
+              key={metric.label}
+              style={[styles.outboundMetric, (index + 1) % 2 === 0 && styles.outboundMetricLast]}
+            >
+              <Text style={styles.outboundLabel}>{metric.label}</Text>
+              <Text style={styles.outboundValue}>{metric.value}</Text>
+              {metric.hint ? <Text style={styles.outboundHint}>{metric.hint}</Text> : null}
+            </View>
+          ))}
+        </View>
       </DMCard>
       <DMCard
         title={t('Live Social Performance')}

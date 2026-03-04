@@ -181,6 +181,7 @@ export class OutreachAgent {
     const snapshot = await prospectsCollection.doc(payload.prospectId).get();
     if (!snapshot.exists) return;
     const prospect = snapshot.data() as Prospect;
+    const firstResponder = !prospect.lastReplyAt;
     const userId = this.extractUserId(payload.metadata, prospect);
 
     await outreachCollection.add({
@@ -204,6 +205,9 @@ export class OutreachAgent {
 
     const analyticsScope = resolveAnalyticsScope(undefined, prospect, payload.metadata);
 
+    if (firstResponder) {
+      await incrementMetric('outbound_responder', 1, { industry: prospect.industry }, analyticsScope);
+    }
     await incrementMetric('outbound_reply', 1, { industry: prospect.industry }, analyticsScope);
 
     if (payload.channel === 'x' && this.isXOptOutMessage(payload.message)) {
