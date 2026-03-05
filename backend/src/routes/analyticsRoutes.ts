@@ -14,7 +14,7 @@ import { getLiveSocialMetrics } from '../services/liveSocialMetricsService';
 
 const router = Router();
 const analytics = new AnalyticsService();
-const bwinBetTargetUrl = 'https://www.bwinbetug.com';
+const bwinBetTargetUrl = 'https://bwinbetug.com';
 const webTrackAllowedHosts = (
   process.env.WEB_TRACK_ALLOWED_HOSTS ??
   'bwinbetug.info,www.bwinbetug.info,bwinbetug.com,www.bwinbetug.com'
@@ -241,5 +241,6 @@ router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
 });
 
 export default router;
+
 
 
