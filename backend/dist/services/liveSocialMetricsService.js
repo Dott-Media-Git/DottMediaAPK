@@ -3,7 +3,7 @@ import { TwitterApi } from 'twitter-api-v2';
 import { firestore } from '../db/firestore.js';
 import { config } from '../config.js';
 import { canUsePrimarySocialDefaults } from '../utils/socialAccess.js';
-import { getOutboundStats } from './analyticsService.js';
+import { getOutboundStats, getWebTrafficStats } from './analyticsService.js';
 import { resolveAnalyticsScopeKey } from './analyticsScope.js';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const MAX_POSTS_PER_PLATFORM = Math.max(Number(process.env.LIVE_SOCIAL_MAX_POSTS ?? 20), 5);
@@ -300,127 +300,172 @@ export async function getLiveSocialMetrics(userId, options) {
     const cutoffMs = Date.now() - lookbackHours * 60 * 60 * 1000;
     const lookbackDays = Math.max(Math.ceil(lookbackHours / 24) + 1, 2);
     const minDate = new Date(cutoffMs).toISOString().slice(0, 10);
-    const [userDoc, postsSnap, outbound, webTrafficCandidates] = await Promise.all([
-        firestore.collection('users').doc(userId).get(),
-        firestore.collection('scheduledPosts').where('userId', '==', userId).limit(500).get(),
-        getOutboundStats(options?.scope ?? { userId }),
-        Promise.all(scopeKeys.map(async (key) => {
-            const snap = await firestore
-                .collection('analytics')
-                .doc(key)
-                .collection('webTrafficDaily')
-                .orderBy('date', 'desc')
-                .limit(lookbackDays)
-                .get();
-            const rows = snap.docs
-                .map(doc => doc.data())
-                .filter(row => {
-                const date = typeof row.date === 'string' ? row.date : '';
-                return date && date >= minDate;
-            });
-            return { key, rows };
-        })),
-    ]);
-    const userData = userDoc.data();
-    const accounts = buildWithDefaults(userData);
-    const recentPosted = postsSnap.docs
-        .map(doc => doc.data())
-        .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
-    const facebookIds = collectRemoteIds(recentPosted, ['facebook', 'facebook_story']);
-    const instagramIds = collectRemoteIds(recentPosted, ['instagram', 'instagram_reels', 'instagram_story']);
-    const threadsIds = collectRemoteIds(recentPosted, ['threads']);
-    const xIds = collectRemoteIds(recentPosted, ['x', 'twitter']);
-    const sourceRedirectClicks = {};
-    const recentWebTrafficRows = pickWebTrafficRows(webTrafficCandidates);
-    const webVisitors = sum(recentWebTrafficRows.map(row => toNumber(row.visitors)));
-    const webInteractions = sum(recentWebTrafficRows.map(row => toNumber(row.interactions)));
-    const webRedirectClicks = sum(recentWebTrafficRows.map(row => toNumber(row.redirectClicks)));
-    recentWebTrafficRows.forEach(row => mergeCounterMap(sourceRedirectClicks, row.sourceRedirectClicks));
-    const output = {
-        generatedAt: new Date().toISOString(),
-        lookbackHours,
-        summary: {
-            views: 0,
-            interactions: 0,
-            engagementRate: 0,
-            conversions: Number(outbound?.conversions ?? 0),
-        },
-        web: {
-            visitors: webVisitors,
-            interactions: webInteractions,
-            redirectClicks: webRedirectClicks,
-            engagementRate: formatRate(webInteractions, webVisitors),
-        },
-        platforms: {
-            facebook: {
-                ...emptyPlatformMetric(),
-                connected: Boolean(accounts.facebook?.accessToken && accounts.facebook?.pageId),
-                postsAnalyzed: facebookIds.length,
-            },
-            instagram: {
-                ...emptyPlatformMetric(),
-                connected: Boolean(accounts.instagram?.accessToken && accounts.instagram?.accountId),
-                postsAnalyzed: instagramIds.length,
-            },
-            threads: {
-                ...emptyPlatformMetric(),
-                connected: Boolean(accounts.threads?.accessToken && accounts.threads?.accountId),
-                postsAnalyzed: threadsIds.length,
-            },
-            x: {
-                ...emptyPlatformMetric(),
-                connected: Boolean(getTwitterCredential(accounts)),
-                postsAnalyzed: xIds.length,
+    try {
+        const [userDoc, postsSnap, outbound, webTrafficCandidates] = await Promise.all([
+            firestore.collection('users').doc(userId).get(),
+            firestore.collection('scheduledPosts').where('userId', '==', userId).limit(500).get(),
+            getOutboundStats(options?.scope ?? { userId }),
+            Promise.all(scopeKeys.map(async (key) => {
+                const snap = await firestore
+                    .collection('analytics')
+                    .doc(key)
+                    .collection('webTrafficDaily')
+                    .orderBy('date', 'desc')
+                    .limit(lookbackDays)
+                    .get();
+                const rows = snap.docs
+                    .map(doc => doc.data())
+                    .filter(row => {
+                    const date = typeof row.date === 'string' ? row.date : '';
+                    return date && date >= minDate;
+                });
+                return { key, rows };
+            })),
+        ]);
+        const userData = userDoc.data();
+        const accounts = buildWithDefaults(userData);
+        const recentPosted = postsSnap.docs
+            .map(doc => doc.data())
+            .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
+        const facebookIds = collectRemoteIds(recentPosted, ['facebook', 'facebook_story']);
+        const instagramIds = collectRemoteIds(recentPosted, ['instagram', 'instagram_reels', 'instagram_story']);
+        const threadsIds = collectRemoteIds(recentPosted, ['threads']);
+        const xIds = collectRemoteIds(recentPosted, ['x', 'twitter']);
+        const sourceRedirectClicks = {};
+        const recentWebTrafficRows = pickWebTrafficRows(webTrafficCandidates);
+        const webVisitors = sum(recentWebTrafficRows.map(row => toNumber(row.visitors)));
+        const webInteractions = sum(recentWebTrafficRows.map(row => toNumber(row.interactions)));
+        const webRedirectClicks = sum(recentWebTrafficRows.map(row => toNumber(row.redirectClicks)));
+        recentWebTrafficRows.forEach(row => mergeCounterMap(sourceRedirectClicks, row.sourceRedirectClicks));
+        const output = {
+            generatedAt: new Date().toISOString(),
+            lookbackHours,
+            summary: {
+                views: 0,
+                interactions: 0,
+                engagementRate: 0,
+                conversions: Number(outbound?.conversions ?? 0),
             },
             web: {
-                ...emptyPlatformMetric(),
-                connected: webVisitors > 0 || webInteractions > 0 || webRedirectClicks > 0,
-                views: webVisitors,
+                visitors: webVisitors,
                 interactions: webInteractions,
+                redirectClicks: webRedirectClicks,
                 engagementRate: formatRate(webInteractions, webVisitors),
-                conversions: webRedirectClicks,
-                postsAnalyzed: webVisitors,
             },
-        },
-    };
-    if (accounts.facebook?.accessToken && facebookIds.length > 0) {
-        const rows = await Promise.all(facebookIds.map(id => fetchFacebookMetric(id, accounts.facebook?.accessToken ?? '')));
-        output.platforms.facebook.views = sum(rows.map(row => row.views));
-        output.platforms.facebook.interactions = sum(rows.map(row => row.interactions));
-        output.platforms.facebook.engagementRate = formatRate(output.platforms.facebook.interactions, output.platforms.facebook.views);
+            platforms: {
+                facebook: {
+                    ...emptyPlatformMetric(),
+                    connected: Boolean(accounts.facebook?.accessToken && accounts.facebook?.pageId),
+                    postsAnalyzed: facebookIds.length,
+                },
+                instagram: {
+                    ...emptyPlatformMetric(),
+                    connected: Boolean(accounts.instagram?.accessToken && accounts.instagram?.accountId),
+                    postsAnalyzed: instagramIds.length,
+                },
+                threads: {
+                    ...emptyPlatformMetric(),
+                    connected: Boolean(accounts.threads?.accessToken && accounts.threads?.accountId),
+                    postsAnalyzed: threadsIds.length,
+                },
+                x: {
+                    ...emptyPlatformMetric(),
+                    connected: Boolean(getTwitterCredential(accounts)),
+                    postsAnalyzed: xIds.length,
+                },
+                web: {
+                    ...emptyPlatformMetric(),
+                    connected: webVisitors > 0 || webInteractions > 0 || webRedirectClicks > 0,
+                    views: webVisitors,
+                    interactions: webInteractions,
+                    engagementRate: formatRate(webInteractions, webVisitors),
+                    conversions: webRedirectClicks,
+                    postsAnalyzed: webVisitors,
+                },
+            },
+        };
+        if (accounts.facebook?.accessToken && facebookIds.length > 0) {
+            const rows = await Promise.all(facebookIds.map(id => fetchFacebookMetric(id, accounts.facebook?.accessToken ?? '')));
+            output.platforms.facebook.views = sum(rows.map(row => row.views));
+            output.platforms.facebook.interactions = sum(rows.map(row => row.interactions));
+            output.platforms.facebook.engagementRate = formatRate(output.platforms.facebook.interactions, output.platforms.facebook.views);
+        }
+        if (accounts.instagram?.accessToken && instagramIds.length > 0) {
+            const rows = await Promise.all(instagramIds.map(id => fetchInstagramMetric(id, accounts.instagram?.accessToken ?? '')));
+            output.platforms.instagram.views = sum(rows.map(row => row.views));
+            output.platforms.instagram.interactions = sum(rows.map(row => row.interactions));
+            output.platforms.instagram.engagementRate = formatRate(output.platforms.instagram.interactions, output.platforms.instagram.views);
+        }
+        if (accounts.threads?.accessToken && threadsIds.length > 0) {
+            const rows = await Promise.all(threadsIds.map(id => fetchInstagramMetric(id, accounts.threads?.accessToken ?? '')));
+            output.platforms.threads.views = sum(rows.map(row => row.views));
+            output.platforms.threads.interactions = sum(rows.map(row => row.interactions));
+            output.platforms.threads.engagementRate = formatRate(output.platforms.threads.interactions, output.platforms.threads.views);
+        }
+        const twitterCredential = getTwitterCredential(accounts);
+        if (twitterCredential && xIds.length > 0) {
+            const rows = await Promise.all(xIds.map(id => fetchXMetric(id, twitterCredential)));
+            output.platforms.x.views = sum(rows.map(row => row.views));
+            output.platforms.x.interactions = sum(rows.map(row => row.interactions));
+            output.platforms.x.engagementRate = formatRate(output.platforms.x.interactions, output.platforms.x.views);
+        }
+        output.platforms.facebook.conversions = toNumber(sourceRedirectClicks.facebook);
+        output.platforms.instagram.conversions = toNumber(sourceRedirectClicks.instagram);
+        output.platforms.threads.conversions = toNumber(sourceRedirectClicks.threads);
+        output.platforms.x.conversions =
+            toNumber(sourceRedirectClicks.x) + toNumber(sourceRedirectClicks.twitter);
+        const totalViews = sum(Object.values(output.platforms).map(platform => platform.views));
+        const totalInteractions = sum(Object.values(output.platforms).map(platform => platform.interactions));
+        output.summary.views = totalViews;
+        output.summary.interactions = totalInteractions;
+        output.summary.engagementRate = formatRate(totalInteractions, totalViews);
+        if (webRedirectClicks > 0) {
+            output.summary.conversions = webRedirectClicks;
+        }
+        liveMetricsCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, data: output });
+        return output;
     }
-    if (accounts.instagram?.accessToken && instagramIds.length > 0) {
-        const rows = await Promise.all(instagramIds.map(id => fetchInstagramMetric(id, accounts.instagram?.accessToken ?? '')));
-        output.platforms.instagram.views = sum(rows.map(row => row.views));
-        output.platforms.instagram.interactions = sum(rows.map(row => row.interactions));
-        output.platforms.instagram.engagementRate = formatRate(output.platforms.instagram.interactions, output.platforms.instagram.views);
+    catch (error) {
+        console.warn('[socialLive] quota-safe fallback mode enabled', error);
+        if (cached?.data) {
+            return cached.data;
+        }
+        const outbound = await getOutboundStats(options?.scope ?? { userId });
+        const webStats = await getWebTrafficStats(options?.scope ?? { userId });
+        const fallback = {
+            generatedAt: new Date().toISOString(),
+            lookbackHours,
+            summary: {
+                views: Number(webStats.visitors ?? 0),
+                interactions: Number(webStats.interactions ?? 0),
+                engagementRate: formatRate(Number(webStats.interactions ?? 0), Number(webStats.visitors ?? 0)),
+                conversions: Number(webStats.redirectClicks ?? 0) || Number(outbound.conversions ?? 0),
+            },
+            web: {
+                visitors: Number(webStats.visitors ?? 0),
+                interactions: Number(webStats.interactions ?? 0),
+                redirectClicks: Number(webStats.redirectClicks ?? 0),
+                engagementRate: Number(webStats.engagementRate ?? 0),
+            },
+            platforms: {
+                facebook: { ...emptyPlatformMetric() },
+                instagram: { ...emptyPlatformMetric() },
+                threads: { ...emptyPlatformMetric() },
+                x: { ...emptyPlatformMetric() },
+                web: {
+                    ...emptyPlatformMetric(),
+                    connected: Number(webStats.visitors ?? 0) > 0 ||
+                        Number(webStats.interactions ?? 0) > 0 ||
+                        Number(webStats.redirectClicks ?? 0) > 0,
+                    views: Number(webStats.visitors ?? 0),
+                    interactions: Number(webStats.interactions ?? 0),
+                    engagementRate: Number(webStats.engagementRate ?? 0),
+                    conversions: Number(webStats.redirectClicks ?? 0),
+                    postsAnalyzed: Number(webStats.visitors ?? 0),
+                },
+            },
+        };
+        liveMetricsCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, data: fallback });
+        return fallback;
     }
-    if (accounts.threads?.accessToken && threadsIds.length > 0) {
-        const rows = await Promise.all(threadsIds.map(id => fetchInstagramMetric(id, accounts.threads?.accessToken ?? '')));
-        output.platforms.threads.views = sum(rows.map(row => row.views));
-        output.platforms.threads.interactions = sum(rows.map(row => row.interactions));
-        output.platforms.threads.engagementRate = formatRate(output.platforms.threads.interactions, output.platforms.threads.views);
-    }
-    const twitterCredential = getTwitterCredential(accounts);
-    if (twitterCredential && xIds.length > 0) {
-        const rows = await Promise.all(xIds.map(id => fetchXMetric(id, twitterCredential)));
-        output.platforms.x.views = sum(rows.map(row => row.views));
-        output.platforms.x.interactions = sum(rows.map(row => row.interactions));
-        output.platforms.x.engagementRate = formatRate(output.platforms.x.interactions, output.platforms.x.views);
-    }
-    output.platforms.facebook.conversions = toNumber(sourceRedirectClicks.facebook);
-    output.platforms.instagram.conversions = toNumber(sourceRedirectClicks.instagram);
-    output.platforms.threads.conversions = toNumber(sourceRedirectClicks.threads);
-    output.platforms.x.conversions =
-        toNumber(sourceRedirectClicks.x) + toNumber(sourceRedirectClicks.twitter);
-    const totalViews = sum(Object.values(output.platforms).map(platform => platform.views));
-    const totalInteractions = sum(Object.values(output.platforms).map(platform => platform.interactions));
-    output.summary.views = totalViews;
-    output.summary.interactions = totalInteractions;
-    output.summary.engagementRate = formatRate(totalInteractions, totalViews);
-    if (webRedirectClicks > 0) {
-        output.summary.conversions = webRedirectClicks;
-    }
-    liveMetricsCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, data: output });
-    return output;
 }

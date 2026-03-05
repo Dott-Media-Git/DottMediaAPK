@@ -199,6 +199,54 @@ export class AnalyticsService {
         }
     }
 }
+const outboundFallbackCache = new Map();
+const outboundScore = (value) => Number(value?.prospectsContacted ?? 0) +
+    Number(value?.responders ?? 0) +
+    Number(value?.replies ?? 0) +
+    Number(value?.positiveReplies ?? 0) +
+    Number(value?.conversions ?? 0) +
+    Number(value?.demoBookings ?? 0);
+const getScopeKeys = (scope) => buildScopeCandidates(scope)
+    .map(candidate => resolveAnalyticsScopeKey(candidate))
+    .filter((key, index, all) => Boolean(key) && all.indexOf(key) === index);
+function readOutboundFallback(scope) {
+    let best = null;
+    let bestScore = 0;
+    for (const key of getScopeKeys(scope)) {
+        const cached = outboundFallbackCache.get(key);
+        const score = outboundScore(cached);
+        if (!cached || score <= bestScore)
+            continue;
+        best = cached;
+        bestScore = score;
+    }
+    return best;
+}
+function setOutboundFallback(scope, stats) {
+    for (const key of getScopeKeys(scope)) {
+        outboundFallbackCache.set(key, stats);
+    }
+}
+function applyOutboundFallbackUpdate(scope, update) {
+    const base = readOutboundFallback(scope) ??
+        {
+            prospectsContacted: 0,
+            responders: 0,
+            replies: 0,
+            positiveReplies: 0,
+            conversions: 0,
+            demoBookings: 0,
+        };
+    const next = {
+        prospectsContacted: base.prospectsContacted + Number(update.messagesSent ?? 0),
+        responders: base.responders + Number(update.responders ?? 0),
+        replies: base.replies + Number(update.replies ?? 0),
+        positiveReplies: base.positiveReplies + Number(update.positiveReplies ?? 0),
+        conversions: base.conversions + Number(update.conversions ?? 0),
+        demoBookings: base.demoBookings + Number(update.demosBooked ?? 0),
+    };
+    setOutboundFallback(scope, next);
+}
 export async function incrementMetric(metric, amount = 1, metadata, scope) {
     const update = {};
     if (metric === 'outbound_prospects')
@@ -236,53 +284,59 @@ export async function incrementOutboundAnalytics(update, scope) {
         !update.industryBreakdown) {
         return;
     }
+    applyOutboundFallbackUpdate(scope, update);
     const date = new Date().toISOString().slice(0, 10);
     const docRef = outboundAnalyticsCollection(scope).doc(date);
-    await firestore.runTransaction(async (tx) => {
-        const snap = await tx.get(docRef);
-        const existing = snap.exists
-            ? snap.data()
-            : {};
-        const industryCounts = { ...(existing.industryCounts ?? {}) };
-        const industryLabels = { ...(existing.industryLabels ?? {}) };
-        if (update.industryBreakdown) {
-            Object.entries(update.industryBreakdown).forEach(([industry, value]) => {
-                const key = sanitizeIndustryKey(industry);
-                if (!key)
-                    return;
-                industryCounts[key] = (industryCounts[key] ?? 0) + value;
-                industryLabels[key] = industry;
-            });
-        }
-        const topIndustryKey = Object.entries(industryCounts)
-            .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
-            .map(([key]) => key)[0];
-        const payload = {
-            date,
-            prospectsFound: (existing.prospectsFound ?? 0) + (update.prospectsFound ?? 0),
-            messagesSent: (existing.messagesSent ?? 0) + (update.messagesSent ?? 0),
-            responders: (existing.responders ?? 0) + (update.responders ?? 0),
-            replies: (existing.replies ?? 0) + (update.replies ?? 0),
-            positiveReplies: (existing.positiveReplies ?? 0) + (update.positiveReplies ?? 0),
-            conversions: (existing.conversions ?? 0) + (update.conversions ?? 0),
-            demosBooked: (existing.demosBooked ?? 0) + (update.demosBooked ?? 0),
-            industryCounts,
-            industryLabels,
-            topIndustry: topIndustryKey ? industryLabels[topIndustryKey] ?? topIndustryKey : existing.topIndustry ?? null,
+    try {
+        await firestore.runTransaction(async (tx) => {
+            const snap = await tx.get(docRef);
+            const existing = snap.exists
+                ? snap.data()
+                : {};
+            const industryCounts = { ...(existing.industryCounts ?? {}) };
+            const industryLabels = { ...(existing.industryLabels ?? {}) };
+            if (update.industryBreakdown) {
+                Object.entries(update.industryBreakdown).forEach(([industry, value]) => {
+                    const key = sanitizeIndustryKey(industry);
+                    if (!key)
+                        return;
+                    industryCounts[key] = (industryCounts[key] ?? 0) + value;
+                    industryLabels[key] = industry;
+                });
+            }
+            const topIndustryKey = Object.entries(industryCounts)
+                .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
+                .map(([key]) => key)[0];
+            const payload = {
+                date,
+                prospectsFound: (existing.prospectsFound ?? 0) + (update.prospectsFound ?? 0),
+                messagesSent: (existing.messagesSent ?? 0) + (update.messagesSent ?? 0),
+                responders: (existing.responders ?? 0) + (update.responders ?? 0),
+                replies: (existing.replies ?? 0) + (update.replies ?? 0),
+                positiveReplies: (existing.positiveReplies ?? 0) + (update.positiveReplies ?? 0),
+                conversions: (existing.conversions ?? 0) + (update.conversions ?? 0),
+                demosBooked: (existing.demosBooked ?? 0) + (update.demosBooked ?? 0),
+                industryCounts,
+                industryLabels,
+                topIndustry: topIndustryKey ? industryLabels[topIndustryKey] ?? topIndustryKey : existing.topIndustry ?? null,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+            tx.set(docRef, payload, { merge: true });
+        });
+        await outboundSummaryDoc(scope).set({
+            prospectsFound: admin.firestore.FieldValue.increment(update.prospectsFound ?? 0),
+            messagesSent: admin.firestore.FieldValue.increment(update.messagesSent ?? 0),
+            responders: admin.firestore.FieldValue.increment(update.responders ?? 0),
+            replies: admin.firestore.FieldValue.increment(update.replies ?? 0),
+            positiveReplies: admin.firestore.FieldValue.increment(update.positiveReplies ?? 0),
+            conversions: admin.firestore.FieldValue.increment(update.conversions ?? 0),
+            demosBooked: admin.firestore.FieldValue.increment(update.demosBooked ?? 0),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        };
-        tx.set(docRef, payload, { merge: true });
-    });
-    await outboundSummaryDoc(scope).set({
-        prospectsFound: admin.firestore.FieldValue.increment(update.prospectsFound ?? 0),
-        messagesSent: admin.firestore.FieldValue.increment(update.messagesSent ?? 0),
-        responders: admin.firestore.FieldValue.increment(update.responders ?? 0),
-        replies: admin.firestore.FieldValue.increment(update.replies ?? 0),
-        positiveReplies: admin.firestore.FieldValue.increment(update.positiveReplies ?? 0),
-        conversions: admin.firestore.FieldValue.increment(update.conversions ?? 0),
-        demosBooked: admin.firestore.FieldValue.increment(update.demosBooked ?? 0),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+        }, { merge: true });
+    }
+    catch (error) {
+        console.warn('Firestore outbound analytics increment failed; using fallback cache', error);
+    }
 }
 function sanitizeIndustryKey(industry) {
     if (!industry)
@@ -321,7 +375,7 @@ export async function getOutboundStats(scope) {
         const conversions = data.conversions ?? 0;
         const demoBookings = data.demosBooked ?? 0;
         const conversionRate = prospectsContacted ? conversions / prospectsContacted : 0;
-        return {
+        const result = {
             prospectsContacted,
             responders,
             replies,
@@ -330,9 +384,34 @@ export async function getOutboundStats(scope) {
             demoBookings,
             conversionRate: Number(conversionRate.toFixed(2)),
         };
+        if (outboundScore(result) > 0) {
+            setOutboundFallback(scope, result);
+            return result;
+        }
+        const cached = readOutboundFallback(scope);
+        if (cached && outboundScore(cached) > 0) {
+            const cachedRate = cached.prospectsContacted
+                ? cached.conversions / cached.prospectsContacted
+                : 0;
+            return {
+                ...cached,
+                conversionRate: Number(cachedRate.toFixed(2)),
+            };
+        }
+        return result;
     }
     catch (error) {
         console.warn('Firestore outbound stats fetch failed', error);
+        const cached = readOutboundFallback(scope);
+        if (cached && outboundScore(cached) > 0) {
+            const cachedRate = cached.prospectsContacted
+                ? cached.conversions / cached.prospectsContacted
+                : 0;
+            return {
+                ...cached,
+                conversionRate: Number(cachedRate.toFixed(2)),
+            };
+        }
         return {
             prospectsContacted: 0,
             responders: 0,
@@ -380,6 +459,56 @@ export async function incrementWebLeadAnalytics(update, scope) {
         messages: update.messages ?? 0,
     });
 }
+const webTrafficFallbackCache = new Map();
+const webTrafficScore = (value) => Number(value?.visitors ?? 0) +
+    Number(value?.interactions ?? 0) +
+    Number(value?.redirectClicks ?? 0);
+function readWebTrafficFallback(scope) {
+    let best = null;
+    let bestScore = 0;
+    for (const key of getScopeKeys(scope)) {
+        const cached = webTrafficFallbackCache.get(key);
+        const score = webTrafficScore(cached);
+        if (!cached || score <= bestScore)
+            continue;
+        best = cached;
+        bestScore = score;
+    }
+    return best;
+}
+function setWebTrafficFallback(scope, stats) {
+    for (const key of getScopeKeys(scope)) {
+        webTrafficFallbackCache.set(key, stats);
+    }
+}
+function applyWebTrafficFallbackUpdate(scope, sourceKey, visitors, interactions, redirectClicks) {
+    const base = readWebTrafficFallback(scope) ??
+        {
+            visitors: 0,
+            interactions: 0,
+            redirectClicks: 0,
+            sourceVisitors: {},
+            sourceInteractions: {},
+            sourceRedirectClicks: {},
+        };
+    const sourceVisitors = { ...(base.sourceVisitors ?? {}) };
+    const sourceInteractions = { ...(base.sourceInteractions ?? {}) };
+    const sourceRedirectClicks = { ...(base.sourceRedirectClicks ?? {}) };
+    if (visitors > 0)
+        sourceVisitors[sourceKey] = (sourceVisitors[sourceKey] ?? 0) + visitors;
+    if (interactions > 0)
+        sourceInteractions[sourceKey] = (sourceInteractions[sourceKey] ?? 0) + interactions;
+    if (redirectClicks > 0)
+        sourceRedirectClicks[sourceKey] = (sourceRedirectClicks[sourceKey] ?? 0) + redirectClicks;
+    setWebTrafficFallback(scope, {
+        visitors: base.visitors + visitors,
+        interactions: base.interactions + interactions,
+        redirectClicks: base.redirectClicks + redirectClicks,
+        sourceVisitors,
+        sourceInteractions,
+        sourceRedirectClicks,
+    });
+}
 const normalizeCounterMap = (value) => {
     if (!value || typeof value !== 'object')
         return {};
@@ -412,52 +541,58 @@ export async function incrementWebTrafficAnalytics(update, scope) {
     if (!visitors && !interactions && !redirectClicks)
         return;
     const sourceKey = normalizeWebTrafficSource(update.source);
+    applyWebTrafficFallbackUpdate(scope, sourceKey, visitors, interactions, redirectClicks);
     const date = new Date().toISOString().slice(0, 10);
     const docRef = webTrafficAnalyticsCollection(scope).doc(date);
-    await firestore.runTransaction(async (tx) => {
-        const snap = await tx.get(docRef);
-        const existing = snap.exists
-            ? snap.data()
-            : {};
-        const sourceVisitors = { ...(existing.sourceVisitors ?? {}) };
-        const sourceInteractions = { ...(existing.sourceInteractions ?? {}) };
-        const sourceRedirectClicks = { ...(existing.sourceRedirectClicks ?? {}) };
+    try {
+        await firestore.runTransaction(async (tx) => {
+            const snap = await tx.get(docRef);
+            const existing = snap.exists
+                ? snap.data()
+                : {};
+            const sourceVisitors = { ...(existing.sourceVisitors ?? {}) };
+            const sourceInteractions = { ...(existing.sourceInteractions ?? {}) };
+            const sourceRedirectClicks = { ...(existing.sourceRedirectClicks ?? {}) };
+            if (visitors > 0) {
+                sourceVisitors[sourceKey] = (sourceVisitors[sourceKey] ?? 0) + visitors;
+            }
+            if (interactions > 0) {
+                sourceInteractions[sourceKey] = (sourceInteractions[sourceKey] ?? 0) + interactions;
+            }
+            if (redirectClicks > 0) {
+                sourceRedirectClicks[sourceKey] = (sourceRedirectClicks[sourceKey] ?? 0) + redirectClicks;
+            }
+            tx.set(docRef, {
+                date,
+                visitors: (existing.visitors ?? 0) + visitors,
+                interactions: (existing.interactions ?? 0) + interactions,
+                redirectClicks: (existing.redirectClicks ?? 0) + redirectClicks,
+                sourceVisitors,
+                sourceInteractions,
+                sourceRedirectClicks,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+        });
+        const summaryPayload = {
+            visitors: admin.firestore.FieldValue.increment(visitors),
+            interactions: admin.firestore.FieldValue.increment(interactions),
+            redirectClicks: admin.firestore.FieldValue.increment(redirectClicks),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
         if (visitors > 0) {
-            sourceVisitors[sourceKey] = (sourceVisitors[sourceKey] ?? 0) + visitors;
+            summaryPayload[`sourceVisitors.${sourceKey}`] = admin.firestore.FieldValue.increment(visitors);
         }
         if (interactions > 0) {
-            sourceInteractions[sourceKey] = (sourceInteractions[sourceKey] ?? 0) + interactions;
+            summaryPayload[`sourceInteractions.${sourceKey}`] = admin.firestore.FieldValue.increment(interactions);
         }
         if (redirectClicks > 0) {
-            sourceRedirectClicks[sourceKey] = (sourceRedirectClicks[sourceKey] ?? 0) + redirectClicks;
+            summaryPayload[`sourceRedirectClicks.${sourceKey}`] = admin.firestore.FieldValue.increment(redirectClicks);
         }
-        tx.set(docRef, {
-            date,
-            visitors: (existing.visitors ?? 0) + visitors,
-            interactions: (existing.interactions ?? 0) + interactions,
-            redirectClicks: (existing.redirectClicks ?? 0) + redirectClicks,
-            sourceVisitors,
-            sourceInteractions,
-            sourceRedirectClicks,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-    });
-    const summaryPayload = {
-        visitors: admin.firestore.FieldValue.increment(visitors),
-        interactions: admin.firestore.FieldValue.increment(interactions),
-        redirectClicks: admin.firestore.FieldValue.increment(redirectClicks),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-    if (visitors > 0) {
-        summaryPayload[`sourceVisitors.${sourceKey}`] = admin.firestore.FieldValue.increment(visitors);
+        await webTrafficSummaryDoc(scope).set(summaryPayload, { merge: true });
     }
-    if (interactions > 0) {
-        summaryPayload[`sourceInteractions.${sourceKey}`] = admin.firestore.FieldValue.increment(interactions);
+    catch (error) {
+        console.warn('Firestore web traffic increment failed; using fallback cache', error);
     }
-    if (redirectClicks > 0) {
-        summaryPayload[`sourceRedirectClicks.${sourceKey}`] = admin.firestore.FieldValue.increment(redirectClicks);
-    }
-    await webTrafficSummaryDoc(scope).set(summaryPayload, { merge: true });
 }
 async function writeDailySummary(collection, summaryDoc, counters) {
     const date = new Date().toISOString().slice(0, 10);
@@ -571,19 +706,71 @@ export async function getWebLeadStats(scope) {
     }
 }
 export async function getWebTrafficStats(scope) {
-    const doc = await webTrafficSummaryDoc(scope).get();
-    const data = doc.data() ?? {};
-    const visitors = Number(data.visitors ?? 0);
-    const interactions = Number(data.interactions ?? 0);
-    const redirectClicks = Number(data.redirectClicks ?? 0);
-    const engagementRate = visitors > 0 ? (interactions / visitors) * 100 : 0;
-    return {
-        visitors,
-        interactions,
-        redirectClicks,
-        engagementRate: Number(engagementRate.toFixed(2)),
-        sourceVisitors: normalizeCounterMap(data.sourceVisitors),
-        sourceInteractions: normalizeCounterMap(data.sourceInteractions),
-        sourceRedirectClicks: normalizeCounterMap(data.sourceRedirectClicks),
-    };
+    try {
+        const doc = await webTrafficSummaryDoc(scope).get();
+        const data = doc.data() ?? {};
+        const visitors = Number(data.visitors ?? 0);
+        const interactions = Number(data.interactions ?? 0);
+        const redirectClicks = Number(data.redirectClicks ?? 0);
+        const engagementRate = visitors > 0 ? (interactions / visitors) * 100 : 0;
+        const result = {
+            visitors,
+            interactions,
+            redirectClicks,
+            engagementRate: Number(engagementRate.toFixed(2)),
+            sourceVisitors: normalizeCounterMap(data.sourceVisitors),
+            sourceInteractions: normalizeCounterMap(data.sourceInteractions),
+            sourceRedirectClicks: normalizeCounterMap(data.sourceRedirectClicks),
+        };
+        if (webTrafficScore(result) > 0) {
+            setWebTrafficFallback(scope, {
+                visitors: result.visitors,
+                interactions: result.interactions,
+                redirectClicks: result.redirectClicks,
+                sourceVisitors: result.sourceVisitors,
+                sourceInteractions: result.sourceInteractions,
+                sourceRedirectClicks: result.sourceRedirectClicks,
+            });
+            return result;
+        }
+        const cached = readWebTrafficFallback(scope);
+        if (cached && webTrafficScore(cached) > 0) {
+            const cachedRate = cached.visitors > 0 ? (cached.interactions / cached.visitors) * 100 : 0;
+            return {
+                visitors: cached.visitors,
+                interactions: cached.interactions,
+                redirectClicks: cached.redirectClicks,
+                engagementRate: Number(cachedRate.toFixed(2)),
+                sourceVisitors: { ...(cached.sourceVisitors ?? {}) },
+                sourceInteractions: { ...(cached.sourceInteractions ?? {}) },
+                sourceRedirectClicks: { ...(cached.sourceRedirectClicks ?? {}) },
+            };
+        }
+        return result;
+    }
+    catch (error) {
+        console.warn('Firestore web traffic stats fetch failed', error);
+        const cached = readWebTrafficFallback(scope);
+        if (cached && webTrafficScore(cached) > 0) {
+            const cachedRate = cached.visitors > 0 ? (cached.interactions / cached.visitors) * 100 : 0;
+            return {
+                visitors: cached.visitors,
+                interactions: cached.interactions,
+                redirectClicks: cached.redirectClicks,
+                engagementRate: Number(cachedRate.toFixed(2)),
+                sourceVisitors: { ...(cached.sourceVisitors ?? {}) },
+                sourceInteractions: { ...(cached.sourceInteractions ?? {}) },
+                sourceRedirectClicks: { ...(cached.sourceRedirectClicks ?? {}) },
+            };
+        }
+        return {
+            visitors: 0,
+            interactions: 0,
+            redirectClicks: 0,
+            engagementRate: 0,
+            sourceVisitors: {},
+            sourceInteractions: {},
+            sourceRedirectClicks: {},
+        };
+    }
 }
