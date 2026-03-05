@@ -904,10 +904,7 @@ export class AutoPostService {
   private applyBwinBetTracking(caption: string, ownerId: string, platform?: string) {
     if (!caption || !/bwinbetug\.com/i.test(caption)) return caption;
     const trackedUrl = this.buildBwinTrackedBetUrl(ownerId, platform);
-    return caption
-      .replace(/https?:\/\/(?:www\.)?bwinbetug\.com\b\/?/gi, trackedUrl)
-      .replace(/\bwww\.bwinbetug\.com\b/gi, trackedUrl)
-      .replace(/\bbwinbetug\.com\b/gi, trackedUrl);
+    return caption.replace(/(?:https?:\/\/)?(?:www\.)?bwinbetug\.com\b\/?/gi, trackedUrl);
   }
 
   private buildVideoCaptionFromHighlight(rawText: string, username: string, timezone: string) {
