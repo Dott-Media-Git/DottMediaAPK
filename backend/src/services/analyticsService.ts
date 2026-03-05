@@ -61,6 +61,51 @@ const webTrafficAnalyticsCollection = (scope?: AnalyticsScope) =>
 const webTrafficSummaryDoc = (scope?: AnalyticsScope) =>
   analyticsRoot(scope).collection('summaries').doc('webTraffic');
 
+const hasPositiveMetric = (data: Record<string, unknown>, keys: string[]) =>
+  keys.some(key => Number(data[key] ?? 0) > 0);
+
+const buildScopeCandidates = (scope?: AnalyticsScope): AnalyticsScope[] => {
+  const candidates: AnalyticsScope[] = [];
+  if (scope?.orgId || scope?.scopeId || scope?.userId) {
+    candidates.push(scope);
+  } else {
+    candidates.push({});
+  }
+
+  const userId = scope?.userId?.trim();
+  if (userId) {
+    const userScope: AnalyticsScope = { userId };
+    const primaryKey = resolveAnalyticsScopeKey(scope);
+    const fallbackKey = resolveAnalyticsScopeKey(userScope);
+    if (fallbackKey && fallbackKey !== primaryKey) {
+      candidates.push(userScope);
+    }
+  }
+
+  return candidates;
+};
+
+async function readSummaryWithFallback<T extends Record<string, unknown>>(
+  summaryDocFactory: (scope?: AnalyticsScope) => SummaryDoc,
+  scope: AnalyticsScope | undefined,
+  positiveKeys: string[],
+): Promise<T> {
+  const candidates = buildScopeCandidates(scope);
+  let firstSeen: T | null = null;
+
+  for (const candidate of candidates) {
+    const snap = await summaryDocFactory(candidate).get();
+    if (!snap.exists) continue;
+    const data = (snap.data() ?? {}) as T;
+    if (!firstSeen) firstSeen = data;
+    if (hasPositiveMetric(data, positiveKeys)) {
+      return data;
+    }
+  }
+
+  return (firstSeen ?? {}) as T;
+}
+
 export class AnalyticsService {
   async getSummary(userId: string): Promise<AnalyticsSummary> {
     // Mock Data Logic
@@ -378,18 +423,23 @@ export async function getOutboundStats(scope?: AnalyticsScope): Promise<Outbound
   }
 
   try {
-    const doc = await outboundSummaryDoc(scope).get();
-    const data = doc.exists
-      ? (doc.data() as {
-          prospectsFound?: number;
-          messagesSent?: number;
-          responders?: number;
-          replies?: number;
-          positiveReplies?: number;
-          conversions?: number;
-          demosBooked?: number;
-        })
-      : {};
+    const data = await readSummaryWithFallback<{
+      prospectsFound?: number;
+      messagesSent?: number;
+      responders?: number;
+      replies?: number;
+      positiveReplies?: number;
+      conversions?: number;
+      demosBooked?: number;
+    }>(outboundSummaryDoc, scope, [
+      'prospectsFound',
+      'messagesSent',
+      'responders',
+      'replies',
+      'positiveReplies',
+      'conversions',
+      'demosBooked',
+    ]);
     const prospectsContacted = data.messagesSent ?? 0;
     const responders = data.responders ?? data.replies ?? 0;
     const replies = data.replies ?? 0;
@@ -629,20 +679,34 @@ export type InboundStats = {
 };
 
 export async function getInboundStats(scope?: AnalyticsScope): Promise<InboundStats> {
-  const doc = await inboundSummaryDoc(scope).get();
-  const data = doc.data() ?? {};
-  const messages = Number(data.messages ?? 0);
-  const leads = Number(data.leads ?? 0);
-  const sentimentTotal = Number(data.sentimentTotal ?? 0);
-  const samples = Number(data.sentimentSamples ?? Math.max(messages, 1));
-  const avgSentiment = samples ? sentimentTotal / samples : 0;
-  const conversionRate = messages ? leads / messages : 0;
-  return {
-    messages,
-    leads,
-    avgSentiment: Number(avgSentiment.toFixed(2)),
-    conversionRate: Number(conversionRate.toFixed(2)),
-  };
+  try {
+    const data = await readSummaryWithFallback<{
+      messages?: number;
+      leads?: number;
+      sentimentTotal?: number;
+      sentimentSamples?: number;
+    }>(inboundSummaryDoc, scope, ['messages', 'leads', 'sentimentTotal', 'sentimentSamples']);
+    const messages = Number(data.messages ?? 0);
+    const leads = Number(data.leads ?? 0);
+    const sentimentTotal = Number(data.sentimentTotal ?? 0);
+    const samples = Number(data.sentimentSamples ?? Math.max(messages, 1));
+    const avgSentiment = samples ? sentimentTotal / samples : 0;
+    const conversionRate = messages ? leads / messages : 0;
+    return {
+      messages,
+      leads,
+      avgSentiment: Number(avgSentiment.toFixed(2)),
+      conversionRate: Number(conversionRate.toFixed(2)),
+    };
+  } catch (error) {
+    console.warn('Firestore inbound stats fetch failed', error);
+    return {
+      messages: 0,
+      leads: 0,
+      avgSentiment: 0,
+      conversionRate: 0,
+    };
+  }
 }
 
 export type EngagementStats = {
@@ -653,18 +717,31 @@ export type EngagementStats = {
 };
 
 export async function getEngagementStats(scope?: AnalyticsScope): Promise<EngagementStats> {
-  const doc = await engagementSummaryDoc(scope).get();
-  const data = doc.data() ?? {};
-  const comments = Number(data.commentsDetected ?? 0);
-  const replies = Number(data.repliesSent ?? 0);
-  const conversions = Number(data.conversions ?? 0);
-  const conversionRate = comments ? conversions / comments : 0;
-  return {
-    comments,
-    replies,
-    conversions,
-    conversionRate: Number(conversionRate.toFixed(2)),
-  };
+  try {
+    const data = await readSummaryWithFallback<{
+      commentsDetected?: number;
+      repliesSent?: number;
+      conversions?: number;
+    }>(engagementSummaryDoc, scope, ['commentsDetected', 'repliesSent', 'conversions']);
+    const comments = Number(data.commentsDetected ?? 0);
+    const replies = Number(data.repliesSent ?? 0);
+    const conversions = Number(data.conversions ?? 0);
+    const conversionRate = comments ? conversions / comments : 0;
+    return {
+      comments,
+      replies,
+      conversions,
+      conversionRate: Number(conversionRate.toFixed(2)),
+    };
+  } catch (error) {
+    console.warn('Firestore engagement stats fetch failed', error);
+    return {
+      comments: 0,
+      replies: 0,
+      conversions: 0,
+      conversionRate: 0,
+    };
+  }
 }
 
 export type FollowupStats = {
@@ -676,18 +753,32 @@ export type FollowupStats = {
 };
 
 export async function getFollowupStats(scope?: AnalyticsScope): Promise<FollowupStats> {
-  const doc = await followupSummaryDoc(scope).get();
-  const data = doc.data() ?? {};
-  const sent = Number(data.sent ?? 0);
-  const replies = Number(data.replies ?? 0);
-  const conversions = Number(data.conversions ?? 0);
-  return {
-    sent,
-    replies,
-    conversions,
-    replyRate: sent ? Number((replies / sent).toFixed(2)) : 0,
-    conversionRate: sent ? Number((conversions / sent).toFixed(2)) : 0,
-  };
+  try {
+    const data = await readSummaryWithFallback<{
+      sent?: number;
+      replies?: number;
+      conversions?: number;
+    }>(followupSummaryDoc, scope, ['sent', 'replies', 'conversions']);
+    const sent = Number(data.sent ?? 0);
+    const replies = Number(data.replies ?? 0);
+    const conversions = Number(data.conversions ?? 0);
+    return {
+      sent,
+      replies,
+      conversions,
+      replyRate: sent ? Number((replies / sent).toFixed(2)) : 0,
+      conversionRate: sent ? Number((conversions / sent).toFixed(2)) : 0,
+    };
+  } catch (error) {
+    console.warn('Firestore follow-up stats fetch failed', error);
+    return {
+      sent: 0,
+      replies: 0,
+      conversions: 0,
+      replyRate: 0,
+      conversionRate: 0,
+    };
+  }
 }
 
 export type WebLeadStats = {
@@ -697,16 +788,27 @@ export type WebLeadStats = {
 };
 
 export async function getWebLeadStats(scope?: AnalyticsScope): Promise<WebLeadStats> {
-  const doc = await webLeadSummaryDoc(scope).get();
-  const data = doc.data() ?? {};
-  const leads = Number(data.leads ?? 0);
-  const messages = Number(data.messages ?? 0);
-  const conversionRate = messages ? leads / messages : leads ? 1 : 0;
-  return {
-    leads,
-    messages,
-    conversionRate: Number(conversionRate.toFixed(2)),
-  };
+  try {
+    const data = await readSummaryWithFallback<{
+      leads?: number;
+      messages?: number;
+    }>(webLeadSummaryDoc, scope, ['leads', 'messages']);
+    const leads = Number(data.leads ?? 0);
+    const messages = Number(data.messages ?? 0);
+    const conversionRate = messages ? leads / messages : leads ? 1 : 0;
+    return {
+      leads,
+      messages,
+      conversionRate: Number(conversionRate.toFixed(2)),
+    };
+  } catch (error) {
+    console.warn('Firestore web lead stats fetch failed', error);
+    return {
+      leads: 0,
+      messages: 0,
+      conversionRate: 0,
+    };
+  }
 }
 
 export async function getWebTrafficStats(scope?: AnalyticsScope): Promise<WebTrafficStats> {

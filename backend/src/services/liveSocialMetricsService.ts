@@ -123,6 +123,20 @@ const toNumber = (value: unknown) => {
   return Number.isFinite(numeric) ? numeric : 0;
 };
 
+const pickWebTrafficRows = (candidates: Array<{ rows: any[] }>) => {
+  if (candidates.length === 0) return [];
+  const withScores = candidates.map(candidate => {
+    const score = candidate.rows.reduce(
+      (acc, row) =>
+        acc + toNumber(row.visitors) + toNumber(row.interactions) + toNumber(row.redirectClicks),
+      0,
+    );
+    return { rows: candidate.rows, score };
+  });
+  withScores.sort((a, b) => b.score - a.score);
+  return withScores[0]?.rows ?? [];
+};
+
 const mergeCounterMap = (target: Record<string, number>, raw: unknown) => {
   if (!raw || typeof raw !== 'object') return;
   Object.entries(raw as Record<string, unknown>).forEach(([key, value]) => {
@@ -363,6 +377,8 @@ export async function getLiveSocialMetrics(
 ): Promise<LiveSocialMetrics> {
   const lookbackHours = Math.max(options?.lookbackHours ?? LOOKBACK_HOURS_DEFAULT, 1);
   const scopeKey = resolveAnalyticsScopeKey(options?.scope);
+  const fallbackScopeKey = resolveAnalyticsScopeKey({ userId });
+  const scopeKeys = Array.from(new Set([scopeKey, fallbackScopeKey].filter(Boolean)));
   const cacheKey = `${userId}:${scopeKey}:${lookbackHours}`;
   const now = Date.now();
   const cached = liveMetricsCache.get(cacheKey);
@@ -374,17 +390,28 @@ export async function getLiveSocialMetrics(
   const lookbackDays = Math.max(Math.ceil(lookbackHours / 24) + 1, 2);
   const minDate = new Date(cutoffMs).toISOString().slice(0, 10);
 
-  const [userDoc, postsSnap, outbound, webTrafficSnap] = await Promise.all([
+  const [userDoc, postsSnap, outbound, webTrafficCandidates] = await Promise.all([
     firestore.collection('users').doc(userId).get(),
     firestore.collection('scheduledPosts').where('userId', '==', userId).limit(500).get(),
     getOutboundStats(options?.scope ?? { userId }),
-    firestore
-      .collection('analytics')
-      .doc(scopeKey)
-      .collection('webTrafficDaily')
-      .orderBy('date', 'desc')
-      .limit(lookbackDays)
-      .get(),
+    Promise.all(
+      scopeKeys.map(async key => {
+        const snap = await firestore
+          .collection('analytics')
+          .doc(key)
+          .collection('webTrafficDaily')
+          .orderBy('date', 'desc')
+          .limit(lookbackDays)
+          .get();
+        const rows = snap.docs
+          .map(doc => doc.data() as any)
+          .filter(row => {
+            const date = typeof row.date === 'string' ? row.date : '';
+            return date && date >= minDate;
+          });
+        return { key, rows };
+      }),
+    ),
   ]);
 
   const userData = userDoc.data() as { email?: string | null; socialAccounts?: UserSocialAccounts } | undefined;
@@ -399,12 +426,7 @@ export async function getLiveSocialMetrics(
   const threadsIds = collectRemoteIds(recentPosted, ['threads']);
   const xIds = collectRemoteIds(recentPosted, ['x', 'twitter']);
   const sourceRedirectClicks: Record<string, number> = {};
-  const recentWebTrafficRows = webTrafficSnap.docs
-    .map(doc => doc.data() as any)
-    .filter(row => {
-      const date = typeof row.date === 'string' ? row.date : '';
-      return date && date >= minDate;
-    });
+  const recentWebTrafficRows = pickWebTrafficRows(webTrafficCandidates);
   const webVisitors = sum(recentWebTrafficRows.map(row => toNumber(row.visitors)));
   const webInteractions = sum(recentWebTrafficRows.map(row => toNumber(row.interactions)));
   const webRedirectClicks = sum(recentWebTrafficRows.map(row => toNumber(row.redirectClicks)));

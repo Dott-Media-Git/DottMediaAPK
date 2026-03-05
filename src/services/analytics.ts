@@ -405,26 +405,28 @@ const buildOrgDashboard = (
   };
 };
 
-export const fetchOrgDashboardAnalytics = async (
-  scopeId: string | undefined
-): Promise<DashboardAnalytics | null> => {
-  if (!isFirebaseEnabled || !realtimeDb || !scopeId) return null;
+const dashboardActivityScore = (payload: DashboardAnalytics) =>
+  payload.history.reduce(
+    (acc, row) => acc + Number(row.leads ?? 0) + Number(row.engagement ?? 0) + Number(row.conversions ?? 0),
+    0,
+  );
+
+const loadOrgDashboardScope = async (scopeKey: string) => {
   const inboundRef = query(
-    collection(realtimeDb, 'analytics', scopeId, 'inboundDaily'),
+    collection(realtimeDb!, 'analytics', scopeKey, 'inboundDaily'),
     orderBy('date', 'desc'),
     limit(14)
   );
   const outboundRef = query(
-    collection(realtimeDb, 'analytics', scopeId, 'outboundDaily'),
+    collection(realtimeDb!, 'analytics', scopeKey, 'outboundDaily'),
     orderBy('date', 'desc'),
     limit(14)
   );
   const webRef = query(
-    collection(realtimeDb, 'analytics', scopeId, 'webLeadsDaily'),
+    collection(realtimeDb!, 'analytics', scopeKey, 'webLeadsDaily'),
     orderBy('date', 'desc'),
     limit(14)
   );
-
   const [inboundSnap, outboundSnap, webSnap] = await Promise.all([
     getDocs(inboundRef),
     getDocs(outboundRef),
@@ -437,24 +439,40 @@ export const fetchOrgDashboardAnalytics = async (
   return buildOrgDashboard(inbound, outbound, webLeads);
 };
 
+export const fetchOrgDashboardAnalytics = async (
+  scopeId: string | undefined,
+  fallbackScopeId?: string
+): Promise<DashboardAnalytics | null> => {
+  if (!isFirebaseEnabled || !realtimeDb || !scopeId) return null;
+  const primaryScopeKey = resolveScopeKey(scopeId);
+  const fallbackScopeKey = fallbackScopeId ? resolveScopeKey(fallbackScopeId) : '';
+  const primary = await loadOrgDashboardScope(primaryScopeKey);
+  if (!fallbackScopeKey || fallbackScopeKey === primaryScopeKey) return primary;
+  const fallback = await loadOrgDashboardScope(fallbackScopeKey);
+  return dashboardActivityScore(fallback) > dashboardActivityScore(primary) ? fallback : primary;
+};
+
 export const subscribeOrgDashboardAnalytics = (
   scopeId: string | undefined,
   onData: (payload: DashboardAnalytics) => void,
-  onError?: (err: unknown) => void
+  onError?: (err: unknown) => void,
+  fallbackScopeId?: string
 ): Unsubscribe | null => {
   if (!isFirebaseEnabled || !realtimeDb || !scopeId) return null;
+  const primaryScopeKey = resolveScopeKey(scopeId);
+  const fallbackScopeKey = fallbackScopeId ? resolveScopeKey(fallbackScopeId) : '';
   const inboundRef = query(
-    collection(realtimeDb, 'analytics', scopeId, 'inboundDaily'),
+    collection(realtimeDb, 'analytics', primaryScopeKey, 'inboundDaily'),
     orderBy('date', 'desc'),
     limit(14)
   );
   const outboundRef = query(
-    collection(realtimeDb, 'analytics', scopeId, 'outboundDaily'),
+    collection(realtimeDb, 'analytics', primaryScopeKey, 'outboundDaily'),
     orderBy('date', 'desc'),
     limit(14)
   );
   const webRef = query(
-    collection(realtimeDb, 'analytics', scopeId, 'webLeadsDaily'),
+    collection(realtimeDb, 'analytics', primaryScopeKey, 'webLeadsDaily'),
     orderBy('date', 'desc'),
     limit(14)
   );
@@ -462,9 +480,16 @@ export const subscribeOrgDashboardAnalytics = (
   let inbound: InboundDailyDoc[] = [];
   let outbound: OutboundDailyDoc[] = [];
   let webLeads: WebLeadDailyDoc[] = [];
+  let fallbackInbound: InboundDailyDoc[] = [];
+  let fallbackOutbound: OutboundDailyDoc[] = [];
+  let fallbackWebLeads: WebLeadDailyDoc[] = [];
 
   const emit = () => {
-    onData(buildOrgDashboard(inbound, outbound, webLeads));
+    const primary = buildOrgDashboard(inbound, outbound, webLeads);
+    const fallback = buildOrgDashboard(fallbackInbound, fallbackOutbound, fallbackWebLeads);
+    const preferred =
+      dashboardActivityScore(fallback) > dashboardActivityScore(primary) ? fallback : primary;
+    onData(preferred);
   };
 
   const unsubInbound = onSnapshot(
@@ -491,11 +516,62 @@ export const subscribeOrgDashboardAnalytics = (
     },
     err => onError?.(err)
   );
+  if (!fallbackScopeKey || fallbackScopeKey === primaryScopeKey) {
+    return () => {
+      unsubInbound();
+      unsubOutbound();
+      unsubWeb();
+    };
+  }
+
+  const fallbackInboundRef = query(
+    collection(realtimeDb, 'analytics', fallbackScopeKey, 'inboundDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+  const fallbackOutboundRef = query(
+    collection(realtimeDb, 'analytics', fallbackScopeKey, 'outboundDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+  const fallbackWebRef = query(
+    collection(realtimeDb, 'analytics', fallbackScopeKey, 'webLeadsDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+
+  const unsubFallbackInbound = onSnapshot(
+    fallbackInboundRef,
+    snap => {
+      fallbackInbound = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as InboundDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
+  const unsubFallbackOutbound = onSnapshot(
+    fallbackOutboundRef,
+    snap => {
+      fallbackOutbound = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as OutboundDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
+  const unsubFallbackWeb = onSnapshot(
+    fallbackWebRef,
+    snap => {
+      fallbackWebLeads = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as WebLeadDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
 
   return () => {
     unsubInbound();
     unsubOutbound();
     unsubWeb();
+    unsubFallbackInbound();
+    unsubFallbackOutbound();
+    unsubFallbackWeb();
   };
 };
 
@@ -517,38 +593,76 @@ export const fetchOutboundStats = async (userId?: string, scopeId?: string): Pro
   }
 };
 
+const parseOutboundSummary = (data: any): OutboundStats => {
+  const prospectsContacted = Number(
+    data?.prospectsContacted ?? data?.messagesSent ?? data?.prospectsFound ?? 0
+  );
+  const responders = Number(data?.responders ?? data?.replies ?? 0);
+  const replies = Number(data?.replies ?? 0);
+  const conversions = Number(data?.conversions ?? 0);
+  const positiveReplies = Number(data?.positiveReplies ?? replies);
+  const demoBookings = Number(data?.demosBooked ?? data?.demoBookings ?? 0);
+  const conversionRate = prospectsContacted ? conversions / prospectsContacted : 0;
+  return {
+    prospectsContacted,
+    responders,
+    replies,
+    positiveReplies,
+    conversions,
+    demoBookings,
+    conversionRate: Number(conversionRate.toFixed(2)),
+  };
+};
+
+const outboundStatsScore = (stats: OutboundStats) =>
+  stats.prospectsContacted +
+  stats.responders +
+  stats.replies +
+  stats.positiveReplies +
+  stats.conversions +
+  stats.demoBookings;
+
 export const subscribeOutboundStats = (
   scopeId: string | undefined,
   onData: (stats: OutboundStats) => void,
-  onError?: (err: unknown) => void
+  onError?: (err: unknown) => void,
+  fallbackScopeId?: string
 ): Unsubscribe | null => {
   if (!isFirebaseEnabled || !realtimeDb) return null;
-  const summaryRef = doc(realtimeDb, 'analytics', resolveScopeKey(scopeId), 'summaries', 'outbound');
-  return onSnapshot(
+  const primaryScopeKey = resolveScopeKey(scopeId);
+  const fallbackScopeKey = fallbackScopeId ? resolveScopeKey(fallbackScopeId) : '';
+  const summaryRef = doc(realtimeDb, 'analytics', primaryScopeKey, 'summaries', 'outbound');
+  let primary = parseOutboundSummary({});
+  let fallback = parseOutboundSummary({});
+  const emit = () => {
+    const preferred =
+      outboundStatsScore(fallback) > outboundStatsScore(primary) ? fallback : primary;
+    onData(preferred);
+  };
+  const unsubPrimary = onSnapshot(
     summaryRef,
     snap => {
-      const data = (snap.data() ?? {}) as any;
-      const prospectsContacted = Number(
-        data.prospectsContacted ?? data.messagesSent ?? data.prospectsFound ?? 0
-      );
-      const responders = Number(data.responders ?? data.replies ?? 0);
-      const replies = Number(data.replies ?? 0);
-      const conversions = Number(data.conversions ?? 0);
-      const positiveReplies = Number(data.positiveReplies ?? replies);
-      const demoBookings = Number(data.demosBooked ?? data.demoBookings ?? 0);
-      const conversionRate = prospectsContacted ? conversions / prospectsContacted : 0;
-      onData({
-        prospectsContacted,
-        responders,
-        replies,
-        positiveReplies,
-        conversions,
-        demoBookings,
-        conversionRate: Number(conversionRate.toFixed(2)),
-      });
+      primary = parseOutboundSummary(snap.data() ?? {});
+      emit();
     },
     err => onError?.(err)
   );
+  if (!fallbackScopeKey || fallbackScopeKey === primaryScopeKey) {
+    return unsubPrimary;
+  }
+  const fallbackRef = doc(realtimeDb, 'analytics', fallbackScopeKey, 'summaries', 'outbound');
+  const unsubFallback = onSnapshot(
+    fallbackRef,
+    snap => {
+      fallback = parseOutboundSummary(snap.data() ?? {});
+      emit();
+    },
+    err => onError?.(err)
+  );
+  return () => {
+    unsubPrimary();
+    unsubFallback();
+  };
 };
 
 export type InboundStats = {
@@ -694,14 +808,27 @@ const buildActivityHeatmap = (
     }));
 };
 
+const activityHeatmapScore = (rows: ActivityHeatmapDaily[]) =>
+  rows.reduce(
+    (acc, row) =>
+      acc +
+      Number(row.views ?? 0) +
+      Number(row.interactions ?? 0) +
+      Number(row.outbound ?? 0) +
+      Number(row.conversions ?? 0),
+    0,
+  );
+
 export const subscribeLiveActivityHeatmap = (
   scopeId: string | undefined,
   onData: (rows: ActivityHeatmapDaily[]) => void,
-  onError?: (err: unknown) => void
+  onError?: (err: unknown) => void,
+  fallbackScopeId?: string
 ): Unsubscribe | null => {
   if (!isFirebaseEnabled || !realtimeDb) return null;
 
   const scopeKey = resolveScopeKey(scopeId);
+  const fallbackScopeKey = fallbackScopeId ? resolveScopeKey(fallbackScopeId) : '';
   const webTrafficRef = query(
     collection(realtimeDb, 'analytics', scopeKey, 'webTrafficDaily'),
     orderBy('date', 'desc'),
@@ -721,9 +848,18 @@ export const subscribeLiveActivityHeatmap = (
   let webTraffic: WebTrafficDailyDoc[] = [];
   let outbound: OutboundDailyDoc[] = [];
   let engagement: EngagementDailyDoc[] = [];
+  let fallbackWebTraffic: WebTrafficDailyDoc[] = [];
+  let fallbackOutbound: OutboundDailyDoc[] = [];
+  let fallbackEngagement: EngagementDailyDoc[] = [];
 
   const emit = () => {
-    onData(buildActivityHeatmap(webTraffic, outbound, engagement));
+    const primaryRows = buildActivityHeatmap(webTraffic, outbound, engagement);
+    const fallbackRows = buildActivityHeatmap(fallbackWebTraffic, fallbackOutbound, fallbackEngagement);
+    const preferredRows =
+      activityHeatmapScore(fallbackRows) > activityHeatmapScore(primaryRows)
+        ? fallbackRows
+        : primaryRows;
+    onData(preferredRows);
   };
 
   const unsubWebTraffic = onSnapshot(
@@ -752,10 +888,61 @@ export const subscribeLiveActivityHeatmap = (
     },
     err => onError?.(err)
   );
+  if (!fallbackScopeKey || fallbackScopeKey === scopeKey) {
+    return () => {
+      unsubWebTraffic();
+      unsubOutbound();
+      unsubEngagement();
+    };
+  }
+
+  const fallbackWebTrafficRef = query(
+    collection(realtimeDb, 'analytics', fallbackScopeKey, 'webTrafficDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+  const fallbackOutboundRef = query(
+    collection(realtimeDb, 'analytics', fallbackScopeKey, 'outboundDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+  const fallbackEngagementRef = query(
+    collection(realtimeDb, 'analytics', fallbackScopeKey, 'engagementDaily'),
+    orderBy('date', 'desc'),
+    limit(14)
+  );
+
+  const unsubFallbackWebTraffic = onSnapshot(
+    fallbackWebTrafficRef,
+    snap => {
+      fallbackWebTraffic = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as WebTrafficDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
+  const unsubFallbackOutbound = onSnapshot(
+    fallbackOutboundRef,
+    snap => {
+      fallbackOutbound = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as OutboundDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
+  const unsubFallbackEngagement = onSnapshot(
+    fallbackEngagementRef,
+    snap => {
+      fallbackEngagement = snap.docs.map(doc => ({ date: doc.id, ...(doc.data() as EngagementDailyDoc) }));
+      emit();
+    },
+    err => onError?.(err)
+  );
 
   return () => {
     unsubWebTraffic();
     unsubOutbound();
     unsubEngagement();
+    unsubFallbackWebTraffic();
+    unsubFallbackOutbound();
+    unsubFallbackEngagement();
   };
 };

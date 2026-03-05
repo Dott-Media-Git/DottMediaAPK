@@ -126,12 +126,13 @@ export const DashboardScreen: React.FC = () => {
               setAnalytics(createEmptyAnalytics(payload));
               setLoading(false);
             },
-            error => console.warn('Realtime org analytics failed', error)
+            error => console.warn('Realtime org analytics failed', error),
+            state.user?.uid
           ) ?? null;
 
         if (!unsubscribe) {
           try {
-            const response = await fetchOrgDashboardAnalytics(analyticsScopeId);
+            const response = await fetchOrgDashboardAnalytics(analyticsScopeId, state.user?.uid);
             if (response && isMounted) {
               setAnalytics(createEmptyAnalytics(response));
             }
@@ -181,6 +182,10 @@ export const DashboardScreen: React.FC = () => {
   }, [analyticsScopeId, orgId, state.user?.uid, state.crmData]);
 
   useEffect(() => {
+    if (!state.user?.uid) {
+      setOutboundStats(emptyOutboundStats);
+      return;
+    }
     let mounted = true;
     let outboundUnsub: (() => void) | null = null;
 
@@ -188,7 +193,8 @@ export const DashboardScreen: React.FC = () => {
       subscribeOutboundStats(
         analyticsScopeId,
         stats => mounted && setOutboundStats(stats),
-        error => console.warn('Realtime outbound stats failed', error)
+        error => console.warn('Realtime outbound stats failed', error),
+        state.user?.uid
       ) ?? null;
 
     if (!outboundUnsub) {
@@ -204,6 +210,10 @@ export const DashboardScreen: React.FC = () => {
   }, [analyticsScopeId, state.user?.uid]);
 
   useEffect(() => {
+    if (!state.user?.uid) {
+      setActivityHeatmapRows([]);
+      return;
+    }
     let active = true;
     const unsubscribe =
       subscribeLiveActivityHeatmap(
@@ -212,13 +222,14 @@ export const DashboardScreen: React.FC = () => {
           if (!active) return;
           setActivityHeatmapRows(rows);
         },
-        error => console.warn('Realtime activity heatmap subscription failed', error)
+        error => console.warn('Realtime activity heatmap subscription failed', error),
+        state.user?.uid
       ) ?? null;
     return () => {
       active = false;
       unsubscribe?.();
     };
-  }, [analyticsScopeId]);
+  }, [analyticsScopeId, state.user?.uid]);
 
   useEffect(() => {
     let mounted = true;
