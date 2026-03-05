@@ -14,6 +14,7 @@ import { getLiveSocialMetrics } from '../services/liveSocialMetricsService';
 
 const router = Router();
 const analytics = new AnalyticsService();
+const bwinBetTargetUrl = 'https://www.bwinbetug.com';
 const webTrackAllowedHosts = (
   process.env.WEB_TRACK_ALLOWED_HOSTS ??
   'bwinbetug.info,www.bwinbetug.info,bwinbetug.com,www.bwinbetug.com'
@@ -153,6 +154,29 @@ router.post('/stats/webTrack', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+router.get('/stats/bwinRedirect', async (req, res) => {
+  const ownerId = typeof req.query.ownerId === 'string' ? req.query.ownerId.trim() : '';
+  const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId.trim() : '';
+  const source = normalizeTrafficSource(typeof req.query.source === 'string' ? req.query.source : 'social');
+
+  try {
+    if (ownerId || scopeId) {
+      await incrementWebTrafficAnalytics(
+        {
+          redirectClicks: 1,
+          source,
+        },
+        { scopeId: scopeId || undefined, userId: ownerId || undefined },
+      );
+    }
+  } catch (error) {
+    console.warn('[analytics] failed to record bwin redirect click', error);
+  }
+
+  res.set('Cache-Control', 'no-store, max-age=0');
+  res.redirect(302, bwinBetTargetUrl);
 });
 
 router.get('/stats/inbound', requireFirebase, async (req, res, next) => {
