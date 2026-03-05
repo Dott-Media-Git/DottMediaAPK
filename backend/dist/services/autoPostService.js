@@ -198,13 +198,14 @@ export class AutoPostService {
             if (!selectedTitle) {
                 return { attempted: true, posted: false, reason: 'duplicate_only' };
             }
-            const caption = this.normalizeXCaption([
+            const emergencyOwnerId = (process.env.BWIN_TRACK_OWNER_ID ?? '').trim();
+            const caption = this.normalizeXCaption(this.applyBwinBetTracking([
                 selectedTitle,
                 selectedLink ? selectedLink : '',
                 'Bet now: www.bwinbetug.com | More info: www.bwinbetug.info',
             ]
                 .filter(Boolean)
-                .join('\n'));
+                .join('\n'), emergencyOwnerId, 'x'));
             const imageUrls = selectedImage ? [selectedImage] : [];
             const response = await publishToTwitter({
                 caption,
@@ -642,6 +643,48 @@ export class AutoPostService {
         const lastBreak = Math.max(truncated.lastIndexOf('\n'), truncated.lastIndexOf(' '));
         const base = lastBreak > 80 ? truncated.slice(0, lastBreak) : truncated;
         return `${base.trimEnd()}...`;
+    }
+    normalizeBwinTrackingSource(platform) {
+        const value = (platform ?? '').trim().toLowerCase();
+        if (!value)
+            return 'social';
+        if (value === 'x' || value === 'twitter')
+            return 'x';
+        if (value.startsWith('instagram'))
+            return 'instagram';
+        if (value.startsWith('facebook'))
+            return 'facebook';
+        if (value === 'threads')
+            return 'threads';
+        if (value === 'linkedin')
+            return 'linkedin';
+        if (value === 'tiktok')
+            return 'tiktok';
+        if (value === 'youtube')
+            return 'youtube';
+        return 'social';
+    }
+    buildBwinTrackedBetUrl(ownerId, platform) {
+        const normalizedOwnerId = ownerId.trim();
+        if (!normalizedOwnerId)
+            return 'www.bwinbetug.com';
+        const baseUrl = this.getPublicBaseUrl();
+        if (!baseUrl)
+            return 'www.bwinbetug.com';
+        const params = new URLSearchParams({
+            ownerId: normalizedOwnerId,
+            source: this.normalizeBwinTrackingSource(platform),
+        });
+        return `${baseUrl}/api/stats/bwinRedirect?${params.toString()}`;
+    }
+    applyBwinBetTracking(caption, ownerId, platform) {
+        if (!caption || !/bwinbetug\.com/i.test(caption))
+            return caption;
+        const trackedUrl = this.buildBwinTrackedBetUrl(ownerId, platform);
+        return caption
+            .replace(/https?:\/\/(?:www\.)?bwinbetug\.com\b\/?/gi, trackedUrl)
+            .replace(/\bwww\.bwinbetug\.com\b/gi, trackedUrl)
+            .replace(/\bbwinbetug\.com\b/gi, trackedUrl);
     }
     buildVideoCaptionFromHighlight(rawText, username, timezone) {
         const cleaned = String(rawText || '')
@@ -1916,13 +1959,15 @@ export class AutoPostService {
             }
             try {
                 const rawPerPlatformCaption = trendCaptions[platform] || caption;
+                const trackedRawPerPlatformCaption = this.applyBwinBetTracking(rawPerPlatformCaption, userId, platform);
                 const perPlatformCaption = platform === 'x' || platform === 'twitter'
-                    ? this.normalizeXCaption(rawPerPlatformCaption)
-                    : rawPerPlatformCaption;
+                    ? this.normalizeXCaption(trackedRawPerPlatformCaption)
+                    : trackedRawPerPlatformCaption;
                 if (shouldUseVideoMode && (platform === 'x' || platform === 'twitter') && xHighlight?.tweetId) {
-                    const relatedCaption = this.normalizeXCaption(xHighlight.isWeeklyAward
+                    const relatedCaptionTemplate = xHighlight.isWeeklyAward
                         ? `${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nWeekly award clip`
-                        : this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone));
+                        : this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone);
+                    const relatedCaption = this.normalizeXCaption(this.applyBwinBetTracking(relatedCaptionTemplate, userId, platform));
                     const quoteCaption = relatedCaption;
                     let response = null;
                     let finalCaption = quoteCaption;
@@ -1941,7 +1986,7 @@ export class AutoPostService {
                         const sourceVideoUrl = await this.resolveVideoUrlFromTweet(xHighlight.tweetId, credentials);
                         if (!sourceVideoUrl)
                             throw quoteError;
-                        finalCaption = this.normalizeXCaption(this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone));
+                        finalCaption = this.normalizeXCaption(this.applyBwinBetTracking(this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone), userId, platform));
                         response = await publisher({
                             caption: finalCaption,
                             imageUrls: [],
@@ -2139,7 +2184,8 @@ export class AutoPostService {
             const publisher = platformPublishers[platform] ?? publishToTwitter;
             const rawCaption = this.captionForPlatform(platform, finalGenerated, fallbackCopy);
             const shortsCaption = platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
-            const { caption, signature } = this.ensureCaptionVariety(platform, shortsCaption, captionHistory);
+            const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
+            const { caption, signature } = this.ensureCaptionVariety(platform, trackedCaption, captionHistory);
             const isVideoPlatform = videoPlatforms.has(platform);
             const supportsVideo = isVideoPlatform || optionalVideoPlatforms.has(platform);
             let videoUrl;
