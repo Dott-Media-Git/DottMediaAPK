@@ -92,6 +92,28 @@ export class SocialPostingService {
     return err?.code === 9 && message.includes('index');
   }
 
+  private normalizePostedPlatform(platform?: string) {
+    const raw = (platform ?? '').toLowerCase().trim();
+    if (raw === 'instagram_story' || raw === 'instagram_reels') return 'instagram';
+    if (raw === 'facebook_story') return 'facebook';
+    if (raw === 'twitter') return 'x';
+    return raw;
+  }
+
+  private isVideoLikePost(post: Record<string, unknown>) {
+    const platform = this.normalizePostedPlatform(String(post.platform ?? ''));
+    if (post.videoUrl) return true;
+    if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram') {
+      const rawPlatform = String(post.platform ?? '').toLowerCase().trim();
+      if (rawPlatform === 'instagram_reels') return true;
+    }
+    if (platform === 'x') {
+      const caption = String(post.caption ?? '');
+      return /(^|\n)\s*video[:\s]|video highlight|highlight clip|\bclip\b/i.test(caption);
+    }
+    return false;
+  }
+
   private toSeconds(value: any) {
     if (!value) return 0;
     if (typeof value.seconds === 'number') return value.seconds;
@@ -240,9 +262,9 @@ export class SocialPostingService {
     return { processed };
   }
 
-  async getHistory(userId: string, limit = 100) {
+  async getHistory(userId: string, limit = 400) {
     let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
-    const fallbackLimit = Math.min(Math.max(limit * 5, limit), 500);
+    const fallbackLimit = Math.min(Math.max(limit * 5, limit), 2500);
     try {
       snap = await scheduledPostsCollection
         .where('userId', '==', userId)
@@ -271,7 +293,55 @@ export class SocialPostingService {
       },
       { perPlatform: {} as Record<string, number>, byStatus: {} as Record<string, number> },
     );
-    return { posts: trimmed, summary };
+
+    const todayDate = new Date().toISOString().slice(0, 10);
+    let todayPosts: Array<Record<string, unknown>> = [];
+    try {
+      const todaySnap = await scheduledPostsCollection
+        .where('userId', '==', userId)
+        .where('targetDate', '==', todayDate)
+        .where('status', '==', 'posted')
+        .limit(2500)
+        .get();
+      todayPosts = todaySnap.docs.map(doc => ({ id: doc.id, ...(doc.data() as Record<string, unknown>) }));
+      todayPosts.sort((a, b) => {
+        const aScore = this.toSeconds(a.postedAt) || this.toSeconds(a.createdAt) || this.toSeconds(a.scheduledFor);
+        const bScore = this.toSeconds(b.postedAt) || this.toSeconds(b.createdAt) || this.toSeconds(b.scheduledFor);
+        return bScore - aScore;
+      });
+    } catch (error) {
+      if (!this.isMissingIndexError(error)) {
+        console.warn('[social-history] failed to fetch full today posts', error);
+      }
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todaySeconds = Math.floor(todayStart.getTime() / 1000);
+      todayPosts = trimmed.filter(post => {
+        if ((post as any).status !== 'posted') return false;
+        const seconds =
+          this.toSeconds((post as any).postedAt) ||
+          this.toSeconds((post as any).createdAt) ||
+          this.toSeconds((post as any).scheduledFor);
+        return seconds >= todaySeconds;
+      });
+    }
+
+    const todaySummary = todayPosts.reduce(
+      (acc, post) => {
+        acc.totalPosted += 1;
+        const platform = this.normalizePostedPlatform(String(post.platform ?? ''));
+        if (platform) {
+          acc.perPlatform[platform] = (acc.perPlatform[platform] ?? 0) + 1;
+        }
+        if (this.isVideoLikePost(post)) {
+          acc.videoPosts += 1;
+        }
+        return acc;
+      },
+      { date: todayDate, totalPosted: 0, videoPosts: 0, perPlatform: {} as Record<string, number> },
+    );
+
+    return { posts: trimmed, summary, todayPosts, todaySummary };
   }
 
   private async buildCounts(entries: Array<{ userId: string; targetDate: string }>) {

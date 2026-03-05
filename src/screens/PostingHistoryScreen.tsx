@@ -16,17 +16,31 @@ const getTimestampSeconds = (timestamp?: { seconds?: number; _seconds?: number }
 const getPostSeconds = (post: SocialPost) =>
   getTimestampSeconds((post.postedAt ?? post.createdAt ?? post.scheduledFor) as { seconds?: number; _seconds?: number });
 
-const isVideoPost = (post: SocialPost) => {
-  if (post.videoUrl) return true;
-  const platform = post.platform?.toLowerCase();
-  return platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels';
+const normalizePostedPlatform = (platform?: string) => {
+  const raw = (platform ?? '').toLowerCase().trim();
+  if (raw === 'instagram_story' || raw === 'instagram_reels') return 'instagram';
+  if (raw === 'facebook_story') return 'facebook';
+  if (raw === 'twitter') return 'x';
+  return raw;
 };
 
-const isImagePost = (post: SocialPost) => {
-  if (isVideoPost(post)) return false;
-  const imageUrls = (post as SocialPost & { imageUrls?: string[] }).imageUrls;
-  if (Array.isArray(imageUrls)) return imageUrls.length > 0;
-  return true;
+const isVideoPost = (post: SocialPost) => {
+  if (post.videoUrl) return true;
+  const platform = normalizePostedPlatform(post.platform);
+  const rawPlatform = (post.platform ?? '').toLowerCase().trim();
+  if (platform === 'youtube' || platform === 'tiktok' || rawPlatform === 'instagram_reels') return true;
+  if (platform === 'x') {
+    const caption = post.caption ?? '';
+    return /(^|\n)\s*video[:\s]|video highlight|highlight clip|\bclip\b/i.test(caption);
+  }
+  return false;
+};
+
+const formatHoursMinutes = (value: Date | number) => {
+  const date = value instanceof Date ? value : new Date(value);
+  const hours = `${date.getHours()}`.padStart(2, '0');
+  const minutes = `${date.getMinutes()}`.padStart(2, '0');
+  return `${hours}:${minutes}`;
 };
 
 const buildCumulativeSeries = (posts: SocialPost[], start: Date, end: Date, zeroLine = false) => {
@@ -93,19 +107,31 @@ export const PostingHistoryScreen: React.FC = () => {
   today.setHours(0, 0, 0, 0);
   const todaySeconds = Math.floor(today.getTime() / 1000);
   const now = new Date();
+  const hasServerToday = Boolean(history.todaySummary);
 
   const postedToday = useMemo(
-    () =>
-      history.posts.filter(post => {
+    () => {
+      if (hasServerToday) {
+        return (history.todayPosts ?? []).filter(post => post.status === 'posted');
+      }
+      return history.posts.filter(post => {
         if (post.status !== 'posted') return false;
         const seconds = getPostSeconds(post);
         return typeof seconds === 'number' && seconds >= todaySeconds;
-      }),
-    [history.posts, todaySeconds],
+      });
+    },
+    [hasServerToday, history.posts, history.todayPosts, todaySeconds],
   );
 
   const videoPostsToday = useMemo(() => postedToday.filter(isVideoPost), [postedToday]);
-  const imagePostsToday = useMemo(() => postedToday.filter(isImagePost), [postedToday]);
+  const postedTodayCount = useMemo(
+    () => (typeof history.todaySummary?.totalPosted === 'number' ? history.todaySummary.totalPosted : postedToday.length),
+    [history.todaySummary?.totalPosted, postedToday.length],
+  );
+  const videoPostsTodayCount = useMemo(
+    () => (typeof history.todaySummary?.videoPosts === 'number' ? history.todaySummary.videoPosts : videoPostsToday.length),
+    [history.todaySummary?.videoPosts, videoPostsToday.length],
+  );
 
   const pendingPosts = useMemo(
     () => history.posts.filter(post => post.status === 'pending'),
@@ -122,56 +148,63 @@ export const PostingHistoryScreen: React.FC = () => {
       tiktok: 0,
       x: 0,
     };
+    const sourceSummary = history.todaySummary?.perPlatform;
+    if (sourceSummary && Object.keys(sourceSummary).length > 0) {
+      Object.entries(sourceSummary).forEach(([platformKey, count]) => {
+        const normalized = normalizePostedPlatform(platformKey);
+        if (normalized && Object.prototype.hasOwnProperty.call(counts, normalized)) {
+          counts[normalized] += Number(count ?? 0);
+        }
+      });
+      return counts;
+    }
     postedToday.forEach(post => {
-      const rawPlatform = post.platform?.toLowerCase();
-      const platform =
-        rawPlatform === 'instagram_story'
-          ? 'instagram'
-          : rawPlatform === 'instagram_reels'
-            ? 'instagram'
-          : rawPlatform === 'facebook_story'
-            ? 'facebook'
-            : rawPlatform === 'twitter'
-              ? 'x'
-            : rawPlatform;
-      if (platform && Object.prototype.hasOwnProperty.call(counts, platform)) {
-        counts[platform] += 1;
+      const normalized = normalizePostedPlatform(post.platform);
+      if (normalized && Object.prototype.hasOwnProperty.call(counts, normalized)) {
+        counts[normalized] += 1;
       }
     });
     return counts;
-  }, [postedToday]);
+  }, [history.todaySummary?.perPlatform, postedToday]);
 
   const frequencySeries = useMemo(
     () => buildCumulativeSeries(postedToday, new Date(today), now),
     [postedToday, today, now],
   );
 
-  const videoFrequencySeries = useMemo(
-    () => buildCumulativeSeries(videoPostsToday, new Date(today), now, true),
-    [videoPostsToday, today, now],
+  const platformCards = useMemo(
+    () => [
+      { key: 'facebook', label: t('Facebook'), color: colors.accentMuted, count: platformSummary.facebook ?? 0 },
+      { key: 'instagram', label: t('Instagram'), color: colors.accentSecondary, count: platformSummary.instagram ?? 0 },
+      { key: 'linkedin', label: t('LinkedIn'), color: colors.accent, count: platformSummary.linkedin ?? 0 },
+      { key: 'threads', label: t('Threads'), color: '#9B5DE5', count: platformSummary.threads ?? 0 },
+      { key: 'youtube', label: t('YouTube'), color: '#EF4444', count: platformSummary.youtube ?? 0 },
+      { key: 'tiktok', label: t('TikTok'), color: '#14B8A6', count: platformSummary.tiktok ?? 0 },
+      { key: 'x', label: t('X'), color: '#F59E0B', count: platformSummary.x ?? 0 },
+    ],
+    [platformSummary, t],
   );
 
-  const imageFrequencySeries = useMemo(
-    () => buildCumulativeSeries(imagePostsToday, new Date(today), now, true),
-    [imagePostsToday, today, now],
-  );
+  const platformFrequencySeries = useMemo(() => {
+    const grouped = postedToday.reduce<Record<string, SocialPost[]>>((acc, post) => {
+      const key = normalizePostedPlatform(post.platform);
+      if (!key) return acc;
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(post);
+      return acc;
+    }, {});
+    return platformCards.map(card => ({
+      ...card,
+      data: buildCumulativeSeries(grouped[card.key] ?? [], new Date(today), now, true),
+    }));
+  }, [now, platformCards, postedToday, today]);
 
-  const platformCards = [
-    { key: 'facebook', label: t('Facebook'), color: colors.accentMuted, count: platformSummary.facebook ?? 0 },
-    { key: 'instagram', label: t('Instagram'), color: colors.accentSecondary, count: platformSummary.instagram ?? 0 },
-    { key: 'linkedin', label: t('LinkedIn'), color: colors.accent, count: platformSummary.linkedin ?? 0 },
-    { key: 'threads', label: t('Threads'), color: '#9B5DE5', count: platformSummary.threads ?? 0 },
-    { key: 'youtube', label: t('YouTube'), color: '#EF4444', count: platformSummary.youtube ?? 0 },
-    { key: 'tiktok', label: t('TikTok'), color: '#14B8A6', count: platformSummary.tiktok ?? 0 },
-    { key: 'x', label: t('X'), color: '#F59E0B', count: platformSummary.x ?? 0 },
-  ];
-
-  const formatTime = (value: Date | number) => {
-    const date = value instanceof Date ? value : new Date(value);
-    const hours = `${date.getHours()}`.padStart(2, '0');
-    const minutes = `${date.getMinutes()}`.padStart(2, '0');
-    return `${hours}:${minutes}`;
-  };
+  const latestPostLabel = useMemo(() => {
+    if (!postedToday.length) return t('No live posts yet today');
+    const latest = Math.max(...postedToday.map(post => getPostSeconds(post) ?? 0));
+    if (!latest) return t('No live posts yet today');
+    return t('Last post at {{time}}', { time: formatHoursMinutes(new Date(latest * 1000)) });
+  }, [postedToday, t]);
 
   return (
     <ScrollView
@@ -183,7 +216,7 @@ export const PostingHistoryScreen: React.FC = () => {
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>{t('Posted Today')}</Text>
           <View style={styles.totalBadge}>
-            <Text style={styles.totalBadgeText}>{postedToday.length}</Text>
+            <Text style={styles.totalBadgeText}>{postedTodayCount}</Text>
           </View>
         </View>
         <View style={styles.platformGrid}>
@@ -200,7 +233,7 @@ export const PostingHistoryScreen: React.FC = () => {
         <View style={styles.videoSummaryRow}>
           <View style={[styles.platformDot, { backgroundColor: colors.success }]} />
           <Text style={styles.videoSummaryText}>
-            {t('Videos posted today: {{count}}', { count: videoPostsToday.length })}
+            {t('Videos posted today: {{count}}', { count: videoPostsTodayCount })}
           </Text>
         </View>
       </View>
@@ -210,19 +243,20 @@ export const PostingHistoryScreen: React.FC = () => {
           <Text style={styles.cardTitle}>{t('Posting Frequency')}</Text>
           <Text style={styles.cardSubtitle}>{t('Live today')}</Text>
         </View>
+        <Text style={styles.latestPostText}>{latestPostLabel}</Text>
         <View style={styles.legendRow}>
           <View style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: colors.accent }]} />
-            <Text style={styles.legendText}>{t('All posts')}</Text>
+            <Text style={styles.legendText}>{t('All posts')} ({postedTodayCount})</Text>
           </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: colors.success }]} />
-            <Text style={styles.legendText}>{t('Videos')}</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: colors.warning }]} />
-            <Text style={styles.legendText}>{t('Images')}</Text>
-          </View>
+          {platformCards.map(item => (
+            <View key={`legend-${item.key}`} style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: item.color }]} />
+              <Text style={styles.legendText}>
+                {item.label} ({item.count})
+              </Text>
+            </View>
+          ))}
         </View>
         {frequencySeries.length > 0 ? (
           <View style={styles.chartWrapper}>
@@ -233,7 +267,7 @@ export const PostingHistoryScreen: React.FC = () => {
             >
               <VictoryAxis
                 tickCount={4}
-                tickFormat={formatTime}
+                tickFormat={formatHoursMinutes}
                 style={{
                   axis: { stroke: colors.border },
                   tickLabels: { fill: colors.subtext, fontSize: 10 },
@@ -260,32 +294,15 @@ export const PostingHistoryScreen: React.FC = () => {
                 size={3}
                 style={{ data: { fill: colors.accentSecondary } }}
               />
-              {videoFrequencySeries.length > 0 ? (
-                <>
+              {platformFrequencySeries
+                .filter(series => series.count > 0)
+                .map(series => (
                   <VictoryLine
-                    data={videoFrequencySeries}
-                    style={{ data: { stroke: colors.success, strokeWidth: 3 } }}
+                    key={`line-${series.key}`}
+                    data={series.data}
+                    style={{ data: { stroke: series.color, strokeWidth: 2, opacity: 0.9 } }}
                   />
-                  <VictoryScatter
-                    data={videoFrequencySeries}
-                    size={3}
-                    style={{ data: { fill: colors.success } }}
-                  />
-                </>
-              ) : null}
-              {imageFrequencySeries.length > 0 ? (
-                <>
-                  <VictoryLine
-                    data={imageFrequencySeries}
-                    style={{ data: { stroke: colors.warning, strokeWidth: 3 } }}
-                  />
-                  <VictoryScatter
-                    data={imageFrequencySeries}
-                    size={3}
-                    style={{ data: { fill: colors.warning } }}
-                  />
-                </>
-              ) : null}
+                ))}
             </VictoryChart>
           </View>
         ) : (
@@ -374,15 +391,18 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   videoSummaryText: { color: colors.subtext, fontSize: 12, fontWeight: '600' },
+  latestPostText: { color: colors.subtext, fontSize: 12, marginBottom: 8 },
   legendRow: {
     flexDirection: 'row',
-    gap: 16,
+    flexWrap: 'wrap',
+    marginHorizontal: -6,
     marginBottom: 10,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    marginHorizontal: 6,
+    marginBottom: 8,
   },
   legendDot: {
     width: 8,

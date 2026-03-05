@@ -1,15 +1,15 @@
 import admin from 'firebase-admin';
-import { firestore } from '../../db/firestore.js';
-import { config } from '../../config.js';
-import { publishToInstagram, publishToInstagramReel, publishToInstagramStory } from './socialPlatforms/instagramPublisher.js';
-import { publishToFacebook, publishToFacebookStory } from './socialPlatforms/facebookPublisher.js';
-import { publishToLinkedIn } from './socialPlatforms/linkedinPublisher.js';
-import { publishToTwitter } from './socialPlatforms/twitterPublisher.js';
-import { publishToTikTok } from './socialPlatforms/tiktokPublisher.js';
-import { publishToYouTube } from './socialPlatforms/youtubePublisher.js';
-import { socialAnalyticsService } from './socialAnalyticsService.js';
-import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from '../../services/socialIntegrationService.js';
-import { canUsePrimarySocialDefaults } from '../../utils/socialAccess.js';
+import { firestore } from '../../db/firestore';
+import { config } from '../../config';
+import { publishToInstagram, publishToInstagramReel, publishToInstagramStory } from './socialPlatforms/instagramPublisher';
+import { publishToFacebook, publishToFacebookStory } from './socialPlatforms/facebookPublisher';
+import { publishToLinkedIn } from './socialPlatforms/linkedinPublisher';
+import { publishToTwitter } from './socialPlatforms/twitterPublisher';
+import { publishToTikTok } from './socialPlatforms/tiktokPublisher';
+import { publishToYouTube } from './socialPlatforms/youtubePublisher';
+import { socialAnalyticsService } from './socialAnalyticsService';
+import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from '../../services/socialIntegrationService';
+import { canUsePrimarySocialDefaults } from '../../utils/socialAccess';
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
 const socialLogsCollection = firestore.collection('socialLogs');
@@ -32,6 +32,31 @@ export class SocialPostingService {
         const err = error;
         const message = `${err?.message ?? ''} ${err?.details ?? ''}`.toLowerCase();
         return err?.code === 9 && message.includes('index');
+    }
+    normalizePostedPlatform(platform) {
+        const raw = (platform ?? '').toLowerCase().trim();
+        if (raw === 'instagram_story' || raw === 'instagram_reels')
+            return 'instagram';
+        if (raw === 'facebook_story')
+            return 'facebook';
+        if (raw === 'twitter')
+            return 'x';
+        return raw;
+    }
+    isVideoLikePost(post) {
+        const platform = this.normalizePostedPlatform(String(post.platform ?? ''));
+        if (post.videoUrl)
+            return true;
+        if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram') {
+            const rawPlatform = String(post.platform ?? '').toLowerCase().trim();
+            if (rawPlatform === 'instagram_reels')
+                return true;
+        }
+        if (platform === 'x') {
+            const caption = String(post.caption ?? '');
+            return /(^|\n)\s*video[:\s]|video highlight|highlight clip|\bclip\b/i.test(caption);
+        }
+        return false;
     }
     toSeconds(value) {
         if (!value)
@@ -165,9 +190,9 @@ export class SocialPostingService {
         }
         return { processed };
     }
-    async getHistory(userId, limit = 100) {
+    async getHistory(userId, limit = 400) {
         let snap;
-        const fallbackLimit = Math.min(Math.max(limit * 5, limit), 500);
+        const fallbackLimit = Math.min(Math.max(limit * 5, limit), 2500);
         try {
             snap = await scheduledPostsCollection
                 .where('userId', '==', userId)
@@ -195,7 +220,51 @@ export class SocialPostingService {
             acc.byStatus[post.status] = (acc.byStatus[post.status] ?? 0) + 1;
             return acc;
         }, { perPlatform: {}, byStatus: {} });
-        return { posts: trimmed, summary };
+        const todayDate = new Date().toISOString().slice(0, 10);
+        let todayPosts = [];
+        try {
+            const todaySnap = await scheduledPostsCollection
+                .where('userId', '==', userId)
+                .where('targetDate', '==', todayDate)
+                .where('status', '==', 'posted')
+                .limit(2500)
+                .get();
+            todayPosts = todaySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            todayPosts.sort((a, b) => {
+                const aScore = this.toSeconds(a.postedAt) || this.toSeconds(a.createdAt) || this.toSeconds(a.scheduledFor);
+                const bScore = this.toSeconds(b.postedAt) || this.toSeconds(b.createdAt) || this.toSeconds(b.scheduledFor);
+                return bScore - aScore;
+            });
+        }
+        catch (error) {
+            if (!this.isMissingIndexError(error)) {
+                console.warn('[social-history] failed to fetch full today posts', error);
+            }
+            const todayStart = new Date();
+            todayStart.setHours(0, 0, 0, 0);
+            const todaySeconds = Math.floor(todayStart.getTime() / 1000);
+            todayPosts = trimmed.filter(post => {
+                if (post.status !== 'posted')
+                    return false;
+                const seconds =
+                    this.toSeconds(post.postedAt) ||
+                        this.toSeconds(post.createdAt) ||
+                        this.toSeconds(post.scheduledFor);
+                return seconds >= todaySeconds;
+            });
+        }
+        const todaySummary = todayPosts.reduce((acc, post) => {
+            acc.totalPosted += 1;
+            const platform = this.normalizePostedPlatform(String(post.platform ?? ''));
+            if (platform) {
+                acc.perPlatform[platform] = (acc.perPlatform[platform] ?? 0) + 1;
+            }
+            if (this.isVideoLikePost(post)) {
+                acc.videoPosts += 1;
+            }
+            return acc;
+        }, { date: todayDate, totalPosted: 0, videoPosts: 0, perPlatform: {} });
+        return { posts: trimmed, summary, todayPosts, todaySummary };
     }
     async buildCounts(entries) {
         const set = new Map();

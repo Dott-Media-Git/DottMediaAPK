@@ -62,6 +62,7 @@ export type SocialPost = {
   id: string;
   platform: string;
   status: string;
+  caption?: string;
   scheduledFor?: { seconds: number };
   postedAt?: { seconds: number };
   errorMessage?: string;
@@ -70,9 +71,18 @@ export type SocialPost = {
   imageUrls?: string[];
 };
 
+export type SocialTodaySummary = {
+  date: string;
+  totalPosted: number;
+  videoPosts: number;
+  perPlatform: Record<string, number>;
+};
+
 export type SocialHistory = {
   posts: SocialPost[];
   summary: { perPlatform: Record<string, number>; byStatus: Record<string, number> };
+  todayPosts?: SocialPost[];
+  todaySummary?: SocialTodaySummary;
   daily: any[];
 };
 
