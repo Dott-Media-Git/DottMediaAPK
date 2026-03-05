@@ -680,6 +680,9 @@ export class AutoPostService {
     applyBwinBetTracking(caption, ownerId, platform) {
         if (!caption || !/bwinbetug\.com/i.test(caption))
             return caption;
+        const useRedirectLinks = (process.env.BWIN_TRACK_REDIRECT_URLS ?? 'false').toLowerCase() === 'true';
+        if (!useRedirectLinks)
+            return caption;
         const trackedUrl = this.buildBwinTrackedBetUrl(ownerId, platform);
         return caption.replace(/(?:https?:\/\/)?(?:www\.)?bwinbetug\.com\b\/?/gi, trackedUrl);
     }
