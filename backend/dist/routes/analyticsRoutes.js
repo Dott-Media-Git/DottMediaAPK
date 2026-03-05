@@ -218,6 +218,11 @@ router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
             lookbackHours,
             scope: { userId: authUser.uid, scopeId },
         });
+        res.set({
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            Pragma: 'no-cache',
+            Expires: '0',
+        });
         res.json({ stats });
     }
     catch (error) {
@@ -225,6 +230,3 @@ router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
     }
 });
 export default router;
-
-
-
