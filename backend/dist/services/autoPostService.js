@@ -72,7 +72,6 @@ export class AutoPostService {
             'Ask for a quick demo today.',
         ];
         this.defaultXHighlightAccounts = [
-            'premierleague',
             'SkySportsNews',
             'SkySportsPL',
             'ESPNFC',
@@ -82,6 +81,7 @@ export class AutoPostService {
             'Bundesliga_EN',
             'ChampionsLeague',
         ];
+        this.xBlockedHighlightAccounts = new Set(['premierleague', 'premier_league', 'premier-league']);
         this.defaultXWeeklyAwardKeywords = [
             'player of the week',
             'goal of the week',
@@ -387,120 +387,120 @@ export class AutoPostService {
         try {
             // Query only by nextRun to avoid composite index requirement, then filter active in memory.
             const [standardSnap, reelsSnap, storiesSnap, trendSnap, missingReelsSnap, missingStoriesSnap] = await Promise.all([
-            autopostCollection.where('nextRun', '<=', now).get(),
-            autopostCollection.where('reelsNextRun', '<=', now).get(),
-            autopostCollection.where('storyNextRun', '<=', now).get(),
-            autopostCollection.where('trendNextRun', '<=', now).get(),
-            autopostCollection.where('reelsNextRun', '==', null).get(),
-            autopostCollection.where('storyNextRun', '==', null).get(),
-        ]);
-        if (!missingReelsSnap.empty) {
-            const selfHealWrites = missingReelsSnap.docs.map(doc => {
+                autopostCollection.where('nextRun', '<=', now).get(),
+                autopostCollection.where('reelsNextRun', '<=', now).get(),
+                autopostCollection.where('storyNextRun', '<=', now).get(),
+                autopostCollection.where('trendNextRun', '<=', now).get(),
+                autopostCollection.where('reelsNextRun', '==', null).get(),
+                autopostCollection.where('storyNextRun', '==', null).get(),
+            ]);
+            if (!missingReelsSnap.empty) {
+                const selfHealWrites = missingReelsSnap.docs.map(doc => {
+                    const data = doc.data();
+                    if (data.active === false)
+                        return null;
+                    const hasReelsConfig = Boolean(data.reelsVideoUrl ||
+                        (data.reelsVideoUrls && data.reelsVideoUrls.length) ||
+                        data.reelsIntervalHours ||
+                        data.reelsLastRunAt ||
+                        data.reelsLastResult);
+                    if (!hasReelsConfig)
+                        return null;
+                    const reelsIntervalHours = data.reelsIntervalHours ?? this.defaultReelsIntervalHours;
+                    return autopostCollection.doc(doc.id).set({
+                        reelsIntervalHours,
+                        reelsNextRun: now,
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    }, { merge: true });
+                }).filter(Boolean);
+                if (selfHealWrites.length) {
+                    await Promise.all(selfHealWrites);
+                }
+            }
+            if (!missingStoriesSnap.empty) {
+                const selfHealWrites = missingStoriesSnap.docs
+                    .map(doc => {
+                    const data = doc.data();
+                    if (data.active === false || data.storyTrendEnabled !== true)
+                        return null;
+                    const intervalHours = data.storyIntervalHours ?? this.defaultStoryIntervalHours;
+                    return autopostCollection.doc(doc.id).set({
+                        storyIntervalHours: intervalHours,
+                        storyNextRun: now,
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    }, { merge: true });
+                })
+                    .filter(Boolean);
+                if (selfHealWrites.length) {
+                    await Promise.all(selfHealWrites);
+                }
+            }
+            if (standardSnap.empty && reelsSnap.empty && storiesSnap.empty && trendSnap.empty)
+                return { processed: 0 };
+            let processed = 0;
+            const results = new Map();
+            for (const doc of standardSnap.docs) {
                 const data = doc.data();
                 if (data.active === false)
-                    return null;
-                const hasReelsConfig = Boolean(data.reelsVideoUrl ||
-                    (data.reelsVideoUrls && data.reelsVideoUrls.length) ||
-                    data.reelsIntervalHours ||
-                    data.reelsLastRunAt ||
-                    data.reelsLastResult);
-                if (!hasReelsConfig)
-                    return null;
-                const reelsIntervalHours = data.reelsIntervalHours ?? this.defaultReelsIntervalHours;
-                return autopostCollection.doc(doc.id).set({
-                    reelsIntervalHours,
-                    reelsNextRun: now,
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                }, { merge: true });
-            }).filter(Boolean);
-            if (selfHealWrites.length) {
-                await Promise.all(selfHealWrites);
+                    continue;
+                const outcome = await this.executeJob(doc.id, data);
+                processed += 1;
+                results.set(doc.id, {
+                    userId: doc.id,
+                    posted: outcome.posted,
+                    failed: outcome.failed.length,
+                    nextRun: outcome.nextRun,
+                });
             }
-        }
-        if (!missingStoriesSnap.empty) {
-            const selfHealWrites = missingStoriesSnap.docs
-                .map(doc => {
+            for (const doc of reelsSnap.docs) {
+                const data = doc.data();
+                if (data.active === false)
+                    continue;
+                const outcome = await this.executeJob(doc.id, data, {
+                    platforms: ['instagram_reels'],
+                    intervalHours: data.reelsIntervalHours ?? this.defaultReelsIntervalHours,
+                    nextRunField: 'reelsNextRun',
+                    lastRunField: 'reelsLastRunAt',
+                    resultField: 'reelsLastResult',
+                    useGenericVideoFallback: false,
+                });
+                processed += 1;
+                const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
+                results.set(doc.id, {
+                    ...existing,
+                    reelsPosted: outcome.posted,
+                    reelsFailed: outcome.failed.length,
+                    reelsNextRun: outcome.nextRun,
+                });
+            }
+            for (const doc of storiesSnap.docs) {
                 const data = doc.data();
                 if (data.active === false || data.storyTrendEnabled !== true)
-                    return null;
-                const intervalHours = data.storyIntervalHours ?? this.defaultStoryIntervalHours;
-                return autopostCollection.doc(doc.id).set({
-                    storyIntervalHours: intervalHours,
-                    storyNextRun: now,
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                }, { merge: true });
-            })
-                .filter(Boolean);
-            if (selfHealWrites.length) {
-                await Promise.all(selfHealWrites);
+                    continue;
+                const outcome = await this.executeTrendStories(doc.id, data);
+                processed += 1;
+                const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
+                results.set(doc.id, {
+                    ...existing,
+                    storyPosted: outcome.posted,
+                    storyFailed: outcome.failed.length,
+                    storyNextRun: outcome.nextRun,
+                });
             }
-        }
-        if (standardSnap.empty && reelsSnap.empty && storiesSnap.empty && trendSnap.empty)
-            return { processed: 0 };
-        let processed = 0;
-        const results = new Map();
-        for (const doc of standardSnap.docs) {
-            const data = doc.data();
-            if (data.active === false)
-                continue;
-            const outcome = await this.executeJob(doc.id, data);
-            processed += 1;
-            results.set(doc.id, {
-                userId: doc.id,
-                posted: outcome.posted,
-                failed: outcome.failed.length,
-                nextRun: outcome.nextRun,
-            });
-        }
-        for (const doc of reelsSnap.docs) {
-            const data = doc.data();
-            if (data.active === false)
-                continue;
-            const outcome = await this.executeJob(doc.id, data, {
-                platforms: ['instagram_reels'],
-                intervalHours: data.reelsIntervalHours ?? this.defaultReelsIntervalHours,
-                nextRunField: 'reelsNextRun',
-                lastRunField: 'reelsLastRunAt',
-                resultField: 'reelsLastResult',
-                useGenericVideoFallback: false,
-            });
-            processed += 1;
-            const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
-            results.set(doc.id, {
-                ...existing,
-                reelsPosted: outcome.posted,
-                reelsFailed: outcome.failed.length,
-                reelsNextRun: outcome.nextRun,
-            });
-        }
-        for (const doc of storiesSnap.docs) {
-            const data = doc.data();
-            if (data.active === false || data.storyTrendEnabled !== true)
-                continue;
-            const outcome = await this.executeTrendStories(doc.id, data);
-            processed += 1;
-            const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
-            results.set(doc.id, {
-                ...existing,
-                storyPosted: outcome.posted,
-                storyFailed: outcome.failed.length,
-                storyNextRun: outcome.nextRun,
-            });
-        }
-        for (const doc of trendSnap.docs) {
-            const data = doc.data();
-            if (data.active === false || data.trendEnabled !== true)
-                continue;
-            const outcome = await this.executeTrendPosts(doc.id, data);
-            processed += 1;
-            const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
-            results.set(doc.id, {
-                ...existing,
-                trendPosted: outcome.posted,
-                trendFailed: outcome.failed.length,
-                trendNextRun: outcome.nextRun,
-            });
-        }
+            for (const doc of trendSnap.docs) {
+                const data = doc.data();
+                if (data.active === false || data.trendEnabled !== true)
+                    continue;
+                const outcome = await this.executeTrendPosts(doc.id, data);
+                processed += 1;
+                const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
+                results.set(doc.id, {
+                    ...existing,
+                    trendPosted: outcome.posted,
+                    trendFailed: outcome.failed.length,
+                    trendNextRun: outcome.nextRun,
+                });
+            }
             return { processed, results: Array.from(results.values()) };
         }
         catch (error) {
@@ -2885,14 +2885,16 @@ export class AutoPostService {
         return `${platform}:${normalized}`;
     }
     getXHighlightAccounts(job) {
+        const isBlocked = (value) => this.xBlockedHighlightAccounts.has(value.toLowerCase());
+        const normalize = (value) => String(value || '').replace(/^@/, '').trim();
         if (Array.isArray(job.xHighlightAccounts) && job.xHighlightAccounts.length) {
             const provided = job.xHighlightAccounts
-                .map(value => String(value || '').replace(/^@/, '').trim())
-                .filter(Boolean);
+                .map(normalize)
+                .filter(value => Boolean(value) && !isBlocked(value));
             if (provided.length)
                 return provided.slice(0, 15);
         }
-        return this.defaultXHighlightAccounts;
+        return this.defaultXHighlightAccounts.filter(value => !isBlocked(value));
     }
     getXWeeklyAwardKeywords(job) {
         if (Array.isArray(job.xWeeklyAwardKeywords) && job.xWeeklyAwardKeywords.length) {
@@ -3128,6 +3130,3 @@ export class AutoPostService {
     }
 }
 export const autoPostService = new AutoPostService();
-
-
-

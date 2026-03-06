@@ -228,7 +228,6 @@ export class AutoPostService {
     'Ask for a quick demo today.',
   ];
   private defaultXHighlightAccounts = [
-    'premierleague',
     'SkySportsNews',
     'SkySportsPL',
     'ESPNFC',
@@ -238,6 +237,7 @@ export class AutoPostService {
     'Bundesliga_EN',
     'ChampionsLeague',
   ];
+  private xBlockedHighlightAccounts = new Set(['premierleague', 'premier_league', 'premier-league']);
   private defaultXWeeklyAwardKeywords = [
     'player of the week',
     'goal of the week',
@@ -3278,13 +3278,16 @@ export class AutoPostService {
   }
 
   private getXHighlightAccounts(job: AutoPostJob) {
+    const isBlocked = (value: string) => this.xBlockedHighlightAccounts.has(value.toLowerCase());
+    const normalize = (value: unknown) => String(value || '').replace(/^@/, '').trim();
+
     if (Array.isArray(job.xHighlightAccounts) && job.xHighlightAccounts.length) {
       const provided = job.xHighlightAccounts
-        .map(value => String(value || '').replace(/^@/, '').trim())
-        .filter(Boolean);
+        .map(normalize)
+        .filter(value => Boolean(value) && !isBlocked(value));
       if (provided.length) return provided.slice(0, 15);
     }
-    return this.defaultXHighlightAccounts;
+    return this.defaultXHighlightAccounts.filter(value => !isBlocked(value));
   }
 
   private getXWeeklyAwardKeywords(job: AutoPostJob) {
