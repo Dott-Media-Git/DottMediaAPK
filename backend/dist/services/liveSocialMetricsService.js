@@ -104,6 +104,46 @@ const getTwitterCredential = (accounts) => {
         accessSecret: account.accessSecret,
     };
 };
+const resolveBwinScopeId = () => (process.env.BWIN_SCOPE_ID ?? process.env.BWIN_TRACK_OWNER_ID ?? '').trim();
+const isBwinScopeRequest = (scope, userId) => {
+    const bwinScopeId = resolveBwinScopeId();
+    if (!bwinScopeId)
+        return false;
+    const candidates = [
+        scope?.scopeId,
+        scope?.userId,
+        userId,
+    ]
+        .map(value => String(value ?? '').trim())
+        .filter(Boolean);
+    return candidates.includes(bwinScopeId);
+};
+const getBwinEnvTwitterCredential = () => {
+    const accessToken = process.env.BWIN_X_ACCESS_TOKEN ??
+        process.env.BWIN_TWITTER_ACCESS_TOKEN ??
+        '';
+    const accessSecret = process.env.BWIN_X_ACCESS_SECRET ??
+        process.env.BWIN_TWITTER_ACCESS_SECRET ??
+        '';
+    const appKey = process.env.BWIN_X_APP_KEY ??
+        process.env.BWIN_TWITTER_APP_KEY ??
+        process.env.TWITTER_API_KEY ??
+        process.env.TWITTER_CONSUMER_KEY ??
+        '';
+    const appSecret = process.env.BWIN_X_APP_SECRET ??
+        process.env.BWIN_TWITTER_APP_SECRET ??
+        process.env.TWITTER_API_SECRET ??
+        process.env.TWITTER_CONSUMER_SECRET ??
+        '';
+    if (!accessToken || !accessSecret || !appKey || !appSecret)
+        return null;
+    return {
+        appKey,
+        appSecret,
+        accessToken,
+        accessSecret,
+    };
+};
 const extractTwitterViews = (data) => {
     const nonPublic = data?.non_public_metrics?.impression_count;
     if (typeof nonPublic === 'number')
@@ -286,6 +326,35 @@ const fetchXMetric = async (tweetId, credentials) => {
         }
     }
 };
+const fetchOwnXTimelineMetrics = async (credentials) => {
+    const client = new TwitterApi(credentials).readWrite;
+    try {
+        const me = await client.v2.me();
+        const meId = String(me?.data?.id ?? '').trim();
+        if (!meId)
+            return { views: 0, interactions: 0, postsAnalyzed: 0 };
+        const timeline = await client.v2.userTimeline(meId, {
+            max_results: 10,
+            exclude: ['replies', 'retweets'],
+            'tweet.fields': ['public_metrics', 'non_public_metrics', 'organic_metrics'],
+        });
+        const tweets = Array.isArray(timeline?.data?.data)
+            ? timeline.data.data
+            : Array.isArray(timeline?.tweets)
+                ? timeline.tweets
+                : [];
+        const views = sum(tweets.map(tweet => extractTwitterViews(tweet)));
+        const interactions = sum(tweets.map(tweet => extractTwitterInteractions(tweet)));
+        return {
+            views,
+            interactions,
+            postsAnalyzed: tweets.length,
+        };
+    }
+    catch {
+        return { views: 0, interactions: 0, postsAnalyzed: 0 };
+    }
+};
 export async function getLiveSocialMetrics(userId, options) {
     const lookbackHours = Math.max(options?.lookbackHours ?? LOOKBACK_HOURS_DEFAULT, 1);
     const scopeKey = resolveAnalyticsScopeKey(options?.scope);
@@ -432,13 +501,31 @@ export async function getLiveSocialMetrics(userId, options) {
         }
         const outbound = await getOutboundStats(options?.scope ?? { userId });
         const webStats = await getWebTrafficStats(options?.scope ?? { userId });
+        let xFallbackMetric = { ...emptyPlatformMetric() };
+        if (isBwinScopeRequest(options?.scope, userId)) {
+            const envTwitterCredentials = getBwinEnvTwitterCredential();
+            if (envTwitterCredentials) {
+                const timelineStats = await fetchOwnXTimelineMetrics(envTwitterCredentials);
+                xFallbackMetric = {
+                    ...emptyPlatformMetric(),
+                    connected: true,
+                    views: timelineStats.views,
+                    interactions: timelineStats.interactions,
+                    engagementRate: formatRate(timelineStats.interactions, timelineStats.views),
+                    conversions: 0,
+                    postsAnalyzed: timelineStats.postsAnalyzed,
+                };
+            }
+        }
+        const summaryViews = Number(webStats.visitors ?? 0) + Number(xFallbackMetric.views ?? 0);
+        const summaryInteractions = Number(webStats.interactions ?? 0) + Number(xFallbackMetric.interactions ?? 0);
         const fallback = {
             generatedAt: new Date().toISOString(),
             lookbackHours,
             summary: {
-                views: Number(webStats.visitors ?? 0),
-                interactions: Number(webStats.interactions ?? 0),
-                engagementRate: formatRate(Number(webStats.interactions ?? 0), Number(webStats.visitors ?? 0)),
+                views: summaryViews,
+                interactions: summaryInteractions,
+                engagementRate: formatRate(summaryInteractions, summaryViews),
                 conversions: Number(webStats.redirectClicks ?? 0) || Number(outbound.conversions ?? 0),
             },
             web: {
@@ -451,7 +538,7 @@ export async function getLiveSocialMetrics(userId, options) {
                 facebook: { ...emptyPlatformMetric() },
                 instagram: { ...emptyPlatformMetric() },
                 threads: { ...emptyPlatformMetric() },
-                x: { ...emptyPlatformMetric() },
+                x: xFallbackMetric,
                 web: {
                     ...emptyPlatformMetric(),
                     connected: Number(webStats.visitors ?? 0) > 0 ||
