@@ -81,7 +81,19 @@ export class AutoPostService {
             'Bundesliga_EN',
             'ChampionsLeague',
         ];
-        this.xBlockedHighlightAccounts = new Set(['premierleague', 'premier_league', 'premier-league']);
+        this.xBlockedHighlightAccounts = new Set([
+            'premierleague',
+            'premier_league',
+            'premier-league',
+            'skysportsnews',
+            'skysportspl',
+            'espnfc',
+            'seriea_en',
+            'laligaen',
+            'ligue1_eng',
+            'bundesliga_en',
+            'championsleague',
+        ]);
         this.defaultXWeeklyAwardKeywords = [
             'player of the week',
             'goal of the week',
