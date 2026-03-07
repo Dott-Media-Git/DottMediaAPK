@@ -5,6 +5,7 @@ import { publishToInstagram, publishToInstagramReel, publishToInstagramStory } f
 import { publishToFacebook, publishToFacebookStory } from './socialPlatforms/facebookPublisher';
 import { publishToLinkedIn } from './socialPlatforms/linkedinPublisher';
 import { publishToTwitter } from './socialPlatforms/twitterPublisher';
+import { publishToThreads } from './socialPlatforms/threadsPublisher';
 import { publishToTikTok } from './socialPlatforms/tiktokPublisher';
 import { publishToYouTube } from './socialPlatforms/youtubePublisher';
 import { socialAnalyticsService } from './socialAnalyticsService';
@@ -32,6 +33,7 @@ type ScheduledPost = {
 export interface SocialAccounts {
   facebook?: { accessToken: string; pageId: string; pageName?: string };
   instagram?: { accessToken: string; accountId: string; username?: string };
+  threads?: { accessToken: string; accountId: string; username?: string };
   linkedin?: { accessToken: string; urn: string };
   twitter?: {
     accessToken: string;
@@ -81,7 +83,7 @@ const platformPublishers: Record<string, PlatformPublisher> = {
   twitter: publishToTwitter,
   youtube: publishToYouTube,
   x: publishToTwitter,
-  threads: publishToInstagram,
+  threads: publishToThreads,
   tiktok: publishToTikTok,
 };
 
@@ -326,7 +328,12 @@ export class SocialPostingService {
       });
     }
 
-    const todaySummary = todayPosts.reduce(
+    const todaySummary = todayPosts.reduce<{
+      date: string;
+      totalPosted: number;
+      videoPosts: number;
+      perPlatform: Record<string, number>;
+    }>(
       (acc, post) => {
         acc.totalPosted += 1;
         const platform = this.normalizePostedPlatform(String(post.platform ?? ''));

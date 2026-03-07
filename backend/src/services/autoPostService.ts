@@ -13,6 +13,7 @@ import { SocialAccounts } from '../packages/services/socialPostingService.js';
 import { publishToInstagram, publishToInstagramReel, publishToInstagramStory } from '../packages/services/socialPlatforms/instagramPublisher.js';
 import { publishToFacebook, publishToFacebookStory } from '../packages/services/socialPlatforms/facebookPublisher.js';
 import { publishToLinkedIn } from '../packages/services/socialPlatforms/linkedinPublisher.js';
+import { publishToThreads } from '../packages/services/socialPlatforms/threadsPublisher.js';
 import { publishToTwitter } from '../packages/services/socialPlatforms/twitterPublisher.js';
 import { publishToYouTube } from '../packages/services/socialPlatforms/youtubePublisher.js';
 import { publishToTikTok } from '../packages/services/socialPlatforms/tiktokPublisher.js';
@@ -183,7 +184,7 @@ const platformPublishers: Record<
   instagram: publishToInstagram,
   instagram_reels: publishToInstagramReel,
   instagram_story: publishToInstagramStory,
-  threads: publishToInstagram,
+  threads: publishToThreads,
   tiktok: publishToTikTok,
   facebook: publishToFacebook,
   facebook_story: publishToFacebookStory,
@@ -241,14 +242,6 @@ export class AutoPostService {
     'premierleague',
     'premier_league',
     'premier-league',
-    'skysportsnews',
-    'skysportspl',
-    'espnfc',
-    'seriea_en',
-    'laligaen',
-    'ligue1_eng',
-    'bundesliga_en',
-    'championsleague',
   ]);
   private defaultXWeeklyAwardKeywords = [
     'player of the week',
@@ -2251,7 +2244,7 @@ export class AutoPostService {
     // No local/static fallback videos are allowed in this path.
     const genericVideoSelection = this.selectNextGenericVideo(job, []);
     const trendVideoUrl = sourceVideoUrls[0] || (scope === 'football' ? undefined : genericVideoSelection.videoUrl);
-    const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'linkedin']);
+    const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'instagram', 'linkedin']);
     const hasXPlatform = platforms.some(platform => platform === 'x' || platform === 'twitter');
     const shouldUseVideoMode = scope === 'football' && selectedContentType === 'video';
     const weeklyAwardsEnabled = scope === 'football' && job.xWeeklyAwardsEnabled === true;
@@ -2281,12 +2274,17 @@ export class AutoPostService {
     let usedXHighlightUsername: string | null = null;
     let usedXHighlightAccountCursor: number | null = null;
     let usedXWeeklyAwardTweetId: string | null = null;
+    let resolvedHighlightVideoUrl: string | null = null;
+    if (shouldUseVideoMode && xHighlight?.tweetId) {
+      resolvedHighlightVideoUrl = await this.resolveVideoUrlFromTweet(xHighlight.tweetId, credentials);
+    }
+    const effectiveTrendVideoUrl = resolvedHighlightVideoUrl || trendVideoUrl;
 
     const nextRecord: Partial<AutoPostJob> = {
       trendLastRunAt: admin.firestore.Timestamp.now(),
       trendNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
       trendLastResult: results,
-      ...(!sourceVideoUrls[0] && trendVideoUrl && typeof genericVideoSelection.nextCursor === 'number'
+      ...(!sourceVideoUrls[0] && effectiveTrendVideoUrl && typeof genericVideoSelection.nextCursor === 'number'
         ? { videoCursor: genericVideoSelection.nextCursor }
         : {}),
     };
@@ -2304,7 +2302,18 @@ export class AutoPostService {
         continue;
       }
       try {
-        const rawPerPlatformCaption = trendCaptions[platform] || caption;
+        const highlightCaptionTemplate =
+          shouldUseVideoMode && xHighlight?.text
+            ? xHighlight.isWeeklyAward
+              ? `${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nWeekly award clip`
+              : this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)
+            : '';
+        const rawPerPlatformCaption =
+          highlightCaptionTemplate &&
+          shouldUseVideoMode &&
+          (platform === 'facebook' || platform === 'facebook_story' || platform === 'instagram' || platform === 'linkedin')
+            ? highlightCaptionTemplate
+            : (trendCaptions[platform] || caption);
         const trackedRawPerPlatformCaption = this.applyBwinBetTracking(rawPerPlatformCaption, userId, platform);
         const perPlatformCaption =
           platform === 'x' || platform === 'twitter'
@@ -2370,12 +2379,14 @@ export class AutoPostService {
 
         const useVideo =
           shouldUseVideoMode &&
-          Boolean(trendVideoUrl) &&
+          Boolean(effectiveTrendVideoUrl) &&
           videoCapablePlatforms.has(platform);
-        const response = await publisher({
+        const effectivePublisher =
+          platform === 'instagram' && useVideo ? publishToInstagramReel : publisher;
+        const response = await effectivePublisher({
           caption: perPlatformCaption,
           imageUrls: useVideo ? [] : imageUrls,
-          videoUrl: useVideo ? trendVideoUrl : undefined,
+          videoUrl: useVideo ? effectiveTrendVideoUrl || undefined : undefined,
           credentials,
         });
         results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
@@ -2384,7 +2395,7 @@ export class AutoPostService {
           status: 'posted',
           caption: perPlatformCaption,
           remoteId: response.remoteId ?? null,
-          videoUrl: useVideo ? trendVideoUrl : undefined,
+          videoUrl: useVideo ? effectiveTrendVideoUrl || undefined : undefined,
         });
       } catch (error: any) {
         const message = error?.message ?? 'publish_failed';
