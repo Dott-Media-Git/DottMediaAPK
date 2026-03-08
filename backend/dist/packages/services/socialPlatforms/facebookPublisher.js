@@ -1,5 +1,20 @@
 import axios from 'axios';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v18.0';
+const resolveFacebookAnalyticsId = async (objectId, accessToken) => {
+    try {
+        const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${objectId}`, {
+            params: {
+                fields: 'page_story_id,post_id',
+                access_token: accessToken,
+            },
+            timeout: 20000,
+        });
+        return response.data?.page_story_id || response.data?.post_id || objectId;
+    }
+    catch {
+        return objectId;
+    }
+};
 export async function publishToFacebook(input) {
     const { credentials } = input;
     if (!credentials?.facebook) {
@@ -32,7 +47,10 @@ export async function publishToFacebook(input) {
             });
         }
         if (response.data && response.data.id) {
-            return { remoteId: response.data.id };
+            const analyticsId = response.data.post_id ||
+                response.data.page_story_id ||
+                (await resolveFacebookAnalyticsId(response.data.id, accessToken));
+            return { remoteId: analyticsId || response.data.id };
         }
         throw new Error('No ID returned from Facebook');
     }

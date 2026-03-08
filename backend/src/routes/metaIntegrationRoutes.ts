@@ -439,6 +439,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
 
     currentAccounts.facebook = {
       accessToken: selectedPage.access_token,
+      userAccessToken,
       pageId: selectedPage.id,
       pageName: selectedPage.name ?? currentAccounts.facebook?.pageName,
     };

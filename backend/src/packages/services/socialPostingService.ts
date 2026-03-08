@@ -31,7 +31,7 @@ type ScheduledPost = {
 };
 
 export interface SocialAccounts {
-  facebook?: { accessToken: string; pageId: string; pageName?: string };
+  facebook?: { accessToken: string; userAccessToken?: string; pageId: string; pageName?: string };
   instagram?: { accessToken: string; accountId: string; username?: string };
   threads?: { accessToken: string; accountId: string; username?: string };
   linkedin?: { accessToken: string; urn: string };

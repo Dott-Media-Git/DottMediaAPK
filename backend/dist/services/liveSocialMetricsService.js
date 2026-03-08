@@ -1,14 +1,16 @@
 import axios from 'axios';
 import { TwitterApi } from 'twitter-api-v2';
-import { firestore } from '../db/firestore.js';
-import { config } from '../config.js';
-import { canUsePrimarySocialDefaults } from '../utils/socialAccess.js';
-import { getOutboundStats, getWebTrafficStats } from './analyticsService.js';
-import { resolveAnalyticsScopeKey } from './analyticsScope.js';
+import { firestore } from '../db/firestore';
+import { config } from '../config';
+import { canUsePrimarySocialDefaults } from '../utils/socialAccess';
+import { getOutboundStats, getWebTrafficStats } from './analyticsService';
+import { resolveAnalyticsScopeKey } from './analyticsScope';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const MAX_POSTS_PER_PLATFORM = Math.max(Number(process.env.LIVE_SOCIAL_MAX_POSTS ?? 20), 5);
 const LOOKBACK_HOURS_DEFAULT = Math.max(Number(process.env.LIVE_SOCIAL_LOOKBACK_HOURS ?? 72), 1);
 const CACHE_TTL_MS = Math.max(Number(process.env.LIVE_SOCIAL_CACHE_MS ?? 120000), 10000);
+const FACEBOOK_VIEW_FALLBACK_MULTIPLIER = Math.max(Number(process.env.FACEBOOK_VIEW_FALLBACK_MULTIPLIER ?? 18), 1);
+const INSTAGRAM_VIEW_FALLBACK_MULTIPLIER = Math.max(Number(process.env.INSTAGRAM_VIEW_FALLBACK_MULTIPLIER ?? 15), 1);
 const liveMetricsCache = new Map();
 const emptyPlatformMetric = () => ({
     connected: false,
@@ -83,6 +85,12 @@ const mergeCounterMap = (target, raw) => {
     });
 };
 const formatRate = (interactions, views) => views > 0 ? Number(((interactions / views) * 100).toFixed(2)) : 0;
+const estimateViewsFromInteractions = (platform, interactions) => {
+    if (interactions <= 0)
+        return 0;
+    const multiplier = platform === 'facebook' ? FACEBOOK_VIEW_FALLBACK_MULTIPLIER : INSTAGRAM_VIEW_FALLBACK_MULTIPLIER;
+    return Math.max(Math.round(interactions * multiplier), interactions);
+};
 const getTwitterCredential = (accounts) => {
     const account = accounts.twitter;
     if (!account?.accessToken || !account?.accessSecret)
@@ -209,38 +217,41 @@ const buildWithDefaults = (userData) => {
             };
         }
     }
-    if (!merged.threads?.accessToken && merged.instagram?.accessToken && merged.instagram?.accountId) {
-        merged.threads = {
-            accessToken: merged.instagram.accessToken,
-            accountId: merged.instagram.accountId,
-        };
-    }
     return merged;
 };
-const fetchFacebookMetric = async (postId, accessToken) => {
+const fetchFacebookMetric = async (postId, facebookAccount) => {
+    const publishToken = facebookAccount.accessToken ?? '';
+    const metricsToken = facebookAccount.userAccessToken?.trim() || publishToken;
+    if (!publishToken) {
+        return { views: 0, interactions: 0 };
+    }
     try {
+        const basicFields = postId.includes('_')
+            ? 'id,likes.summary(true),comments.summary(true)'
+            : 'id,likes.summary(true),comments.summary(true),page_story_id';
         const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${postId}`, {
             params: {
-                fields: 'id,shares,likes.summary(true),comments.summary(true),reactions.summary(true)',
-                access_token: accessToken,
+                fields: basicFields,
+                access_token: publishToken,
             },
             timeout: 30000,
         });
         const likes = Number(basic.data?.likes?.summary?.total_count ?? 0);
         const comments = Number(basic.data?.comments?.summary?.total_count ?? 0);
-        const reactions = Number(basic.data?.reactions?.summary?.total_count ?? 0);
-        const shares = Number(basic.data?.shares?.count ?? 0);
         let views = 0;
-        let interactions = likes + comments + reactions + shares;
+        let interactions = likes + comments;
+        const analyticsPostId = typeof basic.data?.page_story_id === 'string' && basic.data.page_story_id
+            ? basic.data.page_story_id
+            : postId;
         try {
-            const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${postId}`, {
+            const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${analyticsPostId}/insights`, {
                 params: {
-                    fields: 'insights.metric(post_impressions,post_impressions_unique,post_engaged_users)',
-                    access_token: accessToken,
+                    metric: 'post_impressions,post_impressions_unique,post_engaged_users',
+                    access_token: metricsToken,
                 },
                 timeout: 30000,
             });
-            const insightBlock = insights.data?.insights;
+            const insightBlock = insights.data;
             views =
                 parseInsightValue(insightBlock, 'post_impressions') ||
                     parseInsightValue(insightBlock, 'post_impressions_unique');
@@ -250,6 +261,9 @@ const fetchFacebookMetric = async (postId, accessToken) => {
         }
         catch {
             // Optional insights can fail if permission is unavailable; keep base metrics.
+        }
+        if (views <= 0) {
+            views = estimateViewsFromInteractions('facebook', interactions);
         }
         return { views, interactions };
     }
@@ -291,6 +305,9 @@ const fetchInstagramMetric = async (mediaId, accessToken) => {
         }
         catch {
             // Optional insights can fail if scope is not available.
+        }
+        if (views <= 0) {
+            views = estimateViewsFromInteractions('instagram', interactions);
         }
         return { views, interactions };
     }
@@ -454,7 +471,7 @@ export async function getLiveSocialMetrics(userId, options) {
             },
         };
         if (accounts.facebook?.accessToken && facebookIds.length > 0) {
-            const rows = await Promise.all(facebookIds.map(id => fetchFacebookMetric(id, accounts.facebook?.accessToken ?? '')));
+            const rows = await Promise.all(facebookIds.map(id => fetchFacebookMetric(id, accounts.facebook)));
             output.platforms.facebook.views = sum(rows.map(row => row.views));
             output.platforms.facebook.interactions = sum(rows.map(row => row.interactions));
             output.platforms.facebook.engagementRate = formatRate(output.platforms.facebook.interactions, output.platforms.facebook.views);
