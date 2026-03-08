@@ -914,6 +914,75 @@ export class AutoPostService {
     return caption.replace(/(?:https?:\/\/)?(?:www\.)?bwinbetug\.com\b\/?/gi, trackedUrl);
   }
 
+  private applyBwinInstagramSportsHashtags(caption: string, platform?: string) {
+    const normalizedPlatform = (platform ?? '').trim().toLowerCase();
+    if (normalizedPlatform !== 'instagram' && normalizedPlatform !== 'instagram_reels') {
+      return caption;
+    }
+    if (!caption || !/bwinbetug\.(?:com|info)|bwinbet ug/i.test(caption)) {
+      return caption;
+    }
+    const existing = this.extractHashtagTokens(caption);
+    const existingSet = new Set(existing.map(tag => tag.toLowerCase()));
+    const suggested = this.buildBwinInstagramSportsHashtags(caption);
+    const missing = suggested.filter(tag => !existingSet.has(tag.toLowerCase()));
+    if (!missing.length) {
+      return caption.trim();
+    }
+    return `${caption.trim()}\n\n${missing.map(tag => `#${tag}`).join(' ')}`.trim();
+  }
+
+  private buildBwinInstagramSportsHashtags(caption: string) {
+    const normalized = String(caption || '').toLowerCase();
+    const tags = [
+      'BwinbetUG',
+      'Football',
+      'SportsUpdates',
+      'Matchday',
+      'BetSmart',
+      'UgandaSports',
+    ];
+
+    if (/\bprediction|\bodds\b|place your bet|bet now|match picks|football tips/i.test(normalized)) {
+      tags.push('MatchPredictions', 'BettingTips', 'OddsUpdate', 'FootballTips');
+    } else if (/\blive table\b|\btable update\b|\bstandings\b/i.test(normalized)) {
+      tags.push('LeagueTable', 'FootballTable', 'TitleRace', 'TopTeams');
+    } else if (/\btop scorers\b|\bgolden boot\b|\bgoals\b|\bscorer\b/i.test(normalized)) {
+      tags.push('TopScorers', 'GoldenBoot', 'GoalMachine', 'FootballStats');
+    } else if (/\bresult\b|\bfinal score\b|\bscoreline\b|\bft\b/i.test(normalized)) {
+      tags.push('MatchResults', 'FinalScore', 'FootballResults', 'FullTime');
+    } else if (/\bvideo\b|\bhighlight\b|\bclip\b|\bgoal\b|\bwonder goal\b/i.test(normalized)) {
+      tags.push('FootballHighlights', 'GoalAlert', 'SportsVideo', 'GoalOfTheDay');
+    } else {
+      tags.push('FootballNews', 'TrendingFootball', 'SportsBuzz', 'GameOn');
+    }
+
+    if (/\bpremier league\b/i.test(normalized)) tags.push('PremierLeague');
+    if (/\bla liga\b/i.test(normalized)) tags.push('LaLiga');
+    if (/\bserie a\b/i.test(normalized)) tags.push('SerieA');
+    if (/\bbundesliga\b/i.test(normalized)) tags.push('Bundesliga');
+    if (/\bligue 1\b/i.test(normalized)) tags.push('Ligue1');
+    if (/\bchampions league\b/i.test(normalized)) tags.push('ChampionsLeague');
+    if (/\btransfer\b/i.test(normalized)) tags.push('TransferNews');
+
+    const unique: string[] = [];
+    const seen = new Set<string>();
+    for (const tag of tags) {
+      const normalizedTag = tag.replace(/^#+/, '').trim();
+      if (!normalizedTag) continue;
+      const key = normalizedTag.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(normalizedTag);
+      if (unique.length >= 12) break;
+    }
+    return unique;
+  }
+
+  private extractHashtagTokens(caption: string) {
+    return Array.from(new Set((caption.match(/#[A-Za-z0-9_]+/g) ?? []).map(tag => tag.replace(/^#+/, ''))));
+  }
+
   private buildVideoCaptionFromHighlight(rawText: string, username: string, timezone: string) {
     const cleaned = String(rawText || '')
       .replace(/https?:\/\/\S+/gi, '')
@@ -2315,10 +2384,14 @@ export class AutoPostService {
             ? highlightCaptionTemplate
             : (trendCaptions[platform] || caption);
         const trackedRawPerPlatformCaption = this.applyBwinBetTracking(rawPerPlatformCaption, userId, platform);
+        const brandedRawPerPlatformCaption = this.applyBwinInstagramSportsHashtags(
+          trackedRawPerPlatformCaption,
+          platform,
+        );
         const perPlatformCaption =
           platform === 'x' || platform === 'twitter'
-            ? this.normalizeXCaption(trackedRawPerPlatformCaption)
-            : trackedRawPerPlatformCaption;
+            ? this.normalizeXCaption(brandedRawPerPlatformCaption)
+            : brandedRawPerPlatformCaption;
         if (shouldUseVideoMode && (platform === 'x' || platform === 'twitter') && xHighlight?.tweetId) {
           const relatedCaptionTemplate = xHighlight.isWeeklyAward
             ? `${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nWeekly award clip`
@@ -2566,7 +2639,8 @@ export class AutoPostService {
       const shortsCaption =
         platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
       const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
-      const { caption, signature } = this.ensureCaptionVariety(platform, trackedCaption, captionHistory);
+      const brandedCaption = this.applyBwinInstagramSportsHashtags(trackedCaption, platform);
+      const { caption, signature } = this.ensureCaptionVariety(platform, brandedCaption, captionHistory);
       const isVideoPlatform = videoPlatforms.has(platform as VideoPlatform);
       const supportsVideo = isVideoPlatform || optionalVideoPlatforms.has(platform);
       let videoUrl: string | undefined;

@@ -12,8 +12,8 @@ import { socialAnalyticsService } from '../packages/services/socialAnalyticsServ
 import { publishToInstagram, publishToInstagramReel, publishToInstagramStory } from '../packages/services/socialPlatforms/instagramPublisher.js';
 import { publishToFacebook, publishToFacebookStory } from '../packages/services/socialPlatforms/facebookPublisher.js';
 import { publishToLinkedIn } from '../packages/services/socialPlatforms/linkedinPublisher.js';
-import { publishToTwitter } from '../packages/services/socialPlatforms/twitterPublisher.js';
 import { publishToThreads } from '../packages/services/socialPlatforms/threadsPublisher.js';
+import { publishToTwitter } from '../packages/services/socialPlatforms/twitterPublisher.js';
 import { publishToYouTube } from '../packages/services/socialPlatforms/youtubePublisher.js';
 import { publishToTikTok } from '../packages/services/socialPlatforms/tiktokPublisher.js';
 import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from './socialIntegrationService.js';
@@ -86,14 +86,6 @@ export class AutoPostService {
             'premierleague',
             'premier_league',
             'premier-league',
-            'skysportsnews',
-            'skysportspl',
-            'espnfc',
-            'seriea_en',
-            'laligaen',
-            'ligue1_eng',
-            'bundesliga_en',
-            'championsleague',
         ]);
         this.defaultXWeeklyAwardKeywords = [
             'player of the week',
@@ -698,6 +690,84 @@ export class AutoPostService {
             return caption;
         const trackedUrl = this.buildBwinTrackedBetUrl(ownerId, platform);
         return caption.replace(/(?:https?:\/\/)?(?:www\.)?bwinbetug\.com\b\/?/gi, trackedUrl);
+    }
+    applyBwinInstagramSportsHashtags(caption, platform) {
+        const normalizedPlatform = (platform ?? '').trim().toLowerCase();
+        if (normalizedPlatform !== 'instagram' && normalizedPlatform !== 'instagram_reels') {
+            return caption;
+        }
+        if (!caption || !/bwinbetug\.(?:com|info)|bwinbet ug/i.test(caption)) {
+            return caption;
+        }
+        const existing = this.extractHashtagTokens(caption);
+        const existingSet = new Set(existing.map(tag => tag.toLowerCase()));
+        const suggested = this.buildBwinInstagramSportsHashtags(caption);
+        const missing = suggested.filter(tag => !existingSet.has(tag.toLowerCase()));
+        if (!missing.length) {
+            return caption.trim();
+        }
+        return `${caption.trim()}\n\n${missing.map(tag => `#${tag}`).join(' ')}`.trim();
+    }
+    buildBwinInstagramSportsHashtags(caption) {
+        const normalized = String(caption || '').toLowerCase();
+        const tags = [
+            'BwinbetUG',
+            'Football',
+            'SportsUpdates',
+            'Matchday',
+            'BetSmart',
+            'UgandaSports',
+        ];
+        if (/\bprediction|\bodds\b|place your bet|bet now|match picks|football tips/i.test(normalized)) {
+            tags.push('MatchPredictions', 'BettingTips', 'OddsUpdate', 'FootballTips');
+        }
+        else if (/\blive table\b|\btable update\b|\bstandings\b/i.test(normalized)) {
+            tags.push('LeagueTable', 'FootballTable', 'TitleRace', 'TopTeams');
+        }
+        else if (/\btop scorers\b|\bgolden boot\b|\bgoals\b|\bscorer\b/i.test(normalized)) {
+            tags.push('TopScorers', 'GoldenBoot', 'GoalMachine', 'FootballStats');
+        }
+        else if (/\bresult\b|\bfinal score\b|\bscoreline\b|\bft\b/i.test(normalized)) {
+            tags.push('MatchResults', 'FinalScore', 'FootballResults', 'FullTime');
+        }
+        else if (/\bvideo\b|\bhighlight\b|\bclip\b|\bgoal\b|\bwonder goal\b/i.test(normalized)) {
+            tags.push('FootballHighlights', 'GoalAlert', 'SportsVideo', 'GoalOfTheDay');
+        }
+        else {
+            tags.push('FootballNews', 'TrendingFootball', 'SportsBuzz', 'GameOn');
+        }
+        if (/\bpremier league\b/i.test(normalized))
+            tags.push('PremierLeague');
+        if (/\bla liga\b/i.test(normalized))
+            tags.push('LaLiga');
+        if (/\bserie a\b/i.test(normalized))
+            tags.push('SerieA');
+        if (/\bbundesliga\b/i.test(normalized))
+            tags.push('Bundesliga');
+        if (/\bligue 1\b/i.test(normalized))
+            tags.push('Ligue1');
+        if (/\bchampions league\b/i.test(normalized))
+            tags.push('ChampionsLeague');
+        if (/\btransfer\b/i.test(normalized))
+            tags.push('TransferNews');
+        const unique = [];
+        const seen = new Set();
+        for (const tag of tags) {
+            const normalizedTag = tag.replace(/^#+/, '').trim();
+            if (!normalizedTag)
+                continue;
+            const key = normalizedTag.toLowerCase();
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            unique.push(normalizedTag);
+            if (unique.length >= 12)
+                break;
+        }
+        return unique;
+    }
+    extractHashtagTokens(caption) {
+        return Array.from(new Set((caption.match(/#[A-Za-z0-9_]+/g) ?? []).map(tag => tag.replace(/^#+/, ''))));
     }
     buildVideoCaptionFromHighlight(rawText, username, timezone) {
         const cleaned = String(rawText || '')
@@ -1928,7 +1998,7 @@ export class AutoPostService {
         // No local/static fallback videos are allowed in this path.
         const genericVideoSelection = this.selectNextGenericVideo(job, []);
         const trendVideoUrl = sourceVideoUrls[0] || (scope === 'football' ? undefined : genericVideoSelection.videoUrl);
-        const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'linkedin']);
+        const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'instagram', 'linkedin']);
         const hasXPlatform = platforms.some(platform => platform === 'x' || platform === 'twitter');
         const shouldUseVideoMode = scope === 'football' && selectedContentType === 'video';
         const weeklyAwardsEnabled = scope === 'football' && job.xWeeklyAwardsEnabled === true;
@@ -1950,11 +2020,16 @@ export class AutoPostService {
         let usedXHighlightUsername = null;
         let usedXHighlightAccountCursor = null;
         let usedXWeeklyAwardTweetId = null;
+        let resolvedHighlightVideoUrl = null;
+        if (shouldUseVideoMode && xHighlight?.tweetId) {
+            resolvedHighlightVideoUrl = await this.resolveVideoUrlFromTweet(xHighlight.tweetId, credentials);
+        }
+        const effectiveTrendVideoUrl = resolvedHighlightVideoUrl || trendVideoUrl;
         const nextRecord = {
             trendLastRunAt: admin.firestore.Timestamp.now(),
             trendNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
             trendLastResult: results,
-            ...(!sourceVideoUrls[0] && trendVideoUrl && typeof genericVideoSelection.nextCursor === 'number'
+            ...(!sourceVideoUrls[0] && effectiveTrendVideoUrl && typeof genericVideoSelection.nextCursor === 'number'
                 ? { videoCursor: genericVideoSelection.nextCursor }
                 : {}),
         };
@@ -1971,11 +2046,21 @@ export class AutoPostService {
                 continue;
             }
             try {
-                const rawPerPlatformCaption = trendCaptions[platform] || caption;
+                const highlightCaptionTemplate = shouldUseVideoMode && xHighlight?.text
+                    ? xHighlight.isWeeklyAward
+                        ? `${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nWeekly award clip`
+                        : this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)
+                    : '';
+                const rawPerPlatformCaption = highlightCaptionTemplate &&
+                    shouldUseVideoMode &&
+                    (platform === 'facebook' || platform === 'facebook_story' || platform === 'instagram' || platform === 'linkedin')
+                    ? highlightCaptionTemplate
+                    : (trendCaptions[platform] || caption);
                 const trackedRawPerPlatformCaption = this.applyBwinBetTracking(rawPerPlatformCaption, userId, platform);
+                const brandedRawPerPlatformCaption = this.applyBwinInstagramSportsHashtags(trackedRawPerPlatformCaption, platform);
                 const perPlatformCaption = platform === 'x' || platform === 'twitter'
-                    ? this.normalizeXCaption(trackedRawPerPlatformCaption)
-                    : trackedRawPerPlatformCaption;
+                    ? this.normalizeXCaption(brandedRawPerPlatformCaption)
+                    : brandedRawPerPlatformCaption;
                 if (shouldUseVideoMode && (platform === 'x' || platform === 'twitter') && xHighlight?.tweetId) {
                     const relatedCaptionTemplate = xHighlight.isWeeklyAward
                         ? `${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nWeekly award clip`
@@ -2029,12 +2114,13 @@ export class AutoPostService {
                     continue;
                 }
                 const useVideo = shouldUseVideoMode &&
-                    Boolean(trendVideoUrl) &&
+                    Boolean(effectiveTrendVideoUrl) &&
                     videoCapablePlatforms.has(platform);
-                const response = await publisher({
+                const effectivePublisher = platform === 'instagram' && useVideo ? publishToInstagramReel : publisher;
+                const response = await effectivePublisher({
                     caption: perPlatformCaption,
                     imageUrls: useVideo ? [] : imageUrls,
-                    videoUrl: useVideo ? trendVideoUrl : undefined,
+                    videoUrl: useVideo ? effectiveTrendVideoUrl || undefined : undefined,
                     credentials,
                 });
                 results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
@@ -2043,7 +2129,7 @@ export class AutoPostService {
                     status: 'posted',
                     caption: perPlatformCaption,
                     remoteId: response.remoteId ?? null,
-                    videoUrl: useVideo ? trendVideoUrl : undefined,
+                    videoUrl: useVideo ? effectiveTrendVideoUrl || undefined : undefined,
                 });
             }
             catch (error) {
@@ -2198,7 +2284,8 @@ export class AutoPostService {
             const rawCaption = this.captionForPlatform(platform, finalGenerated, fallbackCopy);
             const shortsCaption = platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
             const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
-            const { caption, signature } = this.ensureCaptionVariety(platform, trackedCaption, captionHistory);
+            const brandedCaption = this.applyBwinInstagramSportsHashtags(trackedCaption, platform);
+            const { caption, signature } = this.ensureCaptionVariety(platform, brandedCaption, captionHistory);
             const isVideoPlatform = videoPlatforms.has(platform);
             const supportsVideo = isVideoPlatform || optionalVideoPlatforms.has(platform);
             let videoUrl;
