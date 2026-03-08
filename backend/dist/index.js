@@ -29,8 +29,9 @@ import adminRoutes from './routes/adminRoutes.js';
 import contentRoutes from './routes/contentRoutes.js';
 import footballTrendRoutes from './routes/footballTrendRoutes.js';
 import trendRoutes from './routes/trendRoutes.js';
-import socialRoutes from './routes/socialRoutes.threads.js';
+import socialRoutes from './routes/socialRoutes.js';
 import metaWebhookRoutes from './routes/metaWebhookRoutes.js';
+import metaIntegrationRoutes from './routes/metaIntegrationRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import youtubeIntegrationRoutes from './routes/youtubeIntegrationRoutes.js';
 import tiktokIntegrationRoutes from './routes/tiktokIntegrationRoutes.js';
@@ -147,6 +148,7 @@ else {
     console.info('[football-trends] Routes disabled (set FOOTBALL_TRENDS_ENABLED=true).');
 }
 app.use('/api', socialRoutes);
+app.use('/', metaIntegrationRoutes);
 app.use('/api', authRoutes);
 app.use('/', youtubeIntegrationRoutes);
 app.use('/', tiktokIntegrationRoutes);

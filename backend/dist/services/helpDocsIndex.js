@@ -76,4 +76,20 @@ export const helpDocIndex = [
         url: `${helpDocsBaseUrl}/whatsapp-onboarding.html`,
         tags: ['whatsapp', 'business', 'onboarding', 'connect', 'phone number id', 'access token', 'webhook'],
     },
+    {
+        id: 'bwinbet-outbound-ceo-brief',
+        title: 'Bwinbet UG Outbound CEO Brief',
+        summary: 'Executive document covering Bwinbet outbound workflow: audience sourcing, compliance controls, message strategy with examples, and live dashboard metrics including prospects contacted, people responding, replies, and conversions.',
+        url: `${helpDocsBaseUrl}/bwinbet-outbound-ceo-brief.html`,
+        tags: [
+            'bwinbet',
+            'outbound',
+            'ceo brief',
+            'prospecting',
+            'message examples',
+            'responders',
+            'conversion',
+            'dashboard',
+        ],
+    },
 ];

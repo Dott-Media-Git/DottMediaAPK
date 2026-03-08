@@ -1,10 +1,10 @@
 import axios from 'axios';
 import { TwitterApi } from 'twitter-api-v2';
-import { firestore } from '../db/firestore';
-import { config } from '../config';
-import { canUsePrimarySocialDefaults } from '../utils/socialAccess';
-import { getOutboundStats, getWebTrafficStats } from './analyticsService';
-import { resolveAnalyticsScopeKey } from './analyticsScope';
+import { firestore } from '../db/firestore.js';
+import { config } from '../config.js';
+import { canUsePrimarySocialDefaults } from '../utils/socialAccess.js';
+import { getOutboundStats, getWebTrafficStats } from './analyticsService.js';
+import { resolveAnalyticsScopeKey } from './analyticsScope.js';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const MAX_POSTS_PER_PLATFORM = Math.max(Number(process.env.LIVE_SOCIAL_MAX_POSTS ?? 20), 5);
 const LOOKBACK_HOURS_DEFAULT = Math.max(Number(process.env.LIVE_SOCIAL_LOOKBACK_HOURS ?? 72), 1);

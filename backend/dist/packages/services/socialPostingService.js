@@ -247,10 +247,9 @@ export class SocialPostingService {
             todayPosts = trimmed.filter(post => {
                 if (post.status !== 'posted')
                     return false;
-                const seconds =
-                    this.toSeconds(post.postedAt) ||
-                        this.toSeconds(post.createdAt) ||
-                        this.toSeconds(post.scheduledFor);
+                const seconds = this.toSeconds(post.postedAt) ||
+                    this.toSeconds(post.createdAt) ||
+                    this.toSeconds(post.scheduledFor);
                 return seconds >= todaySeconds;
             });
         }

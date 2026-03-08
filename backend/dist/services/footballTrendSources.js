@@ -131,6 +131,150 @@ const parseDate = (value) => {
         return undefined;
     return new Date(ts).toISOString();
 };
+const normalizeText = (value) => {
+    if (!value)
+        return undefined;
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    return normalized || undefined;
+};
+const stripHtml = (value) => {
+    if (!value)
+        return undefined;
+    const text = cheerio.load(`<root>${value}</root>`)('root').text();
+    return normalizeText(text);
+};
+const toAbsoluteUrl = (url, baseUrl) => {
+    if (!url)
+        return undefined;
+    const trimmed = url.trim();
+    if (!trimmed)
+        return undefined;
+    try {
+        return new URL(trimmed, baseUrl).toString();
+    }
+    catch (error) {
+        return undefined;
+    }
+};
+const extractImageFromHtmlFragment = (value, baseUrl) => {
+    try {
+        const $ = cheerio.load(value);
+        const src = $('img').first().attr('src')?.trim();
+        return toAbsoluteUrl(src, baseUrl);
+    }
+    catch (error) {
+        return undefined;
+    }
+};
+const extractVideoFromHtmlFragment = (value, baseUrl) => {
+    try {
+        const $ = cheerio.load(value);
+        const sourceSrc = $('video source').first().attr('src')?.trim();
+        if (sourceSrc)
+            return toAbsoluteUrl(sourceSrc, baseUrl);
+        const videoSrc = $('video').first().attr('src')?.trim();
+        return toAbsoluteUrl(videoSrc, baseUrl);
+    }
+    catch (error) {
+        return undefined;
+    }
+};
+const extractRssImage = ($, entry, source) => {
+    const mediaContent = $(entry).find('media\\:content').first().attr('url')?.trim() ||
+        $(entry).find('content').first().attr('url')?.trim();
+    if (mediaContent)
+        return toAbsoluteUrl(mediaContent, source.url);
+    const mediaThumbnail = $(entry).find('media\\:thumbnail').first().attr('url')?.trim() ||
+        $(entry).find('thumbnail').first().attr('url')?.trim();
+    if (mediaThumbnail)
+        return toAbsoluteUrl(mediaThumbnail, source.url);
+    const enclosureUrl = $(entry)
+        .find('enclosure')
+        .toArray()
+        .map(node => {
+        const type = ($(node).attr('type') || '').toLowerCase();
+        if (type.startsWith('image/'))
+            return $(node).attr('url')?.trim();
+        return undefined;
+    })
+        .find(Boolean);
+    if (enclosureUrl)
+        return toAbsoluteUrl(enclosureUrl, source.url);
+    const atomEnclosure = $(entry)
+        .find('link')
+        .toArray()
+        .map(node => {
+        const rel = ($(node).attr('rel') || '').toLowerCase();
+        const type = ($(node).attr('type') || '').toLowerCase();
+        if (rel === 'enclosure' && type.startsWith('image/')) {
+            return $(node).attr('href')?.trim();
+        }
+        return undefined;
+    })
+        .find(Boolean);
+    if (atomEnclosure)
+        return toAbsoluteUrl(atomEnclosure, source.url);
+    const descriptionRaw = $(entry).find('description').first().text().trim();
+    const descriptionImage = descriptionRaw ? extractImageFromHtmlFragment(descriptionRaw, source.url) : undefined;
+    if (descriptionImage)
+        return descriptionImage;
+    const contentRaw = $(entry).find('content\\:encoded').first().text().trim();
+    const contentImage = contentRaw ? extractImageFromHtmlFragment(contentRaw, source.url) : undefined;
+    if (contentImage)
+        return contentImage;
+    return undefined;
+};
+const extractRssVideo = ($, entry, source) => {
+    const mediaVideo = $(entry)
+        .find('media\\:content')
+        .toArray()
+        .map(node => {
+        const medium = ($(node).attr('medium') || '').toLowerCase();
+        const type = ($(node).attr('type') || '').toLowerCase();
+        if (medium === 'video' || type.startsWith('video/')) {
+            return $(node).attr('url')?.trim();
+        }
+        return undefined;
+    })
+        .find(Boolean);
+    if (mediaVideo)
+        return toAbsoluteUrl(mediaVideo, source.url);
+    const enclosureVideo = $(entry)
+        .find('enclosure')
+        .toArray()
+        .map(node => {
+        const type = ($(node).attr('type') || '').toLowerCase();
+        if (type.startsWith('video/'))
+            return $(node).attr('url')?.trim();
+        return undefined;
+    })
+        .find(Boolean);
+    if (enclosureVideo)
+        return toAbsoluteUrl(enclosureVideo, source.url);
+    const atomVideo = $(entry)
+        .find('link')
+        .toArray()
+        .map(node => {
+        const rel = ($(node).attr('rel') || '').toLowerCase();
+        const type = ($(node).attr('type') || '').toLowerCase();
+        if (rel === 'enclosure' && type.startsWith('video/')) {
+            return $(node).attr('href')?.trim();
+        }
+        return undefined;
+    })
+        .find(Boolean);
+    if (atomVideo)
+        return toAbsoluteUrl(atomVideo, source.url);
+    const descriptionRaw = $(entry).find('description').first().text().trim();
+    const descriptionVideo = descriptionRaw ? extractVideoFromHtmlFragment(descriptionRaw, source.url) : undefined;
+    if (descriptionVideo)
+        return descriptionVideo;
+    const contentRaw = $(entry).find('content\\:encoded').first().text().trim();
+    const contentVideo = contentRaw ? extractVideoFromHtmlFragment(contentRaw, source.url) : undefined;
+    if (contentVideo)
+        return contentVideo;
+    return undefined;
+};
 const tokenize = (title) => {
     return title
         .toLowerCase()
@@ -197,19 +341,23 @@ const parseRssItems = (body, source) => {
         const title = $(entry).find('title').first().text().trim();
         const linkEl = $(entry).find('link').first();
         const link = linkEl.attr('href')?.trim() || linkEl.text().trim();
-        const summary = $(entry).find('description').first().text().trim() ||
-            $(entry).find('summary').first().text().trim() ||
-            undefined;
+        const descriptionRaw = $(entry).find('description').first().text().trim();
+        const summaryRaw = descriptionRaw || $(entry).find('summary').first().text().trim();
+        const summary = stripHtml(summaryRaw) || normalizeText(summaryRaw);
         const publishedRaw = $(entry).find('pubDate').first().text().trim() ||
             $(entry).find('published').first().text().trim() ||
             $(entry).find('updated').first().text().trim();
         const publishedAt = parseDate(publishedRaw);
+        const imageUrl = extractRssImage($, entry, source);
+        const videoUrl = extractRssVideo($, entry, source);
         if (!title)
             return null;
         return {
             title,
-            link: link || undefined,
+            link: toAbsoluteUrl(link, source.url) || link || undefined,
             summary,
+            imageUrl,
+            videoUrl,
             publishedAt,
             sourceId: source.id,
             sourceLabel: source.label,
@@ -228,15 +376,19 @@ const parseHtmlItems = (body, source) => {
         if (!title)
             return;
         const link = selectors.link ? $(element).find(selectors.link).first().attr('href')?.trim() : undefined;
-        const summary = selectors.summary ? $(element).find(selectors.summary).first().text().trim() : undefined;
+        const summaryRaw = selectors.summary ? $(element).find(selectors.summary).first().text().trim() : undefined;
+        const imageRaw = $(element).find('img').first().attr('src')?.trim();
+        const videoRaw = $(element).find('video source').first().attr('src')?.trim() || $(element).find('video').first().attr('src')?.trim();
         const publishedRaw = selectors.published
             ? $(element).find(selectors.published).first().text().trim()
             : undefined;
         const publishedAt = parseDate(publishedRaw);
         items.push({
             title,
-            link,
-            summary,
+            link: toAbsoluteUrl(link, source.url) || link,
+            summary: normalizeText(summaryRaw),
+            imageUrl: toAbsoluteUrl(imageRaw, source.url) || imageRaw,
+            videoUrl: toAbsoluteUrl(videoRaw, source.url) || videoRaw,
             publishedAt,
             sourceId: source.id,
             sourceLabel: source.label,

@@ -1,5 +1,16 @@
 import fs from 'fs';
 import path from 'path';
+const normalizeChannel = (value) => {
+    const raw = (value ?? '').trim().toLowerCase();
+    if (!raw)
+        return 'csv';
+    if (raw === 'twitter' || raw === 'x' || raw === 'x.com')
+        return 'x';
+    if (raw === 'linkedin' || raw === 'instagram' || raw === 'whatsapp' || raw === 'web' || raw === 'csv') {
+        return raw;
+    }
+    return 'csv';
+};
 /**
  * Reads a CSV file supplied via params.csvPath or PROSPECT_CSV_PATH env.
  * Expected headers: name,company,email,position,industry,location,profileUrl,channel
@@ -33,7 +44,14 @@ export async function loadCsvProspects(params) {
             industry: record.industry || params.industry,
             location: record.location || params.country,
             profileUrl: record.profileurl || record.profile_url,
-            channel: record.channel ?? 'csv',
+            channel: normalizeChannel(record.channel),
+            notes: record.notes || undefined,
+            tags: (record.tags || '')
+                .split(/[|,]/)
+                .map(value => value.trim())
+                .filter(Boolean),
+            ownerId: record.ownerid || record.owner_id || undefined,
+            orgId: record.orgid || record.org_id || undefined,
         };
     });
 }

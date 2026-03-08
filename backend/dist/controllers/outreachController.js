@@ -51,13 +51,17 @@ export class OutreachController {
         };
         this.run = async (req, res, next) => {
             try {
+                const authUser = req.authUser;
+                if (!authUser) {
+                    return res.status(401).json({ message: 'Unauthorized' });
+                }
                 const token = process.env.OUTBOUND_RUN_TOKEN;
                 const body = req.body;
                 if (token) {
                     const provided = req.header('x-outbound-token') ??
                         req.query.token ??
                         body?.token;
-                    if (provided !== token) {
+                    if (provided && provided !== token) {
                         return res.status(403).json({ message: 'Forbidden' });
                     }
                 }
@@ -68,7 +72,9 @@ export class OutreachController {
                     const target = await resolveOutboundDiscoveryTarget();
                     const limit = resolveDiscoveryLimit();
                     const prospects = await runProspectDiscovery({ industry: target.industry, country: target.country, limit });
-                    const outreach = await outreachAgent.runDailyOutreach(prospects);
+                    const outreach = await outreachAgent.runDailyOutreach(prospects, {
+                        userId: authUser.uid,
+                    });
                     return res.json({ target, discovered: prospects.length, outreach });
                 }
                 // Trigger the agent
@@ -76,7 +82,9 @@ export class OutreachController {
                 // const result = await outreachAgent.runDailyOutreach();
                 // For now, we'll simulate a run or call the service if we can import it dynamically to avoid circular deps if any
                 const { outreachAgent } = await import('../packages/services/outreachAgent/index.js');
-                const result = await outreachAgent.runDailyOutreach();
+                const result = await outreachAgent.runDailyOutreach([], {
+                    userId: authUser.uid,
+                });
                 res.json(result);
             }
             catch (error) {

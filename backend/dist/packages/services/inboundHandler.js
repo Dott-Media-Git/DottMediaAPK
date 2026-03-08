@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { firestore } from '../../db/firestore.js';
 import { config } from '../../config.js';
 import { pickFallbackReply } from '../../services/fallbackReplyLibrary.js';
+import { resolveBrandIdForClient } from '../../services/brandKitService.js';
 import { OPENAI_REPLY_TIMEOUT_MS } from '../../utils/openaiTimeout.js';
 import { classifyIntentText } from '../brain/nlu/intentClassifier.js';
 import { LeadService } from './leadService.js';
@@ -12,6 +13,7 @@ import { incrementInboundAnalytics, incrementWebLeadAnalytics } from '../../serv
 const messagesCollection = firestore.collection('messages');
 const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
 const replyPromptCache = new Map();
+const replyProfileCache = new Map();
 export class InboundHandler {
     constructor() {
         this.leadService = new LeadService();
@@ -72,13 +74,21 @@ export class InboundHandler {
         return { reply, leadCreated };
     }
     async composeReply(payload, classification, leadName) {
-        const override = await getAutoReplyPromptOverride(payload.ownerId ?? payload.metadata?.ownerId);
+        const ownerId = payload.ownerId ?? payload.metadata?.ownerId;
+        const profile = await getReplyProfile(ownerId);
+        const override = await getAutoReplyPromptOverride(ownerId);
+        const identityLine = profile === 'bwinbetug'
+            ? `You are Bwinbet UG's sports assistant, responding on ${payload.channel}.`
+            : `You are Dotti from Dott Media, responding on ${payload.channel}.`;
+        const goalLine = profile === 'bwinbetug'
+            ? 'Goal: keep it sports-focused, helpful, concise (<=3 sentences), and direct them to www.bwinbetug.info for full details, fixtures, markets, and support.'
+            : 'Goal: move them toward buying or booking a demo of the Dott Media AI Sales Agent. Keep it friendly, concise (<=3 sentences), give a clear CTA (book a demo or get the Sales Agent), and offer a link or next step.';
         const prompt = `
-You are Dotti from Dott Media, responding on ${payload.channel}.
+${identityLine}
 Message: """${payload.text}"""
 Intent: ${classification.intent}
 Name: ${leadName ?? payload.name ?? 'there'}
-Goal: move them toward buying or booking a demo of the Dott Media AI Sales Agent. Keep it friendly, concise (<=3 sentences), give a clear CTA (book a demo or get the Sales Agent), and offer a link or next step.
+${goalLine}
 ${override ? `Additional guidance: ${override}` : ''}
 `.trim();
         try {
@@ -87,19 +97,24 @@ ${override ? `Additional guidance: ${override}` : ''}
                 temperature: 0.6,
                 max_tokens: 200,
                 messages: [
-                    { role: 'system', content: 'You are Dotti, the AI sales concierge for Dott Media.' },
+                    {
+                        role: 'system',
+                        content: profile === 'bwinbetug'
+                            ? 'You are Bwinbet UG sports support. Keep replies brief, natural, and always include www.bwinbetug.info as the next step.'
+                            : 'You are Dotti, the AI sales concierge for Dott Media.',
+                    },
                     { role: 'user', content: prompt },
                 ],
             });
-            return completion.choices?.[0]?.message?.content?.trim() ?? this.fallbackReply(payload.channel);
+            return completion.choices?.[0]?.message?.content?.trim() ?? this.fallbackReply(payload.channel, profile);
         }
         catch (error) {
             console.error('Inbound reply generation failed', error);
-            return this.fallbackReply(payload.channel);
+            return this.fallbackReply(payload.channel, profile);
         }
     }
-    fallbackReply(channel) {
-        return pickFallbackReply({ channel, kind: 'message' });
+    fallbackReply(channel, profile) {
+        return pickFallbackReply({ channel, kind: 'message', profile });
     }
     async logMessage(payload, classification) {
         const entry = {
@@ -158,6 +173,28 @@ const getAutoReplyPromptOverride = async (userId) => {
     catch (error) {
         console.warn('Failed to load auto-reply prompt override', error.message);
         replyPromptCache.set(userId, { value: '', fetchedAt: now, loaded: true });
+        return null;
+    }
+};
+const getReplyProfile = async (userId) => {
+    if (!userId)
+        return null;
+    const now = Date.now();
+    const cached = replyProfileCache.get(userId);
+    if (cached?.loaded && now - cached.fetchedAt < SETTINGS_CACHE_TTL_MS) {
+        return cached.value || null;
+    }
+    try {
+        const snap = await firestore.collection('users').doc(userId).get();
+        const email = snap.data()?.email?.toLowerCase().trim() ?? '';
+        const brandId = email ? resolveBrandIdForClient(email) : null;
+        const profile = brandId === 'bwinbetug' ? 'bwinbetug' : '';
+        replyProfileCache.set(userId, { value: profile, fetchedAt: now, loaded: true });
+        return profile || null;
+    }
+    catch (error) {
+        console.warn('Failed to load inbound reply profile', error.message);
+        replyProfileCache.set(userId, { value: '', fetchedAt: now, loaded: true });
         return null;
     }
 };
