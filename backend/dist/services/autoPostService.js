@@ -13,6 +13,7 @@ import { publishToInstagram, publishToInstagramReel, publishToInstagramStory } f
 import { publishToFacebook, publishToFacebookStory } from '../packages/services/socialPlatforms/facebookPublisher.js';
 import { publishToLinkedIn } from '../packages/services/socialPlatforms/linkedinPublisher.js';
 import { publishToTwitter } from '../packages/services/socialPlatforms/twitterPublisher.js';
+import { publishToThreads } from '../packages/services/socialPlatforms/threadsPublisher.js';
 import { publishToYouTube } from '../packages/services/socialPlatforms/youtubePublisher.js';
 import { publishToTikTok } from '../packages/services/socialPlatforms/tiktokPublisher.js';
 import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from './socialIntegrationService.js';
@@ -36,7 +37,7 @@ const platformPublishers = {
     instagram: publishToInstagram,
     instagram_reels: publishToInstagramReel,
     instagram_story: publishToInstagramStory,
-    threads: publishToInstagram,
+    threads: publishToThreads,
     tiktok: publishToTikTok,
     facebook: publishToFacebook,
     facebook_story: publishToFacebookStory,

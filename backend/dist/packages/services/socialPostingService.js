@@ -5,6 +5,7 @@ import { publishToInstagram, publishToInstagramReel, publishToInstagramStory } f
 import { publishToFacebook, publishToFacebookStory } from './socialPlatforms/facebookPublisher.js';
 import { publishToLinkedIn } from './socialPlatforms/linkedinPublisher.js';
 import { publishToTwitter } from './socialPlatforms/twitterPublisher.js';
+import { publishToThreads } from './socialPlatforms/threadsPublisher.js';
 import { publishToTikTok } from './socialPlatforms/tiktokPublisher.js';
 import { publishToYouTube } from './socialPlatforms/youtubePublisher.js';
 import { socialAnalyticsService } from './socialAnalyticsService.js';
@@ -24,7 +25,7 @@ const platformPublishers = {
     twitter: publishToTwitter,
     youtube: publishToYouTube,
     x: publishToTwitter,
-    threads: publishToInstagram,
+    threads: publishToThreads,
     tiktok: publishToTikTok,
 };
 export class SocialPostingService {
