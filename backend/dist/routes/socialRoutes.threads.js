@@ -2,6 +2,8 @@ import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import admin from 'firebase-admin';
 import { z } from 'zod';
 import { requireFirebase } from '../middleware/firebaseAuth.js';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService.js';
@@ -163,6 +165,50 @@ const renderThreadsCallbackHtml = (title, message) => `<!doctype html>
     <style>
       body { font-family: Arial, sans-serif; background:#0b1020; color:#f8fafc; display:flex; min-height:100vh; align-items:center; justify-content:center; margin:0; }
       .card { width:min(92vw, 520px); background:#11182c; border:1px solid rgba(148,163,184,.25); border-radius:20px; padding:28px; box-shadow:0 18px 50px rgba(0,0,0,.35); }
+      h1 { margin:0 0 12px; font-size:24px; }
+      p { margin:0; line-height:1.6; color:#cbd5e1; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>${title}</h1>
+      <p>${message}</p>
+    </div>
+  </body>
+</html>`;
+const base64UrlToBuffer = (value) => {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
+    return Buffer.from(normalized + padding, 'base64');
+};
+const parseSignedRequest = (signedRequest, secret) => {
+    if (!signedRequest || !secret)
+        return null;
+    const [encodedSignature, encodedPayload] = signedRequest.split('.');
+    if (!encodedSignature || !encodedPayload)
+        return null;
+    const expected = createHmac('sha256', secret).update(encodedPayload).digest();
+    const provided = base64UrlToBuffer(encodedSignature);
+    if (expected.length !== provided.length)
+        return null;
+    if (!timingSafeEqual(expected, provided))
+        return null;
+    try {
+        return JSON.parse(base64UrlToBuffer(encodedPayload).toString('utf8'));
+    }
+    catch {
+        return null;
+    }
+};
+const renderThreadsManagementHtml = (title, message) => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${title}</title>
+    <style>
+      body { font-family: Arial, sans-serif; background:#0b1020; color:#f8fafc; display:flex; min-height:100vh; align-items:center; justify-content:center; margin:0; }
+      .card { width:min(92vw, 560px); background:#11182c; border:1px solid rgba(148,163,184,.25); border-radius:20px; padding:28px; box-shadow:0 18px 50px rgba(0,0,0,.35); }
       h1 { margin:0 0 12px; font-size:24px; }
       p { margin:0; line-height:1.6; color:#cbd5e1; }
     </style>
@@ -484,6 +530,86 @@ router.get('/social/threads/callback', async (req, res) => {
         res
             .status(400)
             .send(renderThreadsCallbackHtml('Threads connection failed', error.message || 'Unable to complete the Threads connection flow.'));
+    }
+});
+router.get('/social/threads/uninstall', (_req, res) => {
+    res
+        .status(200)
+        .send(renderThreadsManagementHtml('Threads uninstall callback', 'This endpoint is active and accepts Meta deauthorization callbacks.'));
+});
+router.post('/social/threads/uninstall', async (req, res) => {
+    try {
+        const signedRequest = typeof req.body?.signed_request === 'string'
+            ? req.body.signed_request
+            : typeof req.query.signed_request === 'string'
+                ? req.query.signed_request
+                : undefined;
+        const { appSecret } = getThreadsAppConfig(req);
+        const payload = parseSignedRequest(signedRequest, appSecret);
+        await firestore.collection('metaThreadsUninstalls').add({
+            payload,
+            signedRequestPresent: Boolean(signedRequest),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        res.status(200).json({ success: true });
+    }
+    catch (error) {
+        console.error('[threads] uninstall callback failed', error);
+        res.status(200).json({ success: true });
+    }
+});
+router.get('/social/threads/delete', (_req, res) => {
+    res
+        .status(200)
+        .send(renderThreadsManagementHtml('Threads data deletion callback', 'This endpoint is active and accepts Meta data deletion requests.'));
+});
+router.post('/social/threads/delete', async (req, res) => {
+    try {
+        const signedRequest = typeof req.body?.signed_request === 'string'
+            ? req.body.signed_request
+            : typeof req.query.signed_request === 'string'
+                ? req.query.signed_request
+                : undefined;
+        const { appSecret } = getThreadsAppConfig(req);
+        const payload = parseSignedRequest(signedRequest, appSecret);
+        const confirmationCode = randomBytes(12).toString('hex');
+        const statusUrl = `${getBaseUrl(req)}/api/social/threads/delete-status/${confirmationCode}`;
+        await firestore.collection('metaThreadsDeletionRequests').doc(confirmationCode).set({
+            confirmationCode,
+            payload,
+            signedRequestPresent: Boolean(signedRequest),
+            status: 'received',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        res.status(200).json({
+            url: statusUrl,
+            confirmation_code: confirmationCode,
+        });
+    }
+    catch (error) {
+        console.error('[threads] delete callback failed', error);
+        res.status(500).json({ message: 'Unable to process deletion request' });
+    }
+});
+router.get('/social/threads/delete-status/:code', async (req, res) => {
+    try {
+        const code = String(req.params.code ?? '').trim();
+        if (!code) {
+            res.status(400).send(renderThreadsManagementHtml('Deletion status unavailable', 'Missing confirmation code.'));
+            return;
+        }
+        const snap = await firestore.collection('metaThreadsDeletionRequests').doc(code).get();
+        if (!snap.exists) {
+            res.status(404).send(renderThreadsManagementHtml('Deletion status unavailable', 'No deletion request was found for this confirmation code.'));
+            return;
+        }
+        res
+            .status(200)
+            .send(renderThreadsManagementHtml('Deletion request received', `Confirmation code ${code} has been recorded and is pending processing.`));
+    }
+    catch (error) {
+        console.error('[threads] delete status failed', error);
+        res.status(500).send(renderThreadsManagementHtml('Deletion status unavailable', 'Unable to read deletion request status.'));
     }
 });
 const credentialsSchema = z.object({
