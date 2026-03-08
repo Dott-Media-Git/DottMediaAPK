@@ -1590,6 +1590,7 @@ export class AutoPostService {
         let baselineCandidate = null;
         let usedTableCursor = null;
         let trendContentKey = null;
+        const allowThirdPartyHighlightVideoRepublish = this.allowThirdPartyHighlightVideoRepublish();
         if (scope === 'football') {
             try {
                 const { sources } = await getUserTrendConfig(userId);
@@ -2011,7 +2012,7 @@ export class AutoPostService {
             imageUrls = await this.improveNewsImageQuality(imageUrls, platforms);
         }
         // Football trend videos must come from approved source feeds/highlight tweets only.
-        // No local/static fallback videos are allowed in this path.
+        // The only local/static exception is our owned Bwin branded highlight fallback for Meta feeds.
         const genericVideoSelection = this.selectNextGenericVideo(job, []);
         const trendVideoUrl = sourceVideoUrls[0] || (scope === 'football' ? undefined : genericVideoSelection.videoUrl);
         const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'instagram', 'linkedin']);
@@ -2019,7 +2020,9 @@ export class AutoPostService {
         const shouldUseVideoMode = scope === 'football' && selectedContentType === 'video';
         const weeklyAwardsEnabled = scope === 'football' && job.xWeeklyAwardsEnabled === true;
         const weeklyAwardsOnly = weeklyAwardsEnabled && job.xWeeklyAwardsOnly === true;
-        const allowThirdPartyHighlightVideoRepublish = this.allowThirdPartyHighlightVideoRepublish();
+        const ownedBwinHighlightVideoUrl = shouldUseVideoMode && !allowThirdPartyHighlightVideoRepublish
+            ? this.getOwnedBwinHighlightVideoUrl()
+            : '';
         let xHighlight = null;
         if (shouldUseVideoMode && hasXPlatform) {
             try {
@@ -2127,15 +2130,21 @@ export class AutoPostService {
                     }
                     continue;
                 }
+                const platformVideoUrl = shouldUseVideoMode && !allowThirdPartyHighlightVideoRepublish
+                    ? platform === 'facebook' || platform === 'instagram'
+                        ? ownedBwinHighlightVideoUrl || ''
+                        : ''
+                    : effectiveTrendVideoUrl || '';
                 const useVideo = shouldUseVideoMode &&
-                    Boolean(effectiveTrendVideoUrl) &&
+                    Boolean(platformVideoUrl) &&
                     videoCapablePlatforms.has(platform) &&
-                    allowThirdPartyHighlightVideoRepublish;
+                    (allowThirdPartyHighlightVideoRepublish ||
+                        ((platform === 'facebook' || platform === 'instagram') && Boolean(ownedBwinHighlightVideoUrl)));
                 const effectivePublisher = platform === 'instagram' && useVideo ? publishToInstagramReel : publisher;
                 const response = await effectivePublisher({
                     caption: perPlatformCaption,
                     imageUrls: useVideo ? [] : imageUrls,
-                    videoUrl: useVideo ? effectiveTrendVideoUrl || undefined : undefined,
+                    videoUrl: useVideo ? platformVideoUrl || undefined : undefined,
                     credentials,
                 });
                 results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
@@ -2144,7 +2153,7 @@ export class AutoPostService {
                     status: 'posted',
                     caption: perPlatformCaption,
                     remoteId: response.remoteId ?? null,
-                    videoUrl: useVideo ? effectiveTrendVideoUrl || undefined : undefined,
+                    videoUrl: useVideo ? platformVideoUrl || undefined : undefined,
                 });
             }
             catch (error) {
@@ -3014,6 +3023,29 @@ export class AutoPostService {
     }
     allowThirdPartyHighlightVideoRepublish() {
         return (process.env.ALLOW_THIRD_PARTY_HIGHLIGHT_VIDEO_REPUBLISH ?? 'false').toLowerCase() === 'true';
+    }
+    getOwnedBwinHighlightVideoUrl() {
+        const explicitUrl = (process.env.BWIN_HIGHLIGHT_BRANDED_VIDEO_URL ?? '').trim();
+        if (explicitUrl) {
+            return this.withCacheBuster(explicitUrl);
+        }
+        const baseUrl = this.getPublicBaseUrl();
+        if (!baseUrl)
+            return '';
+        const dir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim() || './public/fallback-videos';
+        const preferredNames = ['bwinbet-highlight-alert.mp4', 'bwinbet-highlight-alert.mov', 'bwinbet-highlight-alert.m4v'];
+        try {
+            const resolved = path.resolve(dir);
+            for (const name of preferredNames) {
+                if (fs.existsSync(path.join(resolved, name))) {
+                    return this.withCacheBuster(`${baseUrl}/public/fallback-videos/${encodeURIComponent(name)}`);
+                }
+            }
+        }
+        catch (error) {
+            console.warn('[autopost] Failed to resolve owned Bwin highlight video fallback.', error);
+        }
+        return '';
     }
     getXWeeklyAwardKeywords(job) {
         if (Array.isArray(job.xWeeklyAwardKeywords) && job.xWeeklyAwardKeywords.length) {
