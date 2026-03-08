@@ -1,16 +1,32 @@
 import fs from 'fs';
 import path from 'path';
+const resolveExistingPath = (candidates) => {
+    for (const candidate of candidates) {
+        if (candidate && fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+    return candidates[0];
+};
 const resolveBrandKitDir = () => {
     const override = process.env.BRAND_KIT_DIR?.trim();
     if (override)
         return override;
-    return path.join(process.cwd(), 'brand-kits');
+    return resolveExistingPath([
+        path.join(process.cwd(), 'brand-kits'),
+        path.join(process.cwd(), 'backend', 'brand-kits'),
+        path.join(path.resolve(process.cwd(), '..'), 'backend', 'brand-kits'),
+    ]);
 };
 const resolveBrandMapFile = () => {
     const override = process.env.BRAND_KIT_MAP_FILE?.trim();
     if (override)
         return override;
-    return path.join(resolveBrandKitDir(), 'client-map.json');
+    return resolveExistingPath([
+        path.join(resolveBrandKitDir(), 'client-map.json'),
+        path.join(process.cwd(), 'backend', 'brand-kits', 'client-map.json'),
+        path.join(path.resolve(process.cwd(), '..'), 'backend', 'brand-kits', 'client-map.json'),
+    ]);
 };
 export const loadBrandKit = (brandId) => {
     const dir = resolveBrandKitDir();
