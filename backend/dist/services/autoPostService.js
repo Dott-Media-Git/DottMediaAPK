@@ -1881,9 +1881,9 @@ export class AutoPostService {
                     const source = videoSelection.item.sourceLabel || videoSelection.candidate.sources?.[0] || 'Football source';
                     const title = videoSelection.item.title || videoSelection.candidate.topic || 'Football highlight';
                     caption = [
-                        'Football video highlight',
+                        allowThirdPartyHighlightVideoRepublish ? 'Football video highlight' : 'Highlight alert',
                         title,
-                        `Source: ${source}`,
+                        allowThirdPartyHighlightVideoRepublish ? `Source: ${source}` : `Official source: ${source}`,
                         `Updated: ${updatedStamp} (${scheduleTimezone})`,
                         'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
                     ]
@@ -1899,7 +1899,10 @@ export class AutoPostService {
                         sourceVideoUrls.push(...Array.from(new Set(nextVideoPool)).slice(0, 10));
                     }
                     const resolvedImage = await this.resolveBestNewsImageUrl(videoSelection.item.imageUrl?.trim(), videoSelection.item.link?.trim());
-                    if (resolvedImage) {
+                    if (!allowThirdPartyHighlightVideoRepublish) {
+                        imageUrls = await this.generateFootballCardImage(`Create a premium branded football highlight alert card for Bwinbet UG. Headline: "${title}". Secondary line: "Official source: ${source}". Bold black-and-gold sports editorial design, sharp typography, dynamic football energy, no copyrighted logos, no watermarks, no club crests.`, new Set(this.getRecentImageHistory(job)));
+                    }
+                    else if (resolvedImage) {
                         imageUrls = [resolvedImage];
                     }
                     else if (!imageUrls.length) {
