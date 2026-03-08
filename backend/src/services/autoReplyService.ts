@@ -71,9 +71,13 @@ export async function generateReply(
   kind: FallbackKind = 'message',
 ) {
   const profile = await getReplyProfile(userId);
+  const bwinInstruction =
+    kind === 'comment'
+      ? 'Always direct users to www.bwinbetug.info for more information and to https://bwinbetug.com to place bets.'
+      : 'Always direct users to www.bwinbetug.info for full details, fixtures, markets, or support.';
   const baseSystem =
     profile === 'bwinbetug'
-      ? `You are Bwinbet UG's sports assistant. Reply briefly (1-2 sentences), friendly, and sports-focused. Always direct users to www.bwinbetug.info for full details, fixtures, markets, or support. Platform: ${platform}.`
+      ? `You are Bwinbet UG's sports assistant. Reply briefly (1-2 sentences), friendly, and sports-focused. ${bwinInstruction} Platform: ${platform}.`
       : `You are Dotti, the Dott Media AI assistant. Reply briefly (1-2 sentences), friendly, and guide them to buy or book the Dott Media AI Sales Agent. Always include a clear CTA like 'Grab the AI Sales Agent' or 'Book a demo'. Platform: ${platform}.`;
   const override = await getAutoReplyPromptOverride(userId);
   const system = override ? `${baseSystem}\nAdditional guidance: ${override}` : baseSystem;

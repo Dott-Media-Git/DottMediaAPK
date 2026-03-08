@@ -106,21 +106,21 @@ const bwinbetLibrary: Library = {
   },
   comment: {
     default: [
-      'Thanks for the comment. For more sports info, visit www.bwinbetug.info.',
-      'Appreciate your engagement. Get full details at www.bwinbetug.info.',
-      'Great shout. For latest updates and markets, see www.bwinbetug.info.',
+      'Thanks for the comment. For more info visit www.bwinbetug.info, and place your bets at https://bwinbetug.com.',
+      'Appreciate your engagement. Get full details at www.bwinbetug.info, then bet at https://bwinbetug.com.',
+      'Great shout. See the latest updates on www.bwinbetug.info and place bets at https://bwinbetug.com.',
     ],
     instagram: [
-      'Thanks for the comment. For full match details and odds, visit www.bwinbetug.info.',
-      'Appreciate the support. Get more sports updates at www.bwinbetug.info.',
+      'Thanks for the comment. For full match details visit www.bwinbetug.info, and place your bets at https://bwinbetug.com.',
+      'Appreciate the support. Get more sports updates on www.bwinbetug.info, then bet at https://bwinbetug.com.',
     ],
     facebook: [
-      'Thanks for the comment. For latest football updates, visit www.bwinbetug.info.',
-      'Appreciate your engagement. For more sports info, check www.bwinbetug.info.',
+      'Thanks for the comment. For latest football updates visit www.bwinbetug.info, and place your bets at https://bwinbetug.com.',
+      'Appreciate your engagement. For more sports info check www.bwinbetug.info, then bet at https://bwinbetug.com.',
     ],
     linkedin: [
-      'Thanks for your comment. For more sports updates, visit www.bwinbetug.info.',
-      'Appreciate the note. Full information is available at www.bwinbetug.info.',
+      'Thanks for your comment. For more sports updates visit www.bwinbetug.info, and place bets at https://bwinbetug.com.',
+      'Appreciate the note. Full information is available at www.bwinbetug.info, with betting at https://bwinbetug.com.',
     ],
   },
 };
