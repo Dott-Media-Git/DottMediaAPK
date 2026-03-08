@@ -1,6 +1,8 @@
 import axios from 'axios';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
+const THREADS_GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
+const THREADS_GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
 
 type FacebookPageInfo = {
   pageId: string;
@@ -9,6 +11,11 @@ type FacebookPageInfo = {
 };
 
 type InstagramAccountInfo = {
+  accountId: string;
+  username?: string;
+};
+
+type ThreadsAccountInfo = {
   accountId: string;
   username?: string;
 };
@@ -65,6 +72,63 @@ export async function resolveInstagramAccountId(accessToken: string): Promise<In
     }
   } catch (error) {
     console.warn('[social] failed to resolve Instagram account id', (error as Error).message);
+  }
+
+  return null;
+}
+
+export async function resolveThreadsAccountId(
+  accessToken: string,
+  instagramAccountId?: string,
+): Promise<ThreadsAccountInfo | null> {
+  const token = accessToken?.trim();
+  if (!token) return null;
+
+  try {
+    const response = await axios.get(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/me`, {
+      params: {
+        fields: 'id,username',
+        access_token: token,
+      },
+    });
+    const id = response.data?.id as string | undefined;
+    if (id) {
+      return { accountId: id, username: response.data?.username as string | undefined };
+    }
+  } catch (error) {
+    console.warn('[social] failed to resolve Threads account id via graph.threads.net /me', (error as Error).message);
+  }
+
+  if (instagramAccountId?.trim()) {
+    try {
+      const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${instagramAccountId.trim()}`, {
+        params: {
+          fields: 'threads_profile{id,username}',
+          access_token: token,
+        },
+      });
+      const profile = response.data?.threads_profile as { id?: string; username?: string } | undefined;
+      if (profile?.id) {
+        return { accountId: profile.id, username: profile.username };
+      }
+    } catch (error) {
+      console.warn('[social] failed to resolve Threads account id via Instagram account', (error as Error).message);
+    }
+  }
+
+  try {
+    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/me`, {
+      params: {
+        fields: 'threads_profile{id,username}',
+        access_token: token,
+      },
+    });
+    const profile = response.data?.threads_profile as { id?: string; username?: string } | undefined;
+    if (profile?.id) {
+      return { accountId: profile.id, username: profile.username };
+    }
+  } catch (error) {
+    console.warn('[social] failed to resolve Threads account id via /me', (error as Error).message);
   }
 
   return null;
