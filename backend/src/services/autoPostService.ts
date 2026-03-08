@@ -229,19 +229,32 @@ export class AutoPostService {
     'Ask for a quick demo today.',
   ];
   private defaultXHighlightAccounts = [
-    'SkySportsNews',
-    'SkySportsPL',
-    'ESPNFC',
+    'ChampionsLeague',
     'SerieA_EN',
     'LaLigaEN',
     'Ligue1_ENG',
     'Bundesliga_EN',
-    'ChampionsLeague',
   ];
+  private trustedXHighlightAccounts = new Set([
+    'championsleague',
+    'seriea_en',
+    'laligaen',
+    'ligue1_eng',
+    'bundesliga_en',
+  ]);
   private xBlockedHighlightAccounts = new Set([
     'premierleague',
     'premier_league',
     'premier-league',
+    'skysportsnews',
+    'skysportspl',
+    'espnfc',
+    '433',
+    'brfootball',
+    'onefootball',
+    'cbssportsgolazo',
+    'tntsports',
+    'footballontnt',
   ]);
   private defaultXWeeklyAwardKeywords = [
     'player of the week',
@@ -2318,6 +2331,7 @@ export class AutoPostService {
     const shouldUseVideoMode = scope === 'football' && selectedContentType === 'video';
     const weeklyAwardsEnabled = scope === 'football' && job.xWeeklyAwardsEnabled === true;
     const weeklyAwardsOnly = weeklyAwardsEnabled && job.xWeeklyAwardsOnly === true;
+    const allowThirdPartyHighlightVideoRepublish = this.allowThirdPartyHighlightVideoRepublish();
     let xHighlight: {
       tweetId: string;
       username: string;
@@ -2400,6 +2414,7 @@ export class AutoPostService {
             this.applyBwinBetTracking(relatedCaptionTemplate, userId, platform),
           );
           const quoteCaption = relatedCaption;
+          const sourceTweetUrl = `https://x.com/${xHighlight.username}/status/${xHighlight.tweetId}`;
           let response: { remoteId?: string } | null = null;
           let finalCaption = quoteCaption;
           try {
@@ -2412,11 +2427,9 @@ export class AutoPostService {
           } catch (quoteError: any) {
             const forbidden = Number(quoteError?.code ?? quoteError?.status) === 403;
             if (!forbidden) throw quoteError;
-            const sourceVideoUrl = await this.resolveVideoUrlFromTweet(xHighlight.tweetId, credentials);
-            if (!sourceVideoUrl) throw quoteError;
             finalCaption = this.normalizeXCaption(
               this.applyBwinBetTracking(
-                this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone),
+                `${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nOfficial clip: ${sourceTweetUrl}`,
                 userId,
                 platform,
               ),
@@ -2424,7 +2437,6 @@ export class AutoPostService {
             response = await publisher({
               caption: finalCaption,
               imageUrls: [],
-              videoUrl: sourceVideoUrl,
               credentials,
             });
           }
@@ -2453,7 +2465,8 @@ export class AutoPostService {
         const useVideo =
           shouldUseVideoMode &&
           Boolean(effectiveTrendVideoUrl) &&
-          videoCapablePlatforms.has(platform);
+          videoCapablePlatforms.has(platform) &&
+          allowThirdPartyHighlightVideoRepublish;
         const effectivePublisher =
           platform === 'instagram' && useVideo ? publishToInstagramReel : publisher;
         const response = await effectivePublisher({
@@ -3376,15 +3389,20 @@ export class AutoPostService {
 
   private getXHighlightAccounts(job: AutoPostJob) {
     const isBlocked = (value: string) => this.xBlockedHighlightAccounts.has(value.toLowerCase());
+    const isTrusted = (value: string) => this.trustedXHighlightAccounts.has(value.toLowerCase());
     const normalize = (value: unknown) => String(value || '').replace(/^@/, '').trim();
 
     if (Array.isArray(job.xHighlightAccounts) && job.xHighlightAccounts.length) {
       const provided = job.xHighlightAccounts
         .map(normalize)
-        .filter(value => Boolean(value) && !isBlocked(value));
+        .filter(value => Boolean(value) && !isBlocked(value) && isTrusted(value));
       if (provided.length) return provided.slice(0, 15);
     }
-    return this.defaultXHighlightAccounts.filter(value => !isBlocked(value));
+    return this.defaultXHighlightAccounts.filter(value => !isBlocked(value) && isTrusted(value));
+  }
+
+  private allowThirdPartyHighlightVideoRepublish() {
+    return (process.env.ALLOW_THIRD_PARTY_HIGHLIGHT_VIDEO_REPUBLISH ?? 'false').toLowerCase() === 'true';
   }
 
   private getXWeeklyAwardKeywords(job: AutoPostJob) {

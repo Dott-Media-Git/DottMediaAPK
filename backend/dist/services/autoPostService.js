@@ -73,19 +73,32 @@ export class AutoPostService {
             'Ask for a quick demo today.',
         ];
         this.defaultXHighlightAccounts = [
-            'SkySportsNews',
-            'SkySportsPL',
-            'ESPNFC',
+            'ChampionsLeague',
             'SerieA_EN',
             'LaLigaEN',
             'Ligue1_ENG',
             'Bundesliga_EN',
-            'ChampionsLeague',
         ];
+        this.trustedXHighlightAccounts = new Set([
+            'championsleague',
+            'seriea_en',
+            'laligaen',
+            'ligue1_eng',
+            'bundesliga_en',
+        ]);
         this.xBlockedHighlightAccounts = new Set([
             'premierleague',
             'premier_league',
             'premier-league',
+            'skysportsnews',
+            'skysportspl',
+            'espnfc',
+            '433',
+            'brfootball',
+            'onefootball',
+            'cbssportsgolazo',
+            'tntsports',
+            'footballontnt',
         ]);
         this.defaultXWeeklyAwardKeywords = [
             'player of the week',
@@ -2003,6 +2016,7 @@ export class AutoPostService {
         const shouldUseVideoMode = scope === 'football' && selectedContentType === 'video';
         const weeklyAwardsEnabled = scope === 'football' && job.xWeeklyAwardsEnabled === true;
         const weeklyAwardsOnly = weeklyAwardsEnabled && job.xWeeklyAwardsOnly === true;
+        const allowThirdPartyHighlightVideoRepublish = this.allowThirdPartyHighlightVideoRepublish();
         let xHighlight = null;
         if (shouldUseVideoMode && hasXPlatform) {
             try {
@@ -2067,6 +2081,7 @@ export class AutoPostService {
                         : this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone);
                     const relatedCaption = this.normalizeXCaption(this.applyBwinBetTracking(relatedCaptionTemplate, userId, platform));
                     const quoteCaption = relatedCaption;
+                    const sourceTweetUrl = `https://x.com/${xHighlight.username}/status/${xHighlight.tweetId}`;
                     let response = null;
                     let finalCaption = quoteCaption;
                     try {
@@ -2081,14 +2096,10 @@ export class AutoPostService {
                         const forbidden = Number(quoteError?.code ?? quoteError?.status) === 403;
                         if (!forbidden)
                             throw quoteError;
-                        const sourceVideoUrl = await this.resolveVideoUrlFromTweet(xHighlight.tweetId, credentials);
-                        if (!sourceVideoUrl)
-                            throw quoteError;
-                        finalCaption = this.normalizeXCaption(this.applyBwinBetTracking(this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone), userId, platform));
+                        finalCaption = this.normalizeXCaption(this.applyBwinBetTracking(`${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nOfficial clip: ${sourceTweetUrl}`, userId, platform));
                         response = await publisher({
                             caption: finalCaption,
                             imageUrls: [],
-                            videoUrl: sourceVideoUrl,
                             credentials,
                         });
                     }
@@ -2115,7 +2126,8 @@ export class AutoPostService {
                 }
                 const useVideo = shouldUseVideoMode &&
                     Boolean(effectiveTrendVideoUrl) &&
-                    videoCapablePlatforms.has(platform);
+                    videoCapablePlatforms.has(platform) &&
+                    allowThirdPartyHighlightVideoRepublish;
                 const effectivePublisher = platform === 'instagram' && useVideo ? publishToInstagramReel : publisher;
                 const response = await effectivePublisher({
                     caption: perPlatformCaption,
@@ -2986,15 +2998,19 @@ export class AutoPostService {
     }
     getXHighlightAccounts(job) {
         const isBlocked = (value) => this.xBlockedHighlightAccounts.has(value.toLowerCase());
+        const isTrusted = (value) => this.trustedXHighlightAccounts.has(value.toLowerCase());
         const normalize = (value) => String(value || '').replace(/^@/, '').trim();
         if (Array.isArray(job.xHighlightAccounts) && job.xHighlightAccounts.length) {
             const provided = job.xHighlightAccounts
                 .map(normalize)
-                .filter(value => Boolean(value) && !isBlocked(value));
+                .filter(value => Boolean(value) && !isBlocked(value) && isTrusted(value));
             if (provided.length)
                 return provided.slice(0, 15);
         }
-        return this.defaultXHighlightAccounts.filter(value => !isBlocked(value));
+        return this.defaultXHighlightAccounts.filter(value => !isBlocked(value) && isTrusted(value));
+    }
+    allowThirdPartyHighlightVideoRepublish() {
+        return (process.env.ALLOW_THIRD_PARTY_HIGHLIGHT_VIDEO_REPUBLISH ?? 'false').toLowerCase() === 'true';
     }
     getXWeeklyAwardKeywords(job) {
         if (Array.isArray(job.xWeeklyAwardKeywords) && job.xWeeklyAwardKeywords.length) {
