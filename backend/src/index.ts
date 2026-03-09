@@ -31,11 +31,13 @@ import footballTrendRoutes from './routes/footballTrendRoutes';
 import trendRoutes from './routes/trendRoutes';
 import socialRoutes from './routes/socialRoutes';
 import metaWebhookRoutes from './routes/metaWebhookRoutes';
+import metaIntegrationRoutes from './routes/metaIntegrationRoutes';
 import authRoutes from './routes/authRoutes';
 import youtubeIntegrationRoutes from './routes/youtubeIntegrationRoutes';
 import tiktokIntegrationRoutes from './routes/tiktokIntegrationRoutes';
 import instagramReelsSoraRoutes from './routes/instagramReelsSoraRoutes';
 import publicMediaRoutes from './routes/publicMediaRoutes';
+import redirectRoutes from './routes/redirectRoutes';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher';
 import stripeRoutes from './routes/stripeRoutes';
 import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
@@ -154,11 +156,13 @@ if (footballTrendsEnabled) {
   console.info('[football-trends] Routes disabled (set FOOTBALL_TRENDS_ENABLED=true).');
 }
 app.use('/api', socialRoutes);
+app.use('/', metaIntegrationRoutes);
 app.use('/api', authRoutes);
 app.use('/', youtubeIntegrationRoutes);
 app.use('/', tiktokIntegrationRoutes);
 app.use('/', instagramReelsSoraRoutes);
 app.use('/', publicMediaRoutes);
+app.use('/', redirectRoutes);
 app.use('/', adminRoutes);
 
 // Direct autopost endpoint to ensure availability (mirrors socialRoutes autopost handler)

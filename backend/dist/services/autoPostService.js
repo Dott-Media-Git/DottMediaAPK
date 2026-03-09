@@ -682,6 +682,20 @@ export class AutoPostService {
             return 'youtube';
         return 'social';
     }
+    normalizeBwinTrackingPlacement(platform) {
+        const value = (platform ?? '').trim().toLowerCase();
+        if (!value)
+            return 'post';
+        if (value.includes('story'))
+            return 'story';
+        if (value.includes('reel'))
+            return 'reel';
+        if (value.includes('comment'))
+            return 'comment';
+        if (value.includes('dm') || value.includes('message'))
+            return 'dm';
+        return 'post';
+    }
     buildBwinTrackedBetUrl(ownerId, platform) {
         const normalizedOwnerId = ownerId.trim();
         if (!normalizedOwnerId)
@@ -692,17 +706,35 @@ export class AutoPostService {
         const params = new URLSearchParams({
             ownerId: normalizedOwnerId,
             source: this.normalizeBwinTrackingSource(platform),
+            placement: this.normalizeBwinTrackingPlacement(platform),
         });
-        return `${baseUrl}/api/stats/bwinRedirect?${params.toString()}`;
+        return `${baseUrl}/r/bwin?${params.toString()}`;
+    }
+    buildBwinTrackedInfoUrl(ownerId, platform) {
+        const normalizedOwnerId = ownerId.trim();
+        if (!normalizedOwnerId)
+            return 'https://www.bwinbetug.info';
+        const baseUrl = this.getPublicBaseUrl();
+        if (!baseUrl)
+            return 'https://www.bwinbetug.info';
+        const params = new URLSearchParams({
+            ownerId: normalizedOwnerId,
+            source: this.normalizeBwinTrackingSource(platform),
+            placement: this.normalizeBwinTrackingPlacement(platform),
+        });
+        return `${baseUrl}/r/bwin-info?${params.toString()}`;
     }
     applyBwinBetTracking(caption, ownerId, platform) {
-        if (!caption || !/bwinbetug\.com/i.test(caption))
+        if (!caption || !/bwinbetug\.(?:com|info)/i.test(caption))
             return caption;
-        const useRedirectLinks = (process.env.BWIN_TRACK_REDIRECT_URLS ?? 'false').toLowerCase() === 'true';
+        const useRedirectLinks = (process.env.BWIN_TRACK_REDIRECT_URLS ?? 'true').toLowerCase() !== 'false';
         if (!useRedirectLinks)
             return caption;
         const trackedUrl = this.buildBwinTrackedBetUrl(ownerId, platform);
-        return caption.replace(/(?:https?:\/\/)?(?:www\.)?bwinbetug\.com\b\/?/gi, trackedUrl);
+        const trackedInfoUrl = this.buildBwinTrackedInfoUrl(ownerId, platform);
+        return caption
+            .replace(/(?:https?:\/\/)?(?:www\.)?bwinbetug\.com\b\/?/gi, trackedUrl)
+            .replace(/(?:https?:\/\/)?(?:www\.)?bwinbetug\.info\b\/?/gi, trackedInfoUrl);
     }
     applyBwinInstagramSportsHashtags(caption, platform) {
         const normalizedPlatform = (platform ?? '').trim().toLowerCase();

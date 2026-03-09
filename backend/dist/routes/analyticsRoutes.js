@@ -40,8 +40,36 @@ const normalizeTrafficSource = (value) => {
         return 'threads';
     if (raw.includes('twitter') || raw === 'x' || raw.includes('x.com') || raw.includes('t.co'))
         return 'x';
+    if (raw.includes('linkedin'))
+        return 'linkedin';
+    if (raw.includes('tiktok') || raw.includes('tik tok'))
+        return 'tiktok';
+    if (raw.includes('youtube') || raw.includes('youtu.be'))
+        return 'youtube';
+    if (raw.includes('whatsapp') || raw.includes('wa.me'))
+        return 'whatsapp';
     if (raw.includes('web') || raw.includes('direct'))
         return 'web';
+    return 'other';
+};
+const normalizeTrafficPlacement = (value) => {
+    const raw = (value ?? '').trim().toLowerCase();
+    if (!raw)
+        return 'other';
+    if (raw.includes('bio') || raw.includes('profile'))
+        return 'bio';
+    if (raw.includes('story'))
+        return 'story';
+    if (raw.includes('reel'))
+        return 'reel';
+    if (raw.includes('dm') || raw.includes('message'))
+        return 'dm';
+    if (raw.includes('comment'))
+        return 'comment';
+    if (raw.includes('web') || raw.includes('site') || raw.includes('page'))
+        return 'website';
+    if (raw.includes('post') || raw.includes('caption'))
+        return 'post';
     return 'other';
 };
 const inferTrafficSource = (input) => {
@@ -57,6 +85,14 @@ const inferTrafficSource = (input) => {
         return 'threads';
     if (referrer.includes('t.co') || referrer.includes('x.com') || referrer.includes('twitter'))
         return 'x';
+    if (referrer.includes('linkedin'))
+        return 'linkedin';
+    if (referrer.includes('tiktok'))
+        return 'tiktok';
+    if (referrer.includes('youtube') || referrer.includes('youtu.be'))
+        return 'youtube';
+    if (referrer.includes('whatsapp') || referrer.includes('wa.me'))
+        return 'whatsapp';
     return 'web';
 };
 router.get('/analytics', requireFirebase, async (req, res, next) => {
@@ -126,6 +162,7 @@ router.post('/stats/webTrack', async (req, res, next) => {
             utmSource: typeof req.body?.utmSource === 'string' ? req.body.utmSource : undefined,
             referrer: typeof req.body?.referrer === 'string' ? req.body.referrer : req.get('referer') ?? undefined,
         });
+        const placement = normalizeTrafficPlacement(typeof req.body?.placement === 'string' ? req.body.placement : undefined);
         const isBwinRedirect = event !== 'redirect_click' || /(^|\/|\.)bwinbetug\.com(\/|$)/i.test(targetUrl);
         const visitors = event === 'visit' ? 1 : 0;
         const interactions = event === 'interaction' ? 1 : 0;
@@ -136,6 +173,7 @@ router.post('/stats/webTrack', async (req, res, next) => {
                 interactions,
                 redirectClicks,
                 source,
+                placement,
             }, { scopeId: scopeId || undefined, userId: ownerId || undefined });
         }
         res.json({ ok: true, source, tracked: Boolean(visitors || interactions || redirectClicks) });
@@ -148,11 +186,13 @@ router.get('/stats/bwinRedirect', async (req, res) => {
     const ownerId = typeof req.query.ownerId === 'string' ? req.query.ownerId.trim() : '';
     const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId.trim() : '';
     const source = normalizeTrafficSource(typeof req.query.source === 'string' ? req.query.source : 'social');
+    const placement = normalizeTrafficPlacement(typeof req.query.placement === 'string' ? req.query.placement : 'post');
     try {
         if (ownerId || scopeId) {
             await incrementWebTrafficAnalytics({
                 redirectClicks: 1,
                 source,
+                placement,
             }, { scopeId: scopeId || undefined, userId: ownerId || undefined });
         }
     }

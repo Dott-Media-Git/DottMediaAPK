@@ -630,7 +630,21 @@ export type WebTrafficSource =
   | 'instagram'
   | 'threads'
   | 'x'
+  | 'linkedin'
+  | 'tiktok'
+  | 'youtube'
+  | 'whatsapp'
   | 'web'
+  | 'other';
+
+export type WebTrafficPlacement =
+  | 'bio'
+  | 'post'
+  | 'story'
+  | 'reel'
+  | 'dm'
+  | 'comment'
+  | 'website'
   | 'other';
 
 export type WebTrafficAnalyticsUpdate = {
@@ -638,6 +652,7 @@ export type WebTrafficAnalyticsUpdate = {
   interactions?: number;
   redirectClicks?: number;
   source?: string;
+  placement?: string;
 };
 
 export type WebTrafficStats = {
@@ -648,6 +663,10 @@ export type WebTrafficStats = {
   sourceVisitors: Record<string, number>;
   sourceInteractions: Record<string, number>;
   sourceRedirectClicks: Record<string, number>;
+  placementVisitors: Record<string, number>;
+  placementInteractions: Record<string, number>;
+  placementRedirectClicks: Record<string, number>;
+  sourcePlacementRedirectClicks: Record<string, number>;
 };
 
 type WebTrafficFallbackStats = {
@@ -657,6 +676,10 @@ type WebTrafficFallbackStats = {
   sourceVisitors: Record<string, number>;
   sourceInteractions: Record<string, number>;
   sourceRedirectClicks: Record<string, number>;
+  placementVisitors: Record<string, number>;
+  placementInteractions: Record<string, number>;
+  placementRedirectClicks: Record<string, number>;
+  sourcePlacementRedirectClicks: Record<string, number>;
 };
 
 const webTrafficFallbackCache = new Map<string, WebTrafficFallbackStats>();
@@ -688,6 +711,7 @@ function setWebTrafficFallback(scope: AnalyticsScope | undefined, stats: WebTraf
 function applyWebTrafficFallbackUpdate(
   scope: AnalyticsScope | undefined,
   sourceKey: string,
+  placementKey: string,
   visitors: number,
   interactions: number,
   redirectClicks: number,
@@ -701,14 +725,29 @@ function applyWebTrafficFallbackUpdate(
       sourceVisitors: {},
       sourceInteractions: {},
       sourceRedirectClicks: {},
+      placementVisitors: {},
+      placementInteractions: {},
+      placementRedirectClicks: {},
+      sourcePlacementRedirectClicks: {},
     } as WebTrafficFallbackStats);
 
   const sourceVisitors = { ...(base.sourceVisitors ?? {}) };
   const sourceInteractions = { ...(base.sourceInteractions ?? {}) };
   const sourceRedirectClicks = { ...(base.sourceRedirectClicks ?? {}) };
+  const placementVisitors = { ...(base.placementVisitors ?? {}) };
+  const placementInteractions = { ...(base.placementInteractions ?? {}) };
+  const placementRedirectClicks = { ...(base.placementRedirectClicks ?? {}) };
+  const sourcePlacementRedirectClicks = { ...(base.sourcePlacementRedirectClicks ?? {}) };
   if (visitors > 0) sourceVisitors[sourceKey] = (sourceVisitors[sourceKey] ?? 0) + visitors;
   if (interactions > 0) sourceInteractions[sourceKey] = (sourceInteractions[sourceKey] ?? 0) + interactions;
   if (redirectClicks > 0) sourceRedirectClicks[sourceKey] = (sourceRedirectClicks[sourceKey] ?? 0) + redirectClicks;
+  if (visitors > 0) placementVisitors[placementKey] = (placementVisitors[placementKey] ?? 0) + visitors;
+  if (interactions > 0) placementInteractions[placementKey] = (placementInteractions[placementKey] ?? 0) + interactions;
+  if (redirectClicks > 0) {
+    placementRedirectClicks[placementKey] = (placementRedirectClicks[placementKey] ?? 0) + redirectClicks;
+    sourcePlacementRedirectClicks[`${sourceKey}:${placementKey}`] =
+      (sourcePlacementRedirectClicks[`${sourceKey}:${placementKey}`] ?? 0) + redirectClicks;
+  }
 
   setWebTrafficFallback(scope, {
     visitors: base.visitors + visitors,
@@ -717,6 +756,10 @@ function applyWebTrafficFallbackUpdate(
     sourceVisitors,
     sourceInteractions,
     sourceRedirectClicks,
+    placementVisitors,
+    placementInteractions,
+    placementRedirectClicks,
+    sourcePlacementRedirectClicks,
   });
 }
 
@@ -736,7 +779,24 @@ const normalizeWebTrafficSource = (value?: string): WebTrafficSource => {
   if (raw.includes('facebook') || raw === 'fb') return 'facebook';
   if (raw.includes('threads')) return 'threads';
   if (raw.includes('twitter') || raw === 'x' || raw.includes('x.com') || raw.includes('t.co')) return 'x';
+  if (raw.includes('linkedin')) return 'linkedin';
+  if (raw.includes('tiktok') || raw.includes('tik tok')) return 'tiktok';
+  if (raw.includes('youtube') || raw.includes('youtu.be')) return 'youtube';
+  if (raw.includes('whatsapp') || raw.includes('wa.me')) return 'whatsapp';
   if (raw.includes('web') || raw.includes('direct')) return 'web';
+  return 'other';
+};
+
+const normalizeWebTrafficPlacement = (value?: string): WebTrafficPlacement => {
+  const raw = (value ?? '').trim().toLowerCase();
+  if (!raw) return 'other';
+  if (raw.includes('bio') || raw.includes('profile')) return 'bio';
+  if (raw.includes('story')) return 'story';
+  if (raw.includes('reel')) return 'reel';
+  if (raw.includes('dm') || raw.includes('message')) return 'dm';
+  if (raw.includes('comment')) return 'comment';
+  if (raw.includes('web') || raw.includes('site') || raw.includes('page')) return 'website';
+  if (raw.includes('post') || raw.includes('caption')) return 'post';
   return 'other';
 };
 
@@ -747,7 +807,8 @@ export async function incrementWebTrafficAnalytics(update: WebTrafficAnalyticsUp
   if (!visitors && !interactions && !redirectClicks) return;
 
   const sourceKey = normalizeWebTrafficSource(update.source);
-  applyWebTrafficFallbackUpdate(scope, sourceKey, visitors, interactions, redirectClicks);
+  const placementKey = normalizeWebTrafficPlacement(update.placement);
+  applyWebTrafficFallbackUpdate(scope, sourceKey, placementKey, visitors, interactions, redirectClicks);
 
   const date = new Date().toISOString().slice(0, 10);
   const docRef = webTrafficAnalyticsCollection(scope).doc(date);
@@ -763,21 +824,34 @@ export async function incrementWebTrafficAnalytics(update: WebTrafficAnalyticsUp
             sourceVisitors?: Record<string, number>;
             sourceInteractions?: Record<string, number>;
             sourceRedirectClicks?: Record<string, number>;
+            placementVisitors?: Record<string, number>;
+            placementInteractions?: Record<string, number>;
+            placementRedirectClicks?: Record<string, number>;
+            sourcePlacementRedirectClicks?: Record<string, number>;
           })
         : {};
 
       const sourceVisitors = { ...(existing.sourceVisitors ?? {}) };
       const sourceInteractions = { ...(existing.sourceInteractions ?? {}) };
       const sourceRedirectClicks = { ...(existing.sourceRedirectClicks ?? {}) };
+      const placementVisitors = { ...(existing.placementVisitors ?? {}) };
+      const placementInteractions = { ...(existing.placementInteractions ?? {}) };
+      const placementRedirectClicks = { ...(existing.placementRedirectClicks ?? {}) };
+      const sourcePlacementRedirectClicks = { ...(existing.sourcePlacementRedirectClicks ?? {}) };
 
       if (visitors > 0) {
         sourceVisitors[sourceKey] = (sourceVisitors[sourceKey] ?? 0) + visitors;
+        placementVisitors[placementKey] = (placementVisitors[placementKey] ?? 0) + visitors;
       }
       if (interactions > 0) {
         sourceInteractions[sourceKey] = (sourceInteractions[sourceKey] ?? 0) + interactions;
+        placementInteractions[placementKey] = (placementInteractions[placementKey] ?? 0) + interactions;
       }
       if (redirectClicks > 0) {
         sourceRedirectClicks[sourceKey] = (sourceRedirectClicks[sourceKey] ?? 0) + redirectClicks;
+        placementRedirectClicks[placementKey] = (placementRedirectClicks[placementKey] ?? 0) + redirectClicks;
+        sourcePlacementRedirectClicks[`${sourceKey}:${placementKey}`] =
+          (sourcePlacementRedirectClicks[`${sourceKey}:${placementKey}`] ?? 0) + redirectClicks;
       }
 
       tx.set(
@@ -790,6 +864,10 @@ export async function incrementWebTrafficAnalytics(update: WebTrafficAnalyticsUp
           sourceVisitors,
           sourceInteractions,
           sourceRedirectClicks,
+          placementVisitors,
+          placementInteractions,
+          placementRedirectClicks,
+          sourcePlacementRedirectClicks,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true },
@@ -804,12 +882,17 @@ export async function incrementWebTrafficAnalytics(update: WebTrafficAnalyticsUp
     };
     if (visitors > 0) {
       summaryPayload[`sourceVisitors.${sourceKey}`] = admin.firestore.FieldValue.increment(visitors);
+      summaryPayload[`placementVisitors.${placementKey}`] = admin.firestore.FieldValue.increment(visitors);
     }
     if (interactions > 0) {
       summaryPayload[`sourceInteractions.${sourceKey}`] = admin.firestore.FieldValue.increment(interactions);
+      summaryPayload[`placementInteractions.${placementKey}`] = admin.firestore.FieldValue.increment(interactions);
     }
     if (redirectClicks > 0) {
       summaryPayload[`sourceRedirectClicks.${sourceKey}`] = admin.firestore.FieldValue.increment(redirectClicks);
+      summaryPayload[`placementRedirectClicks.${placementKey}`] = admin.firestore.FieldValue.increment(redirectClicks);
+      summaryPayload[`sourcePlacementRedirectClicks.${sourceKey}:${placementKey}`] =
+        admin.firestore.FieldValue.increment(redirectClicks);
     }
 
     await webTrafficSummaryDoc(scope).set(summaryPayload, { merge: true });
@@ -999,6 +1082,10 @@ export async function getWebTrafficStats(scope?: AnalyticsScope): Promise<WebTra
       sourceVisitors: normalizeCounterMap(data.sourceVisitors),
       sourceInteractions: normalizeCounterMap(data.sourceInteractions),
       sourceRedirectClicks: normalizeCounterMap(data.sourceRedirectClicks),
+      placementVisitors: normalizeCounterMap(data.placementVisitors),
+      placementInteractions: normalizeCounterMap(data.placementInteractions),
+      placementRedirectClicks: normalizeCounterMap(data.placementRedirectClicks),
+      sourcePlacementRedirectClicks: normalizeCounterMap(data.sourcePlacementRedirectClicks),
     };
     if (webTrafficScore(result) > 0) {
       setWebTrafficFallback(scope, {
@@ -1008,6 +1095,10 @@ export async function getWebTrafficStats(scope?: AnalyticsScope): Promise<WebTra
         sourceVisitors: result.sourceVisitors,
         sourceInteractions: result.sourceInteractions,
         sourceRedirectClicks: result.sourceRedirectClicks,
+        placementVisitors: result.placementVisitors,
+        placementInteractions: result.placementInteractions,
+        placementRedirectClicks: result.placementRedirectClicks,
+        sourcePlacementRedirectClicks: result.sourcePlacementRedirectClicks,
       });
       return result;
     }
@@ -1022,6 +1113,10 @@ export async function getWebTrafficStats(scope?: AnalyticsScope): Promise<WebTra
         sourceVisitors: { ...(cached.sourceVisitors ?? {}) },
         sourceInteractions: { ...(cached.sourceInteractions ?? {}) },
         sourceRedirectClicks: { ...(cached.sourceRedirectClicks ?? {}) },
+        placementVisitors: { ...(cached.placementVisitors ?? {}) },
+        placementInteractions: { ...(cached.placementInteractions ?? {}) },
+        placementRedirectClicks: { ...(cached.placementRedirectClicks ?? {}) },
+        sourcePlacementRedirectClicks: { ...(cached.sourcePlacementRedirectClicks ?? {}) },
       };
     }
     return result;
@@ -1038,6 +1133,10 @@ export async function getWebTrafficStats(scope?: AnalyticsScope): Promise<WebTra
         sourceVisitors: { ...(cached.sourceVisitors ?? {}) },
         sourceInteractions: { ...(cached.sourceInteractions ?? {}) },
         sourceRedirectClicks: { ...(cached.sourceRedirectClicks ?? {}) },
+        placementVisitors: { ...(cached.placementVisitors ?? {}) },
+        placementInteractions: { ...(cached.placementInteractions ?? {}) },
+        placementRedirectClicks: { ...(cached.placementRedirectClicks ?? {}) },
+        sourcePlacementRedirectClicks: { ...(cached.sourcePlacementRedirectClicks ?? {}) },
       };
     }
     return {
@@ -1048,6 +1147,10 @@ export async function getWebTrafficStats(scope?: AnalyticsScope): Promise<WebTra
       sourceVisitors: {},
       sourceInteractions: {},
       sourceRedirectClicks: {},
+      placementVisitors: {},
+      placementInteractions: {},
+      placementRedirectClicks: {},
+      sourcePlacementRedirectClicks: {},
     };
   }
 }

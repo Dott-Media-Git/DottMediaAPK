@@ -37,6 +37,7 @@ import youtubeIntegrationRoutes from './routes/youtubeIntegrationRoutes.js';
 import tiktokIntegrationRoutes from './routes/tiktokIntegrationRoutes.js';
 import instagramReelsSoraRoutes from './routes/instagramReelsSoraRoutes.js';
 import publicMediaRoutes from './routes/publicMediaRoutes.js';
+import redirectRoutes from './routes/redirectRoutes.js';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher.js';
 import stripeRoutes from './routes/stripeRoutes.js';
 import { requireFirebase } from './middleware/firebaseAuth.js';
@@ -154,6 +155,7 @@ app.use('/', youtubeIntegrationRoutes);
 app.use('/', tiktokIntegrationRoutes);
 app.use('/', instagramReelsSoraRoutes);
 app.use('/', publicMediaRoutes);
+app.use('/', redirectRoutes);
 app.use('/', adminRoutes);
 // Direct autopost endpoint to ensure availability (mirrors socialRoutes autopost handler)
 app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
