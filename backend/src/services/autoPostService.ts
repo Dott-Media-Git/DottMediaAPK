@@ -972,6 +972,43 @@ export class AutoPostService {
     return `${caption.trim()}\n\n${missing.map(tag => `#${tag}`).join(' ')}`.trim();
   }
 
+  private sanitizeBwinInstagramCaptionLinks(caption: string, platform?: string) {
+    const normalizedPlatform = (platform ?? '').trim().toLowerCase();
+    if (
+      normalizedPlatform !== 'instagram' &&
+      normalizedPlatform !== 'instagram_reels' &&
+      normalizedPlatform !== 'instagram_story'
+    ) {
+      return caption;
+    }
+    if (!caption) return caption;
+
+    const hasBwinReference =
+      /bwinbetug\.(?:com|info)/i.test(caption) ||
+      /\/r\/bwin(?:-info)?\b/i.test(caption) ||
+      /ownerId=.*source=instagram/i.test(caption);
+
+    if (!hasBwinReference) {
+      return caption;
+    }
+
+    const sanitizedLines = caption
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+      .filter(
+        line =>
+          !/https?:\/\/\S+/i.test(line) &&
+          !/(?:www\.)?bwinbetug\.(?:com|info)\b/i.test(line) &&
+          !/\bbet now\b|\bmore info\b|\bplace your bet\b/i.test(line),
+      );
+
+    sanitizedLines.push('Bet now — link in bio');
+    sanitizedLines.push('More info — link in bio');
+
+    return Array.from(new Set(sanitizedLines)).join('\n');
+  }
+
   private buildBwinInstagramSportsHashtags(caption: string) {
     const normalized = String(caption || '').toLowerCase();
     const tags = [
@@ -2433,8 +2470,12 @@ export class AutoPostService {
             ? highlightCaptionTemplate
             : (trendCaptions[platform] || caption);
         const trackedRawPerPlatformCaption = this.applyBwinBetTracking(rawPerPlatformCaption, userId, platform);
-        const brandedRawPerPlatformCaption = this.applyBwinInstagramSportsHashtags(
+        const cleanedRawPerPlatformCaption = this.sanitizeBwinInstagramCaptionLinks(
           trackedRawPerPlatformCaption,
+          platform,
+        );
+        const brandedRawPerPlatformCaption = this.applyBwinInstagramSportsHashtags(
+          cleanedRawPerPlatformCaption,
           platform,
         );
         const perPlatformCaption =
@@ -2694,7 +2735,8 @@ export class AutoPostService {
       const shortsCaption =
         platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
       const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
-      const brandedCaption = this.applyBwinInstagramSportsHashtags(trackedCaption, platform);
+      const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
+      const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
       const { caption, signature } = this.ensureCaptionVariety(platform, brandedCaption, captionHistory);
       const isVideoPlatform = videoPlatforms.has(platform as VideoPlatform);
       const supportsVideo = isVideoPlatform || optionalVideoPlatforms.has(platform);
