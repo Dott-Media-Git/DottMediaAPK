@@ -23,6 +23,7 @@ import { getNewsTrendingCandidates } from './newsTrendSources.js';
 import { getUserTrendConfig } from './userTrendSourceService.js';
 import { getTrendingCandidates as getFootballTrendingCandidates } from './footballTrendSources.js';
 import { footballTrendContentService } from './footballTrendContentService.js';
+import { fetchHighlightlyFootballHighlights, type HighlightlyFootballHighlight } from './highlightlyService.js';
 import { resolveBrandIdForClient } from './brandKitService.js';
 import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage } from './tableImageService.js';
 import type { TrendCandidate } from '../types/footballTrends.js';
@@ -1076,6 +1077,45 @@ export class AutoPostService {
       .join('\n');
   }
 
+  private buildHighlightlyVideoCaption(item: HighlightlyFootballHighlight, timezone: string) {
+    const matchup =
+      item.homeTeam && item.awayTeam
+        ? item.score
+          ? `${item.homeTeam} ${item.score} ${item.awayTeam}`
+          : `${item.homeTeam} vs ${item.awayTeam}`
+        : '';
+    const sourceLine = item.channel || item.source ? `Verified source: ${item.channel || item.source}` : '';
+    const competitionLine = item.leagueName ? `Competition: ${item.leagueName}` : '';
+    return [
+      'Highlight alert',
+      item.title,
+      matchup,
+      competitionLine,
+      sourceLine,
+      `Update time: ${this.formatTrendClock(timezone)} EAT`,
+      'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  private async pickFreshHighlightlyVideoCandidate(timezone: string, recentSet: Set<string>) {
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const highlights = await fetchHighlightlyFootballHighlights({
+      dates: [this.getDateKeyForTimezone(now, timezone), this.getDateKeyForTimezone(yesterday, timezone)],
+      timezone,
+      limit: 5,
+    });
+    for (const item of highlights) {
+      const key = this.buildTrendContentKey('video', `highlightly|${item.id}|${item.url || item.title}`);
+      if (!recentSet.has(key)) {
+        return { item, key };
+      }
+    }
+    return null;
+  }
+
   private getTrendRecentKeys(job: AutoPostJob): string[] {
     if (!Array.isArray(job.trendRecentKeys)) return [];
     return job.trendRecentKeys.filter(Boolean).map(value => String(value).toLowerCase().trim()).filter(Boolean);
@@ -1920,6 +1960,7 @@ export class AutoPostService {
     let baselineCandidate: TrendCandidate | null = null;
     let usedTableCursor: number | null = null;
     let trendContentKey: string | null = null;
+    let highlightlyVideoSelection: { item: HighlightlyFootballHighlight; key: string } | null = null;
     const allowThirdPartyHighlightVideoRepublish = this.allowThirdPartyHighlightVideoRepublish();
 
     if (scope === 'football') {
@@ -2231,6 +2272,50 @@ export class AutoPostService {
         }
       }
       if (selectedContentType === 'video') {
+        highlightlyVideoSelection = await this.pickFreshHighlightlyVideoCandidate(scheduleTimezone, trendRecentSet);
+        if (highlightlyVideoSelection) {
+          const updatedStamp = new Date().toLocaleTimeString('en-GB', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            timeZone: scheduleTimezone,
+          });
+          const source = highlightlyVideoSelection.item.channel || highlightlyVideoSelection.item.source || 'Highlightly';
+          const title = highlightlyVideoSelection.item.title || 'Football highlight';
+          caption = [
+            'Highlight alert',
+            title,
+            `Official source: ${source}`,
+            `Updated: ${updatedStamp} (${scheduleTimezone})`,
+            'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+          ]
+            .filter(Boolean)
+            .join('\n');
+          setUnifiedCaption();
+          trendContentKey = highlightlyVideoSelection.key;
+          usedTrendKeys.push(highlightlyVideoSelection.key);
+          const resolvedImage = await this.resolveBestNewsImageUrl(
+            highlightlyVideoSelection.item.imageUrl?.trim(),
+            highlightlyVideoSelection.item.url?.trim(),
+          );
+          if (!allowThirdPartyHighlightVideoRepublish) {
+            imageUrls = await this.generateFootballCardImage(
+              `Create a premium branded football highlight alert card for Bwinbet UG. Headline: "${title}". Secondary line: "Official source: ${source}". Bold black-and-gold sports editorial design, sharp typography, dynamic football energy, no copyrighted logos, no watermarks, no club crests.`,
+              new Set<string>(this.getRecentImageHistory(job)),
+            );
+          } else if (resolvedImage) {
+            imageUrls = [resolvedImage];
+          } else if (!imageUrls.length) {
+            imageUrls = await this.generateFootballCardImage(
+              `Create a football highlight poster image for "${title}". High-energy action style with clean headline space.`,
+              new Set<string>(this.getRecentImageHistory(job)),
+            );
+          }
+        }
+      }
+
+      if (selectedContentType === 'video' && !highlightlyVideoSelection) {
         const videoSelection = this.pickFreshVideoCandidate(footballCandidates, trendRecentSet);
         if (videoSelection) {
           const updatedStamp = new Date().toLocaleTimeString('en-GB', {
@@ -2411,6 +2496,10 @@ export class AutoPostService {
       nextCursor?: number;
       isWeeklyAward?: boolean;
     } | null = null;
+    const highlightlyMetaCaptionTemplate =
+      shouldUseVideoMode && highlightlyVideoSelection
+        ? this.buildHighlightlyVideoCaption(highlightlyVideoSelection.item, scheduleTimezone)
+        : '';
     if (shouldUseVideoMode && hasXPlatform) {
       try {
         xHighlight = await this.pickFootballHighlightForX(job, credentials, {
@@ -2463,12 +2552,18 @@ export class AutoPostService {
               ? `${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nWeekly award clip`
               : this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)
             : '';
-        const rawPerPlatformCaption =
-          highlightCaptionTemplate &&
+        const useXHighlightTemplateForMeta =
+          Boolean(highlightCaptionTemplate) &&
           shouldUseVideoMode &&
-          (platform === 'facebook' || platform === 'facebook_story' || platform === 'instagram' || platform === 'linkedin')
-            ? highlightCaptionTemplate
-            : (trendCaptions[platform] || caption);
+          !highlightlyMetaCaptionTemplate &&
+          (platform === 'facebook' || platform === 'facebook_story' || platform === 'instagram' || platform === 'linkedin');
+        const rawPerPlatformCaption = useXHighlightTemplateForMeta
+          ? highlightCaptionTemplate
+          : (highlightlyMetaCaptionTemplate &&
+              shouldUseVideoMode &&
+              (platform === 'facebook' || platform === 'facebook_story' || platform === 'instagram' || platform === 'linkedin')
+            ? highlightlyMetaCaptionTemplate
+            : (trendCaptions[platform] || caption));
         const trackedRawPerPlatformCaption = this.applyBwinBetTracking(rawPerPlatformCaption, userId, platform);
         const cleanedRawPerPlatformCaption = this.sanitizeBwinInstagramCaptionLinks(
           trackedRawPerPlatformCaption,
