@@ -27,6 +27,14 @@ export type AnalyticsSummary = {
   }>;
 };
 
+export type ActivityHeatmapDaily = {
+  date: string;
+  views: number;
+  interactions: number;
+  outbound: number;
+  conversions: number;
+};
+
 const RatingWeights: Record<string, number> = {
   active: 1,
   queued: 0.6,
@@ -84,6 +92,116 @@ const buildScopeCandidates = (scope?: AnalyticsScope): AnalyticsScope[] => {
 
   return candidates;
 };
+
+const activityHeatmapScore = (rows: ActivityHeatmapDaily[]) =>
+  rows.reduce(
+    (acc, row) =>
+      acc +
+      Number(row.views ?? 0) +
+      Number(row.interactions ?? 0) +
+      Number(row.outbound ?? 0) +
+      Number(row.conversions ?? 0),
+    0,
+  );
+
+const mergeActivityHeatmapRow = (
+  target: Map<string, ActivityHeatmapDaily>,
+  date: string,
+  incoming: Partial<ActivityHeatmapDaily>,
+) => {
+  if (!date) return;
+  const existing =
+    target.get(date) ??
+    ({
+      date,
+      views: 0,
+      interactions: 0,
+      outbound: 0,
+      conversions: 0,
+    } as ActivityHeatmapDaily);
+  existing.views = Math.max(existing.views, Number(incoming.views ?? 0));
+  existing.interactions = Math.max(existing.interactions, Number(incoming.interactions ?? 0));
+  existing.outbound = Math.max(existing.outbound, Number(incoming.outbound ?? 0));
+  existing.conversions = Math.max(existing.conversions, Number(incoming.conversions ?? 0));
+  target.set(date, existing);
+};
+
+const readActivityHeatmapScope = async (scope: AnalyticsScope | undefined, limitValue: number) => {
+  const [webTrafficSnap, outboundSnap, engagementSnap, dailySnap] = await Promise.all([
+    webTrafficAnalyticsCollection(scope).orderBy('date', 'desc').limit(limitValue).get(),
+    outboundAnalyticsCollection(scope).orderBy('date', 'desc').limit(limitValue).get(),
+    engagementAnalyticsCollection(scope).orderBy('date', 'desc').limit(limitValue).get(),
+    analyticsRoot(scope).collection('daily').orderBy('date', 'desc').limit(limitValue).get(),
+  ]);
+
+  const byDate = new Map<string, ActivityHeatmapDaily>();
+
+  webTrafficSnap.docs.forEach(doc => {
+    const data = doc.data() as Record<string, unknown>;
+    mergeActivityHeatmapRow(byDate, String(data.date ?? doc.id ?? ''), {
+      views: Number(data.visitors ?? 0),
+      interactions: Number(data.interactions ?? 0),
+    });
+  });
+
+  outboundSnap.docs.forEach(doc => {
+    const data = doc.data() as Record<string, unknown>;
+    mergeActivityHeatmapRow(byDate, String(data.date ?? doc.id ?? ''), {
+      outbound: Number(data.messagesSent ?? data.replies ?? 0),
+      conversions: Number(data.conversions ?? 0),
+    });
+  });
+
+  engagementSnap.docs.forEach(doc => {
+    const data = doc.data() as Record<string, unknown>;
+    mergeActivityHeatmapRow(byDate, String(data.date ?? doc.id ?? ''), {
+      interactions: Number(data.comments ?? 0) + Number(data.replies ?? 0),
+      conversions: Number(data.conversions ?? 0),
+    });
+  });
+
+  dailySnap.docs.forEach(doc => {
+    const data = doc.data() as Record<string, unknown>;
+    const samples = Math.max(Number(data.samples ?? 1) || 1, 1);
+    mergeActivityHeatmapRow(byDate, String(data.date ?? doc.id ?? ''), {
+      views: Math.round(Number(data.leads ?? 0) / samples),
+      interactions: Math.round(Number(data.engagement ?? 0) / samples),
+      outbound: Math.round(Number(data.conversions ?? 0) / samples),
+      conversions: Math.round(Number(data.conversions ?? 0) / samples),
+    });
+  });
+
+  return Array.from(byDate.values())
+    .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
+    .slice(-limitValue);
+};
+
+export async function getActivityHeatmap(scope?: AnalyticsScope, days = 14): Promise<ActivityHeatmapDaily[]> {
+  try {
+    const limitValue = Math.max(days, 7);
+    const candidateRows = await Promise.all(
+      buildScopeCandidates(scope).map(candidate => readActivityHeatmapScope(candidate, limitValue)),
+    );
+
+    const merged = new Map<string, ActivityHeatmapDaily>();
+    candidateRows.forEach(rows => {
+      rows.forEach(row => mergeActivityHeatmapRow(merged, row.date, row));
+    });
+
+    const rows = Array.from(merged.values())
+      .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
+      .slice(-limitValue);
+
+    if (activityHeatmapScore(rows) > 0) {
+      return rows;
+    }
+
+    return [];
+  } catch (error) {
+    console.warn('Firestore activity heatmap fetch failed', error);
+    return [];
+  }
+}
 
 async function readSummaryWithFallback<T extends Record<string, unknown>>(
   summaryDocFactory: (scope?: AnalyticsScope) => SummaryDoc,

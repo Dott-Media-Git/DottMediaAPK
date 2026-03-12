@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { requireFirebase } from '../middleware/firebaseAuth.js';
-import { firestore } from '../db/firestore.js';
-import { AnalyticsService, incrementWebTrafficAnalytics, getOutboundStats, getInboundStats, getEngagementStats, getFollowupStats, getWebLeadStats, } from '../services/analyticsService.js';
-import { getLiveSocialMetrics } from '../services/liveSocialMetricsService.js';
+import { requireFirebase } from '../middleware/firebaseAuth';
+import { firestore } from '../db/firestore';
+import { AnalyticsService, getActivityHeatmap, incrementWebTrafficAnalytics, getOutboundStats, getInboundStats, getEngagementStats, getFollowupStats, getWebLeadStats, } from '../services/analyticsService';
+import { getLiveSocialMetrics } from '../services/liveSocialMetricsService';
 const router = Router();
 const analytics = new AnalyticsService();
 const bwinBetTargetUrl = 'https://bwinbetug.com';
@@ -258,6 +258,26 @@ router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
             lookbackHours,
             scope: { userId: authUser.uid, scopeId },
         });
+        res.set({
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            Pragma: 'no-cache',
+            Expires: '0',
+        });
+        res.json({ stats });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.get('/stats/activityHeatmap', requireFirebase, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        if (!authUser)
+            return res.status(401).json({ message: 'Unauthorized' });
+        const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+        const daysRaw = typeof req.query.days === 'string' ? Number(req.query.days) : undefined;
+        const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Number(daysRaw) : 14;
+        const stats = await getActivityHeatmap({ userId: authUser.uid, scopeId }, days);
         res.set({
             'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
             Pragma: 'no-cache',

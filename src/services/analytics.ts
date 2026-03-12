@@ -733,6 +733,22 @@ export const fetchLiveSocialStats = (
   );
 };
 
+export const fetchActivityHeatmap = (userId?: string, scopeId?: string, days = 14) =>
+  simpleFetch<ActivityHeatmapDaily[]>(
+    `/api/stats/activityHeatmap?days=${encodeURIComponent(String(days))}`,
+    userId,
+    scopeId,
+  ).then(stats => {
+    if (!Array.isArray(stats)) return [];
+    return stats.map((row: any) => ({
+      date: String(row?.date ?? ''),
+      views: toFiniteNumber(row?.views),
+      interactions: toFiniteNumber(row?.interactions),
+      outbound: toFiniteNumber(row?.outbound),
+      conversions: toFiniteNumber(row?.conversions),
+    }));
+  });
+
 export const subscribeWebLeadStats = (
   scopeId: string | undefined,
   onData: (stats: WebLeadStats) => void,

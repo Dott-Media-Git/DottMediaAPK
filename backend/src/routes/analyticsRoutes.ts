@@ -3,6 +3,7 @@ import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { firestore } from '../db/firestore';
 import {
   AnalyticsService,
+  getActivityHeatmap,
   incrementWebTrafficAnalytics,
   getOutboundStats,
   getInboundStats,
@@ -261,6 +262,25 @@ router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
       lookbackHours,
       scope: { userId: authUser.uid, scopeId },
     });
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    res.json({ stats });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/stats/activityHeatmap', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
+    const daysRaw = typeof req.query.days === 'string' ? Number(req.query.days) : undefined;
+    const days = Number.isFinite(daysRaw) && (daysRaw as number) > 0 ? Number(daysRaw) : 14;
+    const stats = await getActivityHeatmap({ userId: authUser.uid, scopeId }, days);
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
       Pragma: 'no-cache',

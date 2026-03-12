@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { VictoryAxis, VictoryBar, VictoryChart, VictoryTheme } from 'victory-native';
+import { VictoryAxis, VictoryBar, VictoryChart, VictoryLabel, VictoryTheme } from 'victory-native';
 import { DMCard } from '@components/DMCard';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
@@ -11,6 +11,7 @@ import {
   fetchAnalytics,
   DashboardAnalytics,
   fetchOrgDashboardAnalytics,
+  fetchActivityHeatmap,
   fetchOutboundStats,
   fetchLiveSocialStats,
   LiveSocialStats,
@@ -72,8 +73,41 @@ const emptyLiveSocialStats: LiveSocialStats = {
   },
 };
 
+const parseChartDate = (date: string) => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return new Date(`${date}T12:00:00`);
+  }
+  return new Date(date);
+};
+
+const toDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const buildDateWindow = (count: number) => {
+  const days: string[] = [];
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const current = new Date(today);
+    current.setDate(today.getDate() - index);
+    days.push(toDateKey(current));
+  }
+
+  return days;
+};
+
+const getHoursSinceMidnight = () => {
+  const now = new Date();
+  return Math.max(1, now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600);
+};
+
 const formatDateLabel = (date: string) => {
-  const parsed = new Date(date);
+  const parsed = parseChartDate(date);
   if (!Number.isNaN(parsed.getTime())) {
     return `${parsed.getMonth() + 1}/${parsed.getDate()}`;
   }
@@ -81,9 +115,21 @@ const formatDateLabel = (date: string) => {
 };
 
 const formatDayOfWeek = (date: string, locale?: string) => {
-  const parsed = new Date(date);
+  const parsed = parseChartDate(date);
   if (Number.isNaN(parsed.getTime())) return 'Day';
   return parsed.toLocaleDateString(locale ?? undefined, { weekday: 'short' });
+};
+
+const buildChartScale = (values: number[]) => {
+  const maxValue = values.reduce((max, value) => Math.max(max, value), 0);
+  if (maxValue <= 0) {
+    return { top: 100, ticks: [0, 100] };
+  }
+
+  const step = 100;
+  const top = Math.max(step, Math.ceil(maxValue / step) * step);
+  const ticks = Array.from({ length: Math.ceil(top / step) + 1 }, (_, index) => index * step);
+  return { top, ticks };
 };
 
 const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
@@ -108,12 +154,32 @@ export const DashboardScreen: React.FC = () => {
   const [chartMetric, setChartMetric] = useState<ChartMetric>('views');
   const [outboundStats, setOutboundStats] = useState<OutboundStats>(() => emptyOutboundStats);
   const [liveSocialStats, setLiveSocialStats] = useState<LiveSocialStats>(() => emptyLiveSocialStats);
+  const [todayLiveSocialStats, setTodayLiveSocialStats] = useState<LiveSocialStats>(() => emptyLiveSocialStats);
   const [activityHeatmapRows, setActivityHeatmapRows] = useState<ActivityHeatmapDaily[]>([]);
+  const [activityHeatmapRestRows, setActivityHeatmapRestRows] = useState<ActivityHeatmapDaily[]>([]);
   const [liveSocialLoading, setLiveSocialLoading] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
     let unsubscribe: (() => void) | null = null;
+    const refreshRestAnalytics = async () => {
+      if (!state.user?.uid) return false;
+      try {
+        const response = orgId
+          ? await fetchOrgDashboardAnalytics(analyticsScopeId, state.user?.uid)
+          : await fetchAnalytics(state.user.uid);
+        if (response && isMounted) {
+          setAnalytics(createEmptyAnalytics(response));
+          return true;
+        }
+      } catch (error) {
+        console.warn('Failed to refresh analytics', error);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+      return false;
+    };
+
     const loadAnalytics = async () => {
       if (!state.user) return;
       setLoading(true);
@@ -126,21 +192,15 @@ export const DashboardScreen: React.FC = () => {
               setAnalytics(createEmptyAnalytics(payload));
               setLoading(false);
             },
-            error => console.warn('Realtime org analytics failed', error),
+            error => {
+              console.warn('Realtime org analytics failed', error);
+              void refreshRestAnalytics();
+            },
             state.user?.uid
           ) ?? null;
 
         if (!unsubscribe) {
-          try {
-            const response = await fetchOrgDashboardAnalytics(analyticsScopeId, state.user?.uid);
-            if (response && isMounted) {
-              setAnalytics(createEmptyAnalytics(response));
-            }
-          } catch (error) {
-            console.warn('Failed to refresh org analytics', error);
-          } finally {
-            if (isMounted) setLoading(false);
-          }
+          await refreshRestAnalytics();
         }
         return;
       }
@@ -155,22 +215,15 @@ export const DashboardScreen: React.FC = () => {
           },
           error => {
             console.warn('Realtime analytics subscription failed', error);
+            void refreshRestAnalytics();
           },
           analyticsScopeId
         ) ?? null;
 
       if (!unsubscribe) {
-        try {
-          const response = await fetchAnalytics(state.user.uid);
-          if (response && isMounted) {
-            setAnalytics(createEmptyAnalytics(response));
-          } else if (isMounted && state.crmData) {
-            setAnalytics(createEmptyAnalytics(state.crmData.analytics));
-          }
-        } catch (error) {
-          console.warn('Failed to refresh analytics', error);
-        } finally {
-          if (isMounted) setLoading(false);
+        const loaded = await refreshRestAnalytics();
+        if (!loaded && isMounted && state.crmData) {
+          setAnalytics(createEmptyAnalytics(state.crmData.analytics));
         }
       }
     };
@@ -188,19 +241,24 @@ export const DashboardScreen: React.FC = () => {
     }
     let mounted = true;
     let outboundUnsub: (() => void) | null = null;
+    const refreshRestOutbound = async () => {
+      const stats = await fetchOutboundStats(state.user?.uid, analyticsScopeId);
+      if (stats && mounted) setOutboundStats(stats);
+    };
 
     outboundUnsub =
       subscribeOutboundStats(
         analyticsScopeId,
         stats => mounted && setOutboundStats(stats),
-        error => console.warn('Realtime outbound stats failed', error),
+        error => {
+          console.warn('Realtime outbound stats failed', error);
+          void refreshRestOutbound();
+        },
         state.user?.uid
       ) ?? null;
 
     if (!outboundUnsub) {
-      void fetchOutboundStats(state.user?.uid, analyticsScopeId).then(stats => {
-        if (stats && mounted) setOutboundStats(stats);
-      });
+      void refreshRestOutbound();
     }
 
     return () => {
@@ -212,21 +270,42 @@ export const DashboardScreen: React.FC = () => {
   useEffect(() => {
     if (!state.user?.uid) {
       setActivityHeatmapRows([]);
+      setActivityHeatmapRestRows([]);
       return;
     }
     let active = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const refreshRestActivityHeatmap = async () => {
+      const rows = await fetchActivityHeatmap(state.user?.uid, analyticsScopeId, 14);
+      if (!active) return;
+      setActivityHeatmapRestRows(rows);
+    };
     const unsubscribe =
       subscribeLiveActivityHeatmap(
         analyticsScopeId,
         rows => {
           if (!active) return;
           setActivityHeatmapRows(rows);
+          if (!rows.length) {
+            void refreshRestActivityHeatmap();
+          }
         },
-        error => console.warn('Realtime activity heatmap subscription failed', error),
+        error => {
+          console.warn('Realtime activity heatmap subscription failed', error);
+          if (active) {
+            setActivityHeatmapRows([]);
+            void refreshRestActivityHeatmap();
+          }
+        },
         state.user?.uid
       ) ?? null;
+    void refreshRestActivityHeatmap();
+    timer = setInterval(() => {
+      void refreshRestActivityHeatmap();
+    }, 120000);
     return () => {
       active = false;
+      if (timer) clearInterval(timer);
       unsubscribe?.();
     };
   }, [analyticsScopeId, state.user?.uid]);
@@ -239,9 +318,15 @@ export const DashboardScreen: React.FC = () => {
       if (!state.user?.uid) return;
       setLiveSocialLoading(true);
       try {
-        const stats = await fetchLiveSocialStats(state.user.uid, analyticsScopeId, 72);
-        if (mounted && stats) {
-          setLiveSocialStats(stats);
+        const [rollingStats, todayStats] = await Promise.all([
+          fetchLiveSocialStats(state.user.uid, analyticsScopeId, 72),
+          fetchLiveSocialStats(state.user.uid, analyticsScopeId, getHoursSinceMidnight()),
+        ]);
+        if (mounted && rollingStats) {
+          setLiveSocialStats(rollingStats);
+        }
+        if (mounted && todayStats) {
+          setTodayLiveSocialStats(todayStats);
         }
       } finally {
         if (mounted) setLiveSocialLoading(false);
@@ -269,6 +354,12 @@ export const DashboardScreen: React.FC = () => {
   const formatCount = (value: number) => {
     const rounded = Number.isFinite(value) ? Math.round(value) : 0;
     return rounded.toLocaleString();
+  };
+
+  const formatAxisCount = (value: number) => {
+    if (value >= 1000000) return `${(value / 1000000).toFixed(value % 1000000 === 0 ? 0 : 1)}M`;
+    if (value >= 1000) return `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}K`;
+    return formatCount(value);
   };
 
   const heroStats = [
@@ -413,42 +504,101 @@ export const DashboardScreen: React.FC = () => {
 
   const heatmapSeries = useMemo(
     () => {
-      const source =
-        activityHeatmapRows.length > 0
-          ? activityHeatmapRows
-          : [...historySeries]
-              .slice(-7)
-              .map(day => ({
-                date: day.date,
-                views: day.leads,
-                interactions: day.engagement,
-                outbound: day.conversions,
-                conversions: day.conversions,
-              }));
-      return [...source]
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-        .slice(-7)
-        .map((day, index, arr) => ({
-          label: index === arr.length - 1 ? t('Today') : formatDayOfWeek(day.date, locale),
+      const liveByDate = new Map(
+        activityHeatmapRows.map(day => [
+          day.date,
+          {
+            views: Number(day.views ?? 0),
+            interactions: Number(day.interactions ?? 0),
+            outbound: Number(day.outbound ?? 0),
+            conversions: Number(day.conversions ?? 0),
+          },
+        ]),
+      );
+
+      const restByDate = new Map(
+        activityHeatmapRestRows.map(day => [
+          day.date,
+          {
+            views: Number(day.views ?? 0),
+            interactions: Number(day.interactions ?? 0),
+            outbound: Number(day.outbound ?? 0),
+            conversions: Number(day.conversions ?? 0),
+          },
+        ]),
+      );
+
+      const historyByDate = new Map(
+        historySeries.map(day => [
+          day.date,
+          {
+            views: Number(day.leads ?? 0),
+            interactions: Number(day.engagement ?? 0),
+            outbound: Number(day.conversions ?? 0),
+            conversions: Number(day.conversions ?? 0),
+          },
+        ]),
+      );
+
+      return buildDateWindow(7).map((date, index, arr) => {
+        const live = liveByDate.get(date);
+        const rest = restByDate.get(date);
+        const fallback = historyByDate.get(date);
+        const isToday = index === arr.length - 1;
+        const todayLive = isToday
+          ? {
+              views: Number(todayLiveSocialStats.summary.views ?? 0),
+              interactions: Number(todayLiveSocialStats.summary.interactions ?? 0),
+              conversions: Number(todayLiveSocialStats.summary.conversions ?? 0),
+            }
+          : null;
+        const merged = {
+          views: Math.max(
+            Number(live?.views ?? 0),
+            Number(rest?.views ?? 0),
+            Number(fallback?.views ?? 0),
+            Number(todayLive?.views ?? 0),
+          ),
+          interactions: Math.max(
+            Number(live?.interactions ?? 0),
+            Number(rest?.interactions ?? 0),
+            Number(fallback?.interactions ?? 0),
+            Number(todayLive?.interactions ?? 0),
+          ),
+          outbound: Math.max(
+            Number(live?.outbound ?? 0),
+            Number(rest?.outbound ?? 0),
+            Number(fallback?.outbound ?? 0),
+          ),
+          conversions: Math.max(
+            Number(live?.conversions ?? 0),
+            Number(rest?.conversions ?? 0),
+            Number(fallback?.conversions ?? 0),
+            Number(todayLive?.conversions ?? 0),
+          ),
+        };
+
+        return {
+          date,
+          label: isToday ? t('Today') : formatDayOfWeek(date, locale),
           value:
             chartMetric === 'views'
-              ? day.views
+              ? merged.views
               : chartMetric === 'interactions'
-              ? day.interactions
-              : chartMetric === 'outbound'
-              ? day.outbound
-              : day.conversions
-        }));
+                ? merged.interactions
+                : chartMetric === 'outbound'
+                  ? merged.outbound
+                  : merged.conversions,
+        };
+      });
     },
-    [activityHeatmapRows, chartMetric, historySeries, locale, t]
+    [activityHeatmapRestRows, activityHeatmapRows, chartMetric, historySeries, locale, t, todayLiveSocialStats]
   );
 
-  const heatmapTicks = useMemo(() => {
-    const maxValue = heatmapSeries.reduce((max, item) => Math.max(max, item.value), 0);
-    const top = Math.max(100, Math.ceil(maxValue / 100) * 100);
-    const steps = Math.max(1, top / 100);
-    return Array.from({ length: steps + 1 }, (_, i) => i * 100);
-  }, [heatmapSeries]);
+  const heatmapScale = useMemo(
+    () => buildChartScale(heatmapSeries.map(item => item.value)),
+    [heatmapSeries]
+  );
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -624,32 +774,54 @@ export const DashboardScreen: React.FC = () => {
             </TouchableOpacity>
           ))}
         </View>
-        <VictoryChart theme={VictoryTheme.material} domainPadding={{ x: 20, y: 12 }}>
-          <VictoryAxis
-            style={{
-              axis: { stroke: colors.border },
-              tickLabels: { fill: colors.subtext },
-              grid: { stroke: 'transparent' }
-            }}
-          />
-          <VictoryAxis
-            dependentAxis
-            label={t('Count')}
-            tickValues={heatmapTicks}
-            style={{
-              axisLabel: { padding: 32, fill: colors.subtext },
-              tickLabels: { fill: colors.subtext },
-              grid: { stroke: 'transparent' }
-            }}
-          />
-          <VictoryBar
-            style={{ data: { fill: colors.accent } }}
-            data={heatmapSeries}
-            x="label"
-            y="value"
-            barWidth={24}
-          />
-        </VictoryChart>
+        <View style={styles.chartFrame}>
+          <VictoryChart
+            animate={{ duration: 500 }}
+            theme={VictoryTheme.material}
+            height={300}
+            domain={{ y: [0, heatmapScale.top * 1.12] }}
+            domainPadding={{ x: 24, y: 18 }}
+            padding={{ top: 42, bottom: 52, left: 54, right: 22 }}
+          >
+            <VictoryAxis
+              style={{
+                axis: { stroke: colors.border },
+                tickLabels: { fill: colors.subtext, fontSize: 11, padding: 10 },
+                grid: { stroke: 'transparent' }
+              }}
+            />
+            <VictoryAxis
+              dependentAxis
+              tickValues={heatmapScale.ticks}
+              tickFormat={tick => formatAxisCount(Number(tick))}
+              style={{
+                axis: { stroke: colors.border },
+                tickLabels: { fill: colors.subtext, fontSize: 11, padding: 6 },
+                grid: { stroke: 'rgba(155, 169, 202, 0.16)', strokeDasharray: '4,6' }
+              }}
+            />
+            <VictoryBar
+              cornerRadius={{ top: 10, bottom: 4 }}
+              style={{
+                data: {
+                  fill: ({ datum }) =>
+                    datum.label === t('Today') ? colors.accentSecondary : colors.accent,
+                },
+                labels: {
+                  fill: colors.text,
+                  fontSize: 10,
+                  fontWeight: '700',
+                },
+              }}
+              data={heatmapSeries}
+              x="label"
+              y="value"
+              labels={({ datum }) => (datum.value > 0 ? formatCount(datum.value) : '')}
+              labelComponent={<VictoryLabel dy={-10} />}
+              barWidth={30}
+            />
+          </VictoryChart>
+        </View>
       </DMCard>
       <DMCard title={t('Automation Log')} subtitle={t('Recent events across your CRM scenarios')}>
         {logItems.map(item => (
@@ -777,6 +949,14 @@ const styles = StyleSheet.create({
   },
   metricChipTextActive: {
     color: colors.background
+  },
+  chartFrame: {
+    backgroundColor: colors.cardOverlay,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingTop: 8,
+    overflow: 'hidden'
   },
   metricSummaryRow: {
     flexDirection: 'row',
