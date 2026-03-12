@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import math
 from pathlib import Path
 from typing import Iterable
@@ -13,7 +14,7 @@ WIDTH = 1080
 HEIGHT = 1920
 FPS = 24
 DURATION_SECONDS = 8
-OUTPUT_PATH = Path(__file__).resolve().parents[1] / "public" / "fallback-videos" / "bwinbet-highlight-alert.mp4"
+DEFAULT_OUTPUT_PATH = Path(__file__).resolve().parents[1] / "public" / "fallback-videos" / "bwinbet-highlight-alert.mp4"
 
 BLACK = (12, 12, 16)
 BLACK_SOFT = (24, 24, 32)
@@ -44,6 +45,27 @@ SUBTITLE_FONT = load_font(56, bold=False)
 LABEL_FONT = load_font(44, bold=True)
 CTA_FONT = load_font(40, bold=False)
 LOGO_FONT = load_font(72, bold=True)
+DETAIL_FONT = load_font(42, bold=False)
+HEADLINE_FONT = load_font(66, bold=True)
+
+
+def fit_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    words = [part for part in text.split() if part]
+    if not words:
+        return []
+
+    lines: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}"
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        if bbox[2] - bbox[0] <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
 
 
 def lerp(a: float, b: float, t: float) -> float:
@@ -56,7 +78,16 @@ def draw_centered_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.Ima
     draw.text((x, y), text, font=font, fill=fill)
 
 
-def frame_image(frame_index: int, total_frames: int) -> Image.Image:
+def frame_image(
+    frame_index: int,
+    total_frames: int,
+    *,
+    kicker: str,
+    title_lines: list[str],
+    detail_lines: list[str],
+    cta_primary: str,
+    cta_secondary: str,
+) -> Image.Image:
     t = frame_index / max(total_frames - 1, 1)
     pulse = (math.sin(t * math.pi * 2.0) + 1.0) / 2.0
 
@@ -113,7 +144,7 @@ def frame_image(frame_index: int, total_frames: int) -> Image.Image:
         radius=24,
         fill=(247, 198, 0, 230),
     )
-    draw_centered_text(draw, "OFFICIAL BWINBET UG", LABEL_FONT, label_y + 18, BLACK)
+    draw_centered_text(draw, kicker, LABEL_FONT, label_y + 18, BLACK)
 
     logo_box_w = 540
     logo_box_h = 128
@@ -128,19 +159,18 @@ def frame_image(frame_index: int, total_frames: int) -> Image.Image:
     )
     draw_centered_text(draw, "BWINBET UG", LOGO_FONT, logo_box_y + 24, YELLOW)
 
-    title_y = 620
+    title_y = 590
     title_shift = int(16 * math.sin(t * math.pi * 2.0))
-    draw_centered_text(draw, "FOOTBALL", TITLE_FONT, title_y + title_shift, WHITE)
-    draw_centered_text(draw, "HIGHLIGHT ALERT", TITLE_FONT, title_y + 112 + title_shift, YELLOW)
+    if title_lines:
+        draw_centered_text(draw, title_lines[0], TITLE_FONT, title_y + title_shift, WHITE)
+    if len(title_lines) > 1:
+        draw_centered_text(draw, title_lines[1], TITLE_FONT, title_y + 112 + title_shift, YELLOW)
 
-    sub_y = 900
-    for idx, line in enumerate(
-        [
-            "Latest goals, biggest moments,",
-            "and daily football buzz.",
-        ]
-    ):
-        draw_centered_text(draw, line, SUBTITLE_FONT, sub_y + idx * 66, GREY)
+    sub_y = 860
+    for idx, line in enumerate(detail_lines[:3]):
+        font = HEADLINE_FONT if idx == 0 else SUBTITLE_FONT
+        fill = WHITE if idx == 0 else GREY
+        draw_centered_text(draw, line, font, sub_y + idx * 70, fill)
 
     info_card_x = 120
     info_card_y = 1140
@@ -157,7 +187,7 @@ def frame_image(frame_index: int, total_frames: int) -> Image.Image:
     chip_y = info_card_y + 52
     chip_w = 208
     gap = 26
-    chips = ["VIDEOS", "RESULTS", "TABLES"]
+    chips = ["VIDEOS", "HIGHLIGHTS", "UPDATES"]
     total_chip_width = len(chips) * chip_w + (len(chips) - 1) * gap
     chip_x = (WIDTH - total_chip_width) // 2
     for idx, chip in enumerate(chips):
@@ -170,8 +200,22 @@ def frame_image(frame_index: int, total_frames: int) -> Image.Image:
         draw.text((tx, chip_y + 16), chip, font=LABEL_FONT, fill=text_fill)
 
     cta_y = info_card_y + 182
-    draw_centered_text(draw, "Bet now: bwinbetug.com", CTA_FONT, cta_y, WHITE)
-    draw_centered_text(draw, "More info: bwinbetug.info", CTA_FONT, cta_y + 68, YELLOW_SOFT)
+    draw_centered_text(draw, cta_primary, CTA_FONT, cta_y, WHITE)
+    draw_centered_text(draw, cta_secondary, CTA_FONT, cta_y + 68, YELLOW_SOFT)
+
+    story_box_x = 150
+    story_box_y = 1510
+    story_box_w = WIDTH - 300
+    story_box_h = 170
+    draw.rounded_rectangle(
+        (story_box_x, story_box_y, story_box_x + story_box_w, story_box_y + story_box_h),
+        radius=28,
+        fill=(255, 255, 255, 14),
+        outline=(255, 255, 255, 28),
+        width=2,
+    )
+    for idx, line in enumerate(detail_lines[3:5]):
+        draw_centered_text(draw, line, DETAIL_FONT, story_box_y + 30 + idx * 48, YELLOW_SOFT if idx == 0 else WHITE)
 
     ticker_y = HEIGHT - 180
     ticker_x = int(lerp(WIDTH + 120, -860, t))
@@ -182,11 +226,44 @@ def frame_image(frame_index: int, total_frames: int) -> Image.Image:
     return image.convert("RGB")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", default=str(DEFAULT_OUTPUT_PATH))
+    parser.add_argument("--kicker", default="OFFICIAL BWINBET UG")
+    parser.add_argument("--title", default="FOOTBALL HIGHLIGHT ALERT")
+    parser.add_argument("--matchup", default="Latest goals, biggest moments")
+    parser.add_argument("--competition", default="Daily football buzz")
+    parser.add_argument("--source", default="Verified football update")
+    parser.add_argument("--cta-primary", dest="cta_primary", default="Bet now: bwinbetug.com")
+    parser.add_argument("--cta-secondary", dest="cta_secondary", default="More info: bwinbetug.info")
+    return parser.parse_args()
+
+
 def main():
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    args = parse_args()
+    output_path = Path(args.output).resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     total_frames = FPS * DURATION_SECONDS
+    dummy = Image.new("RGB", (WIDTH, HEIGHT), BLACK)
+    draw = ImageDraw.Draw(dummy)
+    title_lines = fit_text(draw, args.title.strip(), TITLE_FONT, WIDTH - 180)
+    if len(title_lines) < 2:
+        title_lines.append("HIGHLIGHT ALERT")
+    else:
+        title_lines = title_lines[:2]
+    detail_lines = [
+        line
+        for line in [
+            args.matchup.strip(),
+            args.competition.strip(),
+            args.source.strip(),
+            "Fresh football update powered by verified match metadata.",
+            "Built for quick social posting without raw third-party clip reuse.",
+        ]
+        if line
+    ]
     writer = imageio.get_writer(
-        OUTPUT_PATH,
+        output_path,
         fps=FPS,
         codec="libx264",
         quality=8,
@@ -195,11 +272,19 @@ def main():
     )
     try:
         for frame_index in range(total_frames):
-            frame = frame_image(frame_index, total_frames)
+            frame = frame_image(
+                frame_index,
+                total_frames,
+                kicker=args.kicker.strip() or "OFFICIAL BWINBET UG",
+                title_lines=title_lines,
+                detail_lines=detail_lines,
+                cta_primary=args.cta_primary.strip() or "Bet now: bwinbetug.com",
+                cta_secondary=args.cta_secondary.strip() or "More info: bwinbetug.info",
+            )
             writer.append_data(np.asarray(frame))
     finally:
         writer.close()
-    print(str(OUTPUT_PATH))
+    print(str(output_path))
 
 
 if __name__ == "__main__":
