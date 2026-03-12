@@ -86,7 +86,6 @@ export const CreateContentScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
   const [prompt, setPrompt] = useState('');
-  const [businessType, setBusinessType] = useState(state.crmData?.businessGoals ?? 'growth marketing');
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([
     'instagram',
     'instagram_story',
@@ -104,7 +103,6 @@ export const CreateContentScreen: React.FC = () => {
   const [result, setResult] = useState<GeneratedSocialContent | null>(null);
   const [previewContent, setPreviewContent] = useState<GeneratedSocialContent | null>(null);
   const [previewPrompt, setPreviewPrompt] = useState('');
-  const [previewBusinessType, setPreviewBusinessType] = useState('');
   const [loading, setLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [postingNow, setPostingNow] = useState(false);
@@ -115,24 +113,17 @@ export const CreateContentScreen: React.FC = () => {
   const hasTikTok = selectedPlatforms.includes('tiktok');
   const hasReels = selectedPlatforms.includes('instagram_reels');
   const normalizedPrompt = prompt.trim();
-  const normalizedBusinessType = businessType.trim();
-  const previewIsFresh =
-    Boolean(previewContent) && previewPrompt === normalizedPrompt && previewBusinessType === normalizedBusinessType;
+  const businessType = (state.crmData?.businessGoals ?? 'growth marketing').trim();
+  const previewIsFresh = Boolean(previewContent) && previewPrompt === normalizedPrompt;
 
   const invalidatePreview = () => {
     setResult(null);
     setPreviewContent(null);
     setPreviewPrompt('');
-    setPreviewBusinessType('');
   };
 
   const handlePromptChange = (value: string) => {
     setPrompt(value);
-    invalidatePreview();
-  };
-
-  const handleBusinessTypeChange = (value: string) => {
-    setBusinessType(value);
     invalidatePreview();
   };
 
@@ -203,13 +194,12 @@ export const CreateContentScreen: React.FC = () => {
       const response = await generateContent({
         userId: state.user?.uid,
         prompt: normalizedPrompt,
-        businessType: normalizedBusinessType,
+        businessType,
       });
       const content = response.content as GeneratedSocialContent;
       setResult(content);
       setPreviewContent(content);
       setPreviewPrompt(normalizedPrompt);
-      setPreviewBusinessType(normalizedBusinessType);
       return content;
     } catch (error: any) {
       Alert.alert(
@@ -262,7 +252,7 @@ export const CreateContentScreen: React.FC = () => {
     try {
       await runAutoPostNow({
         prompt: normalizedPrompt,
-        businessType: normalizedBusinessType,
+        businessType,
         platforms: selectedPlatforms,
         youtubeVideoUrl: youtubeVideoUrls.length ? undefined : youtubeVideoUrlInput.trim() || undefined,
         youtubeVideoUrls: youtubeVideoUrls.length ? youtubeVideoUrls : undefined,
@@ -309,14 +299,6 @@ export const CreateContentScreen: React.FC = () => {
             placeholder={t('Describe the campaign idea...')}
             placeholderTextColor={colors.subtext}
             multiline
-          />
-          <Text style={styles.label}>{t('Business Type / Tone')}</Text>
-          <TextInput
-            style={styles.input}
-            value={businessType}
-            onChangeText={handleBusinessTypeChange}
-            placeholder={t('e.g. AI agency, SaaS marketing')}
-            placeholderTextColor={colors.subtext}
           />
           <Text style={styles.label}>{t('Platforms')}</Text>
           <View style={styles.row}>
