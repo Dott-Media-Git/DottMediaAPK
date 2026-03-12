@@ -3,6 +3,7 @@ import {
   Alert,
   Animated,
   Image,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -95,6 +96,14 @@ const buildPlatformPreviewText = (platform: string, content: GeneratedSocialCont
   return platform === 'twitter' ? `${caption} ${hashtags}`.trim() : [caption, hashtags].filter(Boolean).join('\n\n');
 };
 
+const truncateValue = (value: string, max = 88) => {
+  if (value.length <= max) return value;
+  return `${value.slice(0, Math.max(max - 1, 1)).trimEnd()}...`;
+};
+
+const formatCountLabel = (count: number, singular: string, plural: string) =>
+  count === 1 ? `1 ${singular}` : `${count} ${plural}`;
+
 export const CreateContentScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
@@ -132,6 +141,8 @@ export const CreateContentScreen: React.FC = () => {
   const businessType = (state.crmData?.businessGoals ?? 'growth marketing').trim();
   const previewIsFresh = Boolean(previewContent) && previewPrompt === normalizedPrompt;
   const shouldGenerateVideo = selectedPlatforms.some(platform => GENERATED_VIDEO_PLATFORMS.has(platform));
+  const previewImageCount = previewContent?.images?.length ?? 0;
+  const previewHasVideo = Boolean(previewContent?.video_url?.trim());
 
   const invalidatePreview = () => {
     setResult(null);
@@ -344,6 +355,23 @@ export const CreateContentScreen: React.FC = () => {
     return [];
   };
 
+  const openExternalPreview = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert(t('Preview unavailable'), t('Unable to open this media preview right now.'));
+    }
+  };
+
+  const buildMediaStatus = (platform: string, videoCount: number) => {
+    if (videoCount) return t('Video attached');
+    if (platform === 'instagram_story' || platform === 'facebook_story') {
+      return previewImageCount ? t('Story creative ready') : t('Story copy only');
+    }
+    if (previewImageCount) return t('Image set ready');
+    return t('Caption only');
+  };
+
   return (
     <>
       <Animated.View
@@ -513,6 +541,35 @@ export const CreateContentScreen: React.FC = () => {
             </View>
 
             <ScrollView style={styles.previewScroll} contentContainerStyle={styles.previewContent}>
+              <View style={styles.previewStatsRow}>
+                <View style={styles.previewStatCard}>
+                  <Text style={styles.previewStatLabel}>{t('Platforms')}</Text>
+                  <Text style={styles.previewStatValue}>{selectedPlatforms.length}</Text>
+                  <Text style={styles.previewStatMeta}>
+                    {formatCountLabel(selectedPlatforms.length, t('channel'), t('channels'))}
+                  </Text>
+                </View>
+                <View style={styles.previewStatCard}>
+                  <Text style={styles.previewStatLabel}>{t('Images')}</Text>
+                  <Text style={styles.previewStatValue}>{previewImageCount}</Text>
+                  <Text style={styles.previewStatMeta}>
+                    {previewImageCount ? formatCountLabel(previewImageCount, t('frame'), t('frames')) : t('No image set')}
+                  </Text>
+                </View>
+                <View style={styles.previewStatCard}>
+                  <Text style={styles.previewStatLabel}>{t('Video')}</Text>
+                  <Text style={styles.previewStatValue}>{previewHasVideo ? t('Ready') : t('Off')}</Text>
+                  <Text style={styles.previewStatMeta}>
+                    {previewHasVideo ? t('AI video attached') : t('Generated only when needed')}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.previewMetaCard}>
+                <Text style={styles.previewMetaLabel}>{t('Prompt')}</Text>
+                <Text style={styles.previewMetaValue}>{previewPrompt || normalizedPrompt}</Text>
+              </View>
+
               <View style={styles.previewMetaCard}>
                 <Text style={styles.previewMetaLabel}>{t('Selected Platforms')}</Text>
                 <View style={styles.row}>
@@ -527,6 +584,9 @@ export const CreateContentScreen: React.FC = () => {
               {previewContent?.images?.length ? (
                 <View style={styles.previewBlock}>
                   <Text style={styles.sectionTitle}>{t('Creative Preview')}</Text>
+                  <Text style={styles.previewSectionHint}>
+                    {t('Primary generated visuals that will anchor the post across image-first channels.')}
+                  </Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     {previewContent.images.map(url => (
                       <Image key={url} source={{ uri: url }} style={styles.previewImage} />
@@ -545,6 +605,25 @@ export const CreateContentScreen: React.FC = () => {
                   <Text style={styles.previewWarningText}>{previewContent.video_error}</Text>
                 </View>
               ) : null}
+              {previewContent?.video_url ? (
+                <View style={styles.previewMediaCard}>
+                  <View style={styles.previewMediaCardHeader}>
+                    <View>
+                      <Text style={styles.previewMediaCardTitle}>{t('AI Video Preview')}</Text>
+                      <Text style={styles.previewMediaCardHint}>
+                        {t('This generated video will be used automatically on the selected video channels.')}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.previewLinkButton}
+                      onPress={() => openExternalPreview(previewContent.video_url!)}
+                    >
+                      <Text style={styles.previewLinkButtonText}>{t('Open video')}</Text>
+                      <Text style={styles.previewLinkMeta}>{truncateValue(previewContent.video_url, 40)}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : null}
 
               {selectedPlatforms.map(platform => {
                 const previewText = previewContent ? buildPlatformPreviewText(platform, previewContent) : '';
@@ -553,23 +632,55 @@ export const CreateContentScreen: React.FC = () => {
                   <View key={platform} style={styles.previewPlatformCard}>
                     <View style={styles.previewPlatformHeader}>
                       <Text style={styles.previewPlatformTitle}>{t(formatPlatformLabel(platform))}</Text>
-                      <Text style={styles.previewPlatformTag}>
-                        {videoUrls.length ? t('Video ready') : previewContent?.images?.length ? t('Image ready') : t('Caption only')}
-                      </Text>
+                      <View style={styles.previewPlatformTagPill}>
+                        <Text style={styles.previewPlatformTag}>{buildMediaStatus(platform, videoUrls.length)}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.previewDetailRow}>
+                      <View style={styles.previewMiniBadge}>
+                        <Text style={styles.previewMiniBadgeText}>
+                          {videoUrls.length
+                            ? formatCountLabel(videoUrls.length, t('video'), t('videos'))
+                            : previewImageCount
+                              ? formatCountLabel(previewImageCount, t('image'), t('images'))
+                              : t('Text only')}
+                        </Text>
+                      </View>
+                      <View style={styles.previewMiniBadge}>
+                        <Text style={styles.previewMiniBadgeText}>{t(formatPlatformLabel(platform))}</Text>
+                      </View>
                     </View>
                     {videoUrls.length ? (
                       <View style={styles.previewMediaBox}>
-                        <Text style={styles.previewMediaLabel}>
-                          {t('Video URLs')} - {videoUrls.length}
+                        <Text style={styles.previewMediaLabel}>{t('Attached Video')}</Text>
+                        <Text style={styles.previewMediaHint}>
+                          {t('Review the video asset before sending it live to this channel.')}
                         </Text>
-                        {videoUrls.map(url => (
-                          <Text key={`${platform}-${url}`} style={styles.previewUrl}>
-                            {url}
-                          </Text>
+                        {videoUrls.map((url, index) => (
+                          <TouchableOpacity
+                            key={`${platform}-${url}`}
+                            style={styles.previewInlineLink}
+                            onPress={() => openExternalPreview(url)}
+                          >
+                            <Text style={styles.previewInlineLinkText}>
+                              {t('Open video {{index}}', { index: index + 1 })}
+                            </Text>
+                            <Text style={styles.previewUrl}>{truncateValue(url, 54)}</Text>
+                          </TouchableOpacity>
                         ))}
                       </View>
+                    ) : previewImageCount ? (
+                      <View style={styles.previewMediaBox}>
+                        <Text style={styles.previewMediaLabel}>{t('Attached Creative')}</Text>
+                        <Text style={styles.previewMediaHint}>
+                          {t('This platform will use the generated image set shown above.')}
+                        </Text>
+                      </View>
                     ) : null}
-                    <Text style={styles.previewCaption}>{previewText || t('No caption available yet.')}</Text>
+                    <View style={styles.previewCaptionBox}>
+                      <Text style={styles.previewMediaLabel}>{t('Caption')}</Text>
+                      <Text style={styles.previewCaption}>{previewText || t('No caption available yet.')}</Text>
+                    </View>
                   </View>
                 );
               })}
@@ -706,6 +817,39 @@ const styles = StyleSheet.create({
     padding: 18,
     paddingBottom: 12,
   },
+  previewStatsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 14,
+  },
+  previewStatCard: {
+    flexGrow: 1,
+    flexBasis: 0,
+    minWidth: 110,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  previewStatLabel: {
+    color: colors.subtext,
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  previewStatValue: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  previewStatMeta: {
+    color: colors.subtext,
+    lineHeight: 17,
+  },
   previewMetaCard: {
     padding: 14,
     borderRadius: 18,
@@ -720,6 +864,10 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginBottom: 10,
+  },
+  previewMetaValue: {
+    color: colors.text,
+    lineHeight: 21,
   },
   previewChip: {
     backgroundColor: 'rgba(139,93,255,0.18)',
@@ -737,6 +885,12 @@ const styles = StyleSheet.create({
   },
   previewBlock: {
     marginBottom: 14,
+  },
+  previewSectionHint: {
+    color: colors.subtext,
+    marginTop: 6,
+    marginBottom: 4,
+    lineHeight: 18,
   },
   previewImage: {
     width: 220,
@@ -772,15 +926,63 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     gap: 12,
   },
+  previewDetailRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  previewMiniBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  previewMiniBadgeText: {
+    color: colors.subtext,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   previewPlatformTitle: {
     color: colors.text,
     fontWeight: '700',
     fontSize: 16,
   },
+  previewPlatformTagPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(76,194,255,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(76,194,255,0.28)',
+  },
   previewPlatformTag: {
     color: colors.accentMuted,
     fontSize: 12,
     fontWeight: '700',
+  },
+  previewMediaCard: {
+    backgroundColor: colors.card,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    marginBottom: 14,
+  },
+  previewMediaCardHeader: {
+    gap: 12,
+  },
+  previewMediaCardTitle: {
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: 16,
+    marginBottom: 6,
+  },
+  previewMediaCardHint: {
+    color: colors.subtext,
+    lineHeight: 18,
   },
   previewMediaBox: {
     backgroundColor: colors.surface,
@@ -793,10 +995,50 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 8,
   },
+  previewMediaHint: {
+    color: colors.subtext,
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  previewInlineLink: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 10,
+    marginTop: 8,
+    backgroundColor: colors.card,
+  },
+  previewInlineLinkText: {
+    color: colors.text,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  previewLinkButton: {
+    marginTop: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  previewLinkButtonText: {
+    color: colors.text,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  previewLinkMeta: {
+    color: colors.subtext,
+    lineHeight: 17,
+  },
   previewUrl: {
     color: colors.accentMuted,
     lineHeight: 18,
-    marginBottom: 4,
+  },
+  previewCaptionBox: {
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    padding: 12,
   },
   previewCaption: {
     color: colors.text,

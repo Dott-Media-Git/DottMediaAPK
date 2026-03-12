@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Alert,
   Image,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -48,6 +49,14 @@ const formatHashtags = (raw: string) =>
     .filter(Boolean)
     .map(token => (token.startsWith('#') ? token : `#${token.replace(/^#+/, '')}`))
     .join(' ');
+
+const truncateValue = (value: string, max = 88) => {
+  if (value.length <= max) return value;
+  return `${value.slice(0, Math.max(max - 1, 1)).trimEnd()}...`;
+};
+
+const formatCountLabel = (count: number, singular: string, plural: string) =>
+  count === 1 ? `1 ${singular}` : `${count} ${plural}`;
 
 export const SchedulePostScreen: React.FC = () => {
   const { state } = useAuth();
@@ -197,6 +206,14 @@ export const SchedulePostScreen: React.FC = () => {
   const openPreview = () => {
     if (!validateSchedule()) return;
     setPreviewVisible(true);
+  };
+
+  const openExternalPreview = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert(t('Preview unavailable'), t('Unable to open this media preview right now.'));
+    }
   };
 
   return (
@@ -365,6 +382,40 @@ export const SchedulePostScreen: React.FC = () => {
             </View>
 
             <ScrollView style={styles.previewScroll} contentContainerStyle={styles.previewContent}>
+              <View style={styles.previewStatsRow}>
+                <View style={styles.previewStatCard}>
+                  <Text style={styles.previewStatLabel}>{t('Platforms')}</Text>
+                  <Text style={styles.previewStatValue}>{selectedPlatforms.length}</Text>
+                  <Text style={styles.previewStatMeta}>
+                    {formatCountLabel(selectedPlatforms.length, t('channel'), t('channels'))}
+                  </Text>
+                </View>
+                <View style={styles.previewStatCard}>
+                  <Text style={styles.previewStatLabel}>{t('Posts per day')}</Text>
+                  <Text style={styles.previewStatValue}>{timesPerDay}</Text>
+                  <Text style={styles.previewStatMeta}>
+                    {t('Capped at {{count}} total scheduled posts today', { count: summary })}
+                  </Text>
+                </View>
+                <View style={styles.previewStatCard}>
+                  <Text style={styles.previewStatLabel}>{t('Media')}</Text>
+                  <Text style={styles.previewStatValue}>
+                    {videoUrl.trim() || youtubeVideoUrl.trim() || tiktokVideoUrl.trim() || reelsVideoUrl.trim()
+                      ? t('Ready')
+                      : images.length
+                        ? t('Image')
+                        : t('Text')}
+                  </Text>
+                  <Text style={styles.previewStatMeta}>
+                    {videoUrl.trim() || youtubeVideoUrl.trim() || tiktokVideoUrl.trim() || reelsVideoUrl.trim()
+                      ? t('Video supplied for selected channels')
+                      : images.length
+                        ? formatCountLabel(images.length, t('image'), t('images'))
+                        : t('Caption-led schedule')}
+                  </Text>
+                </View>
+              </View>
+
               <View style={styles.previewMetaCard}>
                 <Text style={styles.previewMetaLabel}>{t('Schedule')}</Text>
                 <Text style={styles.previewMetaValue}>{date.toLocaleString()}</Text>
@@ -383,14 +434,59 @@ export const SchedulePostScreen: React.FC = () => {
                 </View>
               </View>
 
+              <View style={styles.previewMetaCard}>
+                <Text style={styles.previewMetaLabel}>{t('Caption')}</Text>
+                <Text style={styles.previewMetaValue}>{normalizedCaption}</Text>
+                {normalizedHashtags ? (
+                  <>
+                    <Text style={[styles.previewMetaLabel, { marginTop: 12 }]}>{t('Hashtags')}</Text>
+                    <Text style={styles.previewMetaValue}>{normalizedHashtags}</Text>
+                  </>
+                ) : null}
+              </View>
+
               {images.length ? (
                 <View style={styles.previewBlock}>
                   <Text style={styles.sectionTitle}>{t('Image Preview')}</Text>
+                  <Text style={styles.previewSectionHint}>
+                    {t('These are the attached visuals that will publish on image-first channels.')}
+                  </Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     {images.map(url => (
                       <Image key={url} source={{ uri: url }} style={styles.previewImage} />
                     ))}
                   </ScrollView>
+                </View>
+              ) : null}
+
+              {(videoUrl.trim() || youtubeVideoUrl.trim() || tiktokVideoUrl.trim() || reelsVideoUrl.trim()) ? (
+                <View style={styles.previewMediaCard}>
+                  <Text style={styles.previewMediaCardTitle}>{t('Video Attachments')}</Text>
+                  <Text style={styles.previewMediaCardHint}>
+                    {t('Each supplied video can be opened and checked before the schedule goes live.')}
+                  </Text>
+                  {[
+                    ...getPlatformMedia('youtube'),
+                    ...getPlatformMedia('tiktok'),
+                    ...getPlatformMedia('instagram_reels'),
+                    ...getPlatformMedia('facebook'),
+                    ...getPlatformMedia('facebook_story'),
+                    ...getPlatformMedia('instagram_story'),
+                    ...getPlatformMedia('linkedin'),
+                  ]
+                    .filter((value, index, array) => array.indexOf(value) === index)
+                    .map((url, index) => (
+                      <TouchableOpacity
+                        key={`preview-video-${url}`}
+                        style={styles.previewLinkButton}
+                        onPress={() => openExternalPreview(url)}
+                      >
+                        <Text style={styles.previewLinkButtonText}>
+                          {t('Open video {{index}}', { index: index + 1 })}
+                        </Text>
+                        <Text style={styles.previewLinkMeta}>{truncateValue(url, 54)}</Text>
+                      </TouchableOpacity>
+                    ))}
                 </View>
               ) : null}
 
@@ -400,26 +496,60 @@ export const SchedulePostScreen: React.FC = () => {
                   <View key={platform} style={styles.previewPlatformCard}>
                     <View style={styles.previewPlatformHeader}>
                       <Text style={styles.previewPlatformTitle}>{t(formatPlatformLabel(platform))}</Text>
-                      <Text style={styles.previewPlatformTag}>
-                        {mediaUrls.length ? t('Video ready') : images.length ? t('Image ready') : t('Caption only')}
-                      </Text>
+                      <View style={styles.previewPlatformTagPill}>
+                        <Text style={styles.previewPlatformTag}>
+                          {mediaUrls.length ? t('Video attached') : images.length ? t('Image set ready') : t('Caption only')}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.previewDetailRow}>
+                      <View style={styles.previewMiniBadge}>
+                        <Text style={styles.previewMiniBadgeText}>
+                          {mediaUrls.length
+                            ? formatCountLabel(mediaUrls.length, t('video'), t('videos'))
+                            : images.length
+                              ? formatCountLabel(images.length, t('image'), t('images'))
+                              : t('Text only')}
+                        </Text>
+                      </View>
+                      <View style={styles.previewMiniBadge}>
+                        <Text style={styles.previewMiniBadgeText}>{t(formatPlatformLabel(platform))}</Text>
+                      </View>
                     </View>
                     {platform === 'youtube' && videoTitle.trim() ? (
                       <Text style={styles.previewMetaValue}>{videoTitle.trim()}</Text>
                     ) : null}
                     {mediaUrls.length ? (
                       <View style={styles.previewMediaBox}>
-                        <Text style={styles.previewMediaLabel}>
-                          {t('Video URLs')} - {mediaUrls.length}
+                        <Text style={styles.previewMediaLabel}>{t('Attached Video')}</Text>
+                        <Text style={styles.previewMediaHint}>
+                          {t('Review the exact uploaded video for this platform.')}
                         </Text>
-                        {mediaUrls.map(url => (
-                          <Text key={`${platform}-${url}`} style={styles.previewUrl}>
-                            {url}
-                          </Text>
+                        {mediaUrls.map((url, index) => (
+                          <TouchableOpacity
+                            key={`${platform}-${url}`}
+                            style={styles.previewInlineLink}
+                            onPress={() => openExternalPreview(url)}
+                          >
+                            <Text style={styles.previewInlineLinkText}>
+                              {t('Open video {{index}}', { index: index + 1 })}
+                            </Text>
+                            <Text style={styles.previewUrl}>{truncateValue(url, 54)}</Text>
+                          </TouchableOpacity>
                         ))}
                       </View>
+                    ) : images.length ? (
+                      <View style={styles.previewMediaBox}>
+                        <Text style={styles.previewMediaLabel}>{t('Attached Creative')}</Text>
+                        <Text style={styles.previewMediaHint}>
+                          {t('This platform will use the uploaded image set shown above.')}
+                        </Text>
+                      </View>
                     ) : null}
-                    <Text style={styles.previewCaption}>{buildPreviewText(platform)}</Text>
+                    <View style={styles.previewCaptionBox}>
+                      <Text style={styles.previewMediaLabel}>{t('Caption')}</Text>
+                      <Text style={styles.previewCaption}>{buildPreviewText(platform)}</Text>
+                    </View>
                   </View>
                 );
               })}
@@ -530,6 +660,39 @@ const styles = StyleSheet.create({
     padding: 18,
     paddingBottom: 12,
   },
+  previewStatsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 14,
+  },
+  previewStatCard: {
+    flexGrow: 1,
+    flexBasis: 0,
+    minWidth: 110,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  previewStatLabel: {
+    color: colors.subtext,
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  previewStatValue: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  previewStatMeta: {
+    color: colors.subtext,
+    lineHeight: 17,
+  },
   previewMetaCard: {
     padding: 14,
     borderRadius: 18,
@@ -567,6 +730,12 @@ const styles = StyleSheet.create({
   previewBlock: {
     marginBottom: 14,
   },
+  previewSectionHint: {
+    color: colors.subtext,
+    marginTop: 6,
+    marginBottom: 4,
+    lineHeight: 18,
+  },
   previewImage: {
     width: 220,
     height: 220,
@@ -589,15 +758,61 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     gap: 12,
   },
+  previewDetailRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  previewMiniBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  previewMiniBadgeText: {
+    color: colors.subtext,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   previewPlatformTitle: {
     color: colors.text,
     fontWeight: '700',
     fontSize: 16,
   },
+  previewPlatformTagPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(76,194,255,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(76,194,255,0.28)',
+  },
   previewPlatformTag: {
     color: colors.accentMuted,
     fontSize: 12,
     fontWeight: '700',
+  },
+  previewMediaCard: {
+    backgroundColor: colors.card,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    marginBottom: 14,
+  },
+  previewMediaCardTitle: {
+    color: colors.text,
+    fontWeight: '800',
+    fontSize: 16,
+    marginBottom: 6,
+  },
+  previewMediaCardHint: {
+    color: colors.subtext,
+    lineHeight: 18,
+    marginBottom: 10,
   },
   previewMediaBox: {
     backgroundColor: colors.surface,
@@ -610,10 +825,50 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 8,
   },
+  previewMediaHint: {
+    color: colors.subtext,
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  previewInlineLink: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 10,
+    marginTop: 8,
+    backgroundColor: colors.card,
+  },
+  previewInlineLinkText: {
+    color: colors.text,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  previewLinkButton: {
+    marginTop: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  previewLinkButtonText: {
+    color: colors.text,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  previewLinkMeta: {
+    color: colors.subtext,
+    lineHeight: 17,
+  },
   previewUrl: {
     color: colors.accentMuted,
     lineHeight: 18,
-    marginBottom: 4,
+  },
+  previewCaptionBox: {
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    padding: 12,
   },
   previewCaption: {
     color: colors.text,
