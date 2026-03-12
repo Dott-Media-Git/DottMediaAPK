@@ -104,32 +104,9 @@ const truncateValue = (value: string, max = 88) => {
 const formatCountLabel = (count: number, singular: string, plural: string) =>
   count === 1 ? `1 ${singular}` : `${count} ${plural}`;
 
-const formatGenerationFailureNotice = (assetType: 'image' | 'video', rawMessage?: string) => {
-  const message = (rawMessage ?? '').toLowerCase();
+const formatGenerationFailureNotice = (assetType: 'image' | 'video', _rawMessage?: string) => {
   const label = assetType === 'image' ? 'Image' : 'Video';
-
-  if (
-    message.includes('insufficient_quota') ||
-    message.includes('quota') ||
-    message.includes('credit') ||
-    message.includes('billing')
-  ) {
-    return `${label} generation is unavailable right now. Check your OpenAI credits or billing and try again.`;
-  }
-
-  if (message.includes('rate limit') || message.includes('429')) {
-    return `${label} generation is temporarily rate-limited. Please wait a moment and try again.`;
-  }
-
-  if (message.includes('api key') || message.includes('unauthorized') || message.includes('authentication')) {
-    return `${label} generation is unavailable because the OpenAI connection needs attention.`;
-  }
-
-  if (assetType === 'video' && (message.includes('sora') || message.includes('video generation failed'))) {
-    return 'Video generation is unavailable right now. Sora may not be enabled on this OpenAI account.';
-  }
-
-  return `${label} generation could not complete right now. Please try again shortly.`;
+  return `${label} generation is unavailable right now. add credits and try again.`;
 };
 
 export const CreateContentScreen: React.FC = () => {
