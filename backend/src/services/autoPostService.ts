@@ -65,6 +65,7 @@ type AutoPostJob = {
   trendTimezone?: string;
   trendStructuredScheduleEnabled?: boolean;
   trendSlotCursor?: number;
+  trendContentCycle?: string[];
   trendTableCursor?: number;
   trendLastContentType?: string;
   trendLastContentKey?: string;
@@ -1197,6 +1198,16 @@ export class AutoPostService {
     return 0;
   }
 
+  private getStructuredFootballCycle(job: AutoPostJob) {
+    const allowed = new Set<FootballTrendContentType>(['result', 'news', 'video']);
+    const provided = Array.isArray(job.trendContentCycle)
+      ? job.trendContentCycle
+          .map(value => String(value || '').trim().toLowerCase())
+          .filter((value): value is FootballTrendContentType => allowed.has(value as FootballTrendContentType))
+      : [];
+    return provided.length ? provided : (['result', 'news', 'video'] as FootballTrendContentType[]);
+  }
+
   private getStructuredFootballSlot(job: AutoPostJob, now: Date) {
     const timezone = job.trendTimezone?.trim() || process.env.AUTOPOST_FOOTBALL_TZ?.trim() || 'Africa/Kampala';
     const hour = this.getHourForTimezone(now, timezone);
@@ -1212,7 +1223,7 @@ export class AutoPostService {
     if (topScorerHours.has(hour)) {
       return { contentType: 'top_scorer' as FootballTrendContentType, timezone, hour };
     }
-    const cycle: FootballTrendContentType[] = ['result', 'news', 'video'];
+    const cycle = this.getStructuredFootballCycle(job);
     const cursor = Number.isFinite(job.trendSlotCursor) ? (job.trendSlotCursor as number) : hour % cycle.length;
     const idx = ((Math.trunc(cursor) % cycle.length) + cycle.length) % cycle.length;
     return {
