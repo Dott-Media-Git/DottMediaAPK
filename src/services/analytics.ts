@@ -738,15 +738,39 @@ export const fetchActivityHeatmap = (userId?: string, scopeId?: string, days = 1
     `/api/stats/activityHeatmap?days=${encodeURIComponent(String(days))}`,
     userId,
     scopeId,
-  ).then(stats => {
-    if (!Array.isArray(stats)) return [];
-    return stats.map((row: any) => ({
-      date: String(row?.date ?? ''),
-      views: toFiniteNumber(row?.views),
-      interactions: toFiniteNumber(row?.interactions),
-      outbound: toFiniteNumber(row?.outbound),
-      conversions: toFiniteNumber(row?.conversions),
-    }));
+  ).then(async stats => {
+    const normalizedApiRows = Array.isArray(stats)
+      ? stats.map((row: any) => ({
+          date: String(row?.date ?? ''),
+          views: toFiniteNumber(row?.views),
+          interactions: toFiniteNumber(row?.interactions),
+          outbound: toFiniteNumber(row?.outbound),
+          conversions: toFiniteNumber(row?.conversions),
+        }))
+      : [];
+
+    if (activityHeatmapScore(normalizedApiRows) > 0 || !isFirebaseEnabled || !realtimeDb) {
+      return normalizedApiRows;
+    }
+
+    try {
+      const scopeKeys = Array.from(new Set([resolveScopeKey(scopeId), resolveScopeKey(userId)].filter(Boolean)));
+      const candidateRows = await Promise.all(
+        scopeKeys.map(scopeKey => loadActivityHeatmapScope(scopeKey, Math.max(days, 7))),
+      );
+      const merged = new Map<string, ActivityHeatmapDaily>();
+      candidateRows.forEach(rows => {
+        rows.forEach(row => mergeActivityHeatmapRow(merged, row.date, row));
+      });
+      const rows = Array.from(merged.values())
+        .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
+        .slice(-Math.max(days, 7));
+
+      return activityHeatmapScore(rows) > 0 ? rows : normalizedApiRows;
+    } catch (error) {
+      console.warn('Activity heatmap fetch fallback failed', error);
+      return normalizedApiRows;
+    }
   });
 
 export const subscribeWebLeadStats = (
@@ -822,6 +846,86 @@ const buildActivityHeatmap = (
       outbound: values.outbound,
       conversions: values.conversions,
     }));
+};
+
+const mergeActivityHeatmapRow = (
+  target: Map<string, ActivityHeatmapDaily>,
+  date: string,
+  incoming: Partial<ActivityHeatmapDaily>,
+) => {
+  if (!date) return;
+  const existing =
+    target.get(date) ??
+    ({
+      date,
+      views: 0,
+      interactions: 0,
+      outbound: 0,
+      conversions: 0,
+    } as ActivityHeatmapDaily);
+  existing.views = Math.max(existing.views, Number(incoming.views ?? 0));
+  existing.interactions = Math.max(existing.interactions, Number(incoming.interactions ?? 0));
+  existing.outbound = Math.max(existing.outbound, Number(incoming.outbound ?? 0));
+  existing.conversions = Math.max(existing.conversions, Number(incoming.conversions ?? 0));
+  target.set(date, existing);
+};
+
+const loadActivityHeatmapScope = async (scopeKey: string, dayLimit: number) => {
+  const [webTrafficSnap, outboundSnap, engagementSnap, dailySnap] = await Promise.all([
+    getDocs(
+      query(collection(realtimeDb!, 'analytics', scopeKey, 'webTrafficDaily'), orderBy('date', 'desc'), limit(dayLimit)),
+    ),
+    getDocs(
+      query(collection(realtimeDb!, 'analytics', scopeKey, 'outboundDaily'), orderBy('date', 'desc'), limit(dayLimit)),
+    ),
+    getDocs(
+      query(collection(realtimeDb!, 'analytics', scopeKey, 'engagementDaily'), orderBy('date', 'desc'), limit(dayLimit)),
+    ),
+    getDocs(
+      query(collection(realtimeDb!, 'analytics', scopeKey, 'daily'), orderBy('date', 'desc'), limit(dayLimit)),
+    ),
+  ]);
+
+  const byDate = new Map<string, ActivityHeatmapDaily>();
+
+  webTrafficSnap.docs.forEach(docSnap => {
+    const data = docSnap.data() as WebTrafficDailyDoc;
+    mergeActivityHeatmapRow(byDate, String(data.date ?? docSnap.id ?? ''), {
+      views: Number(data.visitors ?? 0),
+      interactions: Number(data.interactions ?? 0),
+    });
+  });
+
+  outboundSnap.docs.forEach(docSnap => {
+    const data = docSnap.data() as OutboundDailyDoc;
+    mergeActivityHeatmapRow(byDate, String(data.date ?? docSnap.id ?? ''), {
+      outbound: Number(data.messagesSent ?? data.replies ?? 0),
+      conversions: Number(data.conversions ?? 0),
+    });
+  });
+
+  engagementSnap.docs.forEach(docSnap => {
+    const data = docSnap.data() as EngagementDailyDoc;
+    mergeActivityHeatmapRow(byDate, String(data.date ?? docSnap.id ?? ''), {
+      interactions: Number(data.comments ?? 0) + Number(data.replies ?? 0),
+      conversions: Number(data.conversions ?? 0),
+    });
+  });
+
+  dailySnap.docs.forEach(docSnap => {
+    const data = docSnap.data() as any;
+    const samples = Math.max(Number(data.samples ?? 1) || 1, 1);
+    mergeActivityHeatmapRow(byDate, String(data.date ?? docSnap.id ?? ''), {
+      views: Math.round(Number(data.leads ?? 0) / samples),
+      interactions: Math.round(Number(data.engagement ?? 0) / samples),
+      outbound: Math.round(Number(data.conversions ?? 0) / samples),
+      conversions: Math.round(Number(data.conversions ?? 0) / samples),
+    });
+  });
+
+  return Array.from(byDate.values())
+    .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
+    .slice(-dayLimit);
 };
 
 const activityHeatmapScore = (rows: ActivityHeatmapDaily[]) =>
