@@ -104,6 +104,34 @@ const truncateValue = (value: string, max = 88) => {
 const formatCountLabel = (count: number, singular: string, plural: string) =>
   count === 1 ? `1 ${singular}` : `${count} ${plural}`;
 
+const formatGenerationFailureNotice = (assetType: 'image' | 'video', rawMessage?: string) => {
+  const message = (rawMessage ?? '').toLowerCase();
+  const label = assetType === 'image' ? 'Image' : 'Video';
+
+  if (
+    message.includes('insufficient_quota') ||
+    message.includes('quota') ||
+    message.includes('credit') ||
+    message.includes('billing')
+  ) {
+    return `${label} generation is unavailable right now. Check your OpenAI credits or billing and try again.`;
+  }
+
+  if (message.includes('rate limit') || message.includes('429')) {
+    return `${label} generation is temporarily rate-limited. Please wait a moment and try again.`;
+  }
+
+  if (message.includes('api key') || message.includes('unauthorized') || message.includes('authentication')) {
+    return `${label} generation is unavailable because the OpenAI connection needs attention.`;
+  }
+
+  if (assetType === 'video' && (message.includes('sora') || message.includes('video generation failed'))) {
+    return 'Video generation is unavailable right now. Sora may not be enabled on this OpenAI account.';
+  }
+
+  return `${label} generation could not complete right now. Please try again shortly.`;
+};
+
 export const CreateContentScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
@@ -163,8 +191,7 @@ export const CreateContentScreen: React.FC = () => {
     invalidatePreview();
   };
 
-  const showPromptNotice = () => {
-    const message = t('Enter a prompt first.');
+  const showNotice = (message: string) => {
     setNoticeMessage(message);
     if (noticeTimerRef.current) {
       clearTimeout(noticeTimerRef.current);
@@ -184,6 +211,10 @@ export const CreateContentScreen: React.FC = () => {
         useNativeDriver: true,
       }).start(() => setNoticeMessage(''));
     }, 2600);
+  };
+
+  const showPromptNotice = () => {
+    showNotice(t('Enter a prompt first.'));
   };
 
   const addYoutubeVideoUrl = () => {
@@ -248,12 +279,26 @@ export const CreateContentScreen: React.FC = () => {
       setResult(content);
       setPreviewContent(content);
       setPreviewPrompt(normalizedPrompt);
+
+      const warnings: string[] = [];
+      if (!content.images?.length && content.image_error) {
+        warnings.push(formatGenerationFailureNotice('image', content.image_error));
+      }
+      if (shouldGenerateVideo && !content.video_url && content.video_error) {
+        warnings.push(formatGenerationFailureNotice('video', content.video_error));
+      }
+      if (warnings.length) {
+        showNotice(warnings.join('\n'));
+      }
+
       return content;
     } catch (error: any) {
-      Alert.alert(
-        mode === 'generate' ? t('Generation failed') : t('Preview unavailable'),
-        error.message ?? t('Unable to prepare preview right now.'),
-      );
+      const rawMessage = error?.message ?? '';
+      const combinedMessage =
+        shouldGenerateVideo && rawMessage
+          ? `${formatGenerationFailureNotice('image', rawMessage)}\n${formatGenerationFailureNotice('video', rawMessage)}`
+          : formatGenerationFailureNotice('image', rawMessage);
+      showNotice(combinedMessage);
       return null;
     } finally {
       if (mode === 'generate') {
