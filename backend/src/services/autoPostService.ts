@@ -1099,13 +1099,14 @@ export class AutoPostService {
       .join('\n');
   }
 
-  private async pickFreshHighlightlyVideoCandidate(timezone: string, recentSet: Set<string>) {
+  private async pickFreshHighlightlyVideoCandidate(userId: string, timezone: string, recentSet: Set<string>) {
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const highlights = await fetchHighlightlyFootballHighlights({
       dates: [this.getDateKeyForTimezone(now, timezone), this.getDateKeyForTimezone(yesterday, timezone)],
       timezone,
       limit: 5,
+      secretOwnerId: userId,
     });
     for (const item of highlights) {
       const key = this.buildTrendContentKey('video', `highlightly|${item.id}|${item.url || item.title}`);
@@ -2272,7 +2273,7 @@ export class AutoPostService {
         }
       }
       if (selectedContentType === 'video') {
-        highlightlyVideoSelection = await this.pickFreshHighlightlyVideoCandidate(scheduleTimezone, trendRecentSet);
+        highlightlyVideoSelection = await this.pickFreshHighlightlyVideoCandidate(userId, scheduleTimezone, trendRecentSet);
         if (highlightlyVideoSelection) {
           const updatedStamp = new Date().toLocaleTimeString('en-GB', {
             hour: '2-digit',

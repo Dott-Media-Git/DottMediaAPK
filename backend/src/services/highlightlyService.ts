@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getSecret } from './secretVaultService.js';
 
 export type HighlightlyFootballHighlight = {
   id: number;
@@ -21,6 +22,7 @@ type FetchHighlightlyFootballHighlightsOptions = {
   dates: string[];
   timezone: string;
   limit?: number;
+  secretOwnerId?: string;
 };
 
 type HighlightlyApiEnvelope = {
@@ -34,11 +36,28 @@ const BLOCKED_CHANNEL_PATTERNS = [/premier\s*league/i];
 
 let missingApiKeyLogged = false;
 
-const getApiKey = () =>
+const getConfiguredApiKey = () =>
   process.env.HIGHLIGHTLY_API_KEY?.trim() ||
   process.env.RAPIDAPI_KEY?.trim() ||
   process.env.RAPIDAPI_TOKEN?.trim() ||
   '';
+
+const getApiKey = async (secretOwnerId?: string) => {
+  const configured = getConfiguredApiKey();
+  if (configured) return configured;
+  const ownerId = String(secretOwnerId || '').trim();
+  if (!ownerId) return '';
+  try {
+    const secret = await getSecret(ownerId, 'highlightly_api_key', { decrypt: true });
+    return typeof secret?.value === 'string' ? secret.value.trim() : '';
+  } catch (error) {
+    console.warn('[highlightly] failed to resolve secret-backed API key', {
+      ownerId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return '';
+  }
+};
 
 const getAllowedSources = () => {
   const raw = process.env.HIGHLIGHTLY_ALLOWED_SOURCES?.trim();
@@ -97,7 +116,7 @@ const isAllowedHighlight = (item: HighlightlyFootballHighlight, allowedSources: 
 export const fetchHighlightlyFootballHighlights = async (
   options: FetchHighlightlyFootballHighlightsOptions,
 ): Promise<HighlightlyFootballHighlight[]> => {
-  const apiKey = getApiKey();
+  const apiKey = await getApiKey(options.secretOwnerId);
   if (!apiKey) {
     if (!missingApiKeyLogged) {
       missingApiKeyLogged = true;
