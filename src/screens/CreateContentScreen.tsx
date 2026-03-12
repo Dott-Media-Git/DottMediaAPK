@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
   Image,
   Modal,
   Pressable,
@@ -108,6 +109,9 @@ export const CreateContentScreen: React.FC = () => {
   const [postingNow, setPostingNow] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
   const [lastPostTime, setLastPostTime] = useState<Date | null>(null);
+  const [noticeMessage, setNoticeMessage] = useState('');
+  const noticeOffset = useRef(new Animated.Value(-120)).current;
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hasYoutube = selectedPlatforms.includes('youtube');
   const hasTikTok = selectedPlatforms.includes('tiktok');
@@ -122,9 +126,40 @@ export const CreateContentScreen: React.FC = () => {
     setPreviewPrompt('');
   };
 
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) {
+        clearTimeout(noticeTimerRef.current);
+      }
+    };
+  }, []);
+
   const handlePromptChange = (value: string) => {
     setPrompt(value);
     invalidatePreview();
+  };
+
+  const showPromptNotice = () => {
+    const message = t('Enter a prompt first.');
+    setNoticeMessage(message);
+    if (noticeTimerRef.current) {
+      clearTimeout(noticeTimerRef.current);
+    }
+    noticeOffset.stopAnimation();
+    Animated.spring(noticeOffset, {
+      toValue: 0,
+      useNativeDriver: true,
+      damping: 18,
+      stiffness: 170,
+      mass: 0.8,
+    }).start();
+    noticeTimerRef.current = setTimeout(() => {
+      Animated.timing(noticeOffset, {
+        toValue: -120,
+        duration: 220,
+        useNativeDriver: true,
+      }).start(() => setNoticeMessage(''));
+    }, 2600);
   };
 
   const addYoutubeVideoUrl = () => {
@@ -156,7 +191,7 @@ export const CreateContentScreen: React.FC = () => {
 
   const validatePostNow = () => {
     if (!normalizedPrompt) {
-      Alert.alert(t('Prompt required'), t('Add a prompt before posting now.'));
+      showPromptNotice();
       return false;
     }
     if (!selectedPlatforms.length) {
@@ -180,7 +215,7 @@ export const CreateContentScreen: React.FC = () => {
 
   const requestGeneratedContent = async (mode: 'generate' | 'preview') => {
     if (!normalizedPrompt) {
-      Alert.alert(t('Prompt required'));
+      showPromptNotice();
       return null;
     }
 
@@ -289,6 +324,18 @@ export const CreateContentScreen: React.FC = () => {
 
   return (
     <>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.noticeBanner,
+          {
+            opacity: noticeMessage ? 1 : 0,
+            transform: [{ translateY: noticeOffset }],
+          },
+        ]}
+      >
+        <Text style={styles.noticeText}>{noticeMessage}</Text>
+      </Animated.View>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.card}>
           <Text style={styles.label}>{t('Prompt')}</Text>
@@ -551,6 +598,29 @@ const styles = StyleSheet.create({
     color: colors.warning,
     marginTop: 10,
     lineHeight: 18,
+  },
+  noticeBanner: {
+    position: 'absolute',
+    top: 14,
+    left: 18,
+    right: 18,
+    zIndex: 20,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  noticeText: {
+    color: colors.text,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   modalOverlay: {
     flex: 1,
