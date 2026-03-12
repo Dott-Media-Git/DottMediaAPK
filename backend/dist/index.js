@@ -38,10 +38,12 @@ import tiktokIntegrationRoutes from './routes/tiktokIntegrationRoutes.js';
 import instagramReelsSoraRoutes from './routes/instagramReelsSoraRoutes.js';
 import publicMediaRoutes from './routes/publicMediaRoutes.js';
 import redirectRoutes from './routes/redirectRoutes.js';
+import mediaRoutes from './routes/mediaRoutes.js';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher.js';
 import stripeRoutes from './routes/stripeRoutes.js';
 import { requireFirebase } from './middleware/firebaseAuth.js';
 import { autoPostService } from './services/autoPostService.js';
+import { ensureGeneratedMediaRoot } from './services/generatedMediaService.js';
 const initializeAutomation = async () => {
     try {
         await Promise.all([
@@ -102,6 +104,8 @@ if (fallbackVideoDir) {
         console.warn(`[autopost] fallback video directory not found (${resolved}).`);
     }
 }
+const generatedMediaRoot = ensureGeneratedMediaRoot();
+app.use('/public/generated-media', express.static(generatedMediaRoot));
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 app.get('/version', (_req, res) => {
     res.set({
@@ -156,6 +160,7 @@ app.use('/', tiktokIntegrationRoutes);
 app.use('/', instagramReelsSoraRoutes);
 app.use('/', publicMediaRoutes);
 app.use('/', redirectRoutes);
+app.use('/', mediaRoutes);
 app.use('/', adminRoutes);
 // Direct autopost endpoint to ensure availability (mirrors socialRoutes autopost handler)
 app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
