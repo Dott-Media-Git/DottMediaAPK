@@ -1,9 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
   Image,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,7 +17,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
-import { schedulePost } from '@services/social';
+import { schedulePost, uploadMediaFiles, type UploadedMediaFile } from '@services/social';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
 
@@ -58,6 +60,10 @@ const truncateValue = (value: string, max = 88) => {
 const formatCountLabel = (count: number, singular: string, plural: string) =>
   count === 1 ? `1 ${singular}` : `${count} ${plural}`;
 
+const IMAGE_URL_PATTERN = /\.(png|jpe?g|gif|webp|avif|svg)(\?|#|$)/i;
+const VIDEO_URL_PATTERN = /\.(mp4|mov|webm|mkv|m4v)(\?|#|$)/i;
+const URL_PATTERN = /(https?:\/\/[^\s]+)/gi;
+
 export const SchedulePostScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
@@ -76,9 +82,26 @@ export const SchedulePostScreen: React.FC = () => {
   const [imageUrlInput, setImageUrlInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
+  const [noticeMessage, setNoticeMessage] = useState('');
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const noticeOffset = useRef(new Animated.Value(-120)).current;
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const webFileInputRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) {
+        clearTimeout(noticeTimerRef.current);
+      }
+    };
+  }, []);
 
   const addImage = () => {
-    if (!imageUrlInput.trim()) return;
+    if (!imageUrlInput.trim()) {
+      showNotice(t('Add an image URL first, or drag and drop an image below.'));
+      return;
+    }
     setImages(prev => [...prev, imageUrlInput.trim()]);
     setImageUrlInput('');
   };
@@ -106,6 +129,114 @@ export const SchedulePostScreen: React.FC = () => {
 
   const normalizedCaption = caption.trim();
   const normalizedHashtags = formatHashtags(hashtags);
+  const isWeb = Platform.OS === 'web';
+
+  const showNotice = (message: string) => {
+    setNoticeMessage(message);
+    if (noticeTimerRef.current) {
+      clearTimeout(noticeTimerRef.current);
+    }
+    noticeOffset.stopAnimation();
+    Animated.spring(noticeOffset, {
+      toValue: 0,
+      useNativeDriver: true,
+      damping: 18,
+      stiffness: 170,
+      mass: 0.8,
+    }).start();
+    noticeTimerRef.current = setTimeout(() => {
+      Animated.timing(noticeOffset, {
+        toValue: -120,
+        duration: 220,
+        useNativeDriver: true,
+      }).start(() => setNoticeMessage(''));
+    }, 2600);
+  };
+
+  const assignUploadedVideoUrl = (url: string) => {
+    if (hasYoutube) setYoutubeVideoUrl(url);
+    if (hasTikTok) setTiktokVideoUrl(url);
+    if (hasReels) setReelsVideoUrl(url);
+    if (hasOptionalVideoPlatforms || (!hasYoutube && !hasTikTok && !hasReels)) {
+      setVideoUrl(url);
+    }
+  };
+
+  const isLikelyImageUrl = (url: string) => IMAGE_URL_PATTERN.test(url);
+  const isLikelyVideoUrl = (url: string) => VIDEO_URL_PATTERN.test(url);
+
+  const applyUploadedMedia = (uploadedFiles: UploadedMediaFile[]) => {
+    const uploadedImages = uploadedFiles.filter(file => file.kind === 'image');
+    const uploadedVideos = uploadedFiles.filter(file => file.kind === 'video');
+
+    if (uploadedImages.length) {
+      setImages(prev => [...prev, ...uploadedImages.map(file => file.url)]);
+    }
+    if (uploadedVideos.length) {
+      assignUploadedVideoUrl(uploadedVideos[0].url);
+      if (uploadedVideos.length > 1) {
+        showNotice(t('Only the first uploaded video is used for this scheduled post.'));
+      }
+    }
+    if (uploadedImages.length || uploadedVideos.length) {
+      showNotice(
+        t('Media added: {{images}} image(s), {{videos}} video(s).', {
+          images: uploadedImages.length,
+          videos: uploadedVideos.length,
+        }),
+      );
+    }
+  };
+
+  const uploadDroppedFiles = async (files: any[]) => {
+    if (!files.length) return;
+    setMediaUploading(true);
+    try {
+      const response = await uploadMediaFiles(files as File[]);
+      applyUploadedMedia(response.files ?? []);
+    } catch (error: any) {
+      showNotice(error?.message ?? t('Unable to upload media right now.'));
+    } finally {
+      setMediaUploading(false);
+    }
+  };
+
+  const applyPastedUrls = (rawText: string) => {
+    const urls = (rawText.match(URL_PATTERN) ?? []).map(value => value.trim());
+    if (!urls.length) {
+      showNotice(t('Paste a valid image or video URL, or drop a media file.'));
+      return;
+    }
+    const imageUrls: string[] = [];
+    let assignedVideo = false;
+
+    urls.forEach(url => {
+      if (isLikelyVideoUrl(url) || (!isLikelyImageUrl(url) && !assignedVideo && (hasVideoPlatform || hasOptionalVideoPlatforms))) {
+        if (!assignedVideo) {
+          assignUploadedVideoUrl(url);
+          assignedVideo = true;
+        }
+        return;
+      }
+      imageUrls.push(url);
+    });
+
+    if (imageUrls.length) {
+      setImages(prev => [...prev, ...imageUrls]);
+    }
+
+    if (!imageUrls.length && !assignedVideo) {
+      showNotice(t('Paste a valid image or video URL, or drop a media file.'));
+      return;
+    }
+
+    showNotice(
+      t('Media added: {{images}} image(s), {{videos}} video(s).', {
+        images: imageUrls.length,
+        videos: assignedVideo ? 1 : 0,
+      }),
+    );
+  };
 
   const togglePlatform = (platform: string) => {
     setSelectedPlatforms(prev =>
@@ -117,26 +248,26 @@ export const SchedulePostScreen: React.FC = () => {
     if (!state.user) return false;
     if (needsImages && !images.length) {
       if (imageOnlyPlatforms.length === 0 && hasOptionalVideoPlatforms) {
-        Alert.alert(t('Add video URL'), t('Please add a video URL.'));
+        showNotice(t('Add a video URL first, or drag and drop a video below.'));
       } else {
-        Alert.alert(t('Add images'), t('Please add at least one image URL generated earlier.'));
+        showNotice(t('Add an image URL first, or drag and drop an image below.'));
       }
       return false;
     }
     if (hasYoutube && !youtubeVideoUrl.trim()) {
-      Alert.alert(t('Add video URL'), t('Please add a YouTube video URL.'));
+      showNotice(t('Add a YouTube video URL first, or drop a video below.'));
       return false;
     }
     if (hasTikTok && !tiktokVideoUrl.trim()) {
-      Alert.alert(t('Add video URL'), t('Please add a TikTok video URL.'));
+      showNotice(t('Add a TikTok video URL first, or drop a video below.'));
       return false;
     }
     if (hasReels && !reelsVideoUrl.trim()) {
-      Alert.alert(t('Add video URL'), t('Please add an Instagram Reels video URL.'));
+      showNotice(t('Add an Instagram Reels video URL first, or drop a video below.'));
       return false;
     }
     if (!normalizedCaption) {
-      Alert.alert(t('Add caption'));
+      showNotice(t('Add a caption first.'));
       return false;
     }
     return true;
@@ -216,8 +347,63 @@ export const SchedulePostScreen: React.FC = () => {
     }
   };
 
+  const openFilePicker = () => {
+    if (!isWeb) return;
+    webFileInputRef.current?.click?.();
+  };
+
+  const handleWebFileChange = async (event: any) => {
+    const files = Array.from(event?.target?.files ?? []);
+    if (files.length) {
+      await uploadDroppedFiles(files);
+    }
+    if (event?.target) {
+      event.target.value = '';
+    }
+  };
+
+  const handleWebDrop = async (event: any) => {
+    event.preventDefault();
+    setDragActive(false);
+    const files = Array.from(event?.dataTransfer?.files ?? []);
+    if (files.length) {
+      await uploadDroppedFiles(files);
+      return;
+    }
+    const text = event?.dataTransfer?.getData?.('text') ?? '';
+    if (text.trim()) {
+      applyPastedUrls(text);
+    }
+  };
+
+  const handleWebPaste = async (event: any) => {
+    const files = Array.from(event?.clipboardData?.files ?? []);
+    if (files.length) {
+      event.preventDefault();
+      await uploadDroppedFiles(files);
+      return;
+    }
+    const text = event?.clipboardData?.getData?.('text') ?? '';
+    if (text.trim()) {
+      event.preventDefault();
+      applyPastedUrls(text);
+    }
+  };
+
   return (
     <>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.noticeBanner,
+          {
+            opacity: noticeMessage ? 1 : 0,
+            transform: [{ translateY: noticeOffset }],
+          },
+        ]}
+      >
+        <Text style={styles.noticeText}>{noticeMessage}</Text>
+      </Animated.View>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.card}>
           <Text style={styles.label}>{t('Platforms')}</Text>
@@ -322,6 +508,52 @@ export const SchedulePostScreen: React.FC = () => {
               />
             </>
           )}
+
+          <Text style={styles.label}>{t('Media Upload')}</Text>
+          <View
+            {...(isWeb
+              ? ({
+                  onDragOver: (event: any) => {
+                    event.preventDefault();
+                    setDragActive(true);
+                  },
+                  onDragLeave: () => setDragActive(false),
+                  onDrop: handleWebDrop,
+                  onPaste: handleWebPaste,
+                  tabIndex: 0,
+                } as any)
+              : {})}
+            style={[styles.mediaDropZone, dragActive && styles.mediaDropZoneActive]}
+          >
+            <Text style={styles.mediaDropZoneTitle}>
+              {mediaUploading ? t('Uploading media...') : t('Drag and drop images or a video here')}
+            </Text>
+            <Text style={styles.mediaDropZoneText}>
+              {t('You can also paste a media URL here, or browse and upload files directly.')}
+            </Text>
+            {isWeb ? (
+              <>
+                <DMButton
+                  title={t('Browse Files')}
+                  onPress={openFilePicker}
+                  disabled={mediaUploading}
+                  style={styles.mediaDropZoneButton}
+                />
+                {React.createElement('input', {
+                  ref: webFileInputRef,
+                  type: 'file',
+                  multiple: true,
+                  accept: 'image/*,video/*',
+                  style: { display: 'none' },
+                  onChange: handleWebFileChange,
+                })}
+              </>
+            ) : (
+              <Text style={styles.mediaDropZoneText}>
+                {t('Paste image or video URLs into the fields below.')}
+              </Text>
+            )}
+          </View>
 
           <Text style={styles.label}>{t('Images')}</Text>
           <TextInput
@@ -580,6 +812,29 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  noticeBanner: {
+    position: 'absolute',
+    top: 14,
+    left: 18,
+    right: 18,
+    zIndex: 20,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  noticeText: {
+    color: colors.text,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   label: { color: colors.text, fontWeight: '700', marginTop: 12, marginBottom: 6 },
   row: { flexDirection: 'row', flexWrap: 'wrap' },
   chip: {
@@ -608,6 +863,31 @@ const styles = StyleSheet.create({
     padding: 12,
     color: colors.text,
     marginBottom: 12,
+  },
+  mediaDropZone: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.border,
+    borderRadius: 18,
+    padding: 16,
+    backgroundColor: colors.card,
+    marginBottom: 12,
+  },
+  mediaDropZoneActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.surface,
+  },
+  mediaDropZoneTitle: {
+    color: colors.text,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  mediaDropZoneText: {
+    color: colors.subtext,
+    lineHeight: 18,
+  },
+  mediaDropZoneButton: {
+    marginTop: 12,
   },
   imageRow: { color: colors.subtext, marginBottom: 4 },
   modalOverlay: {

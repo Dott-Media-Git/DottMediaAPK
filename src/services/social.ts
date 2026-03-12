@@ -28,6 +28,23 @@ async function authedFetch(path: string, options: RequestInit = {}) {
   return response.json();
 }
 
+async function authedMultipartFetch(path: string, body: FormData) {
+  if (!API_BASE) throw new Error('Missing API URL');
+  const token = await getIdToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers,
+    body,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
 export const generateContent = async (payload: {
   userId?: string;
   prompt: string;
@@ -74,6 +91,20 @@ export const runAutoPostNow = async (payload: {
 export const schedulePost = async (payload: any) => {
   const body = JSON.stringify(payload);
   return authedFetch('/api/posts/schedule', { method: 'POST', body });
+};
+
+export type UploadedMediaFile = {
+  name: string;
+  url: string;
+  kind: 'image' | 'video';
+  mimeType?: string;
+  size?: number;
+};
+
+export const uploadMediaFiles = async (files: File[]) => {
+  const formData = new FormData();
+  files.forEach(file => formData.append('files', file));
+  return authedMultipartFetch('/api/media/upload', formData) as Promise<{ files: UploadedMediaFile[] }>;
 };
 
 export type SocialPost = {

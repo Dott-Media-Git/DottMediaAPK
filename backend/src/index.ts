@@ -38,6 +38,7 @@ import tiktokIntegrationRoutes from './routes/tiktokIntegrationRoutes';
 import instagramReelsSoraRoutes from './routes/instagramReelsSoraRoutes';
 import publicMediaRoutes from './routes/publicMediaRoutes';
 import redirectRoutes from './routes/redirectRoutes';
+import mediaRoutes from './routes/mediaRoutes';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher';
 import stripeRoutes from './routes/stripeRoutes';
 import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
@@ -167,6 +168,7 @@ app.use('/', tiktokIntegrationRoutes);
 app.use('/', instagramReelsSoraRoutes);
 app.use('/', publicMediaRoutes);
 app.use('/', redirectRoutes);
+app.use('/', mediaRoutes);
 app.use('/', adminRoutes);
 
 // Direct autopost endpoint to ensure availability (mirrors socialRoutes autopost handler)

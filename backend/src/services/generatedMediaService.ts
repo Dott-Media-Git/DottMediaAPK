@@ -5,7 +5,9 @@ import { config } from '../config';
 
 const generatedMediaDir = path.resolve(process.env.GENERATED_MEDIA_DIR?.trim() || './public/generated-media');
 
-const ensureDir = (subdir: 'images' | 'videos') => {
+type MediaSubdir = 'images' | 'videos';
+
+const ensureDir = (subdir: MediaSubdir) => {
   const dir = path.join(generatedMediaDir, subdir);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
@@ -26,7 +28,7 @@ const publicBaseUrl = () => {
   return `http://localhost:${config.port}`;
 };
 
-const buildPublicUrl = (subdir: 'images' | 'videos', filename: string) =>
+const buildPublicUrl = (subdir: MediaSubdir, filename: string) =>
   `${publicBaseUrl()}/public/generated-media/${subdir}/${filename}`;
 
 export const ensureGeneratedMediaRoot = () => {
@@ -50,4 +52,20 @@ export const saveGeneratedVideoFile = async (sourcePath: string, extension = 'mp
   const destination = path.join(dir, filename);
   await fs.promises.copyFile(sourcePath, destination);
   return buildPublicUrl('videos', filename);
+};
+
+const normalizeExtension = (extension: string, fallback: string) =>
+  extension.replace(/^\./, '').trim() || fallback;
+
+export const saveUploadedMediaBuffer = async (
+  buffer: Buffer,
+  type: MediaSubdir,
+  extension: string,
+) => {
+  const safeExtension = normalizeExtension(extension, type === 'images' ? 'png' : 'mp4');
+  const filename = `${crypto.randomUUID()}.${safeExtension}`;
+  const dir = ensureDir(type);
+  const filePath = path.join(dir, filename);
+  await fs.promises.writeFile(filePath, buffer);
+  return buildPublicUrl(type, filename);
 };

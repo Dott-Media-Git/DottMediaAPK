@@ -29,6 +29,7 @@
     "http-errors": "^2.0.0",
     "ioredis": "^5.8.2",
     "morgan": "^1.10.1",
+    "multer": "^2.1.1",
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.10",
     "openai": "^6.8.1",
@@ -43,6 +44,7 @@
     "@types/express": "^5.0.5",
     "@types/http-errors": "^2.0.5",
     "@types/morgan": "^1.9.10",
+    "@types/multer": "^2.1.0",
     "@types/node": "^24.10.0",
     "@types/nodemailer": "^7.0.3",
     "typescript": "^5.9.3"
