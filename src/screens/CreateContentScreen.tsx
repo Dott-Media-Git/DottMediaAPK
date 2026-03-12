@@ -31,6 +31,18 @@ const PLATFORM_OPTIONS = [
   'tiktok',
 ] as const;
 
+const GENERATED_VIDEO_PLATFORMS = new Set([
+  'twitter',
+  'threads',
+  'facebook',
+  'facebook_story',
+  'instagram_story',
+  'instagram_reels',
+  'linkedin',
+  'tiktok',
+  'youtube',
+]);
+
 const HASHTAG_REGEX = /#[A-Za-z0-9_]+/;
 
 const formatPlatformLabel = (platform: string) => {
@@ -119,6 +131,7 @@ export const CreateContentScreen: React.FC = () => {
   const normalizedPrompt = prompt.trim();
   const businessType = (state.crmData?.businessGoals ?? 'growth marketing').trim();
   const previewIsFresh = Boolean(previewContent) && previewPrompt === normalizedPrompt;
+  const shouldGenerateVideo = selectedPlatforms.some(platform => GENERATED_VIDEO_PLATFORMS.has(platform));
 
   const invalidatePreview = () => {
     setResult(null);
@@ -198,18 +211,6 @@ export const CreateContentScreen: React.FC = () => {
       Alert.alert(t('Platforms'), t('Select at least one platform.'));
       return false;
     }
-    if (hasYoutube && !youtubeVideoUrls.length && !youtubeVideoUrlInput.trim()) {
-      Alert.alert(t('Add video URL'), t('Please add a YouTube video URL.'));
-      return false;
-    }
-    if (hasTikTok && !tiktokVideoUrls.length && !tiktokVideoUrlInput.trim()) {
-      Alert.alert(t('Add video URL'), t('Please add a TikTok video URL.'));
-      return false;
-    }
-    if (hasReels && !reelsVideoUrls.length && !reelsVideoUrlInput.trim()) {
-      Alert.alert(t('Add video URL'), t('Please add an Instagram Reels video URL.'));
-      return false;
-    }
     return true;
   };
 
@@ -230,6 +231,7 @@ export const CreateContentScreen: React.FC = () => {
         userId: state.user?.uid,
         prompt: normalizedPrompt,
         businessType,
+        generateVideo: shouldGenerateVideo,
       });
       const content = response.content as GeneratedSocialContent;
       setResult(content);
@@ -282,6 +284,16 @@ export const CreateContentScreen: React.FC = () => {
   const handlePostNow = async () => {
     const content = await ensurePreviewContent();
     if (!content) return;
+    const generatedVideoUrl = content.video_url?.trim() || undefined;
+    const youtubeVideoUrl = youtubeVideoUrls.length
+      ? undefined
+      : youtubeVideoUrlInput.trim() || (hasYoutube ? generatedVideoUrl : undefined);
+    const tiktokVideoUrl = tiktokVideoUrls.length
+      ? undefined
+      : tiktokVideoUrlInput.trim() || (hasTikTok ? generatedVideoUrl : undefined);
+    const instagramReelsVideoUrl = reelsVideoUrls.length
+      ? undefined
+      : reelsVideoUrlInput.trim() || (hasReels ? generatedVideoUrl : undefined);
 
     setPostingNow(true);
     try {
@@ -289,11 +301,12 @@ export const CreateContentScreen: React.FC = () => {
         prompt: normalizedPrompt,
         businessType,
         platforms: selectedPlatforms,
-        youtubeVideoUrl: youtubeVideoUrls.length ? undefined : youtubeVideoUrlInput.trim() || undefined,
+        videoUrl: generatedVideoUrl,
+        youtubeVideoUrl,
         youtubeVideoUrls: youtubeVideoUrls.length ? youtubeVideoUrls : undefined,
-        tiktokVideoUrl: tiktokVideoUrls.length ? undefined : tiktokVideoUrlInput.trim() || undefined,
+        tiktokVideoUrl,
         tiktokVideoUrls: tiktokVideoUrls.length ? tiktokVideoUrls : undefined,
-        instagramReelsVideoUrl: reelsVideoUrls.length ? undefined : reelsVideoUrlInput.trim() || undefined,
+        instagramReelsVideoUrl,
         instagramReelsVideoUrls: reelsVideoUrls.length ? reelsVideoUrls : undefined,
         videoTitle: videoTitle.trim() || undefined,
         generatedContent: content,
@@ -309,15 +322,24 @@ export const CreateContentScreen: React.FC = () => {
     }
   };
 
-  const getVideoUrlsForPlatform = (platform: string) => {
+  const getVideoUrlsForPlatform = (platform: string, content?: GeneratedSocialContent | null) => {
     if (platform === 'youtube') {
-      return youtubeVideoUrls.length ? youtubeVideoUrls : youtubeVideoUrlInput.trim() ? [youtubeVideoUrlInput.trim()] : [];
+      if (youtubeVideoUrls.length) return youtubeVideoUrls;
+      if (youtubeVideoUrlInput.trim()) return [youtubeVideoUrlInput.trim()];
+      return content?.video_url ? [content.video_url] : [];
     }
     if (platform === 'tiktok') {
-      return tiktokVideoUrls.length ? tiktokVideoUrls : tiktokVideoUrlInput.trim() ? [tiktokVideoUrlInput.trim()] : [];
+      if (tiktokVideoUrls.length) return tiktokVideoUrls;
+      if (tiktokVideoUrlInput.trim()) return [tiktokVideoUrlInput.trim()];
+      return content?.video_url ? [content.video_url] : [];
     }
     if (platform === 'instagram_reels') {
-      return reelsVideoUrls.length ? reelsVideoUrls : reelsVideoUrlInput.trim() ? [reelsVideoUrlInput.trim()] : [];
+      if (reelsVideoUrls.length) return reelsVideoUrls;
+      if (reelsVideoUrlInput.trim()) return [reelsVideoUrlInput.trim()];
+      return content?.video_url ? [content.video_url] : [];
+    }
+    if (GENERATED_VIDEO_PLATFORMS.has(platform) && content?.video_url) {
+      return [content.video_url];
     }
     return [];
   };
@@ -450,6 +472,13 @@ export const CreateContentScreen: React.FC = () => {
             </ScrollView>
 
             {result.image_error ? <Text style={styles.errorText}>{result.image_error}</Text> : null}
+            {result.video_error ? <Text style={styles.errorText}>{result.video_error}</Text> : null}
+            {result.video_url ? (
+              <>
+                <Text style={styles.sectionTitle}>{t('AI Video')}</Text>
+                <Text style={styles.captionText}>{result.video_url}</Text>
+              </>
+            ) : null}
 
             <Text style={styles.sectionTitle}>{t('Captions')}</Text>
             <Text style={styles.captionLabel}>{t('Instagram')}</Text>
@@ -511,10 +540,15 @@ export const CreateContentScreen: React.FC = () => {
                   <Text style={styles.previewWarningText}>{previewContent.image_error}</Text>
                 </View>
               ) : null}
+              {previewContent?.video_error ? (
+                <View style={styles.previewWarning}>
+                  <Text style={styles.previewWarningText}>{previewContent.video_error}</Text>
+                </View>
+              ) : null}
 
               {selectedPlatforms.map(platform => {
                 const previewText = previewContent ? buildPlatformPreviewText(platform, previewContent) : '';
-                const videoUrls = getVideoUrlsForPlatform(platform);
+                const videoUrls = getVideoUrlsForPlatform(platform, previewContent);
                 return (
                   <View key={platform} style={styles.previewPlatformCard}>
                     <View style={styles.previewPlatformHeader}>

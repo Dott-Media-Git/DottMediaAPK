@@ -28,7 +28,12 @@ async function authedFetch(path: string, options: RequestInit = {}) {
   return response.json();
 }
 
-export const generateContent = async (payload: { userId?: string; prompt: string; businessType: string }) => {
+export const generateContent = async (payload: {
+  userId?: string;
+  prompt: string;
+  businessType: string;
+  generateVideo?: boolean;
+}) => {
   const body = JSON.stringify({ ...payload });
   return authedFetch('/api/content/generate', { method: 'POST', body });
 };
@@ -41,6 +46,8 @@ export type GeneratedSocialContent = {
   hashtags_instagram: string;
   hashtags_generic: string;
   image_error?: string;
+  video_url?: string;
+  video_error?: string;
 };
 
 export const runAutoPostNow = async (payload: {

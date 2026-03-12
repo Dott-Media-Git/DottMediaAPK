@@ -367,6 +367,8 @@ const autoPostSchema = z
         hashtags_instagram: z.string(),
         hashtags_generic: z.string(),
         image_error: z.string().optional(),
+        video_url: z.string().url().optional(),
+        video_error: z.string().optional(),
       })
       .optional(),
   })

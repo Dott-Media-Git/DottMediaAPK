@@ -2750,7 +2750,15 @@ export class AutoPostService {
     const resultField = options.resultField ?? 'lastResult';
     const useGenericVideoFallback = options.useGenericVideoFallback !== false;
     const videoPlatforms = new Set<VideoPlatform>(['youtube', 'tiktok', 'instagram_reels']);
-    const optionalVideoPlatforms = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
+    const optionalVideoPlatforms = new Set([
+      'facebook',
+      'facebook_story',
+      'instagram_story',
+      'linkedin',
+      'twitter',
+      'x',
+      'threads',
+    ]);
     const enableYouTubeShorts = this.useYouTubeShorts(job);
     const basePrompt =
       job.prompt ??

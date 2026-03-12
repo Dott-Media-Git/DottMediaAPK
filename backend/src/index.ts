@@ -42,6 +42,7 @@ import { NotificationDispatcher } from './packages/services/notificationDispatch
 import stripeRoutes from './routes/stripeRoutes';
 import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
 import { autoPostService } from './services/autoPostService';
+import { ensureGeneratedMediaRoot } from './services/generatedMediaService';
 
 const initializeAutomation = async () => {
   try {
@@ -107,6 +108,9 @@ if (fallbackVideoDir) {
     console.warn(`[autopost] fallback video directory not found (${resolved}).`);
   }
 }
+
+const generatedMediaRoot = ensureGeneratedMediaRoot();
+app.use('/public/generated-media', express.static(generatedMediaRoot));
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 app.get('/version', (_req, res) => {

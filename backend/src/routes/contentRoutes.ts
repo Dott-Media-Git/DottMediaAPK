@@ -10,6 +10,7 @@ const generateSchema = z.object({
   prompt: z.string().min(8),
   businessType: z.string().min(2),
   imageCount: z.number().int().min(1).max(4).optional(),
+  generateVideo: z.boolean().optional(),
 });
 
 router.post('/content/generate', requireFirebase, async (req, res, next) => {
