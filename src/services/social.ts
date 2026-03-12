@@ -28,9 +28,19 @@ async function authedFetch(path: string, options: RequestInit = {}) {
   return response.json();
 }
 
-export const generateContent = async (payload: { prompt: string; businessType: string }) => {
+export const generateContent = async (payload: { userId?: string; prompt: string; businessType: string }) => {
   const body = JSON.stringify({ ...payload });
   return authedFetch('/api/content/generate', { method: 'POST', body });
+};
+
+export type GeneratedSocialContent = {
+  images: string[];
+  caption_instagram: string;
+  caption_linkedin: string;
+  caption_x: string;
+  hashtags_instagram: string;
+  hashtags_generic: string;
+  image_error?: string;
 };
 
 export const runAutoPostNow = async (payload: {
@@ -48,6 +58,7 @@ export const runAutoPostNow = async (payload: {
   instagramReelsVideoUrl?: string;
   instagramReelsVideoUrls?: string[];
   reelsIntervalHours?: number;
+  generatedContent?: GeneratedSocialContent;
 }) => {
   const body = JSON.stringify(payload ?? {});
   return authedFetch('/api/autopost/runNow', { method: 'POST', body });

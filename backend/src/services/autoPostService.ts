@@ -122,6 +122,7 @@ type ExecuteOptions = {
   lastRunField?: 'lastRunAt' | 'reelsLastRunAt';
   resultField?: 'lastResult' | 'reelsLastResult';
   useGenericVideoFallback?: boolean;
+  generatedContent?: GeneratedContent;
 };
 
 type LeagueTableRow = {
@@ -432,6 +433,7 @@ export class AutoPostService {
     instagramReelsVideoUrl?: string;
     instagramReelsVideoUrls?: string[];
     reelsIntervalHours?: number;
+    generatedContent?: GeneratedContent;
   }) {
     const basePlatforms = payload.platforms?.length
       ? payload.platforms
@@ -524,7 +526,9 @@ export class AutoPostService {
         active: true,
       });
     }
-    return this.runForUser(payload.userId);
+    return this.runForUser(payload.userId, {
+      ...(payload.generatedContent ? { generatedContent: payload.generatedContent } : {}),
+    });
   }
 
   async runDueJobs() {
@@ -770,12 +774,13 @@ export class AutoPostService {
     }
   }
 
-  async runForUser(userId: string) {
+  async runForUser(userId: string, options: ExecuteOptions = {}) {
     if (this.useMemory && this.memoryStore.has(userId)) {
       const job = this.memoryStore.get(userId)!;
-      const standard = await this.executeJob(userId, job);
+      const standard = await this.executeJob(userId, job, options);
       if (job.reelsNextRun || job.reelsVideoUrl || (job.reelsVideoUrls && job.reelsVideoUrls.length)) {
         const reels = await this.executeJob(userId, job, {
+          ...(options.generatedContent ? { generatedContent: options.generatedContent } : {}),
           platforms: ['instagram_reels'],
           intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
           nextRunField: 'reelsNextRun',
@@ -806,9 +811,10 @@ export class AutoPostService {
       return { posted: 0, failed: [{ platform: 'all', error: 'autopost_not_configured', status: 'failed' as const }], nextRun: null };
     }
     const job = snap.data() as AutoPostJob;
-    const standard = await this.executeJob(userId, job);
+    const standard = await this.executeJob(userId, job, options);
     if (job.reelsNextRun || job.reelsVideoUrl || (job.reelsVideoUrls && job.reelsVideoUrls.length)) {
       const reels = await this.executeJob(userId, job, {
+        ...(options.generatedContent ? { generatedContent: options.generatedContent } : {}),
         platforms: ['instagram_reels'],
         intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
         nextRunField: 'reelsNextRun',
@@ -2767,41 +2773,52 @@ export class AutoPostService {
     const requireAiImages = needsImages ? this.requireAiImages(job) : false;
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
 
-    let generated: GeneratedContent | null = null;
+    let generated: GeneratedContent | null = options.generatedContent
+      ? {
+          ...options.generatedContent,
+          images: Array.isArray(options.generatedContent.images) ? options.generatedContent.images.filter(Boolean) : [],
+        }
+      : null;
     let generationError: Error | null = null;
-    for (let attempt = 0; attempt < maxImageAttempts; attempt += 1) {
-      try {
-        generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1 });
-        generationError = null;
-      } catch (error) {
-        generationError = error as Error;
-        console.error('[autopost] generation failed', error);
-      }
-      const fresh = this.selectFreshImages(generated?.images ?? [], recentSet);
-      if (fresh.length && generated) {
-        generated.images = fresh;
-        break;
-      }
-      runPrompt = this.buildVisualPrompt(basePrompt);
-    }
     if (!generated) {
-      if (generationError) {
-        console.warn('[autopost] using fallback content after generation failures');
+      for (let attempt = 0; attempt < maxImageAttempts; attempt += 1) {
+        try {
+          generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1 });
+          generationError = null;
+        } catch (error) {
+          generationError = error as Error;
+          console.error('[autopost] generation failed', error);
+        }
+        const fresh = this.selectFreshImages(generated?.images ?? [], recentSet);
+        if (fresh.length && generated) {
+          generated.images = fresh;
+          break;
+        }
+        runPrompt = this.buildVisualPrompt(basePrompt);
       }
-      generated = {
-        images: [],
-        caption_instagram: '',
-        caption_linkedin: '',
-        caption_x: '',
-        hashtags_instagram: '',
-        hashtags_generic: '',
-      };
+      if (!generated) {
+        if (generationError) {
+          console.warn('[autopost] using fallback content after generation failures');
+        }
+        generated = {
+          images: [],
+          caption_instagram: '',
+          caption_linkedin: '',
+          caption_x: '',
+          hashtags_instagram: '',
+          hashtags_generic: '',
+        };
+      }
     }
 
     const credentials = await this.resolveCredentials(userId);
     const results: PostResult[] = [];
     const finalGenerated = generated;
-    const imageUrls = needsImages ? this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages) : [];
+    const imageUrls = needsImages
+      ? options.generatedContent
+        ? this.resolveApprovedImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages)
+        : this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages)
+      : [];
     const cursorUpdates: Partial<
       Pick<AutoPostJob, 'videoCursor' | 'youtubeVideoCursor' | 'tiktokVideoCursor' | 'reelsVideoCursor'>
     > = {};
@@ -3352,6 +3369,14 @@ export class AutoPostService {
     if (requireAiImages) return [];
     const fallback = this.pickFallbackImage(recent);
     return fallback ? [fallback] : images;
+  }
+
+  private resolveApprovedImageUrls(images: string[], recent: Set<string>, requireAiImages: boolean) {
+    const approved = images.filter(Boolean);
+    if (approved.length) return approved;
+    if (requireAiImages) return [];
+    const fallback = this.pickFallbackImage(recent);
+    return fallback ? [fallback] : [];
   }
 
   private mergeRecentImages(existing: string[], used: string[]) {

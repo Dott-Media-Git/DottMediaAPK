@@ -1,5 +1,16 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  Image,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
@@ -11,6 +22,7 @@ const PLATFORM_OPTIONS = [
   'instagram',
   'instagram_story',
   'instagram_reels',
+  'threads',
   'facebook',
   'facebook_story',
   'linkedin',
@@ -18,6 +30,24 @@ const PLATFORM_OPTIONS = [
   'youtube',
   'tiktok',
 ] as const;
+
+const formatPlatformLabel = (platform: string) => {
+  if (platform === 'twitter') return 'X';
+  if (platform === 'instagram_reels') return 'Instagram Reels';
+  if (platform === 'instagram_story') return 'Instagram Story';
+  if (platform === 'facebook_story') return 'Facebook Story';
+  if (platform === 'youtube') return 'YouTube';
+  if (platform === 'tiktok') return 'TikTok';
+  return platform.charAt(0).toUpperCase() + platform.slice(1);
+};
+
+const formatHashtags = (raw: string) =>
+  raw
+    .split(/[,\n]/g)
+    .map(token => token.trim())
+    .filter(Boolean)
+    .map(token => (token.startsWith('#') ? token : `#${token.replace(/^#+/, '')}`))
+    .join(' ');
 
 export const SchedulePostScreen: React.FC = () => {
   const { state } = useAuth();
@@ -36,6 +66,7 @@ export const SchedulePostScreen: React.FC = () => {
   const [showPicker, setShowPicker] = useState(false);
   const [imageUrlInput, setImageUrlInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [previewVisible, setPreviewVisible] = useState(false);
 
   const addImage = () => {
     if (!imageUrlInput.trim()) return;
@@ -64,38 +95,79 @@ export const SchedulePostScreen: React.FC = () => {
   );
   const needsImages = imageOnlyPlatforms.length > 0 || (hasOptionalVideoPlatforms && !hasGenericVideo);
 
+  const normalizedCaption = caption.trim();
+  const normalizedHashtags = formatHashtags(hashtags);
+
   const togglePlatform = (platform: string) => {
     setSelectedPlatforms(prev =>
       prev.includes(platform) ? prev.filter(p => p !== platform) : [...prev, platform],
     );
   };
 
-  const submit = async () => {
-    if (!state.user) return;
+  const validateSchedule = () => {
+    if (!state.user) return false;
     if (needsImages && !images.length) {
       if (imageOnlyPlatforms.length === 0 && hasOptionalVideoPlatforms) {
         Alert.alert(t('Add video URL'), t('Please add a video URL.'));
       } else {
         Alert.alert(t('Add images'), t('Please add at least one image URL generated earlier.'));
       }
-      return;
+      return false;
     }
     if (hasYoutube && !youtubeVideoUrl.trim()) {
       Alert.alert(t('Add video URL'), t('Please add a YouTube video URL.'));
-      return;
+      return false;
     }
     if (hasTikTok && !tiktokVideoUrl.trim()) {
       Alert.alert(t('Add video URL'), t('Please add a TikTok video URL.'));
-      return;
+      return false;
     }
     if (hasReels && !reelsVideoUrl.trim()) {
       Alert.alert(t('Add video URL'), t('Please add an Instagram Reels video URL.'));
-      return;
+      return false;
     }
-    if (!caption.trim()) {
+    if (!normalizedCaption) {
       Alert.alert(t('Add caption'));
-      return;
+      return false;
     }
+    return true;
+  };
+
+  const getPlatformMedia = (platform: string) => {
+    if (platform === 'youtube') return youtubeVideoUrl.trim() ? [youtubeVideoUrl.trim()] : [];
+    if (platform === 'tiktok') return tiktokVideoUrl.trim() ? [tiktokVideoUrl.trim()] : [];
+    if (platform === 'instagram_reels') return reelsVideoUrl.trim() ? [reelsVideoUrl.trim()] : [];
+    if (
+      platform === 'facebook' ||
+      platform === 'facebook_story' ||
+      platform === 'instagram_story' ||
+      platform === 'linkedin'
+    ) {
+      return videoUrl.trim() ? [videoUrl.trim()] : [];
+    }
+    return [];
+  };
+
+  const buildPreviewText = (platform: string) => {
+    const joined = platform === 'twitter'
+      ? [normalizedCaption, normalizedHashtags].filter(Boolean).join(' ')
+      : [normalizedCaption, normalizedHashtags].filter(Boolean).join('\n\n');
+    return joined;
+  };
+
+  const resetForm = () => {
+    setCaption('');
+    setHashtags('');
+    setImages([]);
+    setVideoUrl('');
+    setYoutubeVideoUrl('');
+    setTiktokVideoUrl('');
+    setReelsVideoUrl('');
+    setVideoTitle('');
+  };
+
+  const submit = async () => {
+    if (!state.user) return;
     setLoading(true);
     try {
       await schedulePost({
@@ -107,20 +179,14 @@ export const SchedulePostScreen: React.FC = () => {
         tiktokVideoUrl: tiktokVideoUrl.trim() || undefined,
         instagramReelsVideoUrl: reelsVideoUrl.trim() || undefined,
         videoTitle: videoTitle.trim() || undefined,
-        caption,
-        hashtags,
+        caption: normalizedCaption,
+        hashtags: normalizedHashtags,
         scheduledFor: date.toISOString(),
         timesPerDay,
       });
+      setPreviewVisible(false);
       Alert.alert(t('Scheduled'), t('Posts added to queue.'));
-      setCaption('');
-      setHashtags('');
-      setImages([]);
-      setVideoUrl('');
-      setYoutubeVideoUrl('');
-      setTiktokVideoUrl('');
-      setReelsVideoUrl('');
-      setVideoTitle('');
+      resetForm();
     } catch (error: any) {
       Alert.alert(t('Failed'), error.message);
     } finally {
@@ -128,162 +194,249 @@ export const SchedulePostScreen: React.FC = () => {
     }
   };
 
+  const openPreview = () => {
+    if (!validateSchedule()) return;
+    setPreviewVisible(true);
+  };
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.card}>
-        <Text style={styles.label}>{t('Platforms')}</Text>
-        <View style={styles.row}>
-          {PLATFORM_OPTIONS.map(platform => (
-            <TouchableOpacity
-              key={platform}
-              style={[styles.chip, selectedPlatforms.includes(platform) && styles.chipActive]}
-              onPress={() => togglePlatform(platform)}
-            >
-              <Text style={styles.chipText}>
-                {platform === 'twitter'
-                  ? 'X'
-                  : platform === 'instagram_reels'
-                    ? 'Instagram Reels'
-                    : platform === 'instagram_story'
-                      ? 'Instagram Story'
-                      : platform === 'facebook_story'
-                        ? 'Facebook Story'
-                    : platform === 'youtube'
-                      ? 'YouTube'
-                      : platform === 'tiktok'
-                        ? 'TikTok'
-                        : t(platform.charAt(0).toUpperCase() + platform.slice(1))}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+    <>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <View style={styles.card}>
+          <Text style={styles.label}>{t('Platforms')}</Text>
+          <View style={styles.row}>
+            {PLATFORM_OPTIONS.map(platform => (
+              <TouchableOpacity
+                key={platform}
+                style={[styles.chip, selectedPlatforms.includes(platform) && styles.chipActive]}
+                onPress={() => togglePlatform(platform)}
+              >
+                <Text style={styles.chipText}>{t(formatPlatformLabel(platform))}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
-        <Text style={styles.label}>{t('Schedule Date & Time')}</Text>
-        <TouchableOpacity style={styles.dateInput} onPress={() => setShowPicker(true)}>
-          <Text style={styles.dateText}>{date.toLocaleString()}</Text>
-        </TouchableOpacity>
-        {showPicker && (
-          <DateTimePicker
-            value={date}
-            mode="datetime"
-            onChange={(_, selected) => {
-              setShowPicker(false);
-              if (selected) setDate(selected);
-            }}
-          />
-        )}
-
-        <Text style={styles.label}>{t('Times per day')}</Text>
-        <View style={styles.row}>
-          {[1, 2, 3, 4, 5].map(value => (
-            <TouchableOpacity
-              key={value}
-              style={[styles.chip, timesPerDay === value && styles.chipActive]}
-              onPress={() => setTimesPerDay(value)}
-            >
-              <Text style={styles.chipText}>{value}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <Text style={styles.helper}>{t('Total posts scheduled today: {{count}}/5', { count: summary })}</Text>
-
-        {hasVideoPlatform && (
-          <>
-            {hasYoutube && (
-              <>
-                <Text style={styles.label}>{t('YouTube Video URL')}</Text>
-                <TextInput
-                  value={youtubeVideoUrl}
-                  onChangeText={setYoutubeVideoUrl}
-                  placeholder={t('Paste YouTube video URL')}
-                  placeholderTextColor={colors.subtext}
-                  style={styles.input}
-                />
-                <Text style={styles.label}>{t('YouTube Title (optional)')}</Text>
-                <TextInput
-                  value={videoTitle}
-                  onChangeText={setVideoTitle}
-                  placeholder={t('Optional video title')}
-                  placeholderTextColor={colors.subtext}
-                  style={styles.input}
-                />
-              </>
-            )}
-            {hasTikTok && (
-              <>
-                <Text style={styles.label}>{t('TikTok Video URL')}</Text>
-                <TextInput
-                  value={tiktokVideoUrl}
-                  onChangeText={setTiktokVideoUrl}
-                  placeholder={t('Paste TikTok video URL')}
-                  placeholderTextColor={colors.subtext}
-                  style={styles.input}
-                />
-              </>
-            )}
-            {hasReels && (
-              <>
-                <Text style={styles.label}>{t('Instagram Reels Video URL')}</Text>
-                <TextInput
-                  value={reelsVideoUrl}
-                  onChangeText={setReelsVideoUrl}
-                  placeholder={t('Paste Instagram Reels video URL')}
-                  placeholderTextColor={colors.subtext}
-                  style={styles.input}
-                />
-              </>
-            )}
-          </>
-        )}
-        {hasOptionalVideoPlatforms && (
-          <>
-            <Text style={styles.label}>{t('Video URL')}</Text>
-            <TextInput
-              value={videoUrl}
-              onChangeText={setVideoUrl}
-              placeholder={t('Paste video URL')}
-              placeholderTextColor={colors.subtext}
-              style={styles.input}
+          <Text style={styles.label}>{t('Schedule Date & Time')}</Text>
+          <TouchableOpacity style={styles.dateInput} onPress={() => setShowPicker(true)}>
+            <Text style={styles.dateText}>{date.toLocaleString()}</Text>
+          </TouchableOpacity>
+          {showPicker && (
+            <DateTimePicker
+              value={date}
+              mode="datetime"
+              onChange={(_, selected) => {
+                setShowPicker(false);
+                if (selected) setDate(selected);
+              }}
             />
-          </>
-        )}
+          )}
 
-        <Text style={styles.label}>{t('Images')}</Text>
-        <TextInput
-          value={imageUrlInput}
-          onChangeText={setImageUrlInput}
-          placeholder={t('Paste image URL')}
-          placeholderTextColor={colors.subtext}
-          style={styles.input}
-        />
-        <DMButton title={t('Add Image')} onPress={addImage} style={{ marginBottom: 12 }} />
-        {images.map(url => (
-          <Text key={url} style={styles.imageRow}>
-            • {url}
-          </Text>
-        ))}
+          <Text style={styles.label}>{t('Times per day')}</Text>
+          <View style={styles.row}>
+            {[1, 2, 3, 4, 5].map(value => (
+              <TouchableOpacity
+                key={value}
+                style={[styles.chip, timesPerDay === value && styles.chipActive]}
+                onPress={() => setTimesPerDay(value)}
+              >
+                <Text style={styles.chipText}>{value}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={styles.helper}>{t('Total posts scheduled today: {{count}}/5', { count: summary })}</Text>
 
-        <Text style={styles.label}>{t('Caption')}</Text>
-        <TextInput
-          value={caption}
-          onChangeText={setCaption}
-          placeholder={t('Use caption from content generator...')}
-          placeholderTextColor={colors.subtext}
-          multiline
-          style={[styles.input, { minHeight: 80 }]}
-        />
-        <Text style={styles.label}>{t('Hashtags')}</Text>
-        <TextInput
-          value={hashtags}
-          onChangeText={setHashtags}
-          placeholder="#hashtags"
-          placeholderTextColor={colors.subtext}
-          multiline
-          style={[styles.input, { minHeight: 60 }]}
-        />
-        <DMButton title={loading ? t('Scheduling...') : t('Schedule')} onPress={submit} disabled={loading} />
-      </View>
-    </ScrollView>
+          {hasVideoPlatform && (
+            <>
+              {hasYoutube && (
+                <>
+                  <Text style={styles.label}>{t('YouTube Video URL')}</Text>
+                  <TextInput
+                    value={youtubeVideoUrl}
+                    onChangeText={setYoutubeVideoUrl}
+                    placeholder={t('Paste YouTube video URL')}
+                    placeholderTextColor={colors.subtext}
+                    style={styles.input}
+                  />
+                  <Text style={styles.label}>{t('YouTube Title (optional)')}</Text>
+                  <TextInput
+                    value={videoTitle}
+                    onChangeText={setVideoTitle}
+                    placeholder={t('Optional video title')}
+                    placeholderTextColor={colors.subtext}
+                    style={styles.input}
+                  />
+                </>
+              )}
+              {hasTikTok && (
+                <>
+                  <Text style={styles.label}>{t('TikTok Video URL')}</Text>
+                  <TextInput
+                    value={tiktokVideoUrl}
+                    onChangeText={setTiktokVideoUrl}
+                    placeholder={t('Paste TikTok video URL')}
+                    placeholderTextColor={colors.subtext}
+                    style={styles.input}
+                  />
+                </>
+              )}
+              {hasReels && (
+                <>
+                  <Text style={styles.label}>{t('Instagram Reels Video URL')}</Text>
+                  <TextInput
+                    value={reelsVideoUrl}
+                    onChangeText={setReelsVideoUrl}
+                    placeholder={t('Paste Instagram Reels video URL')}
+                    placeholderTextColor={colors.subtext}
+                    style={styles.input}
+                  />
+                </>
+              )}
+            </>
+          )}
+          {hasOptionalVideoPlatforms && (
+            <>
+              <Text style={styles.label}>{t('Video URL')}</Text>
+              <TextInput
+                value={videoUrl}
+                onChangeText={setVideoUrl}
+                placeholder={t('Paste video URL')}
+                placeholderTextColor={colors.subtext}
+                style={styles.input}
+              />
+            </>
+          )}
+
+          <Text style={styles.label}>{t('Images')}</Text>
+          <TextInput
+            value={imageUrlInput}
+            onChangeText={setImageUrlInput}
+            placeholder={t('Paste image URL')}
+            placeholderTextColor={colors.subtext}
+            style={styles.input}
+          />
+          <DMButton title={t('Add Image')} onPress={addImage} style={{ marginBottom: 12 }} />
+          {images.map(url => (
+            <Text key={url} style={styles.imageRow}>
+              - {url}
+            </Text>
+          ))}
+
+          <Text style={styles.label}>{t('Caption')}</Text>
+          <TextInput
+            value={caption}
+            onChangeText={setCaption}
+            placeholder={t('Use caption from content generator...')}
+            placeholderTextColor={colors.subtext}
+            multiline
+            style={[styles.input, { minHeight: 80 }]}
+          />
+          <Text style={styles.label}>{t('Hashtags')}</Text>
+          <TextInput
+            value={hashtags}
+            onChangeText={setHashtags}
+            placeholder="#hashtags"
+            placeholderTextColor={colors.subtext}
+            multiline
+            style={[styles.input, { minHeight: 60 }]}
+          />
+          <DMButton
+            title={loading ? t('Scheduling...') : t('Preview Schedule')}
+            onPress={openPreview}
+            disabled={loading}
+            loading={loading}
+          />
+        </View>
+      </ScrollView>
+
+      <Modal visible={previewVisible} transparent animationType="fade" onRequestClose={() => setPreviewVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setPreviewVisible(false)} />
+          <View style={styles.previewShell}>
+            <View style={styles.previewHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.previewTitle}>{t('Preview Before Scheduling')}</Text>
+                <Text style={styles.previewSubtitle}>
+                  {t('Review the scheduled content and media before adding it to the queue.')}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setPreviewVisible(false)} style={styles.closeButton}>
+                <Text style={styles.closeButtonText}>{t('Close')}</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.previewScroll} contentContainerStyle={styles.previewContent}>
+              <View style={styles.previewMetaCard}>
+                <Text style={styles.previewMetaLabel}>{t('Schedule')}</Text>
+                <Text style={styles.previewMetaValue}>{date.toLocaleString()}</Text>
+                <Text style={styles.previewMetaLabel}>{t('Times per day')}</Text>
+                <Text style={styles.previewMetaValue}>{timesPerDay}</Text>
+              </View>
+
+              <View style={styles.previewMetaCard}>
+                <Text style={styles.previewMetaLabel}>{t('Selected Platforms')}</Text>
+                <View style={styles.row}>
+                  {selectedPlatforms.map(platform => (
+                    <View key={platform} style={styles.previewChip}>
+                      <Text style={styles.previewChipText}>{t(formatPlatformLabel(platform))}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+
+              {images.length ? (
+                <View style={styles.previewBlock}>
+                  <Text style={styles.sectionTitle}>{t('Image Preview')}</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {images.map(url => (
+                      <Image key={url} source={{ uri: url }} style={styles.previewImage} />
+                    ))}
+                  </ScrollView>
+                </View>
+              ) : null}
+
+              {selectedPlatforms.map(platform => {
+                const mediaUrls = getPlatformMedia(platform);
+                return (
+                  <View key={platform} style={styles.previewPlatformCard}>
+                    <View style={styles.previewPlatformHeader}>
+                      <Text style={styles.previewPlatformTitle}>{t(formatPlatformLabel(platform))}</Text>
+                      <Text style={styles.previewPlatformTag}>
+                        {mediaUrls.length ? t('Video ready') : images.length ? t('Image ready') : t('Caption only')}
+                      </Text>
+                    </View>
+                    {platform === 'youtube' && videoTitle.trim() ? (
+                      <Text style={styles.previewMetaValue}>{videoTitle.trim()}</Text>
+                    ) : null}
+                    {mediaUrls.length ? (
+                      <View style={styles.previewMediaBox}>
+                        <Text style={styles.previewMediaLabel}>
+                          {t('Video URLs')} - {mediaUrls.length}
+                        </Text>
+                        {mediaUrls.map(url => (
+                          <Text key={`${platform}-${url}`} style={styles.previewUrl}>
+                            {url}
+                          </Text>
+                        ))}
+                      </View>
+                    ) : null}
+                    <Text style={styles.previewCaption}>{buildPreviewText(platform)}</Text>
+                  </View>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.previewFooter}>
+              <DMButton
+                title={loading ? t('Scheduling...') : t('Schedule')}
+                onPress={submit}
+                disabled={loading}
+                loading={loading}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 };
 
@@ -327,4 +480,154 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   imageRow: { color: colors.subtext, marginBottom: 4 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    justifyContent: 'center',
+    padding: 18,
+  },
+  previewShell: {
+    maxHeight: '92%',
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  previewHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  previewTitle: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  previewSubtitle: {
+    color: colors.subtext,
+    lineHeight: 18,
+  },
+  closeButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  closeButtonText: {
+    color: colors.text,
+    fontWeight: '600',
+  },
+  previewScroll: {
+    maxHeight: '100%',
+  },
+  previewContent: {
+    padding: 18,
+    paddingBottom: 12,
+  },
+  previewMetaCard: {
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 14,
+  },
+  previewMetaLabel: {
+    color: colors.subtext,
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  previewMetaValue: {
+    color: colors.text,
+    marginBottom: 8,
+    lineHeight: 20,
+  },
+  previewChip: {
+    backgroundColor: 'rgba(139,93,255,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(139,93,255,0.32)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  previewChipText: {
+    color: colors.text,
+    fontWeight: '600',
+  },
+  previewBlock: {
+    marginBottom: 14,
+  },
+  previewImage: {
+    width: 220,
+    height: 220,
+    borderRadius: 18,
+    marginRight: 12,
+    marginTop: 10,
+  },
+  previewPlatformCard: {
+    borderRadius: 18,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    marginBottom: 12,
+  },
+  previewPlatformHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+    gap: 12,
+  },
+  previewPlatformTitle: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  previewPlatformTag: {
+    color: colors.accentMuted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  previewMediaBox: {
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+  },
+  previewMediaLabel: {
+    color: colors.subtext,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  previewUrl: {
+    color: colors.accentMuted,
+    lineHeight: 18,
+    marginBottom: 4,
+  },
+  previewCaption: {
+    color: colors.text,
+    lineHeight: 21,
+  },
+  previewFooter: {
+    padding: 18,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.backgroundAlt,
+  },
+  sectionTitle: {
+    color: colors.text,
+    fontWeight: '700',
+    marginTop: 12,
+  },
 });

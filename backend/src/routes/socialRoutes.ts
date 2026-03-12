@@ -358,6 +358,17 @@ const autoPostSchema = z
     instagramReelsVideoUrl: z.string().url().optional(),
     instagramReelsVideoUrls: z.array(z.string().url()).optional(),
     reelsIntervalHours: z.number().positive().optional(),
+    generatedContent: z
+      .object({
+        images: z.array(z.string().url()),
+        caption_instagram: z.string(),
+        caption_linkedin: z.string(),
+        caption_x: z.string(),
+        hashtags_instagram: z.string(),
+        hashtags_generic: z.string(),
+        image_error: z.string().optional(),
+      })
+      .optional(),
   })
   .superRefine((data, ctx) => {
     const platforms = data.platforms ?? [];
@@ -434,6 +445,7 @@ router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
       instagramReelsVideoUrl: payload.instagramReelsVideoUrl,
       instagramReelsVideoUrls: payload.instagramReelsVideoUrls,
       reelsIntervalHours: payload.reelsIntervalHours,
+      generatedContent: payload.generatedContent,
     });
     res.json({ ok: true, ...result });
   } catch (error) {
