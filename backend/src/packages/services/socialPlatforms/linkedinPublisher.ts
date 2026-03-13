@@ -9,7 +9,7 @@ type PublishInput = {
 };
 
 const LINKEDIN_API = 'https://api.linkedin.com/v2';
-const REQUEST_TIMEOUT_MS = 120000;
+const REQUEST_TIMEOUT_MS = 30000;
 const ALLOW_PERSON_FALLBACK = process.env.LINKEDIN_ALLOW_PERSON_FALLBACK === 'true';
 
 const getContentType = (url: string, isVideo: boolean) => {

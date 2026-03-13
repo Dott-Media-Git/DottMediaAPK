@@ -273,6 +273,26 @@ export class SocialPostingService {
           },
           allowDefaults,
         );
+        if (allowDefaults && !socialAccounts.facebook && config.channels.facebook.pageToken) {
+          try {
+            const resolved = await resolveFacebookPageId(
+              config.channels.facebook.pageToken,
+              config.channels.facebook.pageId || undefined,
+            );
+            if (resolved?.pageId) {
+              socialAccounts.facebook = {
+                accessToken: resolved.pageToken?.trim() || config.channels.facebook.pageToken,
+                pageId: resolved.pageId,
+                ...(resolved.pageName ? { pageName: resolved.pageName } : {}),
+              };
+            }
+          } catch (error) {
+            console.warn('[social-posting] failed to resolve primary facebook page from fallback token', {
+              userId: post.userId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
         if (post.platform === 'youtube') {
           try {
             const youtubeIntegration = await getYouTubeIntegrationSecrets(post.userId);

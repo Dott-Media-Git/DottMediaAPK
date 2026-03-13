@@ -3448,6 +3448,26 @@ export class AutoPostService {
     const userAccounts = (userData?.socialAccounts as SocialAccounts | undefined) ?? {};
     const runtimeFallbackAccounts = await this.getRuntimeFallbackAccounts(userId);
     const merged: SocialAccounts = { ...defaults, ...runtimeFallbackAccounts, ...userAccounts };
+    if (allowDefaults && !merged.facebook && config.channels.facebook.pageToken) {
+      try {
+        const resolved = await resolveFacebookPageId(
+          config.channels.facebook.pageToken,
+          config.channels.facebook.pageId || undefined,
+        );
+        if (resolved?.pageId) {
+          merged.facebook = {
+            accessToken: resolved.pageToken?.trim() || config.channels.facebook.pageToken,
+            pageId: resolved.pageId,
+            ...(resolved.pageName ? { pageName: resolved.pageName } : {}),
+          };
+        }
+      } catch (error) {
+        console.warn('[autopost] failed to resolve primary facebook page from fallback token', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     try {
       const youtubeIntegration = await getYouTubeIntegrationSecrets(userId);
       if (youtubeIntegration) {
