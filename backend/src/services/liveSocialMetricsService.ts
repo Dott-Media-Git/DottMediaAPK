@@ -279,8 +279,11 @@ const collectRemoteIds = (posts: ScheduledPost[], platformNames: string[]) =>
       .slice(0, MAX_POSTS_PER_PLATFORM),
   );
 
-const buildWithDefaults = (userData: { email?: string | null; socialAccounts?: UserSocialAccounts } | undefined) => {
-  const allowDefaults = canUsePrimarySocialDefaults(userData);
+const buildWithDefaults = (
+  userData: { email?: string | null; socialAccounts?: UserSocialAccounts } | undefined,
+  userId?: string,
+) => {
+  const allowDefaults = canUsePrimarySocialDefaults(userData, userId);
   const merged: UserSocialAccounts = { ...(userData?.socialAccounts ?? {}) };
   if (allowDefaults) {
     if (!merged.facebook?.accessToken && config.channels.facebook.pageToken) {
@@ -559,7 +562,7 @@ export async function getLiveSocialMetrics(
     ]);
 
     const userData = userDoc?.data() as { email?: string | null; socialAccounts?: UserSocialAccounts } | undefined;
-    const accounts = buildWithDefaults(userData);
+    const accounts = buildWithDefaults(userData, userId);
     if (isBwinScopeRequest(options?.scope, userId)) {
       if (!accounts.facebook?.accessToken && process.env.BWIN_FACEBOOK_PAGE_TOKEN && process.env.BWIN_FACEBOOK_PAGE_ID) {
         accounts.facebook = {
