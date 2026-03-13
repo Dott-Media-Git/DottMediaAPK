@@ -318,7 +318,41 @@ export class AutoPostService {
     };
   }
 
-  private async runBwinXEmergencyPost(now: Date) {
+  private getEmergencyFacebookCredentials(): SocialAccounts | null {
+    const accessToken =
+      process.env.BWIN_FACEBOOK_PAGE_TOKEN ??
+      process.env.BWIN_FACEBOOK_ACCESS_TOKEN ??
+      '';
+    const pageId = process.env.BWIN_FACEBOOK_PAGE_ID ?? '';
+    if (!accessToken || !pageId) return null;
+    return {
+      facebook: {
+        accessToken,
+        pageId,
+      },
+    };
+  }
+
+  private getEmergencyInstagramCredentials(): SocialAccounts | null {
+    const accessToken =
+      process.env.BWIN_INSTAGRAM_ACCESS_TOKEN ??
+      process.env.BWIN_INSTAGRAM_TOKEN ??
+      '';
+    const accountId =
+      process.env.BWIN_INSTAGRAM_ACCOUNT_ID ??
+      process.env.BWIN_INSTAGRAM_BUSINESS_ID ??
+      '';
+    if (!accessToken || !accountId) return null;
+    return {
+      instagram: {
+        accessToken,
+        accountId,
+        username: process.env.BWIN_INSTAGRAM_USERNAME ?? undefined,
+      },
+    };
+  }
+
+  private async runBwinEmergencyPost(now: Date) {
     const enabled = process.env.BWIN_X_EMERGENCY_ENABLED !== 'false';
     if (!enabled) {
       return { attempted: false, posted: false, reason: 'disabled' };
@@ -337,9 +371,11 @@ export class AutoPostService {
       }
     }
 
-    const credentials = this.getEmergencyTwitterCredentials();
-    if (!credentials) {
-      return { attempted: true, posted: false, reason: 'missing_x_credentials' };
+    const xCredentials = this.getEmergencyTwitterCredentials();
+    const facebookCredentials = this.getEmergencyFacebookCredentials();
+    const instagramCredentials = this.getEmergencyInstagramCredentials();
+    if (!xCredentials && !facebookCredentials && !instagramCredentials) {
+      return { attempted: true, posted: false, reason: 'missing_emergency_credentials' };
     }
 
     try {
@@ -377,41 +413,97 @@ export class AutoPostService {
         return { attempted: true, posted: false, reason: 'duplicate_only' };
       }
 
-      const emergencyOwnerId = (process.env.BWIN_TRACK_OWNER_ID ?? '').trim();
-      const caption = this.normalizeXCaption(
-        this.applyBwinBetTracking(
-          [
-            selectedTitle,
-            selectedLink ? selectedLink : '',
-            'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
-          ]
-            .filter(Boolean)
-            .join('\n'),
-          emergencyOwnerId,
-          'x',
-        ),
-      );
-      const imageUrls = selectedImage ? [selectedImage] : [];
-      const response = await publishToTwitter({
-        caption,
-        imageUrls,
-        credentials,
-      });
+      const emergencyOwnerId = (process.env.BWIN_TRACK_OWNER_ID ?? process.env.BWIN_SCOPE_ID ?? '').trim();
+      const baseCaption = [
+        selectedTitle,
+        selectedLink ? selectedLink : '',
+        'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      let imageUrls = selectedImage ? [selectedImage] : [];
+      if (!imageUrls.length) {
+        imageUrls = await this.generateFootballCardImage(
+          `${selectedTitle}\n\nFootball update card for Bwinbet Uganda in yellow and black.`,
+          new Set<string>(),
+        );
+      }
 
-      this.emergencyXLastRunAt = now.getTime();
-      if (selectedKey) this.emergencyXLastKey = selectedKey;
+      const results: Array<{ platform: string; status: 'posted' | 'failed'; remoteId?: string | null; error?: string }> = [];
+
+      if (xCredentials) {
+        try {
+          const xCaption = this.normalizeXCaption(this.applyBwinBetTracking(baseCaption, emergencyOwnerId, 'x'));
+          const response = await publishToTwitter({
+            caption: xCaption,
+            imageUrls,
+            credentials: xCredentials,
+          });
+          results.push({ platform: 'x', status: 'posted', remoteId: response.remoteId ?? null });
+        } catch (error: any) {
+          results.push({ platform: 'x', status: 'failed', error: error?.message ?? 'x_emergency_post_failed' });
+        }
+      }
+
+      if (facebookCredentials) {
+        try {
+          const facebookCaption = this.applyBwinBetTracking(baseCaption, emergencyOwnerId, 'facebook');
+          const response = await publishToFacebook({
+            caption: facebookCaption,
+            imageUrls,
+            credentials: facebookCredentials,
+          });
+          results.push({ platform: 'facebook', status: 'posted', remoteId: response.remoteId ?? null });
+        } catch (error: any) {
+          results.push({
+            platform: 'facebook',
+            status: 'failed',
+            error: error?.message ?? 'facebook_emergency_post_failed',
+          });
+        }
+      }
+
+      if (instagramCredentials) {
+        try {
+          if (!imageUrls.length) {
+            throw new Error('missing_instagram_image');
+          }
+          const instagramCaption = this.sanitizeBwinInstagramCaptionLinks(
+            this.applyBwinInstagramSportsHashtags(baseCaption, 'instagram'),
+            'instagram',
+          );
+          const response = await publishToInstagram({
+            caption: instagramCaption,
+            imageUrls,
+            credentials: instagramCredentials,
+          });
+          results.push({ platform: 'instagram', status: 'posted', remoteId: response.remoteId ?? null });
+        } catch (error: any) {
+          results.push({
+            platform: 'instagram',
+            status: 'failed',
+            error: error?.message ?? 'instagram_emergency_post_failed',
+          });
+        }
+      }
+
+      const posted = results.some(result => result.status === 'posted');
+      if (posted) {
+        this.emergencyXLastRunAt = now.getTime();
+        if (selectedKey) this.emergencyXLastKey = selectedKey;
+      }
 
       return {
         attempted: true,
-        posted: true,
-        remoteId: response.remoteId ?? null,
-        caption,
+        posted,
+        results,
+        selectedTitle,
       };
     } catch (error: any) {
       return {
         attempted: true,
         posted: false,
-        reason: error?.message ?? 'emergency_x_post_failed',
+        reason: error?.message ?? 'emergency_post_failed',
       };
     }
   }
@@ -763,10 +855,10 @@ export class AutoPostService {
       return { processed, results: Array.from(results.values()) };
     } catch (error) {
       if (this.isFirestoreQuotaError(error)) {
-        console.warn('[autopost] Firestore quota exceeded; running emergency Bwin X posting path.');
-        const emergency = await this.runBwinXEmergencyPost(new Date());
+        console.warn('[autopost] Firestore quota exceeded; running emergency Bwin social posting path.');
+        const emergency = await this.runBwinEmergencyPost(new Date());
         return {
-          processed: emergency.posted ? 1 : 0,
+          processed: emergency.posted ? (Array.isArray((emergency as { results?: unknown[] }).results) ? ((emergency as { results?: unknown[] }).results?.length ?? 1) : 1) : 0,
           emergency,
         };
       }

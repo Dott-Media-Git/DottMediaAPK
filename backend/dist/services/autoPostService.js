@@ -162,7 +162,38 @@ export class AutoPostService {
             },
         };
     }
-    async runBwinXEmergencyPost(now) {
+    getEmergencyFacebookCredentials() {
+        const accessToken = process.env.BWIN_FACEBOOK_PAGE_TOKEN ??
+            process.env.BWIN_FACEBOOK_ACCESS_TOKEN ??
+            '';
+        const pageId = process.env.BWIN_FACEBOOK_PAGE_ID ?? '';
+        if (!accessToken || !pageId)
+            return null;
+        return {
+            facebook: {
+                accessToken,
+                pageId,
+            },
+        };
+    }
+    getEmergencyInstagramCredentials() {
+        const accessToken = process.env.BWIN_INSTAGRAM_ACCESS_TOKEN ??
+            process.env.BWIN_INSTAGRAM_TOKEN ??
+            '';
+        const accountId = process.env.BWIN_INSTAGRAM_ACCOUNT_ID ??
+            process.env.BWIN_INSTAGRAM_BUSINESS_ID ??
+            '';
+        if (!accessToken || !accountId)
+            return null;
+        return {
+            instagram: {
+                accessToken,
+                accountId,
+                username: process.env.BWIN_INSTAGRAM_USERNAME ?? undefined,
+            },
+        };
+    }
+    async runBwinEmergencyPost(now) {
         const enabled = process.env.BWIN_X_EMERGENCY_ENABLED !== 'false';
         if (!enabled) {
             return { attempted: false, posted: false, reason: 'disabled' };
@@ -179,9 +210,11 @@ export class AutoPostService {
                 };
             }
         }
-        const credentials = this.getEmergencyTwitterCredentials();
-        if (!credentials) {
-            return { attempted: true, posted: false, reason: 'missing_x_credentials' };
+        const xCredentials = this.getEmergencyTwitterCredentials();
+        const facebookCredentials = this.getEmergencyFacebookCredentials();
+        const instagramCredentials = this.getEmergencyInstagramCredentials();
+        if (!xCredentials && !facebookCredentials && !instagramCredentials) {
+            return { attempted: true, posted: false, reason: 'missing_emergency_credentials' };
         }
         try {
             const maxAgeHours = Math.min(Math.max(Number(process.env.BWIN_X_EMERGENCY_MAX_AGE_HOURS ?? 24), 6), 72);
@@ -208,43 +241,95 @@ export class AutoPostService {
                 selectedTitle = title;
                 selectedLink = link;
                 selectedKey = key;
-                selectedImage =
-                    (await this.resolveBestNewsImageUrl(item?.imageUrl?.trim(), item?.link?.trim())) ??
-                        '';
+                selectedImage = (await this.resolveBestNewsImageUrl(item?.imageUrl?.trim(), item?.link?.trim())) ?? '';
                 break;
             }
             if (!selectedTitle) {
                 return { attempted: true, posted: false, reason: 'duplicate_only' };
             }
-            const emergencyOwnerId = (process.env.BWIN_TRACK_OWNER_ID ?? '').trim();
-            const caption = this.normalizeXCaption(this.applyBwinBetTracking([
+            const emergencyOwnerId = (process.env.BWIN_TRACK_OWNER_ID ?? process.env.BWIN_SCOPE_ID ?? '').trim();
+            const baseCaption = [
                 selectedTitle,
                 selectedLink ? selectedLink : '',
                 'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
             ]
                 .filter(Boolean)
-                .join('\n'), emergencyOwnerId, 'x'));
-            const imageUrls = selectedImage ? [selectedImage] : [];
-            const response = await publishToTwitter({
-                caption,
-                imageUrls,
-                credentials,
-            });
-            this.emergencyXLastRunAt = now.getTime();
-            if (selectedKey)
-                this.emergencyXLastKey = selectedKey;
+                .join('\n');
+            let imageUrls = selectedImage ? [selectedImage] : [];
+            if (!imageUrls.length) {
+                imageUrls = await this.generateFootballCardImage(selectedTitle + '\n\nFootball update card for Bwinbet Uganda in yellow and black.', new Set());
+            }
+            const results = [];
+            if (xCredentials) {
+                try {
+                    const xCaption = this.normalizeXCaption(this.applyBwinBetTracking(baseCaption, emergencyOwnerId, 'x'));
+                    const response = await publishToTwitter({
+                        caption: xCaption,
+                        imageUrls,
+                        credentials: xCredentials,
+                    });
+                    results.push({ platform: 'x', status: 'posted', remoteId: response.remoteId ?? null });
+                }
+                catch (error) {
+                    results.push({ platform: 'x', status: 'failed', error: error?.message ?? 'x_emergency_post_failed' });
+                }
+            }
+            if (facebookCredentials) {
+                try {
+                    const facebookCaption = this.applyBwinBetTracking(baseCaption, emergencyOwnerId, 'facebook');
+                    const response = await publishToFacebook({
+                        caption: facebookCaption,
+                        imageUrls,
+                        credentials: facebookCredentials,
+                    });
+                    results.push({ platform: 'facebook', status: 'posted', remoteId: response.remoteId ?? null });
+                }
+                catch (error) {
+                    results.push({ platform: 'facebook', status: 'failed', error: error?.message ?? 'facebook_emergency_post_failed' });
+                }
+            }
+            if (instagramCredentials) {
+                try {
+                    if (!imageUrls.length) {
+                        throw new Error('missing_instagram_image');
+                    }
+                    const instagramCaption = [
+                        selectedTitle,
+                        'Bet now - link in bio',
+                        'More info - link in bio',
+                        '#BwinbetUG #Football #Matchday #FootballHighlights',
+                    ]
+                        .filter(Boolean)
+                        .join('\n\n');
+                    const response = await publishToInstagram({
+                        caption: instagramCaption,
+                        imageUrls,
+                        credentials: instagramCredentials,
+                    });
+                    results.push({ platform: 'instagram', status: 'posted', remoteId: response.remoteId ?? null });
+                }
+                catch (error) {
+                    results.push({ platform: 'instagram', status: 'failed', error: error?.message ?? 'instagram_emergency_post_failed' });
+                }
+            }
+            const posted = results.some(result => result.status === 'posted');
+            if (posted) {
+                this.emergencyXLastRunAt = now.getTime();
+                if (selectedKey)
+                    this.emergencyXLastKey = selectedKey;
+            }
             return {
                 attempted: true,
-                posted: true,
-                remoteId: response.remoteId ?? null,
-                caption,
+                posted,
+                results,
+                selectedTitle,
             };
         }
         catch (error) {
             return {
                 attempted: true,
                 posted: false,
-                reason: error?.message ?? 'emergency_x_post_failed',
+                reason: error?.message ?? 'emergency_post_failed',
             };
         }
     }
@@ -523,10 +608,10 @@ export class AutoPostService {
         }
         catch (error) {
             if (this.isFirestoreQuotaError(error)) {
-                console.warn('[autopost] Firestore quota exceeded; running emergency Bwin X posting path.');
-                const emergency = await this.runBwinXEmergencyPost(new Date());
+                console.warn('[autopost] Firestore quota exceeded; running emergency Bwin social posting path.');
+                const emergency = await this.runBwinEmergencyPost(new Date());
                 return {
-                    processed: emergency.posted ? 1 : 0,
+                    processed: emergency.posted ? (Array.isArray(emergency.results) ? emergency.results.length : 1) : 0,
                     emergency,
                 };
             }
@@ -752,6 +837,32 @@ export class AutoPostService {
             return caption.trim();
         }
         return `${caption.trim()}\n\n${missing.map(tag => `#${tag}`).join(' ')}`.trim();
+    }
+    sanitizeBwinInstagramCaptionLinks(caption, platform) {
+        const normalizedPlatform = (platform ?? '').trim().toLowerCase();
+        if (normalizedPlatform !== 'instagram' &&
+            normalizedPlatform !== 'instagram_reels' &&
+            normalizedPlatform !== 'instagram_story') {
+            return caption;
+        }
+        if (!caption)
+            return caption;
+        const hasBwinReference = /bwinbetug\.(?:com|info)/i.test(caption) ||
+            /\/r\/bwin(?:-info)?\b/i.test(caption) ||
+            /ownerId=.*source=instagram/i.test(caption);
+        if (!hasBwinReference) {
+            return caption;
+        }
+        const sanitizedLines = caption
+            .split('\n')
+            .map(line => line.trim())
+            .filter(Boolean)
+            .filter(line => !/https?:\/\/\S+/i.test(line) &&
+            !/(?:www\.)?bwinbetug\.(?:com|info)\b/i.test(line) &&
+            !/\bbet now\b|\bmore info\b|\bplace your bet\b/i.test(line));
+        sanitizedLines.push('Bet now — link in bio');
+        sanitizedLines.push('More info — link in bio');
+        return Array.from(new Set(sanitizedLines)).join('\n');
     }
     buildBwinInstagramSportsHashtags(caption) {
         const normalized = String(caption || '').toLowerCase();
@@ -2109,7 +2220,8 @@ export class AutoPostService {
                     ? highlightCaptionTemplate
                     : (trendCaptions[platform] || caption);
                 const trackedRawPerPlatformCaption = this.applyBwinBetTracking(rawPerPlatformCaption, userId, platform);
-                const brandedRawPerPlatformCaption = this.applyBwinInstagramSportsHashtags(trackedRawPerPlatformCaption, platform);
+                const cleanedRawPerPlatformCaption = this.sanitizeBwinInstagramCaptionLinks(trackedRawPerPlatformCaption, platform);
+                const brandedRawPerPlatformCaption = this.applyBwinInstagramSportsHashtags(cleanedRawPerPlatformCaption, platform);
                 const perPlatformCaption = platform === 'x' || platform === 'twitter'
                     ? this.normalizeXCaption(brandedRawPerPlatformCaption)
                     : brandedRawPerPlatformCaption;
@@ -2340,7 +2452,8 @@ export class AutoPostService {
             const rawCaption = this.captionForPlatform(platform, finalGenerated, fallbackCopy);
             const shortsCaption = platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
             const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
-            const brandedCaption = this.applyBwinInstagramSportsHashtags(trackedCaption, platform);
+            const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
+            const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
             const { caption, signature } = this.ensureCaptionVariety(platform, brandedCaption, captionHistory);
             const isVideoPlatform = videoPlatforms.has(platform);
             const supportsVideo = isVideoPlatform || optionalVideoPlatforms.has(platform);
