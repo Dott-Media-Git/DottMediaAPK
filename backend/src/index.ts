@@ -74,6 +74,8 @@ if (config.security.allowMockAuth) {
   notificationDispatcher.start();
 }
 
+void ensureSupabaseFallbackSchema();
+
 const app = express();
 const startedAt = new Date().toISOString();
 const footballTrendsEnabled = process.env.FOOTBALL_TRENDS_ENABLED === 'true';
@@ -306,6 +308,5 @@ import { fileURLToPath } from 'url';
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   app.listen(config.port, () => {
     console.log(`Dott Media backend running on :${config.port}`);
-    void ensureSupabaseFallbackSchema();
   });
 }
