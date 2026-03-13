@@ -44,7 +44,7 @@ import stripeRoutes from './routes/stripeRoutes';
 import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
 import { autoPostService } from './services/autoPostService';
 import { ensureGeneratedMediaRoot } from './services/generatedMediaService';
-import { ensureSupabaseFallbackSchema } from './services/supabaseSchemaService';
+import { ensureSupabaseFallbackSchema, getSupabaseSchemaInitStatus } from './services/supabaseSchemaService';
 
 const initializeAutomation = async () => {
   try {
@@ -133,6 +133,7 @@ app.get('/version', (_req, res) => {
       null,
     serviceId: process.env.RENDER_SERVICE_ID ?? null,
     serviceName: process.env.RENDER_SERVICE_NAME ?? null,
+    supabaseSchemaInit: getSupabaseSchemaInitStatus(),
   });
 });
 
