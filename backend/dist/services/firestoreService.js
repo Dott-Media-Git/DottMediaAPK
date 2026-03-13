@@ -1,5 +1,6 @@
 import admin from 'firebase-admin';
 import { firestore } from '../db/firestore.js';
+import { supabaseFallbackService } from './supabaseFallbackService.js';
 const automationsCollection = firestore.collection('automations');
 const analyticsCollection = firestore.collection('analytics');
 const jobDoc = (userId, jobId) => automationsCollection.doc(userId).collection('jobs').doc(jobId);
@@ -36,13 +37,34 @@ export async function findJobById(jobId) {
 }
 export async function recordAnalyticsSample(userId, sample) {
     const dailyDoc = analyticsCollection.doc(userId).collection('daily').doc(sample.date);
-    await dailyDoc.set({
-        date: sample.date,
-        leads: admin.firestore.FieldValue.increment(sample.leads),
-        engagement: admin.firestore.FieldValue.increment(sample.engagement),
-        conversions: admin.firestore.FieldValue.increment(sample.conversions),
-        feedbackScore: admin.firestore.FieldValue.increment(sample.feedbackScore),
-        samples: admin.firestore.FieldValue.increment(1),
-        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
+    try {
+        await dailyDoc.set({
+            date: sample.date,
+            leads: admin.firestore.FieldValue.increment(sample.leads),
+            engagement: admin.firestore.FieldValue.increment(sample.engagement),
+            conversions: admin.firestore.FieldValue.increment(sample.conversions),
+            feedbackScore: admin.firestore.FieldValue.increment(sample.feedbackScore),
+            samples: admin.firestore.FieldValue.increment(1),
+            lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+    }
+    catch (error) {
+        console.warn('[firestoreService] analytics sample Firestore write failed', error);
+    }
+    try {
+        const counters = {
+            leads: sample.leads,
+            engagement: sample.engagement,
+            conversions: sample.conversions,
+            feedbackScore: sample.feedbackScore,
+            samples: 1,
+        };
+        await Promise.all([
+            supabaseFallbackService.incrementMetricDaily('dashboardDaily', counters, { userId }, sample.date),
+            supabaseFallbackService.incrementMetricSummary('dashboardDaily', counters, { userId }),
+        ]);
+    }
+    catch (error) {
+        console.warn('[firestoreService] analytics sample Supabase mirror failed', error);
+    }
 }

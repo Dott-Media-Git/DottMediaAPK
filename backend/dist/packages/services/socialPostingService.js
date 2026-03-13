@@ -11,6 +11,7 @@ import { publishToYouTube } from './socialPlatforms/youtubePublisher.js';
 import { socialAnalyticsService } from './socialAnalyticsService.js';
 import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from '../../services/socialIntegrationService.js';
 import { canUsePrimarySocialDefaults } from '../../utils/socialAccess.js';
+import { supabaseFallbackService } from '../../services/supabaseFallbackService.js';
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
 const socialLogsCollection = firestore.collection('socialLogs');
@@ -72,26 +73,52 @@ export class SocialPostingService {
     }
     async runQueue(limit = 25) {
         const now = admin.firestore.Timestamp.now();
-        const pendingSnap = await scheduledPostsCollection
-            .where('status', '==', 'pending')
-            .where('scheduledFor', '<=', now)
-            .orderBy('scheduledFor', 'asc')
-            .limit(limit)
-            .get();
-        const posts = pendingSnap.docs.map(doc => {
-            const data = doc.data();
-            return {
-                id: doc.id,
-                userId: data.userId,
-                platform: data.platform,
-                caption: data.caption,
-                hashtags: data.hashtags ?? '',
-                imageUrls: data.imageUrls ?? [],
-                videoUrl: data.videoUrl ?? undefined,
-                videoTitle: data.videoTitle ?? undefined,
-                targetDate: data.targetDate ?? new Date().toISOString().slice(0, 10),
-            };
-        });
+        const pendingById = new Map();
+        try {
+            const pendingSnap = await scheduledPostsCollection
+                .where('status', '==', 'pending')
+                .where('scheduledFor', '<=', now)
+                .orderBy('scheduledFor', 'asc')
+                .limit(limit)
+                .get();
+            pendingSnap.docs.forEach(doc => {
+                const data = doc.data();
+                pendingById.set(doc.id, {
+                    id: doc.id,
+                    userId: data.userId,
+                    platform: data.platform,
+                    caption: data.caption,
+                    hashtags: data.hashtags ?? '',
+                    imageUrls: data.imageUrls ?? [],
+                    videoUrl: data.videoUrl ?? undefined,
+                    videoTitle: data.videoTitle ?? undefined,
+                    targetDate: data.targetDate ?? new Date().toISOString().slice(0, 10),
+                });
+            });
+        }
+        catch (error) {
+            console.warn('[social-posting] firestore pending queue fetch failed', error);
+        }
+        try {
+            const fallbackPosts = await supabaseFallbackService.getPendingScheduledPosts(new Date(now.toMillis()), limit);
+            fallbackPosts.forEach((post) => {
+                pendingById.set(post.id, {
+                    id: post.id,
+                    userId: post.userId,
+                    platform: post.platform,
+                    caption: post.caption ?? '',
+                    hashtags: post.hashtags ?? '',
+                    imageUrls: post.imageUrls ?? [],
+                    videoUrl: post.videoUrl ?? undefined,
+                    videoTitle: post.videoTitle ?? undefined,
+                    targetDate: post.targetDate ?? new Date().toISOString().slice(0, 10),
+                });
+            });
+        }
+        catch (error) {
+            console.warn('[social-posting] supabase pending queue fetch failed', error);
+        }
+        const posts = Array.from(pendingById.values()).sort((a, b) => a.targetDate.localeCompare(b.targetDate));
         if (!posts.length)
             return { processed: 0 };
         const counts = await this.buildCounts(posts.map(post => ({ userId: post.userId, targetDate: post.targetDate })));
@@ -100,10 +127,20 @@ export class SocialPostingService {
             const key = `${post.userId}_${post.targetDate}`;
             const currentCount = counts.get(key) ?? 0;
             if (currentCount >= MAX_PER_DAY) {
-                await scheduledPostsCollection.doc(post.id).update({
+                try {
+                    await scheduledPostsCollection.doc(post.id).update({
+                        status: 'skipped_limit',
+                        errorMessage: 'Daily post limit reached',
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
+                catch (error) {
+                    console.warn('[social-posting] firestore skipped-limit update failed', error);
+                }
+                await supabaseFallbackService.updateScheduledPost(post.id, {
                     status: 'skipped_limit',
                     errorMessage: 'Daily post limit reached',
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    updatedAt: new Date(),
                 });
                 await this.log(post, 'skipped_limit');
                 await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'skipped_limit' });
@@ -163,27 +200,59 @@ export class SocialPostingService {
                     credentials: socialAccounts,
                 };
                 const response = await this.publishWithRetry(publisher, payload);
-                await scheduledPostsCollection.doc(post.id).update({
+                try {
+                    await scheduledPostsCollection.doc(post.id).update({
+                        status: 'posted',
+                        postedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        remoteId: response.remoteId ?? null,
+                    });
+                }
+                catch (error) {
+                    console.warn('[social-posting] firestore posted update failed', error);
+                }
+                await supabaseFallbackService.updateScheduledPost(post.id, {
                     status: 'posted',
-                    postedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    postedAt: new Date(),
                     remoteId: response.remoteId ?? null,
+                    updatedAt: new Date(),
                 });
                 counts.set(key, currentCount + 1);
-                await socialLimitsCollection.doc(key).set({
+                try {
+                    await socialLimitsCollection.doc(key).set({
+                        userId: post.userId,
+                        date: post.targetDate,
+                        postedCount: admin.firestore.FieldValue.increment(1),
+                    }, { merge: true });
+                }
+                catch (error) {
+                    console.warn('[social-posting] firestore social limit increment failed', error);
+                }
+                await supabaseFallbackService.incrementSocialLimit({
+                    key,
                     userId: post.userId,
                     date: post.targetDate,
-                    postedCount: admin.firestore.FieldValue.increment(1),
-                }, { merge: true });
+                    postedCount: 1,
+                });
                 await this.log(post, 'posted', response.remoteId);
                 await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'posted' });
                 processed += 1;
             }
             catch (error) {
                 const message = error.message ?? 'publish_failed';
-                await scheduledPostsCollection.doc(post.id).update({
+                try {
+                    await scheduledPostsCollection.doc(post.id).update({
+                        status: 'failed',
+                        errorMessage: message,
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
+                catch (firestoreError) {
+                    console.warn('[social-posting] firestore failed update failed', firestoreError);
+                }
+                await supabaseFallbackService.updateScheduledPost(post.id, {
                     status: 'failed',
                     errorMessage: message,
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    updatedAt: new Date(),
                 });
                 await this.log(post, 'failed', undefined, message);
                 await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'failed' });
@@ -192,24 +261,42 @@ export class SocialPostingService {
         return { processed };
     }
     async getHistory(userId, limit = 400) {
-        let snap;
+        const mergedById = new Map();
         const fallbackLimit = Math.min(Math.max(limit * 5, limit), 2500);
         try {
-            snap = await scheduledPostsCollection
-                .where('userId', '==', userId)
-                .orderBy('createdAt', 'desc')
-                .limit(limit)
-                .get();
+            let snap;
+            try {
+                snap = await scheduledPostsCollection
+                    .where('userId', '==', userId)
+                    .orderBy('createdAt', 'desc')
+                    .limit(limit)
+                    .get();
+            }
+            catch (error) {
+                if (!this.isMissingIndexError(error))
+                    throw error;
+                snap = await scheduledPostsCollection
+                    .where('userId', '==', userId)
+                    .limit(fallbackLimit)
+                    .get();
+            }
+            snap.docs.forEach(doc => {
+                mergedById.set(doc.id, { id: doc.id, ...doc.data() });
+            });
         }
         catch (error) {
-            if (!this.isMissingIndexError(error))
-                throw error;
-            snap = await scheduledPostsCollection
-                .where('userId', '==', userId)
-                .limit(fallbackLimit)
-                .get();
+            console.warn('[social-history] firestore history fetch failed', error);
         }
-        const posts = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        try {
+            const fallbackPosts = await supabaseFallbackService.getPostsByUser(userId, fallbackLimit);
+            fallbackPosts.forEach((post) => {
+                mergedById.set(post.id, post);
+            });
+        }
+        catch (error) {
+            console.warn('[social-history] supabase history fetch failed', error);
+        }
+        const posts = Array.from(mergedById.values());
         posts.sort((a, b) => {
             const aScore = this.toSeconds(a.createdAt) || this.toSeconds(a.postedAt) || this.toSeconds(a.scheduledFor);
             const bScore = this.toSeconds(b.createdAt) || this.toSeconds(b.postedAt) || this.toSeconds(b.scheduledFor);
@@ -222,7 +309,7 @@ export class SocialPostingService {
             return acc;
         }, { perPlatform: {}, byStatus: {} });
         const todayDate = new Date().toISOString().slice(0, 10);
-        let todayPosts = [];
+        const todayPostsById = new Map();
         try {
             const todaySnap = await scheduledPostsCollection
                 .where('userId', '==', userId)
@@ -230,11 +317,8 @@ export class SocialPostingService {
                 .where('status', '==', 'posted')
                 .limit(2500)
                 .get();
-            todayPosts = todaySnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            todayPosts.sort((a, b) => {
-                const aScore = this.toSeconds(a.postedAt) || this.toSeconds(a.createdAt) || this.toSeconds(a.scheduledFor);
-                const bScore = this.toSeconds(b.postedAt) || this.toSeconds(b.createdAt) || this.toSeconds(b.scheduledFor);
-                return bScore - aScore;
+            todaySnap.docs.forEach(doc => {
+                todayPostsById.set(doc.id, { id: doc.id, ...doc.data() });
             });
         }
         catch (error) {
@@ -244,15 +328,31 @@ export class SocialPostingService {
             const todayStart = new Date();
             todayStart.setHours(0, 0, 0, 0);
             const todaySeconds = Math.floor(todayStart.getTime() / 1000);
-            todayPosts = trimmed.filter(post => {
+            trimmed.forEach(post => {
                 if (post.status !== 'posted')
                     return false;
                 const seconds = this.toSeconds(post.postedAt) ||
                     this.toSeconds(post.createdAt) ||
                     this.toSeconds(post.scheduledFor);
-                return seconds >= todaySeconds;
+                if (seconds >= todaySeconds) {
+                    todayPostsById.set(String(post.id ?? ''), post);
+                }
             });
         }
+        try {
+            const fallbackToday = await supabaseFallbackService.getPostedPostsByDate(userId, todayDate, 2500);
+            fallbackToday.forEach((post) => {
+                todayPostsById.set(post.id, post);
+            });
+        }
+        catch (error) {
+            console.warn('[social-history] supabase today posts fetch failed', error);
+        }
+        const todayPosts = Array.from(todayPostsById.values()).sort((a, b) => {
+            const aScore = this.toSeconds(a.postedAt) || this.toSeconds(a.createdAt) || this.toSeconds(a.scheduledFor);
+            const bScore = this.toSeconds(b.postedAt) || this.toSeconds(b.createdAt) || this.toSeconds(b.scheduledFor);
+            return bScore - aScore;
+        });
         const todaySummary = todayPosts.reduce((acc, post) => {
             acc.totalPosted += 1;
             const platform = this.normalizePostedPlatform(String(post.platform ?? ''));
@@ -271,24 +371,58 @@ export class SocialPostingService {
         const uniqueKeys = Array.from(new Set(entries.map(entry => `${entry.userId}_${entry.targetDate}`)));
         if (!uniqueKeys.length)
             return set;
-        const snaps = await Promise.all(uniqueKeys.map(key => socialLimitsCollection.doc(key).get()));
-        snaps.forEach((doc, index) => {
-            const key = uniqueKeys[index];
-            const postedCount = doc.data()?.postedCount ?? 0;
-            set.set(key, postedCount);
-        });
+        try {
+            const snaps = await Promise.all(uniqueKeys.map(key => socialLimitsCollection.doc(key).get()));
+            snaps.forEach((doc, index) => {
+                const key = uniqueKeys[index];
+                const postedCount = doc.data()?.postedCount ?? 0;
+                set.set(key, postedCount);
+            });
+        }
+        catch (error) {
+            console.warn('[social-posting] firestore social limits fetch failed', error);
+        }
+        for (const key of uniqueKeys) {
+            try {
+                const fallback = await supabaseFallbackService.getSocialLimit(key);
+                if (fallback) {
+                    set.set(key, Math.max(set.get(key) ?? 0, fallback.postedCount ?? 0));
+                }
+            }
+            catch (error) {
+                console.warn('[social-posting] supabase social limit fetch failed', error);
+            }
+        }
         return set;
     }
     async log(post, status, responseId, error) {
-        await socialLogsCollection.add({
-            userId: post.userId,
-            platform: post.platform,
-            scheduledPostId: post.id,
-            status,
-            responseId: responseId ?? null,
-            error: error ?? null,
-            postedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+        try {
+            await socialLogsCollection.add({
+                userId: post.userId,
+                platform: post.platform,
+                scheduledPostId: post.id,
+                status,
+                responseId: responseId ?? null,
+                error: error ?? null,
+                postedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        }
+        catch (firestoreError) {
+            console.warn('[social-posting] firestore log write failed', firestoreError);
+        }
+        try {
+            await supabaseFallbackService.addSocialLog({
+                userId: post.userId,
+                platform: post.platform,
+                scheduledPostId: post.id,
+                status,
+                responseId,
+                error,
+            });
+        }
+        catch (supabaseError) {
+            console.warn('[social-posting] supabase log write failed', supabaseError);
+        }
     }
     async publishWithRetry(publisher, payload) {
         const attempts = 2;

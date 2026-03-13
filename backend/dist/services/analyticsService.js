@@ -1,6 +1,7 @@
 import admin from 'firebase-admin';
-import { firestore } from '../db/firestore';
-import { resolveAnalyticsScopeKey } from './analyticsScope';
+import { firestore } from '../db/firestore.js';
+import { resolveAnalyticsScopeKey } from './analyticsScope.js';
+import { supabaseFallbackService } from './supabaseFallbackService.js';
 const RatingWeights = {
     active: 1,
     queued: 0.6,
@@ -104,39 +105,107 @@ const readActivityHeatmapScope = async (scope, limitValue) => {
         .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
         .slice(-limitValue);
 };
+const readActivityHeatmapSupabaseScope = async (scope, limitValue, minDate) => {
+    const byDate = new Map();
+    const [webTrafficRows, outboundRows, engagementRows, dashboardRows] = await Promise.all([
+        supabaseFallbackService.getMetricDailyRows('webTraffic', scope, limitValue, minDate),
+        supabaseFallbackService.getMetricDailyRows('outbound', scope, limitValue, minDate),
+        supabaseFallbackService.getMetricDailyRows('engagement', scope, limitValue, minDate),
+        supabaseFallbackService.getMetricDailyRows('dashboardDaily', scope, limitValue, minDate),
+    ]);
+    webTrafficRows.forEach(row => {
+        mergeActivityHeatmapRow(byDate, row.date, {
+            views: Number(row.counters?.visitors ?? 0),
+            interactions: Number(row.counters?.interactions ?? 0),
+        });
+    });
+    outboundRows.forEach(row => {
+        mergeActivityHeatmapRow(byDate, row.date, {
+            outbound: Number(row.counters?.messagesSent ?? row.counters?.replies ?? 0),
+            conversions: Number(row.counters?.conversions ?? 0),
+        });
+    });
+    engagementRows.forEach(row => {
+        mergeActivityHeatmapRow(byDate, row.date, {
+            interactions: Number(row.counters?.commentsDetected ?? 0) +
+                Number(row.counters?.repliesSent ?? 0),
+            conversions: Number(row.counters?.conversions ?? 0),
+        });
+    });
+    dashboardRows.forEach(row => {
+        const samples = Math.max(Number(row.counters?.samples ?? 1) || 1, 1);
+        mergeActivityHeatmapRow(byDate, row.date, {
+            views: Math.round(Number(row.counters?.leads ?? 0) / samples),
+            interactions: Math.round(Number(row.counters?.engagement ?? 0) / samples),
+            outbound: Math.round(Number(row.counters?.conversions ?? 0) / samples),
+            conversions: Math.round(Number(row.counters?.conversions ?? 0) / samples),
+        });
+    });
+    return Array.from(byDate.values())
+        .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
+        .slice(-limitValue);
+};
 export async function getActivityHeatmap(scope, days = 14) {
+    const limitValue = Math.max(days, 7);
+    const minDate = new Date(Date.now() - limitValue * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const merged = new Map();
     try {
-        const limitValue = Math.max(days, 7);
         const candidateRows = await Promise.all(buildScopeCandidates(scope).map(candidate => readActivityHeatmapScope(candidate, limitValue)));
-        const merged = new Map();
         candidateRows.forEach(rows => {
             rows.forEach(row => mergeActivityHeatmapRow(merged, row.date, row));
         });
-        const rows = Array.from(merged.values())
-            .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
-            .slice(-limitValue);
-        if (activityHeatmapScore(rows) > 0) {
-            return rows;
-        }
-        return [];
     }
     catch (error) {
         console.warn('Firestore activity heatmap fetch failed', error);
-        return [];
     }
+    try {
+        const supabaseRows = await Promise.all(buildScopeCandidates(scope).map(candidate => readActivityHeatmapSupabaseScope(candidate, limitValue, minDate)));
+        supabaseRows.forEach(rows => {
+            rows.forEach(row => mergeActivityHeatmapRow(merged, row.date, row));
+        });
+    }
+    catch (error) {
+        console.warn('Supabase activity heatmap fetch failed', error);
+    }
+    const rows = Array.from(merged.values())
+        .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
+        .slice(-limitValue);
+    return activityHeatmapScore(rows) > 0 ? rows : [];
 }
-async function readSummaryWithFallback(summaryDocFactory, scope, positiveKeys) {
+async function readSummaryWithFallback(summaryDocFactory, scope, positiveKeys, supabaseMetric) {
     const candidates = buildScopeCandidates(scope);
     let firstSeen = null;
     for (const candidate of candidates) {
-        const snap = await summaryDocFactory(candidate).get();
-        if (!snap.exists)
-            continue;
-        const data = (snap.data() ?? {});
-        if (!firstSeen)
-            firstSeen = data;
-        if (hasPositiveMetric(data, positiveKeys)) {
-            return data;
+        try {
+            const snap = await summaryDocFactory(candidate).get();
+            if (!snap.exists)
+                continue;
+            const data = (snap.data() ?? {});
+            if (!firstSeen)
+                firstSeen = data;
+            if (hasPositiveMetric(data, positiveKeys)) {
+                return data;
+            }
+        }
+        catch (error) {
+            console.warn('[analytics] firestore summary fetch failed', error);
+        }
+    }
+    if (supabaseMetric) {
+        for (const candidate of candidates) {
+            try {
+                const fallback = (await supabaseFallbackService.getMetricSummary(supabaseMetric, candidate));
+                if (!fallback)
+                    continue;
+                if (!firstSeen)
+                    firstSeen = fallback;
+                if (hasPositiveMetric(fallback, positiveKeys)) {
+                    return fallback;
+                }
+            }
+            catch (error) {
+                console.warn(`[analytics] supabase summary fetch failed for ${supabaseMetric}`, error);
+            }
         }
     }
     return (firstSeen ?? {});
@@ -210,7 +279,7 @@ export class AnalyticsService {
                 .orderBy('date', 'desc')
                 .limit(14)
                 .get();
-            const history = historySnap.docs
+            let history = historySnap.docs
                 .map(doc => {
                 const data = doc.data();
                 const samples = Number(data.samples ?? 1) || 1;
@@ -223,6 +292,22 @@ export class AnalyticsService {
                 };
             })
                 .reverse();
+            if (!history.length) {
+                const fallbackRows = await supabaseFallbackService.getMetricDailyRows('dashboardDaily', { userId }, 14);
+                history = fallbackRows
+                    .map(row => {
+                    const counters = row.counters;
+                    const samples = Number(counters.samples ?? 1) || 1;
+                    return {
+                        date: row.date,
+                        leads: Math.round(Number(counters.leads ?? 0) / samples),
+                        engagement: Math.round(Number(counters.engagement ?? 0) / samples),
+                        conversions: Math.round(Number(counters.conversions ?? 0) / samples),
+                        feedbackScore: Number(((Number(counters.feedbackScore ?? 0) / samples) || 0).toFixed(1)),
+                    };
+                })
+                    .reverse();
+            }
             if (history.length) {
                 const divisor = history.length;
                 leads = history.reduce((sum, day) => sum + day.leads, 0) / divisor;
@@ -272,7 +357,37 @@ export class AnalyticsService {
         }
         catch (error) {
             console.warn('Firestore analytics fetch failed, returning fallback data', error);
-            // Fallback if Firestore fails even if mock auth is off (or if it crashes during fetch)
+            try {
+                const fallbackRows = await supabaseFallbackService.getMetricDailyRows('dashboardDaily', { userId }, 14);
+                const history = fallbackRows
+                    .map(row => {
+                    const counters = row.counters;
+                    const samples = Number(counters.samples ?? 1) || 1;
+                    return {
+                        date: row.date,
+                        leads: Math.round(Number(counters.leads ?? 0) / samples),
+                        engagement: Math.round(Number(counters.engagement ?? 0) / samples),
+                        conversions: Math.round(Number(counters.conversions ?? 0) / samples),
+                        feedbackScore: Number(((Number(counters.feedbackScore ?? 0) / samples) || 0).toFixed(1)),
+                    };
+                })
+                    .reverse();
+                if (history.length) {
+                    const divisor = history.length;
+                    return {
+                        leads: Math.round(history.reduce((sum, day) => sum + day.leads, 0) / divisor),
+                        engagement: Math.round(history.reduce((sum, day) => sum + day.engagement, 0) / divisor),
+                        conversions: Math.round(history.reduce((sum, day) => sum + day.conversions, 0) / divisor),
+                        feedbackScore: Math.min(5, Number((history.reduce((sum, day) => sum + day.feedbackScore, 0) / divisor).toFixed(1))),
+                        jobBreakdown: { active: 0, queued: 0, failed: 0 },
+                        recentJobs: [],
+                        history,
+                    };
+                }
+            }
+            catch (supabaseError) {
+                console.warn('Supabase analytics fetch failed', supabaseError);
+            }
             return {
                 leads: 0,
                 engagement: 0,
@@ -423,6 +538,25 @@ export async function incrementOutboundAnalytics(update, scope) {
     catch (error) {
         console.warn('Firestore outbound analytics increment failed; using fallback cache', error);
     }
+    try {
+        const payload = {
+            prospectsFound: update.prospectsFound ?? 0,
+            messagesSent: update.messagesSent ?? 0,
+            responders: update.responders ?? 0,
+            replies: update.replies ?? 0,
+            positiveReplies: update.positiveReplies ?? 0,
+            conversions: update.conversions ?? 0,
+            demosBooked: update.demosBooked ?? 0,
+            industryCounts: update.industryBreakdown ?? {},
+        };
+        await Promise.all([
+            supabaseFallbackService.incrementMetricDaily('outbound', payload, scope),
+            supabaseFallbackService.incrementMetricSummary('outbound', payload, scope),
+        ]);
+    }
+    catch (error) {
+        console.warn('Supabase outbound analytics increment failed', error);
+    }
 }
 function sanitizeIndustryKey(industry) {
     if (!industry)
@@ -453,7 +587,7 @@ export async function getOutboundStats(scope) {
             'positiveReplies',
             'conversions',
             'demosBooked',
-        ]);
+        ], 'outbound');
         const prospectsContacted = data.messagesSent ?? 0;
         const responders = data.responders ?? data.replies ?? 0;
         const replies = data.replies ?? 0;
@@ -517,7 +651,7 @@ export async function incrementInboundAnalytics(update, scope) {
         leads: update.leads ?? 0,
         sentimentTotal: update.sentimentTotal ?? 0,
         sentimentSamples: update.messages ?? 0,
-    });
+    }, scope);
 }
 export async function incrementEngagementAnalytics(update, scope) {
     if (!update.commentsDetected && !update.repliesSent && !update.conversions)
@@ -526,7 +660,7 @@ export async function incrementEngagementAnalytics(update, scope) {
         commentsDetected: update.commentsDetected ?? 0,
         repliesSent: update.repliesSent ?? 0,
         conversions: update.conversions ?? 0,
-    });
+    }, scope);
 }
 export async function incrementFollowupAnalytics(update, scope) {
     if (!update.sent && !update.replies && !update.conversions)
@@ -535,7 +669,7 @@ export async function incrementFollowupAnalytics(update, scope) {
         sent: update.sent ?? 0,
         replies: update.replies ?? 0,
         conversions: update.conversions ?? 0,
-    });
+    }, scope);
 }
 export async function incrementWebLeadAnalytics(update, scope) {
     if (!update.leads && !update.messages)
@@ -543,7 +677,7 @@ export async function incrementWebLeadAnalytics(update, scope) {
     await writeDailySummary(webLeadAnalyticsCollection(scope), webLeadSummaryDoc(scope), {
         leads: update.leads ?? 0,
         messages: update.messages ?? 0,
-    });
+    }, scope);
 }
 const webTrafficFallbackCache = new Map();
 const webTrafficScore = (value) => Number(value?.visitors ?? 0) +
@@ -747,8 +881,29 @@ export async function incrementWebTrafficAnalytics(update, scope) {
     catch (error) {
         console.warn('Firestore web traffic increment failed; using fallback cache', error);
     }
+    try {
+        const payload = {
+            visitors,
+            interactions,
+            redirectClicks,
+            sourceVisitors: visitors > 0 ? { [sourceKey]: visitors } : {},
+            sourceInteractions: interactions > 0 ? { [sourceKey]: interactions } : {},
+            sourceRedirectClicks: redirectClicks > 0 ? { [sourceKey]: redirectClicks } : {},
+            placementVisitors: visitors > 0 ? { [placementKey]: visitors } : {},
+            placementInteractions: interactions > 0 ? { [placementKey]: interactions } : {},
+            placementRedirectClicks: redirectClicks > 0 ? { [placementKey]: redirectClicks } : {},
+            sourcePlacementRedirectClicks: redirectClicks > 0 ? { [`${sourceKey}:${placementKey}`]: redirectClicks } : {},
+        };
+        await Promise.all([
+            supabaseFallbackService.incrementMetricDaily('webTraffic', payload, scope),
+            supabaseFallbackService.incrementMetricSummary('webTraffic', payload, scope),
+        ]);
+    }
+    catch (error) {
+        console.warn('Supabase web traffic increment failed', error);
+    }
 }
-async function writeDailySummary(collection, summaryDoc, counters) {
+async function writeDailySummary(collection, summaryDoc, counters, scope) {
     const date = new Date().toISOString().slice(0, 10);
     const docRef = collection.doc(date);
     const payload = {
@@ -758,14 +913,29 @@ async function writeDailySummary(collection, summaryDoc, counters) {
     Object.entries(counters).forEach(([key, value]) => {
         payload[key] = admin.firestore.FieldValue.increment(value);
     });
-    await firestore.runTransaction(async (tx) => {
-        tx.set(docRef, payload, { merge: true });
-    });
-    await summaryDoc.set(Object.fromEntries(Object.entries(counters).map(([key, value]) => [key, admin.firestore.FieldValue.increment(value)])), { merge: true });
+    try {
+        await firestore.runTransaction(async (tx) => {
+            tx.set(docRef, payload, { merge: true });
+        });
+        await summaryDoc.set(Object.fromEntries(Object.entries(counters).map(([key, value]) => [key, admin.firestore.FieldValue.increment(value)])), { merge: true });
+    }
+    catch (error) {
+        console.warn('Firestore daily summary increment failed; using fallback cache', error);
+    }
+    try {
+        const metric = summaryDoc.id;
+        await Promise.all([
+            supabaseFallbackService.incrementMetricDaily(metric, counters, scope, date),
+            supabaseFallbackService.incrementMetricSummary(metric, counters, scope),
+        ]);
+    }
+    catch (error) {
+        console.warn('Supabase daily summary increment failed', error);
+    }
 }
 export async function getInboundStats(scope) {
     try {
-        const data = await readSummaryWithFallback(inboundSummaryDoc, scope, ['messages', 'leads', 'sentimentTotal', 'sentimentSamples']);
+        const data = await readSummaryWithFallback(inboundSummaryDoc, scope, ['messages', 'leads', 'sentimentTotal', 'sentimentSamples'], 'inbound');
         const messages = Number(data.messages ?? 0);
         const leads = Number(data.leads ?? 0);
         const sentimentTotal = Number(data.sentimentTotal ?? 0);
@@ -791,7 +961,7 @@ export async function getInboundStats(scope) {
 }
 export async function getEngagementStats(scope) {
     try {
-        const data = await readSummaryWithFallback(engagementSummaryDoc, scope, ['commentsDetected', 'repliesSent', 'conversions']);
+        const data = await readSummaryWithFallback(engagementSummaryDoc, scope, ['commentsDetected', 'repliesSent', 'conversions'], 'engagement');
         const comments = Number(data.commentsDetected ?? 0);
         const replies = Number(data.repliesSent ?? 0);
         const conversions = Number(data.conversions ?? 0);
@@ -815,7 +985,7 @@ export async function getEngagementStats(scope) {
 }
 export async function getFollowupStats(scope) {
     try {
-        const data = await readSummaryWithFallback(followupSummaryDoc, scope, ['sent', 'replies', 'conversions']);
+        const data = await readSummaryWithFallback(followupSummaryDoc, scope, ['sent', 'replies', 'conversions'], 'followups');
         const sent = Number(data.sent ?? 0);
         const replies = Number(data.replies ?? 0);
         const conversions = Number(data.conversions ?? 0);
@@ -840,7 +1010,7 @@ export async function getFollowupStats(scope) {
 }
 export async function getWebLeadStats(scope) {
     try {
-        const data = await readSummaryWithFallback(webLeadSummaryDoc, scope, ['leads', 'messages']);
+        const data = await readSummaryWithFallback(webLeadSummaryDoc, scope, ['leads', 'messages'], 'webLeads');
         const leads = Number(data.leads ?? 0);
         const messages = Number(data.messages ?? 0);
         const conversionRate = messages ? leads / messages : leads ? 1 : 0;
@@ -895,6 +1065,46 @@ export async function getWebTrafficStats(scope) {
             });
             return result;
         }
+        try {
+            const fallbackSummary = (await supabaseFallbackService.getMetricSummary('webTraffic', scope));
+            if (fallbackSummary) {
+                const visitors = Number(fallbackSummary.visitors ?? 0);
+                const interactions = Number(fallbackSummary.interactions ?? 0);
+                const redirectClicks = Number(fallbackSummary.redirectClicks ?? 0);
+                const engagementRate = visitors > 0 ? (interactions / visitors) * 100 : 0;
+                const supabaseResult = {
+                    visitors,
+                    interactions,
+                    redirectClicks,
+                    engagementRate: Number(engagementRate.toFixed(2)),
+                    sourceVisitors: normalizeCounterMap(fallbackSummary.sourceVisitors),
+                    sourceInteractions: normalizeCounterMap(fallbackSummary.sourceInteractions),
+                    sourceRedirectClicks: normalizeCounterMap(fallbackSummary.sourceRedirectClicks),
+                    placementVisitors: normalizeCounterMap(fallbackSummary.placementVisitors),
+                    placementInteractions: normalizeCounterMap(fallbackSummary.placementInteractions),
+                    placementRedirectClicks: normalizeCounterMap(fallbackSummary.placementRedirectClicks),
+                    sourcePlacementRedirectClicks: normalizeCounterMap(fallbackSummary.sourcePlacementRedirectClicks),
+                };
+                if (webTrafficScore(supabaseResult) > 0) {
+                    setWebTrafficFallback(scope, {
+                        visitors: supabaseResult.visitors,
+                        interactions: supabaseResult.interactions,
+                        redirectClicks: supabaseResult.redirectClicks,
+                        sourceVisitors: supabaseResult.sourceVisitors,
+                        sourceInteractions: supabaseResult.sourceInteractions,
+                        sourceRedirectClicks: supabaseResult.sourceRedirectClicks,
+                        placementVisitors: supabaseResult.placementVisitors,
+                        placementInteractions: supabaseResult.placementInteractions,
+                        placementRedirectClicks: supabaseResult.placementRedirectClicks,
+                        sourcePlacementRedirectClicks: supabaseResult.sourcePlacementRedirectClicks,
+                    });
+                    return supabaseResult;
+                }
+            }
+        }
+        catch (supabaseError) {
+            console.warn('Supabase web traffic stats fetch failed', supabaseError);
+        }
         const cached = readWebTrafficFallback(scope);
         if (cached && webTrafficScore(cached) > 0) {
             const cachedRate = cached.visitors > 0 ? (cached.interactions / cached.visitors) * 100 : 0;
@@ -916,6 +1126,46 @@ export async function getWebTrafficStats(scope) {
     }
     catch (error) {
         console.warn('Firestore web traffic stats fetch failed', error);
+        try {
+            const fallbackSummary = (await supabaseFallbackService.getMetricSummary('webTraffic', scope));
+            if (fallbackSummary) {
+                const visitors = Number(fallbackSummary.visitors ?? 0);
+                const interactions = Number(fallbackSummary.interactions ?? 0);
+                const redirectClicks = Number(fallbackSummary.redirectClicks ?? 0);
+                const engagementRate = visitors > 0 ? (interactions / visitors) * 100 : 0;
+                const result = {
+                    visitors,
+                    interactions,
+                    redirectClicks,
+                    engagementRate: Number(engagementRate.toFixed(2)),
+                    sourceVisitors: normalizeCounterMap(fallbackSummary.sourceVisitors),
+                    sourceInteractions: normalizeCounterMap(fallbackSummary.sourceInteractions),
+                    sourceRedirectClicks: normalizeCounterMap(fallbackSummary.sourceRedirectClicks),
+                    placementVisitors: normalizeCounterMap(fallbackSummary.placementVisitors),
+                    placementInteractions: normalizeCounterMap(fallbackSummary.placementInteractions),
+                    placementRedirectClicks: normalizeCounterMap(fallbackSummary.placementRedirectClicks),
+                    sourcePlacementRedirectClicks: normalizeCounterMap(fallbackSummary.sourcePlacementRedirectClicks),
+                };
+                if (webTrafficScore(result) > 0) {
+                    setWebTrafficFallback(scope, {
+                        visitors: result.visitors,
+                        interactions: result.interactions,
+                        redirectClicks: result.redirectClicks,
+                        sourceVisitors: result.sourceVisitors,
+                        sourceInteractions: result.sourceInteractions,
+                        sourceRedirectClicks: result.sourceRedirectClicks,
+                        placementVisitors: result.placementVisitors,
+                        placementInteractions: result.placementInteractions,
+                        placementRedirectClicks: result.placementRedirectClicks,
+                        sourcePlacementRedirectClicks: result.sourcePlacementRedirectClicks,
+                    });
+                    return result;
+                }
+            }
+        }
+        catch (supabaseError) {
+            console.warn('Supabase web traffic stats fetch failed', supabaseError);
+        }
         const cached = readWebTrafficFallback(scope);
         if (cached && webTrafficScore(cached) > 0) {
             const cachedRate = cached.visitors > 0 ? (cached.interactions / cached.visitors) * 100 : 0;

@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { canUsePrimarySocialDefaults } from '../utils/socialAccess.js';
 import { getOutboundStats, getWebTrafficStats } from './analyticsService.js';
 import { resolveAnalyticsScopeKey } from './analyticsScope.js';
+import { supabaseFallbackService } from './supabaseFallbackService.js';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const MAX_POSTS_PER_PLATFORM = Math.max(Number(process.env.LIVE_SOCIAL_MAX_POSTS ?? 20), 5);
 const LOOKBACK_HOURS_DEFAULT = Math.max(Number(process.env.LIVE_SOCIAL_LOOKBACK_HOURS ?? 72), 1);
@@ -387,32 +388,84 @@ export async function getLiveSocialMetrics(userId, options) {
     const lookbackDays = Math.max(Math.ceil(lookbackHours / 24) + 1, 2);
     const minDate = new Date(cutoffMs).toISOString().slice(0, 10);
     try {
-        const [userDoc, postsSnap, outbound, webTrafficCandidates] = await Promise.all([
-            firestore.collection('users').doc(userId).get(),
-            firestore.collection('scheduledPosts').where('userId', '==', userId).limit(500).get(),
+        const [userDoc, recentPosted, outbound, webTrafficCandidates] = await Promise.all([
+            firestore
+                .collection('users')
+                .doc(userId)
+                .get()
+                .catch(error => {
+                console.warn('[socialLive] firestore user fetch failed', error);
+                return null;
+            }),
+            (async () => {
+                try {
+                    const postsSnap = await firestore.collection('scheduledPosts').where('userId', '==', userId).limit(500).get();
+                    const rows = postsSnap.docs
+                        .map(doc => doc.data())
+                        .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
+                    if (rows.length)
+                        return rows;
+                }
+                catch (error) {
+                    console.warn('[socialLive] firestore scheduled posts fetch failed', error);
+                }
+                const fallbackPosts = await supabaseFallbackService.getPostsByUser(userId, 500);
+                return fallbackPosts
+                    .map(post => post)
+                    .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
+            })(),
             getOutboundStats(options?.scope ?? { userId }),
             Promise.all(scopeKeys.map(async (key) => {
-                const snap = await firestore
-                    .collection('analytics')
-                    .doc(key)
-                    .collection('webTrafficDaily')
-                    .orderBy('date', 'desc')
-                    .limit(lookbackDays)
-                    .get();
-                const rows = snap.docs
-                    .map(doc => doc.data())
-                    .filter(row => {
-                    const date = typeof row.date === 'string' ? row.date : '';
-                    return date && date >= minDate;
-                });
+                try {
+                    const snap = await firestore
+                        .collection('analytics')
+                        .doc(key)
+                        .collection('webTrafficDaily')
+                        .orderBy('date', 'desc')
+                        .limit(lookbackDays)
+                        .get();
+                    const rows = snap.docs
+                        .map(doc => doc.data())
+                        .filter(row => {
+                        const date = typeof row.date === 'string' ? row.date : '';
+                        return date && date >= minDate;
+                    });
+                    if (rows.length) {
+                        return { key, rows };
+                    }
+                }
+                catch (error) {
+                    console.warn('[socialLive] firestore web traffic daily fetch failed', error);
+                }
+                const fallbackRows = await supabaseFallbackService.getMetricDailyRows('webTraffic', { scopeId: key }, lookbackDays, minDate);
+                const rows = fallbackRows.map(row => ({
+                    date: row.date,
+                    visitors: toNumber(row.counters?.visitors),
+                    interactions: toNumber(row.counters?.interactions),
+                    redirectClicks: toNumber(row.counters?.redirectClicks),
+                    sourceRedirectClicks: row.counters?.sourceRedirectClicks ?? {},
+                }));
                 return { key, rows };
             })),
         ]);
-        const userData = userDoc.data();
+        const userData = userDoc?.data();
         const accounts = buildWithDefaults(userData);
-        const recentPosted = postsSnap.docs
-            .map(doc => doc.data())
-            .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
+        if (isBwinScopeRequest(options?.scope, userId)) {
+            if (!accounts.facebook?.accessToken && process.env.BWIN_FACEBOOK_PAGE_TOKEN && process.env.BWIN_FACEBOOK_PAGE_ID) {
+                accounts.facebook = {
+                    accessToken: process.env.BWIN_FACEBOOK_PAGE_TOKEN,
+                    pageId: process.env.BWIN_FACEBOOK_PAGE_ID,
+                };
+            }
+            if (!accounts.instagram?.accessToken &&
+                process.env.BWIN_INSTAGRAM_ACCESS_TOKEN &&
+                process.env.BWIN_INSTAGRAM_ACCOUNT_ID) {
+                accounts.instagram = {
+                    accessToken: process.env.BWIN_INSTAGRAM_ACCESS_TOKEN,
+                    accountId: process.env.BWIN_INSTAGRAM_ACCOUNT_ID,
+                };
+            }
+        }
         const facebookIds = collectRemoteIds(recentPosted, ['facebook', 'facebook_story']);
         const instagramIds = collectRemoteIds(recentPosted, ['instagram', 'instagram_reels', 'instagram_story']);
         const threadsIds = collectRemoteIds(recentPosted, ['threads']);

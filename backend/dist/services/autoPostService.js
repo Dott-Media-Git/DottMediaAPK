@@ -22,8 +22,10 @@ import { getNewsTrendingCandidates } from './newsTrendSources.js';
 import { getUserTrendConfig } from './userTrendSourceService.js';
 import { getTrendingCandidates as getFootballTrendingCandidates } from './footballTrendSources.js';
 import { footballTrendContentService } from './footballTrendContentService.js';
+import { fetchHighlightlyFootballHighlights } from './highlightlyService.js';
 import { resolveBrandIdForClient } from './brandKitService.js';
 import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage } from './tableImageService.js';
+import { supabaseFallbackService } from './supabaseFallbackService.js';
 const TOP_FIVE_LEAGUES = [
     { id: 'eng.1', label: 'Premier League', espnId: 'eng.1' },
     { id: 'esp.1', label: 'La Liga', espnId: 'esp.1' },
@@ -131,6 +133,133 @@ export class AutoPostService {
         const details = String(candidate.details ?? '').toLowerCase();
         const message = String(candidate.message ?? '').toLowerCase();
         return details.includes('quota exceeded') || message.includes('quota exceeded') || message.includes('resource_exhausted');
+    }
+    cacheJob(userId, job) {
+        this.memoryStore.set(userId, job);
+    }
+    async mirrorAutopostJob(userId, job) {
+        this.cacheJob(userId, job);
+        try {
+            await supabaseFallbackService.upsertAutopostJob(userId, job);
+        }
+        catch (error) {
+            console.warn('[autopost] supabase job mirror failed', error);
+        }
+    }
+    async loadAutopostJob(userId) {
+        const cached = this.memoryStore.get(userId);
+        if (cached)
+            return cached;
+        try {
+            const snap = await autopostCollection.doc(userId).get();
+            if (snap.exists) {
+                const job = snap.data();
+                this.cacheJob(userId, job);
+                return job;
+            }
+        }
+        catch (error) {
+            console.warn('[autopost] firestore job fetch failed; checking fallback store', error);
+        }
+        try {
+            const fallback = await supabaseFallbackService.getAutopostJob(userId);
+            if (fallback) {
+                const job = fallback;
+                this.cacheJob(userId, job);
+                return job;
+            }
+        }
+        catch (error) {
+            console.warn('[autopost] supabase job fetch failed', error);
+        }
+        return null;
+    }
+    async runDueJobsFromFallback(now) {
+        const buildDueSets = () => ({
+            dueStandard: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false && job.nextRun && job.nextRun.toMillis() <= now.toMillis()),
+            dueReels: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false && job.reelsNextRun && job.reelsNextRun.toMillis() <= now.toMillis()),
+            dueStories: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false &&
+                job.storyTrendEnabled === true &&
+                job.storyNextRun &&
+                job.storyNextRun.toMillis() <= now.toMillis()),
+            dueTrends: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false &&
+                job.trendEnabled === true &&
+                job.trendNextRun &&
+                job.trendNextRun.toMillis() <= now.toMillis()),
+        });
+        let { dueStandard, dueReels, dueStories, dueTrends } = buildDueSets();
+        if (!dueStandard.length && !dueReels.length && !dueStories.length && !dueTrends.length) {
+            try {
+                const [standard, reels, stories, trends] = await Promise.all([
+                    supabaseFallbackService.getDueAutopostJobs('next_run', new Date(now.toMillis())),
+                    supabaseFallbackService.getDueAutopostJobs('reels_next_run', new Date(now.toMillis())),
+                    supabaseFallbackService.getDueAutopostJobs('story_next_run', new Date(now.toMillis())),
+                    supabaseFallbackService.getDueAutopostJobs('trend_next_run', new Date(now.toMillis())),
+                ]);
+                [...standard, ...reels, ...stories, ...trends].forEach(job => {
+                    if (!job?.userId)
+                        return;
+                    this.cacheJob(job.userId, job);
+                });
+            }
+            catch (error) {
+                console.warn('[autopost] supabase due-job fetch failed', error);
+            }
+            ({ dueStandard, dueReels, dueStories, dueTrends } = buildDueSets());
+        }
+        let processed = 0;
+        const results = new Map();
+        for (const [userId, job] of dueStandard) {
+            const outcome = await this.executeJob(userId, job);
+            processed += 1;
+            results.set(userId, {
+                userId,
+                posted: outcome.posted,
+                failed: outcome.failed.length,
+                nextRun: outcome.nextRun,
+            });
+        }
+        for (const [userId, job] of dueReels) {
+            const outcome = await this.executeJob(userId, job, {
+                platforms: ['instagram_reels'],
+                intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
+                nextRunField: 'reelsNextRun',
+                lastRunField: 'reelsLastRunAt',
+                resultField: 'reelsLastResult',
+                useGenericVideoFallback: false,
+            });
+            processed += 1;
+            const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
+            results.set(userId, {
+                ...existing,
+                reelsPosted: outcome.posted,
+                reelsFailed: outcome.failed.length,
+                reelsNextRun: outcome.nextRun,
+            });
+        }
+        for (const [userId, job] of dueStories) {
+            const outcome = await this.executeTrendStories(userId, job);
+            processed += 1;
+            const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
+            results.set(userId, {
+                ...existing,
+                storyPosted: outcome.posted,
+                storyFailed: outcome.failed.length,
+                storyNextRun: outcome.nextRun,
+            });
+        }
+        for (const [userId, job] of dueTrends) {
+            const outcome = await this.executeTrendPosts(userId, job);
+            processed += 1;
+            const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
+            results.set(userId, {
+                ...existing,
+                trendPosted: outcome.posted,
+                trendFailed: outcome.failed.length,
+                trendNextRun: outcome.nextRun,
+            });
+        }
+        return { processed, results: Array.from(results.values()) };
     }
     getEmergencyTwitterCredentials() {
         const accessToken = process.env.BWIN_X_ACCESS_TOKEN ??
@@ -241,7 +370,9 @@ export class AutoPostService {
                 selectedTitle = title;
                 selectedLink = link;
                 selectedKey = key;
-                selectedImage = (await this.resolveBestNewsImageUrl(item?.imageUrl?.trim(), item?.link?.trim())) ?? '';
+                selectedImage =
+                    (await this.resolveBestNewsImageUrl(item?.imageUrl?.trim(), item?.link?.trim())) ??
+                        '';
                 break;
             }
             if (!selectedTitle) {
@@ -257,7 +388,7 @@ export class AutoPostService {
                 .join('\n');
             let imageUrls = selectedImage ? [selectedImage] : [];
             if (!imageUrls.length) {
-                imageUrls = await this.generateFootballCardImage(selectedTitle + '\n\nFootball update card for Bwinbet Uganda in yellow and black.', new Set());
+                imageUrls = await this.generateFootballCardImage(`${selectedTitle}\n\nFootball update card for Bwinbet Uganda in yellow and black.`, new Set());
             }
             const results = [];
             if (xCredentials) {
@@ -285,7 +416,11 @@ export class AutoPostService {
                     results.push({ platform: 'facebook', status: 'posted', remoteId: response.remoteId ?? null });
                 }
                 catch (error) {
-                    results.push({ platform: 'facebook', status: 'failed', error: error?.message ?? 'facebook_emergency_post_failed' });
+                    results.push({
+                        platform: 'facebook',
+                        status: 'failed',
+                        error: error?.message ?? 'facebook_emergency_post_failed',
+                    });
                 }
             }
             if (instagramCredentials) {
@@ -293,14 +428,7 @@ export class AutoPostService {
                     if (!imageUrls.length) {
                         throw new Error('missing_instagram_image');
                     }
-                    const instagramCaption = [
-                        selectedTitle,
-                        'Bet now - link in bio',
-                        'More info - link in bio',
-                        '#BwinbetUG #Football #Matchday #FootballHighlights',
-                    ]
-                        .filter(Boolean)
-                        .join('\n\n');
+                    const instagramCaption = this.sanitizeBwinInstagramCaptionLinks(this.applyBwinInstagramSportsHashtags(baseCaption, 'instagram'), 'instagram');
                     const response = await publishToInstagram({
                         caption: instagramCaption,
                         imageUrls,
@@ -309,7 +437,11 @@ export class AutoPostService {
                     results.push({ platform: 'instagram', status: 'posted', remoteId: response.remoteId ?? null });
                 }
                 catch (error) {
-                    results.push({ platform: 'instagram', status: 'failed', error: error?.message ?? 'instagram_emergency_post_failed' });
+                    results.push({
+                        platform: 'instagram',
+                        status: 'failed',
+                        error: error?.message ?? 'instagram_emergency_post_failed',
+                    });
                 }
             }
             const posted = results.some(result => result.status === 'posted');
@@ -358,67 +490,45 @@ export class AutoPostService {
         const reelsIntervalHours = payload.reelsIntervalHours && payload.reelsIntervalHours > 0
             ? payload.reelsIntervalHours
             : this.defaultReelsIntervalHours;
-        await autopostCollection.doc(payload.userId).set({
+        const initialJob = {
             userId: payload.userId,
             platforms,
-            ...(payload.prompt ? { prompt: payload.prompt } : {}),
-            ...(payload.businessType ? { businessType: payload.businessType } : {}),
-            ...(payload.videoUrl ? { videoUrl: payload.videoUrl } : {}),
-            ...(payload.videoUrls && payload.videoUrls.length ? { videoUrls: payload.videoUrls, videoCursor: 0 } : {}),
-            ...(payload.videoTitle ? { videoTitle: payload.videoTitle } : {}),
-            ...(payload.youtubePrivacyStatus ? { youtubePrivacyStatus: payload.youtubePrivacyStatus } : {}),
-            ...(payload.youtubeVideoUrl ? { youtubeVideoUrl: payload.youtubeVideoUrl } : {}),
-            ...(payload.youtubeVideoUrls && payload.youtubeVideoUrls.length
-                ? { youtubeVideoUrls: payload.youtubeVideoUrls, youtubeVideoCursor: 0 }
-                : {}),
-            ...(typeof payload.youtubeShorts === 'boolean' ? { youtubeShorts: payload.youtubeShorts } : {}),
-            ...(payload.tiktokVideoUrl ? { tiktokVideoUrl: payload.tiktokVideoUrl } : {}),
-            ...(payload.tiktokVideoUrls && payload.tiktokVideoUrls.length
-                ? { tiktokVideoUrls: payload.tiktokVideoUrls, tiktokVideoCursor: 0 }
-                : {}),
-            ...(reelsVideoUrl ? { reelsVideoUrl } : {}),
-            ...(reelsVideoUrls && reelsVideoUrls.length ? { reelsVideoUrls, reelsVideoCursor: 0 }
-                : {}),
+            prompt: payload.prompt ?? undefined,
+            businessType: payload.businessType ?? undefined,
+            videoUrl: payload.videoUrl ?? undefined,
+            videoUrls: payload.videoUrls ?? undefined,
+            videoCursor: payload.videoUrls && payload.videoUrls.length ? 0 : undefined,
+            videoTitle: payload.videoTitle ?? undefined,
+            youtubePrivacyStatus: payload.youtubePrivacyStatus ?? undefined,
+            youtubeVideoUrl: payload.youtubeVideoUrl ?? undefined,
+            youtubeVideoUrls: payload.youtubeVideoUrls ?? undefined,
+            youtubeVideoCursor: payload.youtubeVideoUrls && payload.youtubeVideoUrls.length ? 0 : undefined,
+            youtubeShorts: typeof payload.youtubeShorts === 'boolean' ? payload.youtubeShorts : undefined,
+            tiktokVideoUrl: payload.tiktokVideoUrl ?? undefined,
+            tiktokVideoUrls: payload.tiktokVideoUrls ?? undefined,
+            tiktokVideoCursor: payload.tiktokVideoUrls && payload.tiktokVideoUrls.length ? 0 : undefined,
+            reelsVideoUrl: reelsVideoUrl ?? undefined,
+            reelsVideoUrls: reelsVideoUrls ?? undefined,
+            reelsVideoCursor: reelsVideoUrls && reelsVideoUrls.length ? 0 : undefined,
             intervalHours: this.defaultIntervalHours,
             nextRun: admin.firestore.Timestamp.fromDate(now),
-            ...(reelsEnabled
-                ? {
-                    reelsIntervalHours,
-                    reelsNextRun: admin.firestore.Timestamp.fromDate(now),
-                }
-                : {}),
+            reelsIntervalHours: reelsEnabled ? reelsIntervalHours : undefined,
+            reelsNextRun: reelsEnabled ? admin.firestore.Timestamp.fromDate(now) : undefined,
             active: true,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-        if (this.useMemory) {
-            this.memoryStore.set(payload.userId, {
-                userId: payload.userId,
-                platforms,
-                prompt: payload.prompt ?? undefined,
-                businessType: payload.businessType ?? undefined,
-                videoUrl: payload.videoUrl ?? undefined,
-                videoUrls: payload.videoUrls ?? undefined,
-                videoCursor: payload.videoUrls && payload.videoUrls.length ? 0 : undefined,
-                videoTitle: payload.videoTitle ?? undefined,
-                youtubePrivacyStatus: payload.youtubePrivacyStatus ?? undefined,
-                youtubeVideoUrl: payload.youtubeVideoUrl ?? undefined,
-                youtubeVideoUrls: payload.youtubeVideoUrls ?? undefined,
-                youtubeVideoCursor: payload.youtubeVideoUrls && payload.youtubeVideoUrls.length ? 0 : undefined,
-                youtubeShorts: typeof payload.youtubeShorts === 'boolean' ? payload.youtubeShorts : undefined,
-                tiktokVideoUrl: payload.tiktokVideoUrl ?? undefined,
-                tiktokVideoUrls: payload.tiktokVideoUrls ?? undefined,
-                tiktokVideoCursor: payload.tiktokVideoUrls && payload.tiktokVideoUrls.length ? 0 : undefined,
-                reelsVideoUrl: reelsVideoUrl ?? undefined,
-                reelsVideoUrls: reelsVideoUrls ?? undefined,
-                reelsVideoCursor: reelsVideoUrls && reelsVideoUrls.length ? 0 : undefined,
-                intervalHours: this.defaultIntervalHours,
-                nextRun: admin.firestore.Timestamp.fromDate(now),
-                reelsIntervalHours: reelsEnabled ? reelsIntervalHours : undefined,
-                reelsNextRun: reelsEnabled ? admin.firestore.Timestamp.fromDate(now) : undefined,
-                active: true,
-            });
+        };
+        try {
+            await autopostCollection.doc(payload.userId).set({
+                ...initialJob,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
         }
-        return this.runForUser(payload.userId);
+        catch (error) {
+            console.warn('[autopost] firestore start config write failed; using fallback mirror', error);
+        }
+        await this.mirrorAutopostJob(payload.userId, initialJob);
+        return this.runForUser(payload.userId, {
+            ...(payload.generatedContent ? { generatedContent: payload.generatedContent } : {}),
+        });
     }
     async runDueJobs() {
         const now = admin.firestore.Timestamp.now();
@@ -546,6 +656,7 @@ export class AutoPostService {
                 const data = doc.data();
                 if (data.active === false)
                     continue;
+                this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
                 const outcome = await this.executeJob(doc.id, data);
                 processed += 1;
                 results.set(doc.id, {
@@ -559,6 +670,7 @@ export class AutoPostService {
                 const data = doc.data();
                 if (data.active === false)
                     continue;
+                this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
                 const outcome = await this.executeJob(doc.id, data, {
                     platforms: ['instagram_reels'],
                     intervalHours: data.reelsIntervalHours ?? this.defaultReelsIntervalHours,
@@ -580,6 +692,7 @@ export class AutoPostService {
                 const data = doc.data();
                 if (data.active === false || data.storyTrendEnabled !== true)
                     continue;
+                this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
                 const outcome = await this.executeTrendStories(doc.id, data);
                 processed += 1;
                 const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
@@ -594,6 +707,7 @@ export class AutoPostService {
                 const data = doc.data();
                 if (data.active === false || data.trendEnabled !== true)
                     continue;
+                this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
                 const outcome = await this.executeTrendPosts(doc.id, data);
                 processed += 1;
                 const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
@@ -608,22 +722,27 @@ export class AutoPostService {
         }
         catch (error) {
             if (this.isFirestoreQuotaError(error)) {
+                const fallbackResult = await this.runDueJobsFromFallback(now);
+                if ((fallbackResult.processed ?? 0) > 0) {
+                    return fallbackResult;
+                }
                 console.warn('[autopost] Firestore quota exceeded; running emergency Bwin social posting path.');
                 const emergency = await this.runBwinEmergencyPost(new Date());
                 return {
-                    processed: emergency.posted ? (Array.isArray(emergency.results) ? emergency.results.length : 1) : 0,
+                    processed: emergency.posted ? (Array.isArray(emergency.results) ? (emergency.results?.length ?? 1) : 1) : 0,
                     emergency,
                 };
             }
             throw error;
         }
     }
-    async runForUser(userId) {
+    async runForUser(userId, options = {}) {
         if (this.useMemory && this.memoryStore.has(userId)) {
             const job = this.memoryStore.get(userId);
-            const standard = await this.executeJob(userId, job);
+            const standard = await this.executeJob(userId, job, options);
             if (job.reelsNextRun || job.reelsVideoUrl || (job.reelsVideoUrls && job.reelsVideoUrls.length)) {
                 const reels = await this.executeJob(userId, job, {
+                    ...(options.generatedContent ? { generatedContent: options.generatedContent } : {}),
                     platforms: ['instagram_reels'],
                     intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
                     nextRunField: 'reelsNextRun',
@@ -649,14 +768,14 @@ export class AutoPostService {
             }
             return standard;
         }
-        const snap = await autopostCollection.doc(userId).get();
-        if (!snap.exists) {
+        const job = await this.loadAutopostJob(userId);
+        if (!job) {
             return { posted: 0, failed: [{ platform: 'all', error: 'autopost_not_configured', status: 'failed' }], nextRun: null };
         }
-        const job = snap.data();
-        const standard = await this.executeJob(userId, job);
+        const standard = await this.executeJob(userId, job, options);
         if (job.reelsNextRun || job.reelsVideoUrl || (job.reelsVideoUrls && job.reelsVideoUrls.length)) {
             const reels = await this.executeJob(userId, job, {
+                ...(options.generatedContent ? { generatedContent: options.generatedContent } : {}),
                 platforms: ['instagram_reels'],
                 intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
                 nextRunField: 'reelsNextRun',
@@ -940,6 +1059,43 @@ export class AutoPostService {
             .filter(Boolean)
             .join('\n');
     }
+    buildHighlightlyVideoCaption(item, timezone) {
+        const matchup = item.homeTeam && item.awayTeam
+            ? item.score
+                ? `${item.homeTeam} ${item.score} ${item.awayTeam}`
+                : `${item.homeTeam} vs ${item.awayTeam}`
+            : '';
+        const sourceLine = item.channel || item.source ? `Verified source: ${item.channel || item.source}` : '';
+        const competitionLine = item.leagueName ? `Competition: ${item.leagueName}` : '';
+        return [
+            'Highlight alert',
+            item.title,
+            matchup,
+            competitionLine,
+            sourceLine,
+            `Update time: ${this.formatTrendClock(timezone)} EAT`,
+            'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+        ]
+            .filter(Boolean)
+            .join('\n');
+    }
+    async pickFreshHighlightlyVideoCandidate(userId, timezone, recentSet) {
+        const now = new Date();
+        const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const highlights = await fetchHighlightlyFootballHighlights({
+            dates: [this.getDateKeyForTimezone(now, timezone), this.getDateKeyForTimezone(yesterday, timezone)],
+            timezone,
+            limit: 5,
+            secretOwnerId: userId,
+        });
+        for (const item of highlights) {
+            const key = this.buildTrendContentKey('video', `highlightly|${item.id}|${item.url || item.title}`);
+            if (!recentSet.has(key)) {
+                return { item, key };
+            }
+        }
+        return null;
+    }
     getTrendRecentKeys(job) {
         if (!Array.isArray(job.trendRecentKeys))
             return [];
@@ -1020,6 +1176,15 @@ export class AutoPostService {
         }
         return 0;
     }
+    getStructuredFootballCycle(job) {
+        const allowed = new Set(['result', 'news', 'video']);
+        const provided = Array.isArray(job.trendContentCycle)
+            ? job.trendContentCycle
+                .map(value => String(value || '').trim().toLowerCase())
+                .filter((value) => allowed.has(value))
+            : [];
+        return provided.length ? provided : ['result', 'news', 'video'];
+    }
     getStructuredFootballSlot(job, now) {
         const timezone = job.trendTimezone?.trim() || process.env.AUTOPOST_FOOTBALL_TZ?.trim() || 'Africa/Kampala';
         const hour = this.getHourForTimezone(now, timezone);
@@ -1035,7 +1200,7 @@ export class AutoPostService {
         if (topScorerHours.has(hour)) {
             return { contentType: 'top_scorer', timezone, hour };
         }
-        const cycle = ['result', 'news', 'video'];
+        const cycle = this.getStructuredFootballCycle(job);
         const cursor = Number.isFinite(job.trendSlotCursor) ? job.trendSlotCursor : hour % cycle.length;
         const idx = ((Math.trunc(cursor) % cycle.length) + cycle.length) % cycle.length;
         return {
@@ -1577,16 +1742,16 @@ export class AutoPostService {
                 storyLastRunAt: admin.firestore.Timestamp.now(),
                 storyNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
             };
-            await autopostCollection.doc(userId).set({
-                ...nextRecord,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
-            if (this.useMemory) {
-                const current = this.memoryStore.get(userId);
-                if (current) {
-                    this.memoryStore.set(userId, { ...current, ...nextRecord });
-                }
+            try {
+                await autopostCollection.doc(userId).set({
+                    ...nextRecord,
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
             }
+            catch (error) {
+                console.warn('[autopost] firestore story duplicate skip update failed', error);
+            }
+            await this.mirrorAutopostJob(userId, { ...job, ...nextRecord });
             return {
                 posted: 0,
                 failed: [],
@@ -1666,19 +1831,16 @@ export class AutoPostService {
             storyLastTrendKey: trendKey,
             storyRecentImageUrls: this.mergeRecentImages(recentImages, finalImages),
         };
-        await autopostCollection.doc(userId).set({
-            ...nextRecord,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-        if (this.useMemory) {
-            const current = this.memoryStore.get(userId);
-            if (current) {
-                this.memoryStore.set(userId, {
-                    ...current,
-                    ...nextRecord,
-                });
-            }
+        try {
+            await autopostCollection.doc(userId).set({
+                ...nextRecord,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
         }
+        catch (error) {
+            console.warn('[autopost] firestore story update failed', error);
+        }
+        await this.mirrorAutopostJob(userId, { ...job, ...nextRecord });
         await this.recordHistory(userId, historyEntries, finalImages);
         return {
             posted: results.filter(result => result.status === 'posted').length,
@@ -1733,6 +1895,7 @@ export class AutoPostService {
         let baselineCandidate = null;
         let usedTableCursor = null;
         let trendContentKey = null;
+        let highlightlyVideoSelection = null;
         const allowThirdPartyHighlightVideoRepublish = this.allowThirdPartyHighlightVideoRepublish();
         if (scope === 'football') {
             try {
@@ -2013,6 +2176,42 @@ export class AutoPostService {
                 }
             }
             if (selectedContentType === 'video') {
+                highlightlyVideoSelection = await this.pickFreshHighlightlyVideoCandidate(userId, scheduleTimezone, trendRecentSet);
+                if (highlightlyVideoSelection) {
+                    const updatedStamp = new Date().toLocaleTimeString('en-GB', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                        timeZone: scheduleTimezone,
+                    });
+                    const source = highlightlyVideoSelection.item.channel || highlightlyVideoSelection.item.source || 'Highlightly';
+                    const title = highlightlyVideoSelection.item.title || 'Football highlight';
+                    caption = [
+                        'Highlight alert',
+                        title,
+                        `Official source: ${source}`,
+                        `Updated: ${updatedStamp} (${scheduleTimezone})`,
+                        'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+                    ]
+                        .filter(Boolean)
+                        .join('\n');
+                    setUnifiedCaption();
+                    trendContentKey = highlightlyVideoSelection.key;
+                    usedTrendKeys.push(highlightlyVideoSelection.key);
+                    const resolvedImage = await this.resolveBestNewsImageUrl(highlightlyVideoSelection.item.imageUrl?.trim(), highlightlyVideoSelection.item.url?.trim());
+                    if (!allowThirdPartyHighlightVideoRepublish) {
+                        imageUrls = await this.generateFootballCardImage(`Create a premium branded football highlight alert card for Bwinbet UG. Headline: "${title}". Secondary line: "Official source: ${source}". Bold black-and-gold sports editorial design, sharp typography, dynamic football energy, no copyrighted logos, no watermarks, no club crests.`, new Set(this.getRecentImageHistory(job)));
+                    }
+                    else if (resolvedImage) {
+                        imageUrls = [resolvedImage];
+                    }
+                    else if (!imageUrls.length) {
+                        imageUrls = await this.generateFootballCardImage(`Create a football highlight poster image for "${title}". High-energy action style with clean headline space.`, new Set(this.getRecentImageHistory(job)));
+                    }
+                }
+            }
+            if (selectedContentType === 'video' && !highlightlyVideoSelection) {
                 const videoSelection = this.pickFreshVideoCandidate(footballCandidates, trendRecentSet);
                 if (videoSelection) {
                     const updatedStamp = new Date().toLocaleTimeString('en-GB', {
@@ -2167,6 +2366,9 @@ export class AutoPostService {
             ? this.getOwnedBwinHighlightVideoUrl()
             : '';
         let xHighlight = null;
+        const highlightlyMetaCaptionTemplate = shouldUseVideoMode && highlightlyVideoSelection
+            ? this.buildHighlightlyVideoCaption(highlightlyVideoSelection.item, scheduleTimezone)
+            : '';
         if (shouldUseVideoMode && hasXPlatform) {
             try {
                 xHighlight = await this.pickFootballHighlightForX(job, credentials, {
@@ -2214,11 +2416,17 @@ export class AutoPostService {
                         ? `${this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)}\nWeekly award clip`
                         : this.buildVideoCaptionFromHighlight(xHighlight.text || '', xHighlight.username, scheduleTimezone)
                     : '';
-                const rawPerPlatformCaption = highlightCaptionTemplate &&
+                const useXHighlightTemplateForMeta = Boolean(highlightCaptionTemplate) &&
                     shouldUseVideoMode &&
-                    (platform === 'facebook' || platform === 'facebook_story' || platform === 'instagram' || platform === 'linkedin')
+                    !highlightlyMetaCaptionTemplate &&
+                    (platform === 'facebook' || platform === 'facebook_story' || platform === 'instagram' || platform === 'linkedin');
+                const rawPerPlatformCaption = useXHighlightTemplateForMeta
                     ? highlightCaptionTemplate
-                    : (trendCaptions[platform] || caption);
+                    : (highlightlyMetaCaptionTemplate &&
+                        shouldUseVideoMode &&
+                        (platform === 'facebook' || platform === 'facebook_story' || platform === 'instagram' || platform === 'linkedin')
+                        ? highlightlyMetaCaptionTemplate
+                        : (trendCaptions[platform] || caption));
                 const trackedRawPerPlatformCaption = this.applyBwinBetTracking(rawPerPlatformCaption, userId, platform);
                 const cleanedRawPerPlatformCaption = this.sanitizeBwinInstagramCaptionLinks(trackedRawPerPlatformCaption, platform);
                 const brandedRawPerPlatformCaption = this.applyBwinInstagramSportsHashtags(cleanedRawPerPlatformCaption, platform);
@@ -2309,7 +2517,8 @@ export class AutoPostService {
         const nextRecentTrendKeys = usedTrendKeys.length
             ? this.mergeTrendRecentKeys(trendRecentKeys, usedTrendKeys)
             : trendRecentKeys;
-        await autopostCollection.doc(userId).set({
+        const trendJobNext = {
+            ...job,
             ...nextRecord,
             trendLastContentType: selectedContentType,
             ...(trendContentKey ? { trendLastContentKey: trendContentKey } : {}),
@@ -2322,28 +2531,28 @@ export class AutoPostService {
                 ? { xHighlightAccountCursor: usedXHighlightAccountCursor }
                 : {}),
             ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-        if (this.useMemory) {
-            const current = this.memoryStore.get(userId);
-            if (current) {
-                this.memoryStore.set(userId, {
-                    ...current,
-                    ...nextRecord,
-                    trendLastContentType: selectedContentType,
-                    ...(trendContentKey ? { trendLastContentKey: trendContentKey } : {}),
-                    ...(nextRecentTrendKeys.length ? { trendRecentKeys: nextRecentTrendKeys } : {}),
-                    ...(typeof nextTrendSlotCursor === 'number' ? { trendSlotCursor: nextTrendSlotCursor } : {}),
-                    ...(typeof usedTableCursor === 'number' ? { trendTableCursor: usedTableCursor } : {}),
-                    ...(usedXHighlightTweetId ? { xLastHighlightTweetId: usedXHighlightTweetId } : {}),
-                    ...(usedXHighlightUsername ? { xLastHighlightUsername: usedXHighlightUsername } : {}),
-                    ...(typeof usedXHighlightAccountCursor === 'number'
-                        ? { xHighlightAccountCursor: usedXHighlightAccountCursor }
-                        : {}),
-                    ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
-                });
-            }
+        };
+        try {
+            await autopostCollection.doc(userId).set({
+                ...nextRecord,
+                trendLastContentType: selectedContentType,
+                ...(trendContentKey ? { trendLastContentKey: trendContentKey } : {}),
+                ...(nextRecentTrendKeys.length ? { trendRecentKeys: nextRecentTrendKeys } : {}),
+                ...(typeof nextTrendSlotCursor === 'number' ? { trendSlotCursor: nextTrendSlotCursor } : {}),
+                ...(typeof usedTableCursor === 'number' ? { trendTableCursor: usedTableCursor } : {}),
+                ...(usedXHighlightTweetId ? { xLastHighlightTweetId: usedXHighlightTweetId } : {}),
+                ...(usedXHighlightUsername ? { xLastHighlightUsername: usedXHighlightUsername } : {}),
+                ...(typeof usedXHighlightAccountCursor === 'number'
+                    ? { xHighlightAccountCursor: usedXHighlightAccountCursor }
+                    : {}),
+                ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
         }
+        catch (error) {
+            console.warn('[autopost] firestore trend update failed', error);
+        }
+        await this.mirrorAutopostJob(userId, trendJobNext);
         await this.recordHistory(userId, historyEntries, imageUrls);
         return {
             posted: results.filter(result => result.status === 'posted').length,
@@ -2362,7 +2571,15 @@ export class AutoPostService {
         const resultField = options.resultField ?? 'lastResult';
         const useGenericVideoFallback = options.useGenericVideoFallback !== false;
         const videoPlatforms = new Set(['youtube', 'tiktok', 'instagram_reels']);
-        const optionalVideoPlatforms = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
+        const optionalVideoPlatforms = new Set([
+            'facebook',
+            'facebook_story',
+            'instagram_story',
+            'linkedin',
+            'twitter',
+            'x',
+            'threads',
+        ]);
         const enableYouTubeShorts = this.useYouTubeShorts(job);
         const basePrompt = job.prompt ??
             'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in an executive suite; friendly humanoid robot wearing a tie and glasses, assisting a diverse team, natural expressions, premium interior finishes, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.';
@@ -2385,41 +2602,52 @@ export class AutoPostService {
         });
         const requireAiImages = needsImages ? this.requireAiImages(job) : false;
         const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
-        let generated = null;
+        let generated = options.generatedContent
+            ? {
+                ...options.generatedContent,
+                images: Array.isArray(options.generatedContent.images) ? options.generatedContent.images.filter(Boolean) : [],
+            }
+            : null;
         let generationError = null;
-        for (let attempt = 0; attempt < maxImageAttempts; attempt += 1) {
-            try {
-                generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1 });
-                generationError = null;
-            }
-            catch (error) {
-                generationError = error;
-                console.error('[autopost] generation failed', error);
-            }
-            const fresh = this.selectFreshImages(generated?.images ?? [], recentSet);
-            if (fresh.length && generated) {
-                generated.images = fresh;
-                break;
-            }
-            runPrompt = this.buildVisualPrompt(basePrompt);
-        }
         if (!generated) {
-            if (generationError) {
-                console.warn('[autopost] using fallback content after generation failures');
+            for (let attempt = 0; attempt < maxImageAttempts; attempt += 1) {
+                try {
+                    generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1 });
+                    generationError = null;
+                }
+                catch (error) {
+                    generationError = error;
+                    console.error('[autopost] generation failed', error);
+                }
+                const fresh = this.selectFreshImages(generated?.images ?? [], recentSet);
+                if (fresh.length && generated) {
+                    generated.images = fresh;
+                    break;
+                }
+                runPrompt = this.buildVisualPrompt(basePrompt);
             }
-            generated = {
-                images: [],
-                caption_instagram: '',
-                caption_linkedin: '',
-                caption_x: '',
-                hashtags_instagram: '',
-                hashtags_generic: '',
-            };
+            if (!generated) {
+                if (generationError) {
+                    console.warn('[autopost] using fallback content after generation failures');
+                }
+                generated = {
+                    images: [],
+                    caption_instagram: '',
+                    caption_linkedin: '',
+                    caption_x: '',
+                    hashtags_instagram: '',
+                    hashtags_generic: '',
+                };
+            }
         }
         const credentials = await this.resolveCredentials(userId);
         const results = [];
         const finalGenerated = generated;
-        const imageUrls = needsImages ? this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages) : [];
+        const imageUrls = needsImages
+            ? options.generatedContent
+                ? this.resolveApprovedImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages)
+                : this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages)
+            : [];
         const cursorUpdates = {};
         let usedGenericVideo = false;
         const fallbackCopy = this.buildFallbackCopy(job);
@@ -2434,13 +2662,25 @@ export class AutoPostService {
                 status: 'failed',
                 error: 'ai_image_generation_failed',
             }));
-            await autopostCollection.doc(userId).set({
-                lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+            try {
+                await autopostCollection.doc(userId).set({
+                    lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+                    lastResult: failed,
+                    nextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+                    active: job.active !== false,
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+            }
+            catch (error) {
+                console.warn('[autopost] firestore ai-image failure update failed', error);
+            }
+            await this.mirrorAutopostJob(userId, {
+                ...job,
+                lastRunAt: admin.firestore.Timestamp.now(),
                 lastResult: failed,
                 nextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
                 active: job.active !== false,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            }, { merge: true });
+            });
             return {
                 posted: 0,
                 failed,
@@ -2585,34 +2825,38 @@ export class AutoPostService {
         if (!isReelsRun) {
             updatePayload.intervalHours = effectiveIntervalHours;
         }
-        await autopostCollection.doc(userId).set(updatePayload, { merge: true });
-        await this.recordHistory(userId, historyEntries, imageUrls);
-        if (this.useMemory) {
-            const nextRecord = {
-                ...job,
-                active: job.active !== false,
-                recentImageUrls: nextRecentImages,
-                recentCaptions: nextRecentCaptions,
-                videoCursor: usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number'
-                    ? genericVideoSelection.nextCursor
-                    : job.videoCursor,
-                youtubeVideoCursor: typeof cursorUpdates.youtubeVideoCursor === 'number' ? cursorUpdates.youtubeVideoCursor : job.youtubeVideoCursor,
-                tiktokVideoCursor: typeof cursorUpdates.tiktokVideoCursor === 'number' ? cursorUpdates.tiktokVideoCursor : job.tiktokVideoCursor,
-                reelsVideoCursor: typeof cursorUpdates.reelsVideoCursor === 'number' ? cursorUpdates.reelsVideoCursor : job.reelsVideoCursor,
-            };
-            if (!isReelsRun) {
-                nextRecord.intervalHours = effectiveIntervalHours;
-            }
-            if (nextRunField === 'nextRun') {
-                nextRecord.lastRunAt = admin.firestore.Timestamp.now();
-                nextRecord.nextRun = admin.firestore.Timestamp.fromDate(nextRunDate);
-            }
-            else {
-                nextRecord.reelsLastRunAt = admin.firestore.Timestamp.now();
-                nextRecord.reelsNextRun = admin.firestore.Timestamp.fromDate(nextRunDate);
-            }
-            this.memoryStore.set(userId, nextRecord);
+        try {
+            await autopostCollection.doc(userId).set(updatePayload, { merge: true });
         }
+        catch (error) {
+            console.warn('[autopost] firestore executeJob update failed', error);
+        }
+        await this.recordHistory(userId, historyEntries, imageUrls);
+        const nextRecord = {
+            ...job,
+            active: job.active !== false,
+            recentImageUrls: nextRecentImages,
+            recentCaptions: nextRecentCaptions,
+            [resultField]: results,
+            videoCursor: usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number'
+                ? genericVideoSelection.nextCursor
+                : job.videoCursor,
+            youtubeVideoCursor: typeof cursorUpdates.youtubeVideoCursor === 'number' ? cursorUpdates.youtubeVideoCursor : job.youtubeVideoCursor,
+            tiktokVideoCursor: typeof cursorUpdates.tiktokVideoCursor === 'number' ? cursorUpdates.tiktokVideoCursor : job.tiktokVideoCursor,
+            reelsVideoCursor: typeof cursorUpdates.reelsVideoCursor === 'number' ? cursorUpdates.reelsVideoCursor : job.reelsVideoCursor,
+        };
+        if (!isReelsRun) {
+            nextRecord.intervalHours = effectiveIntervalHours;
+        }
+        if (nextRunField === 'nextRun') {
+            nextRecord.lastRunAt = admin.firestore.Timestamp.now();
+            nextRecord.nextRun = admin.firestore.Timestamp.fromDate(nextRunDate);
+        }
+        else {
+            nextRecord.reelsLastRunAt = admin.firestore.Timestamp.now();
+            nextRecord.reelsNextRun = admin.firestore.Timestamp.fromDate(nextRunDate);
+        }
+        await this.mirrorAutopostJob(userId, nextRecord);
         return {
             posted: results.filter(result => result.status === 'posted').length,
             failed: results.filter(result => result.status === 'failed'),
@@ -2624,10 +2868,32 @@ export class AutoPostService {
             return;
         const targetDate = new Date().toISOString().slice(0, 10);
         const scheduledFor = admin.firestore.Timestamp.now();
+        const now = new Date();
+        const fallbackRows = entries.map(entry => {
+            const isVideoPlatform = entry.platform === 'youtube' || entry.platform === 'tiktok' || entry.platform === 'instagram_reels';
+            return {
+                id: scheduledPostsCollection.doc().id,
+                userId,
+                platform: entry.platform,
+                caption: entry.caption,
+                hashtags: '',
+                imageUrls: isVideoPlatform ? [] : imageUrls,
+                scheduledFor: now,
+                targetDate,
+                status: entry.status,
+                createdAt: now,
+                postedAt: entry.status === 'posted' ? now : null,
+                errorMessage: entry.errorMessage ?? null,
+                remoteId: entry.remoteId ?? null,
+                source: 'autopost',
+                videoUrl: entry.videoUrl,
+                videoTitle: entry.videoTitle,
+            };
+        });
         try {
             const batch = firestore.batch();
-            entries.forEach(entry => {
-                const ref = scheduledPostsCollection.doc();
+            fallbackRows.forEach(entry => {
+                const ref = scheduledPostsCollection.doc(entry.id);
                 const isVideoPlatform = entry.platform === 'youtube' || entry.platform === 'tiktok' || entry.platform === 'instagram_reels';
                 const payload = {
                     userId,
@@ -2661,6 +2927,12 @@ export class AutoPostService {
         }
         catch (error) {
             console.warn('[autopost] failed to record history', error);
+        }
+        try {
+            await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
+        }
+        catch (error) {
+            console.warn('[autopost] failed to mirror history to supabase', error);
         }
     }
     async resolveCredentials(userId) {
@@ -2938,6 +3210,15 @@ export class AutoPostService {
             return [];
         const fallback = this.pickFallbackImage(recent);
         return fallback ? [fallback] : images;
+    }
+    resolveApprovedImageUrls(images, recent, requireAiImages) {
+        const approved = images.filter(Boolean);
+        if (approved.length)
+            return approved;
+        if (requireAiImages)
+            return [];
+        const fallback = this.pickFallbackImage(recent);
+        return fallback ? [fallback] : [];
     }
     mergeRecentImages(existing, used) {
         const maxHistory = Math.max(Number(process.env.AUTOPOST_IMAGE_HISTORY ?? 12), 3);
