@@ -27,6 +27,7 @@ import { fetchHighlightlyFootballHighlights, type HighlightlyFootballHighlight }
 import { resolveBrandIdForClient } from './brandKitService.js';
 import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage } from './tableImageService.js';
 import type { TrendCandidate } from '../types/footballTrends.js';
+import { supabaseFallbackService } from './supabaseFallbackService.js';
 
 type AutoPostJob = {
   userId: string;
@@ -36,6 +37,7 @@ type AutoPostJob = {
   intervalHours?: number;
   nextRun?: admin.firestore.Timestamp;
   lastRunAt?: admin.firestore.Timestamp;
+  lastResult?: PostResult[];
   reelsIntervalHours?: number;
   reelsNextRun?: admin.firestore.Timestamp;
   reelsLastRunAt?: admin.firestore.Timestamp;
@@ -282,6 +284,161 @@ export class AutoPostService {
     const details = String(candidate.details ?? '').toLowerCase();
     const message = String(candidate.message ?? '').toLowerCase();
     return details.includes('quota exceeded') || message.includes('quota exceeded') || message.includes('resource_exhausted');
+  }
+
+  private cacheJob(userId: string, job: AutoPostJob) {
+    this.memoryStore.set(userId, job);
+  }
+
+  private async mirrorAutopostJob(userId: string, job: AutoPostJob) {
+    this.cacheJob(userId, job);
+    try {
+      await supabaseFallbackService.upsertAutopostJob(userId, job as Record<string, unknown>);
+    } catch (error) {
+      console.warn('[autopost] supabase job mirror failed', error);
+    }
+  }
+
+  private async loadAutopostJob(userId: string) {
+    const cached = this.memoryStore.get(userId);
+    if (cached) return cached;
+    try {
+      const snap = await autopostCollection.doc(userId).get();
+      if (snap.exists) {
+        const job = snap.data() as AutoPostJob;
+        this.cacheJob(userId, job);
+        return job;
+      }
+    } catch (error) {
+      console.warn('[autopost] firestore job fetch failed; checking fallback store', error);
+    }
+    try {
+      const fallback = await supabaseFallbackService.getAutopostJob(userId);
+      if (fallback) {
+        const job = fallback as AutoPostJob;
+        this.cacheJob(userId, job);
+        return job;
+      }
+    } catch (error) {
+      console.warn('[autopost] supabase job fetch failed', error);
+    }
+    return null;
+  }
+
+  private async runDueJobsFromFallback(now: admin.firestore.Timestamp) {
+    const buildDueSets = () => ({
+      dueStandard: Array.from(this.memoryStore.entries()).filter(
+        ([, job]) => job.active !== false && job.nextRun && job.nextRun.toMillis() <= now.toMillis(),
+      ),
+      dueReels: Array.from(this.memoryStore.entries()).filter(
+        ([, job]) => job.active !== false && job.reelsNextRun && job.reelsNextRun.toMillis() <= now.toMillis(),
+      ),
+      dueStories: Array.from(this.memoryStore.entries()).filter(
+        ([, job]) =>
+          job.active !== false &&
+          job.storyTrendEnabled === true &&
+          job.storyNextRun &&
+          job.storyNextRun.toMillis() <= now.toMillis(),
+      ),
+      dueTrends: Array.from(this.memoryStore.entries()).filter(
+        ([, job]) =>
+          job.active !== false &&
+          job.trendEnabled === true &&
+          job.trendNextRun &&
+          job.trendNextRun.toMillis() <= now.toMillis(),
+      ),
+    });
+
+    let { dueStandard, dueReels, dueStories, dueTrends } = buildDueSets();
+    if (!dueStandard.length && !dueReels.length && !dueStories.length && !dueTrends.length) {
+      try {
+        const [standard, reels, stories, trends] = await Promise.all([
+          supabaseFallbackService.getDueAutopostJobs('next_run', new Date(now.toMillis())),
+          supabaseFallbackService.getDueAutopostJobs('reels_next_run', new Date(now.toMillis())),
+          supabaseFallbackService.getDueAutopostJobs('story_next_run', new Date(now.toMillis())),
+          supabaseFallbackService.getDueAutopostJobs('trend_next_run', new Date(now.toMillis())),
+        ]);
+        [...standard, ...reels, ...stories, ...trends].forEach(job => {
+          if (!job?.userId) return;
+          this.cacheJob(job.userId as string, job as AutoPostJob);
+        });
+      } catch (error) {
+        console.warn('[autopost] supabase due-job fetch failed', error);
+      }
+      ({ dueStandard, dueReels, dueStories, dueTrends } = buildDueSets());
+    }
+
+    let processed = 0;
+    const results = new Map<
+      string,
+      {
+        userId: string;
+        posted: number;
+        failed: number;
+        nextRun?: string | null;
+        reelsPosted?: number;
+        reelsFailed?: number;
+        reelsNextRun?: string | null;
+        storyPosted?: number;
+        storyFailed?: number;
+        storyNextRun?: string | null;
+        trendPosted?: number;
+        trendFailed?: number;
+        trendNextRun?: string | null;
+      }
+    >();
+    for (const [userId, job] of dueStandard) {
+      const outcome = await this.executeJob(userId, job);
+      processed += 1;
+      results.set(userId, {
+        userId,
+        posted: outcome.posted,
+        failed: outcome.failed.length,
+        nextRun: outcome.nextRun,
+      });
+    }
+    for (const [userId, job] of dueReels) {
+      const outcome = await this.executeJob(userId, job, {
+        platforms: ['instagram_reels'],
+        intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
+        nextRunField: 'reelsNextRun',
+        lastRunField: 'reelsLastRunAt',
+        resultField: 'reelsLastResult',
+        useGenericVideoFallback: false,
+      });
+      processed += 1;
+      const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
+      results.set(userId, {
+        ...existing,
+        reelsPosted: outcome.posted,
+        reelsFailed: outcome.failed.length,
+        reelsNextRun: outcome.nextRun,
+      });
+    }
+    for (const [userId, job] of dueStories) {
+      const outcome = await this.executeTrendStories(userId, job);
+      processed += 1;
+      const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
+      results.set(userId, {
+        ...existing,
+        storyPosted: outcome.posted,
+        storyFailed: outcome.failed.length,
+        storyNextRun: outcome.nextRun,
+      });
+    }
+    for (const [userId, job] of dueTrends) {
+      const outcome = await this.executeTrendPosts(userId, job);
+      processed += 1;
+      const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
+      results.set(userId, {
+        ...existing,
+        trendPosted: outcome.posted,
+        trendFailed: outcome.failed.length,
+        trendNextRun: outcome.nextRun,
+      });
+    }
+
+    return { processed, results: Array.from(results.values()) };
   }
 
   private getEmergencyTwitterCredentials(): SocialAccounts | null {
@@ -554,70 +711,44 @@ export class AutoPostService {
       payload.reelsIntervalHours && payload.reelsIntervalHours > 0
         ? payload.reelsIntervalHours
         : this.defaultReelsIntervalHours;
-    await autopostCollection.doc(payload.userId).set(
-      {
-        userId: payload.userId,
-        platforms,
-        ...(payload.prompt ? { prompt: payload.prompt } : {}),
-        ...(payload.businessType ? { businessType: payload.businessType } : {}),
-        ...(payload.videoUrl ? { videoUrl: payload.videoUrl } : {}),
-        ...(payload.videoUrls && payload.videoUrls.length ? { videoUrls: payload.videoUrls, videoCursor: 0 } : {}),
-        ...(payload.videoTitle ? { videoTitle: payload.videoTitle } : {}),
-        ...(payload.youtubePrivacyStatus ? { youtubePrivacyStatus: payload.youtubePrivacyStatus } : {}),
-        ...(payload.youtubeVideoUrl ? { youtubeVideoUrl: payload.youtubeVideoUrl } : {}),
-        ...(payload.youtubeVideoUrls && payload.youtubeVideoUrls.length
-          ? { youtubeVideoUrls: payload.youtubeVideoUrls, youtubeVideoCursor: 0 }
-          : {}),
-        ...(typeof payload.youtubeShorts === 'boolean' ? { youtubeShorts: payload.youtubeShorts } : {}),
-        ...(payload.tiktokVideoUrl ? { tiktokVideoUrl: payload.tiktokVideoUrl } : {}),
-        ...(payload.tiktokVideoUrls && payload.tiktokVideoUrls.length
-          ? { tiktokVideoUrls: payload.tiktokVideoUrls, tiktokVideoCursor: 0 }
-          : {}),
-        ...(reelsVideoUrl ? { reelsVideoUrl } : {}),
-        ...(reelsVideoUrls && reelsVideoUrls.length ? { reelsVideoUrls, reelsVideoCursor: 0 }
-          : {}),
-        intervalHours: this.defaultIntervalHours,
-        nextRun: admin.firestore.Timestamp.fromDate(now),
-        ...(reelsEnabled
-          ? {
-              reelsIntervalHours,
-              reelsNextRun: admin.firestore.Timestamp.fromDate(now),
-            }
-          : {}),
-        active: true,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
-    if (this.useMemory) {
-      this.memoryStore.set(payload.userId, {
-        userId: payload.userId,
-        platforms,
-        prompt: payload.prompt ?? undefined,
-        businessType: payload.businessType ?? undefined,
-        videoUrl: payload.videoUrl ?? undefined,
-        videoUrls: payload.videoUrls ?? undefined,
-        videoCursor: payload.videoUrls && payload.videoUrls.length ? 0 : undefined,
-        videoTitle: payload.videoTitle ?? undefined,
-        youtubePrivacyStatus: payload.youtubePrivacyStatus ?? undefined,
-        youtubeVideoUrl: payload.youtubeVideoUrl ?? undefined,
-        youtubeVideoUrls: payload.youtubeVideoUrls ?? undefined,
-        youtubeVideoCursor: payload.youtubeVideoUrls && payload.youtubeVideoUrls.length ? 0 : undefined,
-        youtubeShorts: typeof payload.youtubeShorts === 'boolean' ? payload.youtubeShorts : undefined,
-        tiktokVideoUrl: payload.tiktokVideoUrl ?? undefined,
-        tiktokVideoUrls: payload.tiktokVideoUrls ?? undefined,
-        tiktokVideoCursor: payload.tiktokVideoUrls && payload.tiktokVideoUrls.length ? 0 : undefined,
-        reelsVideoUrl: reelsVideoUrl ?? undefined,
-        reelsVideoUrls: reelsVideoUrls ?? undefined,
-        reelsVideoCursor:
-          reelsVideoUrls && reelsVideoUrls.length ? 0 : undefined,
-        intervalHours: this.defaultIntervalHours,
-        nextRun: admin.firestore.Timestamp.fromDate(now),
-        reelsIntervalHours: reelsEnabled ? reelsIntervalHours : undefined,
-        reelsNextRun: reelsEnabled ? admin.firestore.Timestamp.fromDate(now) : undefined,
-        active: true,
-      });
+    const initialJob: AutoPostJob = {
+      userId: payload.userId,
+      platforms,
+      prompt: payload.prompt ?? undefined,
+      businessType: payload.businessType ?? undefined,
+      videoUrl: payload.videoUrl ?? undefined,
+      videoUrls: payload.videoUrls ?? undefined,
+      videoCursor: payload.videoUrls && payload.videoUrls.length ? 0 : undefined,
+      videoTitle: payload.videoTitle ?? undefined,
+      youtubePrivacyStatus: payload.youtubePrivacyStatus ?? undefined,
+      youtubeVideoUrl: payload.youtubeVideoUrl ?? undefined,
+      youtubeVideoUrls: payload.youtubeVideoUrls ?? undefined,
+      youtubeVideoCursor: payload.youtubeVideoUrls && payload.youtubeVideoUrls.length ? 0 : undefined,
+      youtubeShorts: typeof payload.youtubeShorts === 'boolean' ? payload.youtubeShorts : undefined,
+      tiktokVideoUrl: payload.tiktokVideoUrl ?? undefined,
+      tiktokVideoUrls: payload.tiktokVideoUrls ?? undefined,
+      tiktokVideoCursor: payload.tiktokVideoUrls && payload.tiktokVideoUrls.length ? 0 : undefined,
+      reelsVideoUrl: reelsVideoUrl ?? undefined,
+      reelsVideoUrls: reelsVideoUrls ?? undefined,
+      reelsVideoCursor: reelsVideoUrls && reelsVideoUrls.length ? 0 : undefined,
+      intervalHours: this.defaultIntervalHours,
+      nextRun: admin.firestore.Timestamp.fromDate(now),
+      reelsIntervalHours: reelsEnabled ? reelsIntervalHours : undefined,
+      reelsNextRun: reelsEnabled ? admin.firestore.Timestamp.fromDate(now) : undefined,
+      active: true,
+    };
+    try {
+      await autopostCollection.doc(payload.userId).set(
+        {
+          ...initialJob,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (error) {
+      console.warn('[autopost] firestore start config write failed; using fallback mirror', error);
     }
+    await this.mirrorAutopostJob(payload.userId, initialJob);
     return this.runForUser(payload.userId, {
       ...(payload.generatedContent ? { generatedContent: payload.generatedContent } : {}),
     });
@@ -797,6 +928,7 @@ export class AutoPostService {
       for (const doc of standardSnap.docs) {
         const data = doc.data() as AutoPostJob;
         if (data.active === false) continue;
+        this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
         const outcome = await this.executeJob(doc.id, data);
         processed += 1;
         results.set(doc.id, {
@@ -809,6 +941,7 @@ export class AutoPostService {
       for (const doc of reelsSnap.docs) {
         const data = doc.data() as AutoPostJob;
         if (data.active === false) continue;
+        this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
         const outcome = await this.executeJob(doc.id, data, {
           platforms: ['instagram_reels'],
           intervalHours: data.reelsIntervalHours ?? this.defaultReelsIntervalHours,
@@ -829,6 +962,7 @@ export class AutoPostService {
       for (const doc of storiesSnap.docs) {
         const data = doc.data() as AutoPostJob;
         if (data.active === false || data.storyTrendEnabled !== true) continue;
+        this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
         const outcome = await this.executeTrendStories(doc.id, data);
         processed += 1;
         const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
@@ -842,6 +976,7 @@ export class AutoPostService {
       for (const doc of trendSnap.docs) {
         const data = doc.data() as AutoPostJob;
         if (data.active === false || data.trendEnabled !== true) continue;
+        this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
         const outcome = await this.executeTrendPosts(doc.id, data);
         processed += 1;
         const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
@@ -855,6 +990,10 @@ export class AutoPostService {
       return { processed, results: Array.from(results.values()) };
     } catch (error) {
       if (this.isFirestoreQuotaError(error)) {
+        const fallbackResult = await this.runDueJobsFromFallback(now);
+        if ((fallbackResult.processed ?? 0) > 0) {
+          return fallbackResult;
+        }
         console.warn('[autopost] Firestore quota exceeded; running emergency Bwin social posting path.');
         const emergency = await this.runBwinEmergencyPost(new Date());
         return {
@@ -898,11 +1037,10 @@ export class AutoPostService {
       }
       return standard;
     }
-    const snap = await autopostCollection.doc(userId).get();
-    if (!snap.exists) {
+    const job = await this.loadAutopostJob(userId);
+    if (!job) {
       return { posted: 0, failed: [{ platform: 'all', error: 'autopost_not_configured', status: 'failed' as const }], nextRun: null };
     }
-    const job = snap.data() as AutoPostJob;
     const standard = await this.executeJob(userId, job, options);
     if (job.reelsNextRun || job.reelsVideoUrl || (job.reelsVideoUrls && job.reelsVideoUrls.length)) {
       const reels = await this.executeJob(userId, job, {
@@ -1899,19 +2037,18 @@ export class AutoPostService {
         storyLastRunAt: admin.firestore.Timestamp.now(),
         storyNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
       };
-      await autopostCollection.doc(userId).set(
-        {
-          ...nextRecord,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
-      if (this.useMemory) {
-        const current = this.memoryStore.get(userId);
-        if (current) {
-          this.memoryStore.set(userId, { ...current, ...nextRecord });
-        }
+      try {
+        await autopostCollection.doc(userId).set(
+          {
+            ...nextRecord,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      } catch (error) {
+        console.warn('[autopost] firestore story duplicate skip update failed', error);
       }
+      await this.mirrorAutopostJob(userId, { ...job, ...nextRecord });
       return {
         posted: 0,
         failed: [],
@@ -1991,22 +2128,18 @@ export class AutoPostService {
       storyLastTrendKey: trendKey,
       storyRecentImageUrls: this.mergeRecentImages(recentImages, finalImages),
     };
-    await autopostCollection.doc(userId).set(
-      {
-        ...nextRecord,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
-    if (this.useMemory) {
-      const current = this.memoryStore.get(userId);
-      if (current) {
-        this.memoryStore.set(userId, {
-          ...current,
+    try {
+      await autopostCollection.doc(userId).set(
+        {
           ...nextRecord,
-        });
-      }
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (error) {
+      console.warn('[autopost] firestore story update failed', error);
     }
+    await this.mirrorAutopostJob(userId, { ...job, ...nextRecord });
 
     await this.recordHistory(userId, historyEntries, finalImages);
 
@@ -2782,29 +2915,24 @@ export class AutoPostService {
       ? this.mergeTrendRecentKeys(trendRecentKeys, usedTrendKeys)
       : trendRecentKeys;
 
-    await autopostCollection.doc(userId).set(
-      {
-        ...nextRecord,
-        trendLastContentType: selectedContentType,
-        ...(trendContentKey ? { trendLastContentKey: trendContentKey } : {}),
-        ...(nextRecentTrendKeys.length ? { trendRecentKeys: nextRecentTrendKeys } : {}),
-        ...(typeof nextTrendSlotCursor === 'number' ? { trendSlotCursor: nextTrendSlotCursor } : {}),
-        ...(typeof usedTableCursor === 'number' ? { trendTableCursor: usedTableCursor } : {}),
-        ...(usedXHighlightTweetId ? { xLastHighlightTweetId: usedXHighlightTweetId } : {}),
-        ...(usedXHighlightUsername ? { xLastHighlightUsername: usedXHighlightUsername } : {}),
-        ...(typeof usedXHighlightAccountCursor === 'number'
-          ? { xHighlightAccountCursor: usedXHighlightAccountCursor }
-          : {}),
-        ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
-    if (this.useMemory) {
-      const current = this.memoryStore.get(userId);
-      if (current) {
-        this.memoryStore.set(userId, {
-          ...current,
+    const trendJobNext: AutoPostJob = {
+      ...job,
+      ...nextRecord,
+      trendLastContentType: selectedContentType,
+      ...(trendContentKey ? { trendLastContentKey: trendContentKey } : {}),
+      ...(nextRecentTrendKeys.length ? { trendRecentKeys: nextRecentTrendKeys } : {}),
+      ...(typeof nextTrendSlotCursor === 'number' ? { trendSlotCursor: nextTrendSlotCursor } : {}),
+      ...(typeof usedTableCursor === 'number' ? { trendTableCursor: usedTableCursor } : {}),
+      ...(usedXHighlightTweetId ? { xLastHighlightTweetId: usedXHighlightTweetId } : {}),
+      ...(usedXHighlightUsername ? { xLastHighlightUsername: usedXHighlightUsername } : {}),
+      ...(typeof usedXHighlightAccountCursor === 'number'
+        ? { xHighlightAccountCursor: usedXHighlightAccountCursor }
+        : {}),
+      ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
+    };
+    try {
+      await autopostCollection.doc(userId).set(
+        {
           ...nextRecord,
           trendLastContentType: selectedContentType,
           ...(trendContentKey ? { trendLastContentKey: trendContentKey } : {}),
@@ -2817,9 +2945,14 @@ export class AutoPostService {
             ? { xHighlightAccountCursor: usedXHighlightAccountCursor }
             : {}),
           ...(usedXWeeklyAwardTweetId ? { xLastWeeklyAwardTweetId: usedXWeeklyAwardTweetId } : {}),
-        });
-      }
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (error) {
+      console.warn('[autopost] firestore trend update failed', error);
     }
+    await this.mirrorAutopostJob(userId, trendJobNext);
 
     await this.recordHistory(userId, historyEntries, imageUrls);
 
@@ -2936,16 +3069,27 @@ export class AutoPostService {
         status: 'failed' as const,
         error: 'ai_image_generation_failed',
       }));
-      await autopostCollection.doc(userId).set(
-        {
-          lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
-          lastResult: failed,
-          nextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
-          active: job.active !== false,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
+      try {
+        await autopostCollection.doc(userId).set(
+          {
+            lastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastResult: failed,
+            nextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+            active: job.active !== false,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      } catch (error) {
+        console.warn('[autopost] firestore ai-image failure update failed', error);
+      }
+      await this.mirrorAutopostJob(userId, {
+        ...job,
+        lastRunAt: admin.firestore.Timestamp.now(),
+        lastResult: failed,
+        nextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+        active: job.active !== false,
+      });
       return {
         posted: 0,
         failed,
@@ -3100,39 +3244,41 @@ export class AutoPostService {
     if (!isReelsRun) {
       updatePayload.intervalHours = effectiveIntervalHours;
     }
-    await autopostCollection.doc(userId).set(updatePayload, { merge: true });
+    try {
+      await autopostCollection.doc(userId).set(updatePayload, { merge: true });
+    } catch (error) {
+      console.warn('[autopost] firestore executeJob update failed', error);
+    }
 
     await this.recordHistory(userId, historyEntries, imageUrls);
-
-    if (this.useMemory) {
-      const nextRecord: AutoPostJob = {
-        ...job,
-        active: job.active !== false,
-        recentImageUrls: nextRecentImages,
-        recentCaptions: nextRecentCaptions,
-        videoCursor:
-          usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number'
-            ? genericVideoSelection.nextCursor
-            : job.videoCursor,
-        youtubeVideoCursor:
-          typeof cursorUpdates.youtubeVideoCursor === 'number' ? cursorUpdates.youtubeVideoCursor : job.youtubeVideoCursor,
-        tiktokVideoCursor:
-          typeof cursorUpdates.tiktokVideoCursor === 'number' ? cursorUpdates.tiktokVideoCursor : job.tiktokVideoCursor,
-        reelsVideoCursor:
-          typeof cursorUpdates.reelsVideoCursor === 'number' ? cursorUpdates.reelsVideoCursor : job.reelsVideoCursor,
-      };
-      if (!isReelsRun) {
-        nextRecord.intervalHours = effectiveIntervalHours;
-      }
-      if (nextRunField === 'nextRun') {
-        nextRecord.lastRunAt = admin.firestore.Timestamp.now();
-        nextRecord.nextRun = admin.firestore.Timestamp.fromDate(nextRunDate);
-      } else {
-        nextRecord.reelsLastRunAt = admin.firestore.Timestamp.now();
-        nextRecord.reelsNextRun = admin.firestore.Timestamp.fromDate(nextRunDate);
-      }
-      this.memoryStore.set(userId, nextRecord);
+    const nextRecord: AutoPostJob = {
+      ...job,
+      active: job.active !== false,
+      recentImageUrls: nextRecentImages,
+      recentCaptions: nextRecentCaptions,
+      [resultField]: results,
+      videoCursor:
+        usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number'
+          ? genericVideoSelection.nextCursor
+          : job.videoCursor,
+      youtubeVideoCursor:
+        typeof cursorUpdates.youtubeVideoCursor === 'number' ? cursorUpdates.youtubeVideoCursor : job.youtubeVideoCursor,
+      tiktokVideoCursor:
+        typeof cursorUpdates.tiktokVideoCursor === 'number' ? cursorUpdates.tiktokVideoCursor : job.tiktokVideoCursor,
+      reelsVideoCursor:
+        typeof cursorUpdates.reelsVideoCursor === 'number' ? cursorUpdates.reelsVideoCursor : job.reelsVideoCursor,
+    };
+    if (!isReelsRun) {
+      nextRecord.intervalHours = effectiveIntervalHours;
     }
+    if (nextRunField === 'nextRun') {
+      nextRecord.lastRunAt = admin.firestore.Timestamp.now();
+      nextRecord.nextRun = admin.firestore.Timestamp.fromDate(nextRunDate);
+    } else {
+      nextRecord.reelsLastRunAt = admin.firestore.Timestamp.now();
+      nextRecord.reelsNextRun = admin.firestore.Timestamp.fromDate(nextRunDate);
+    }
+    await this.mirrorAutopostJob(userId, nextRecord);
 
     return {
       posted: results.filter(result => result.status === 'posted').length,
@@ -3145,10 +3291,32 @@ export class AutoPostService {
     if (!entries.length) return;
     const targetDate = new Date().toISOString().slice(0, 10);
     const scheduledFor = admin.firestore.Timestamp.now();
+    const now = new Date();
+    const fallbackRows = entries.map(entry => {
+      const isVideoPlatform = entry.platform === 'youtube' || entry.platform === 'tiktok' || entry.platform === 'instagram_reels';
+      return {
+        id: scheduledPostsCollection.doc().id,
+        userId,
+        platform: entry.platform,
+        caption: entry.caption,
+        hashtags: '',
+        imageUrls: isVideoPlatform ? [] : imageUrls,
+        scheduledFor: now,
+        targetDate,
+        status: entry.status,
+        createdAt: now,
+        postedAt: entry.status === 'posted' ? now : null,
+        errorMessage: entry.errorMessage ?? null,
+        remoteId: entry.remoteId ?? null,
+        source: 'autopost',
+        videoUrl: entry.videoUrl,
+        videoTitle: entry.videoTitle,
+      };
+    });
     try {
       const batch = firestore.batch();
-      entries.forEach(entry => {
-        const ref = scheduledPostsCollection.doc();
+      fallbackRows.forEach(entry => {
+        const ref = scheduledPostsCollection.doc(entry.id);
         const isVideoPlatform = entry.platform === 'youtube' || entry.platform === 'tiktok' || entry.platform === 'instagram_reels';
         const payload: Record<string, unknown> = {
           userId,
@@ -3185,6 +3353,11 @@ export class AutoPostService {
       );
     } catch (error) {
       console.warn('[autopost] failed to record history', error);
+    }
+    try {
+      await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
+    } catch (error) {
+      console.warn('[autopost] failed to mirror history to supabase', error);
     }
   }
 

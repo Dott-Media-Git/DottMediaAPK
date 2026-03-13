@@ -1,5 +1,6 @@
 import admin from 'firebase-admin';
 import { firestore } from '../../db/firestore';
+import { supabaseFallbackService } from '../../services/supabaseFallbackService';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
@@ -95,6 +96,47 @@ export class SocialSchedulingService {
     }
 
     const batch = firestore.batch();
+    const createdAt = new Date();
+    const fallbackRows = docsToCreate.map(doc => {
+      const isVideoPlatform =
+        doc.platform === 'youtube' ||
+        doc.platform === 'tiktok' ||
+        doc.platform === 'instagram_reels' ||
+        ((doc.platform === 'facebook' ||
+          doc.platform === 'facebook_story' ||
+          doc.platform === 'instagram_story' ||
+          doc.platform === 'linkedin') &&
+          Boolean(payload.videoUrl));
+      const videoUrl =
+        doc.platform === 'youtube'
+          ? payload.youtubeVideoUrl ?? payload.videoUrl ?? null
+          : doc.platform === 'tiktok'
+            ? payload.tiktokVideoUrl ?? payload.videoUrl ?? null
+            : doc.platform === 'instagram_reels'
+              ? payload.instagramReelsVideoUrl ?? null
+              : (doc.platform === 'facebook' ||
+                  doc.platform === 'facebook_story' ||
+                  doc.platform === 'instagram_story' ||
+                  doc.platform === 'linkedin')
+                ? payload.videoUrl ?? null
+                : null;
+      return {
+        id: doc.id,
+        userId: payload.userId,
+        platform: doc.platform,
+        imageUrls: isVideoPlatform ? [] : payload.images ?? [],
+        videoUrl: videoUrl ?? undefined,
+        videoTitle: payload.videoTitle ?? undefined,
+        caption: payload.caption,
+        hashtags: payload.hashtags ?? '',
+        scheduledFor: doc.scheduledFor,
+        targetDate,
+        status: 'pending',
+        createdAt,
+        postedAt: null,
+        errorMessage: undefined,
+      };
+    });
     docsToCreate.forEach(doc => {
       const isVideoPlatform =
         doc.platform === 'youtube' ||
@@ -145,7 +187,32 @@ export class SocialSchedulingService {
       { merge: true },
     );
 
-    await batch.commit();
+    let firestoreError: unknown = null;
+    try {
+      await batch.commit();
+    } catch (error) {
+      firestoreError = error;
+      console.warn('[social-schedule] firestore schedule write failed; attempting Supabase fallback', error);
+    }
+
+    let supabaseError: unknown = null;
+    try {
+      await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
+      await supabaseFallbackService.incrementSocialLimit({
+        key: `${payload.userId}_${targetDate}`,
+        userId: payload.userId,
+        date: targetDate,
+        scheduledCount: docsToCreate.length,
+      });
+    } catch (error) {
+      supabaseError = error;
+      console.warn('[social-schedule] supabase schedule mirror failed', error);
+    }
+
+    if (firestoreError && supabaseError) {
+      throw firestoreError;
+    }
+
     return { scheduled: docsToCreate.length, trimmed: docsToCreate.length < requestedTotal, remaining: remaining - docsToCreate.length };
   }
 }
