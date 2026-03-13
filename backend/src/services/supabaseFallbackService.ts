@@ -39,6 +39,16 @@ type SocialDailyIncrement = {
   status: 'posted' | 'failed' | 'skipped_limit';
 };
 
+type SocialDailyRecord = {
+  userId: string;
+  date: string;
+  postsAttempted?: number;
+  postsPosted?: number;
+  postsFailed?: number;
+  postsSkipped?: number;
+  perPlatform?: Record<string, number>;
+};
+
 type MetricCounterTree = Record<string, unknown>;
 
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
@@ -358,6 +368,23 @@ class SupabaseFallbackService {
     });
   }
 
+  async upsertSocialLimits(records: SocialLimitRecord[]) {
+    if (!this.isConfigured() || !records.length) return;
+    const body = records.map(record => ({
+      key: record.key,
+      user_id: record.userId,
+      date: record.date,
+      posted_count: toNumber(record.postedCount),
+      scheduled_count: toNumber(record.scheduledCount),
+      updated_at: NOW(),
+    }));
+    await this.request('POST', 'dott_social_limits', {
+      params: { on_conflict: 'key' },
+      prefer: 'resolution=merge-duplicates,return=minimal',
+      body,
+    });
+  }
+
   async addSocialLog(payload: {
     userId: string;
     platform: string;
@@ -405,6 +432,26 @@ class SupabaseFallbackService {
       params: { on_conflict: 'id' },
       prefer: 'resolution=merge-duplicates,return=minimal',
       body: [next],
+    });
+  }
+
+  async upsertSocialDailyRows(rows: SocialDailyRecord[]) {
+    if (!this.isConfigured() || !rows.length) return;
+    const body = rows.map(row => ({
+      id: `${row.userId}_${row.date}`,
+      user_id: row.userId,
+      date: row.date,
+      posts_attempted: toNumber(row.postsAttempted),
+      posts_posted: toNumber(row.postsPosted),
+      posts_failed: toNumber(row.postsFailed),
+      posts_skipped: toNumber(row.postsSkipped),
+      per_platform: sanitizeJson(row.perPlatform ?? {}) ?? {},
+      updated_at: NOW(),
+    }));
+    await this.request('POST', 'dott_social_daily', {
+      params: { on_conflict: 'id' },
+      prefer: 'resolution=merge-duplicates,return=minimal',
+      body,
     });
   }
 
@@ -519,6 +566,24 @@ class SupabaseFallbackService {
     });
   }
 
+  async upsertMetricSummaries(
+    rows: Array<{ scopeKey: string; metric: string; counters: MetricCounterTree; userId?: string | null }>,
+  ) {
+    if (!this.isConfigured() || !rows.length) return;
+    const body = rows.map(row => ({
+      scope_key: row.scopeKey,
+      user_id: row.userId ?? null,
+      metric: row.metric,
+      counters: sanitizeJson(row.counters) ?? {},
+      updated_at: NOW(),
+    }));
+    await this.request('POST', 'dott_metric_summaries', {
+      params: { on_conflict: 'scope_key,metric' },
+      prefer: 'resolution=merge-duplicates,return=minimal',
+      body,
+    });
+  }
+
   async incrementMetricDaily(metric: string, counters: MetricCounterTree, scope?: AnalyticsScope, date?: string) {
     if (!this.isConfigured()) return;
     const scopeKey = toScopeKey(scope);
@@ -542,6 +607,34 @@ class SupabaseFallbackService {
           updated_at: NOW(),
         },
       ],
+    });
+  }
+
+  async upsertMetricDailyRows(
+    rows: Array<{
+      scopeKey: string;
+      metric: string;
+      date: string;
+      counters: MetricCounterTree;
+      userId?: string | null;
+    }>,
+  ) {
+    if (!this.isConfigured() || !rows.length) return;
+    const body = rows
+      .filter(row => row.date)
+      .map(row => ({
+        scope_key: row.scopeKey,
+        user_id: row.userId ?? null,
+        metric: row.metric,
+        date: row.date,
+        counters: sanitizeJson(row.counters) ?? {},
+        updated_at: NOW(),
+      }));
+    if (!body.length) return;
+    await this.request('POST', 'dott_metric_daily', {
+      params: { on_conflict: 'scope_key,metric,date' },
+      prefer: 'resolution=merge-duplicates,return=minimal',
+      body,
     });
   }
 

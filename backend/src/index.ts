@@ -45,6 +45,7 @@ import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
 import { autoPostService } from './services/autoPostService';
 import { ensureGeneratedMediaRoot } from './services/generatedMediaService';
 import { ensureSupabaseFallbackSchema } from './services/supabaseSchemaService';
+import { backfillSupabaseFallback } from './services/supabaseBackfillService';
 
 const initializeAutomation = async () => {
   try {
@@ -74,7 +75,10 @@ if (config.security.allowMockAuth) {
   notificationDispatcher.start();
 }
 
-void ensureSupabaseFallbackSchema();
+void ensureSupabaseFallbackSchema().then(ready => {
+  if (!ready) return;
+  void backfillSupabaseFallback();
+});
 
 const app = express();
 const startedAt = new Date().toISOString();
