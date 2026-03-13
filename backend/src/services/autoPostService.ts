@@ -28,6 +28,7 @@ import { resolveBrandIdForClient } from './brandKitService.js';
 import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage } from './tableImageService.js';
 import type { TrendCandidate } from '../types/footballTrends.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
+import { resolveFacebookPageId } from './socialAccountResolver.js';
 
 type AutoPostJob = {
   userId: string;
@@ -289,13 +290,34 @@ export class AutoPostService {
     return Boolean(bwinScopeId) && userId.trim() === bwinScopeId;
   }
 
-  private getRuntimeFallbackAccounts(userId: string): SocialAccounts {
+  private async getRuntimeFallbackAccounts(userId: string): Promise<SocialAccounts> {
     if (!this.isBwinScopeUser(userId)) return {};
-    return {
+
+    const fallback: SocialAccounts = {
       ...(this.getEmergencyTwitterCredentials() ?? {}),
-      ...(this.getEmergencyFacebookCredentials() ?? {}),
       ...(this.getEmergencyInstagramCredentials() ?? {}),
     };
+
+    const rawFacebook = this.getEmergencyFacebookCredentials();
+    const rawAccessToken = rawFacebook?.facebook?.accessToken?.trim() ?? '';
+    const rawPageId = rawFacebook?.facebook?.pageId?.trim() ?? '';
+    if (rawAccessToken && rawPageId) {
+      let accessToken = rawAccessToken;
+      let pageId = rawPageId;
+      try {
+        const resolved = await resolveFacebookPageId(rawAccessToken, rawPageId);
+        accessToken = resolved?.pageToken?.trim() || accessToken;
+        pageId = resolved?.pageId?.trim() || pageId;
+      } catch (error) {
+        console.warn('[autopost] failed to resolve Bwin page token from fallback token', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      fallback.facebook = { accessToken, pageId };
+    }
+
+    return fallback;
   }
 
   private async safeGetUserTrendConfig(userId: string) {
@@ -3424,7 +3446,8 @@ export class AutoPostService {
     const allowDefaults = canUsePrimarySocialDefaults(userData, userId);
     const defaults = this.defaultSocialAccounts(allowDefaults);
     const userAccounts = (userData?.socialAccounts as SocialAccounts | undefined) ?? {};
-    const merged: SocialAccounts = { ...defaults, ...this.getRuntimeFallbackAccounts(userId), ...userAccounts };
+    const runtimeFallbackAccounts = await this.getRuntimeFallbackAccounts(userId);
+    const merged: SocialAccounts = { ...defaults, ...runtimeFallbackAccounts, ...userAccounts };
     try {
       const youtubeIntegration = await getYouTubeIntegrationSecrets(userId);
       if (youtubeIntegration) {

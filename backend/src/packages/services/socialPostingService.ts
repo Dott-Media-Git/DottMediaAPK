@@ -12,6 +12,7 @@ import { socialAnalyticsService } from './socialAnalyticsService';
 import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from '../../services/socialIntegrationService';
 import { canUsePrimarySocialDefaults } from '../../utils/socialAccess';
 import { supabaseFallbackService } from '../../services/supabaseFallbackService';
+import { resolveFacebookPageId } from '../../services/socialAccountResolver';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
@@ -98,14 +99,26 @@ export class SocialPostingService {
     return Boolean(bwinScopeId) && userId.trim() === bwinScopeId;
   }
 
-  private getRuntimeFallbackAccounts(userId: string): SocialAccounts {
+  private async getRuntimeFallbackAccounts(userId: string): Promise<SocialAccounts> {
     const fallback: SocialAccounts = {};
     if (!this.isBwinScopeUser(userId)) return fallback;
 
     const facebookToken = (process.env.BWIN_FACEBOOK_PAGE_TOKEN ?? '').trim();
     const facebookPageId = (process.env.BWIN_FACEBOOK_PAGE_ID ?? '').trim();
     if (facebookToken && facebookPageId) {
-      fallback.facebook = { accessToken: facebookToken, pageId: facebookPageId };
+      let accessToken = facebookToken;
+      let pageId = facebookPageId;
+      try {
+        const resolved = await resolveFacebookPageId(facebookToken, facebookPageId);
+        accessToken = resolved?.pageToken?.trim() || accessToken;
+        pageId = resolved?.pageId?.trim() || pageId;
+      } catch (error) {
+        console.warn('[social-posting] failed to resolve Bwin page token from fallback token', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      fallback.facebook = { accessToken, pageId };
     }
 
     const instagramToken = (process.env.BWIN_INSTAGRAM_ACCESS_TOKEN ?? '').trim();
@@ -255,7 +268,7 @@ export class SocialPostingService {
         const allowDefaults = canUsePrimarySocialDefaults(userData, post.userId);
         const socialAccounts = this.mergeWithDefaults(
           {
-            ...this.getRuntimeFallbackAccounts(post.userId),
+            ...(await this.getRuntimeFallbackAccounts(post.userId)),
             ...((userData?.socialAccounts as SocialAccounts | undefined) ?? {}),
           },
           allowDefaults,
