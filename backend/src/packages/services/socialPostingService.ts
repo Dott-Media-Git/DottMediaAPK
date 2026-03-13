@@ -89,6 +89,46 @@ const platformPublishers: Record<string, PlatformPublisher> = {
 };
 
 export class SocialPostingService {
+  private getBwinScopeId() {
+    return (process.env.BWIN_SCOPE_ID ?? process.env.BWIN_TRACK_OWNER_ID ?? '').trim();
+  }
+
+  private isBwinScopeUser(userId: string) {
+    const bwinScopeId = this.getBwinScopeId();
+    return Boolean(bwinScopeId) && userId.trim() === bwinScopeId;
+  }
+
+  private getRuntimeFallbackAccounts(userId: string): SocialAccounts {
+    const fallback: SocialAccounts = {};
+    if (!this.isBwinScopeUser(userId)) return fallback;
+
+    const facebookToken = (process.env.BWIN_FACEBOOK_PAGE_TOKEN ?? '').trim();
+    const facebookPageId = (process.env.BWIN_FACEBOOK_PAGE_ID ?? '').trim();
+    if (facebookToken && facebookPageId) {
+      fallback.facebook = { accessToken: facebookToken, pageId: facebookPageId };
+    }
+
+    const instagramToken = (process.env.BWIN_INSTAGRAM_ACCESS_TOKEN ?? '').trim();
+    const instagramAccountId = (process.env.BWIN_INSTAGRAM_ACCOUNT_ID ?? '').trim();
+    if (instagramToken && instagramAccountId) {
+      fallback.instagram = {
+        accessToken: instagramToken,
+        accountId: instagramAccountId,
+        username: process.env.BWIN_INSTAGRAM_USERNAME ?? undefined,
+      };
+    }
+
+    const accessToken = (process.env.BWIN_X_ACCESS_TOKEN ?? '').trim();
+    const accessSecret = (process.env.BWIN_X_ACCESS_SECRET ?? '').trim();
+    const appKey = (process.env.BWIN_X_APP_KEY ?? '').trim();
+    const appSecret = (process.env.BWIN_X_APP_SECRET ?? '').trim();
+    if (accessToken && accessSecret && appKey && appSecret) {
+      fallback.twitter = { accessToken, accessSecret, appKey, appSecret };
+    }
+
+    return fallback;
+  }
+
   private isMissingIndexError(error: unknown) {
     const err = error as { code?: number; message?: string; details?: string };
     const message = `${err?.message ?? ''} ${err?.details ?? ''}`.toLowerCase();
@@ -202,32 +242,57 @@ export class SocialPostingService {
 
       try {
         // Fetch user credentials
-        const userDoc = await firestore.collection('users').doc(post.userId).get();
-        const userData = userDoc.data();
-        const allowDefaults = canUsePrimarySocialDefaults(userData as { email?: string | null } | undefined);
+        let userData: { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
+        try {
+          const userDoc = await firestore.collection('users').doc(post.userId).get();
+          userData = userDoc.data() as { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
+        } catch (error) {
+          console.warn('[social-posting] user lookup failed; using runtime fallback credentials', {
+            userId: post.userId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        const allowDefaults = canUsePrimarySocialDefaults(userData, post.userId);
         const socialAccounts = this.mergeWithDefaults(
-          userData?.socialAccounts as SocialAccounts | undefined,
+          {
+            ...this.getRuntimeFallbackAccounts(post.userId),
+            ...((userData?.socialAccounts as SocialAccounts | undefined) ?? {}),
+          },
           allowDefaults,
         );
         if (post.platform === 'youtube') {
-          const youtubeIntegration = await getYouTubeIntegrationSecrets(post.userId);
-          if (youtubeIntegration) {
-            socialAccounts.youtube = {
-              refreshToken: youtubeIntegration.refreshToken,
-              accessToken: youtubeIntegration.accessToken,
-              privacyStatus: youtubeIntegration.privacyStatus,
-              channelId: youtubeIntegration.channelId ?? undefined,
-            };
+          try {
+            const youtubeIntegration = await getYouTubeIntegrationSecrets(post.userId);
+            if (youtubeIntegration) {
+              socialAccounts.youtube = {
+                refreshToken: youtubeIntegration.refreshToken,
+                accessToken: youtubeIntegration.accessToken,
+                privacyStatus: youtubeIntegration.privacyStatus,
+                channelId: youtubeIntegration.channelId ?? undefined,
+              };
+            }
+          } catch (error) {
+            console.warn('[social-posting] youtube integration lookup failed', {
+              userId: post.userId,
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
         }
         if (post.platform === 'tiktok') {
-          const tiktokIntegration = await getTikTokIntegrationSecrets(post.userId);
-          if (tiktokIntegration) {
-            socialAccounts.tiktok = {
-              accessToken: tiktokIntegration.accessToken,
-              refreshToken: tiktokIntegration.refreshToken,
-              openId: tiktokIntegration.openId ?? undefined,
-            };
+          try {
+            const tiktokIntegration = await getTikTokIntegrationSecrets(post.userId);
+            if (tiktokIntegration) {
+              socialAccounts.tiktok = {
+                accessToken: tiktokIntegration.accessToken,
+                refreshToken: tiktokIntegration.refreshToken,
+                openId: tiktokIntegration.openId ?? undefined,
+              };
+            }
+          } catch (error) {
+            console.warn('[social-posting] tiktok integration lookup failed', {
+              userId: post.userId,
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
         }
 

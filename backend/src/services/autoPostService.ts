@@ -18,7 +18,7 @@ import { publishToTwitter } from '../packages/services/socialPlatforms/twitterPu
 import { publishToYouTube } from '../packages/services/socialPlatforms/youtubePublisher.js';
 import { publishToTikTok } from '../packages/services/socialPlatforms/tiktokPublisher.js';
 import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from './socialIntegrationService.js';
-import { canUsePrimarySocialDefaults } from '../utils/socialAccess.js';
+import { canUsePrimarySocialDefaults, isPrimarySocialUserId } from '../utils/socialAccess.js';
 import { getNewsTrendingCandidates } from './newsTrendSources.js';
 import { getUserTrendConfig } from './userTrendSourceService.js';
 import { getTrendingCandidates as getFootballTrendingCandidates } from './footballTrendSources.js';
@@ -275,6 +275,32 @@ export class AutoPostService {
   ];
   private emergencyXLastRunAt = 0;
   private emergencyXLastKey: string | null = null;
+
+  private getPrimaryFallbackEmail() {
+    return (process.env.PRIMARY_SOCIAL_DEFAULT_EMAIL ?? 'brasioxirin@gmail.com').trim().toLowerCase();
+  }
+
+  private getBwinScopeId() {
+    return (process.env.BWIN_SCOPE_ID ?? process.env.BWIN_TRACK_OWNER_ID ?? '').trim();
+  }
+
+  private isBwinScopeUser(userId: string) {
+    const bwinScopeId = this.getBwinScopeId();
+    return Boolean(bwinScopeId) && userId.trim() === bwinScopeId;
+  }
+
+  private getRuntimeFallbackAccounts(userId: string): SocialAccounts {
+    if (!this.isBwinScopeUser(userId)) return {};
+    return {
+      ...(this.getEmergencyTwitterCredentials() ?? {}),
+      ...(this.getEmergencyFacebookCredentials() ?? {}),
+      ...(this.getEmergencyInstagramCredentials() ?? {}),
+    };
+  }
+
+  private async safeGetUserTrendConfig(userId: string) {
+    return getUserTrendConfig(userId);
+  }
 
   private isFirestoreQuotaError(error: unknown) {
     if (!error || typeof error !== 'object') return false;
@@ -648,6 +674,17 @@ export class AutoPostService {
       if (posted) {
         this.emergencyXLastRunAt = now.getTime();
         if (selectedKey) this.emergencyXLastKey = selectedKey;
+      }
+
+      if (emergencyOwnerId && results.length) {
+        const historyEntries: HistoryEntry[] = results.map(result => ({
+          platform: result.platform,
+          status: result.status,
+          caption: baseCaption,
+          remoteId: result.remoteId ?? null,
+          ...(result.error ? { errorMessage: result.error } : {}),
+        }));
+        await this.recordHistory(emergencyOwnerId, historyEntries, imageUrls);
       }
 
       return {
@@ -2013,7 +2050,7 @@ export class AutoPostService {
 
     const recentImages = this.getRecentStoryImageHistory(job);
     const recentSet = new Set(recentImages);
-    const { sources, mode } = await getUserTrendConfig(userId);
+    const { sources, mode } = await this.safeGetUserTrendConfig(userId);
     const candidates = await getNewsTrendingCandidates({
       sources,
       sourceMode: mode,
@@ -2167,12 +2204,24 @@ export class AutoPostService {
     const results: PostResult[] = [];
     const historyEntries: HistoryEntry[] = [];
 
-    const userDoc = await firestore.collection('users').doc(userId).get();
-    const userData = userDoc.data() as { email?: string | null } | undefined;
-    const email = userData?.email ?? null;
+    let userData: { email?: string | null } | undefined;
+    try {
+      const userDoc = await firestore.collection('users').doc(userId).get();
+      userData = userDoc.data() as { email?: string | null } | undefined;
+    } catch (error) {
+      console.warn('[autopost] trend user lookup failed; using runtime fallback context', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const email = userData?.email ?? (isPrimarySocialUserId(userId) ? this.getPrimaryFallbackEmail() : null);
 
     const normalizedEmail = email?.toLowerCase().trim() ?? '';
-    const brandId = normalizedEmail ? resolveBrandIdForClient(normalizedEmail) : null;
+    const brandId = this.isBwinScopeUser(userId)
+      ? 'bwinbetug'
+      : normalizedEmail
+        ? resolveBrandIdForClient(normalizedEmail)
+        : null;
     const scope: 'football' | 'global' = brandId === 'bwinbetug' ? 'football' : 'global';
     const now = new Date();
     const structuredScheduleEnabled = scope === 'football' && job.trendStructuredScheduleEnabled !== false;
@@ -2208,7 +2257,7 @@ export class AutoPostService {
 
     if (scope === 'football') {
       try {
-        const { sources } = await getUserTrendConfig(userId);
+        const { sources } = await this.safeGetUserTrendConfig(userId);
         const candidates = await getFootballTrendingCandidates({
           sources,
           maxCandidates: job.trendMaxCandidates ?? 6,
@@ -3362,28 +3411,50 @@ export class AutoPostService {
   }
 
   private async resolveCredentials(userId: string): Promise<SocialAccounts> {
-    const userDoc = await firestore.collection('users').doc(userId).get();
-    const userData = userDoc.data() as { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
-    const allowDefaults = canUsePrimarySocialDefaults(userData);
+    let userData: { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
+    try {
+      const userDoc = await firestore.collection('users').doc(userId).get();
+      userData = userDoc.data() as { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
+    } catch (error) {
+      console.warn('[autopost] user credential lookup failed; using runtime fallbacks', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const allowDefaults = canUsePrimarySocialDefaults(userData, userId);
     const defaults = this.defaultSocialAccounts(allowDefaults);
     const userAccounts = (userData?.socialAccounts as SocialAccounts | undefined) ?? {};
-    const merged: SocialAccounts = { ...defaults, ...userAccounts };
-    const youtubeIntegration = await getYouTubeIntegrationSecrets(userId);
-    if (youtubeIntegration) {
-      merged.youtube = {
-        refreshToken: youtubeIntegration.refreshToken,
-        accessToken: youtubeIntegration.accessToken,
-        privacyStatus: youtubeIntegration.privacyStatus,
-        channelId: youtubeIntegration.channelId ?? undefined,
-      };
+    const merged: SocialAccounts = { ...defaults, ...this.getRuntimeFallbackAccounts(userId), ...userAccounts };
+    try {
+      const youtubeIntegration = await getYouTubeIntegrationSecrets(userId);
+      if (youtubeIntegration) {
+        merged.youtube = {
+          refreshToken: youtubeIntegration.refreshToken,
+          accessToken: youtubeIntegration.accessToken,
+          privacyStatus: youtubeIntegration.privacyStatus,
+          channelId: youtubeIntegration.channelId ?? undefined,
+        };
+      }
+    } catch (error) {
+      console.warn('[autopost] youtube integration lookup failed', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
-    const tiktokIntegration = await getTikTokIntegrationSecrets(userId);
-    if (tiktokIntegration) {
-      merged.tiktok = {
-        accessToken: tiktokIntegration.accessToken,
-        refreshToken: tiktokIntegration.refreshToken,
-        openId: tiktokIntegration.openId ?? undefined,
-      };
+    try {
+      const tiktokIntegration = await getTikTokIntegrationSecrets(userId);
+      if (tiktokIntegration) {
+        merged.tiktok = {
+          accessToken: tiktokIntegration.accessToken,
+          refreshToken: tiktokIntegration.refreshToken,
+          openId: tiktokIntegration.openId ?? undefined,
+        };
+      }
+    } catch (error) {
+      console.warn('[autopost] tiktok integration lookup failed', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     return merged;
   }

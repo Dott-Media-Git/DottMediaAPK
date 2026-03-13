@@ -61,13 +61,21 @@ const dedupeSources = (sources: TrendSource[]) => {
 export const getUserTrendConfig = async (
   userId: string,
 ): Promise<{ sources: TrendSource[]; mode: TrendSourceMode }> => {
-  const doc = await userCollection.doc(userId).get();
-  const data = doc.data() as { trendSources?: TrendSource[]; trendSourcesMode?: TrendSourceMode } | undefined;
-  const sources = Array.isArray(data?.trendSources)
-    ? data!.trendSources.filter(source => source && typeof source.url === 'string')
-    : [];
-  const mode: TrendSourceMode = data?.trendSourcesMode === 'replace' ? 'replace' : 'merge';
-  return { sources, mode };
+  try {
+    const doc = await userCollection.doc(userId).get();
+    const data = doc.data() as { trendSources?: TrendSource[]; trendSourcesMode?: TrendSourceMode } | undefined;
+    const sources = Array.isArray(data?.trendSources)
+      ? data!.trendSources.filter(source => source && typeof source.url === 'string')
+      : [];
+    const mode: TrendSourceMode = data?.trendSourcesMode === 'replace' ? 'replace' : 'merge';
+    return { sources, mode };
+  } catch (error) {
+    console.warn('[trend-sources] failed to load user trend config; using defaults', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { sources: [], mode: 'merge' };
+  }
 };
 
 export const getUserTrendSources = async (userId: string): Promise<TrendSource[]> => {
