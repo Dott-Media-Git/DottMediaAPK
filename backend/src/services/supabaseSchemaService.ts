@@ -114,23 +114,10 @@ create index if not exists dott_metric_daily_scope_metric_date_idx
   on public.dott_metric_daily (scope_key, metric, date desc);
 `;
 
+let initializationPromise: Promise<boolean> | null = null;
+
 const sanitizeConnectionStringForLogs = (value: string) =>
   value.replace(/:\/\/([^:]+):[^@]+@/, '://$1:***@');
-
-let initializationPromise: Promise<boolean> | null = null;
-const schemaInitStatus: {
-  configured: boolean;
-  ok: boolean;
-  attemptedAt: string | null;
-  target: string | null;
-  error: string | null;
-} = {
-  configured: Boolean(SUPABASE_DATABASE_URL),
-  ok: false,
-  attemptedAt: null,
-  target: SUPABASE_DATABASE_URL ? sanitizeConnectionStringForLogs(SUPABASE_DATABASE_URL) : null,
-  error: null,
-};
 
 const attemptSchemaInit = async (connectionString: string) => {
   const client = new Client({
@@ -153,21 +140,14 @@ export const ensureSupabaseFallbackSchema = async () => {
   if (initializationPromise) return initializationPromise;
 
   initializationPromise = (async () => {
-    schemaInitStatus.attemptedAt = new Date().toISOString();
     if (!SUPABASE_DATABASE_URL) {
-      schemaInitStatus.error = 'SUPABASE_DATABASE_URL missing';
       console.info('[supabase-fallback] SUPABASE_DATABASE_URL missing; skipping schema init');
       return false;
     }
 
     try {
-      const ok = await attemptSchemaInit(SUPABASE_DATABASE_URL);
-      schemaInitStatus.ok = ok;
-      schemaInitStatus.error = null;
-      return ok;
+      return await attemptSchemaInit(SUPABASE_DATABASE_URL);
     } catch (error) {
-      schemaInitStatus.ok = false;
-      schemaInitStatus.error = error instanceof Error ? error.message : String(error);
       console.warn(
         '[supabase-fallback] schema init failed',
         sanitizeConnectionStringForLogs(SUPABASE_DATABASE_URL),
@@ -179,5 +159,3 @@ export const ensureSupabaseFallbackSchema = async () => {
 
   return initializationPromise;
 };
-
-export const getSupabaseSchemaInitStatus = () => ({ ...schemaInitStatus });
