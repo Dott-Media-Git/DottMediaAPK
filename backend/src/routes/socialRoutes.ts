@@ -473,8 +473,16 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
 
     const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
-    const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-    const historyUserId = (userDoc.data()?.historyUserId as string | undefined)?.trim();
+    let historyUserId = '';
+    try {
+      const userDoc = await firestore.collection('users').doc(authUser.uid).get();
+      historyUserId = ((userDoc.data()?.historyUserId as string | undefined) ?? '').trim();
+    } catch (error) {
+      console.warn('[social-history-route] user lookup failed; using direct auth user id', {
+        userId: authUser.uid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     if (requestedUserId && requestedUserId !== authUser.uid && requestedUserId !== historyUserId) {
       return res.status(403).json({ message: 'Forbidden' });
@@ -499,12 +507,30 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
 
-    const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-    const userData = userDoc.data() as { email?: string | null; socialAccounts?: Record<string, any> } | undefined;
+    let userData: { email?: string | null; socialAccounts?: Record<string, any> } | undefined;
+    try {
+      const userDoc = await firestore.collection('users').doc(authUser.uid).get();
+      userData = userDoc.data() as { email?: string | null; socialAccounts?: Record<string, any> } | undefined;
+    } catch (error) {
+      console.warn('[social-status-route] user lookup failed; using fallback defaults', {
+        userId: authUser.uid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     const accounts = userData?.socialAccounts ?? {};
-    const allowDefaults = canUsePrimarySocialDefaults(userData);
-    const youtube = await getYouTubeIntegration(authUser.uid);
-    const tiktok = await getTikTokIntegration(authUser.uid);
+    const allowDefaults = canUsePrimarySocialDefaults(userData, authUser.uid);
+    let youtube: Awaited<ReturnType<typeof getYouTubeIntegration>> | null = null;
+    let tiktok: Awaited<ReturnType<typeof getTikTokIntegration>> | null = null;
+    try {
+      youtube = await getYouTubeIntegration(authUser.uid);
+    } catch (error) {
+      console.warn('[social-status-route] youtube lookup failed', error);
+    }
+    try {
+      tiktok = await getTikTokIntegration(authUser.uid);
+    } catch (error) {
+      console.warn('[social-status-route] tiktok lookup failed', error);
+    }
 
     const status = {
       facebook:
