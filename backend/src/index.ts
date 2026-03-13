@@ -44,6 +44,7 @@ import stripeRoutes from './routes/stripeRoutes';
 import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
 import { autoPostService } from './services/autoPostService';
 import { ensureGeneratedMediaRoot } from './services/generatedMediaService';
+import { ensureSupabaseFallbackSchema } from './services/supabaseSchemaService';
 
 const initializeAutomation = async () => {
   try {
@@ -72,6 +73,8 @@ if (config.security.allowMockAuth) {
 } else {
   notificationDispatcher.start();
 }
+
+void ensureSupabaseFallbackSchema();
 
 const app = express();
 const startedAt = new Date().toISOString();
