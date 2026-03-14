@@ -14,6 +14,7 @@ import {
   type TrendCandidate,
   type TrendSourceInput,
 } from '@services/trends';
+import { buildTrendingCacheKey, readTrendingCache, writeTrendingCache } from '@services/trendsCache';
 
 export const TrendingNewsScreen: React.FC = () => {
   const { state } = useAuth();
@@ -25,37 +26,82 @@ export const TrendingNewsScreen: React.FC = () => {
   const [sourceLabel, setSourceLabel] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [savingSources, setSavingSources] = useState(false);
+  const [cacheReady, setCacheReady] = useState(false);
+  const [hasCachedSnapshot, setHasCachedSnapshot] = useState(false);
+  const cacheKey = useMemo(
+    () => buildTrendingCacheKey(state.user?.uid),
+    [state.user?.uid],
+  );
 
-  const loadTrends = useCallback(async () => {
+  const loadAll = useCallback(async (options?: { silent?: boolean; force?: boolean }) => {
     if (!state.user) return;
-    setRefreshing(true);
+    if (!options?.silent && (!hasCachedSnapshot || options?.force)) {
+      setRefreshing(true);
+    }
     try {
-      const data = await fetchTrendingNews(state.user.uid);
-      setCandidates(data.candidates ?? []);
-      setScope(data.scope ?? 'global');
+      const [trendData, sourceData] = await Promise.all([
+        fetchTrendingNews(state.user.uid),
+        fetchTrendSources(state.user.uid),
+      ]);
+      setCandidates(trendData.candidates ?? []);
+      setScope(trendData.scope ?? 'global');
+      setSources(sourceData.sources ?? []);
+      setHasCachedSnapshot(true);
     } catch (error: any) {
-      Alert.alert(t('Error'), error.message ?? t('Failed to load trends'));
+      if (!hasCachedSnapshot) {
+        Alert.alert(t('Error'), error.message ?? t('Failed to load trends'));
+      } else {
+        console.warn('Failed to refresh trends', error);
+      }
     } finally {
-      setRefreshing(false);
+      if (!options?.silent) {
+        setRefreshing(false);
+      }
     }
-  }, [state.user, t]);
-
-  const loadSources = useCallback(async () => {
-    if (!state.user) return;
-    try {
-      const data = await fetchTrendSources(state.user.uid);
-      setSources(data.sources ?? []);
-    } catch (error: any) {
-      Alert.alert(t('Error'), error.message ?? t('Failed to load sources'));
-    }
-  }, [state.user, t]);
+  }, [hasCachedSnapshot, state.user, t]);
 
   useFocusEffect(
     useCallback(() => {
-      void loadTrends();
-      void loadSources();
-    }, [loadTrends, loadSources])
+      void loadAll({ silent: hasCachedSnapshot, force: !hasCachedSnapshot });
+    }, [hasCachedSnapshot, loadAll])
   );
+
+  React.useEffect(() => {
+    let active = true;
+    if (!state.user?.uid) {
+      setCacheReady(true);
+      setHasCachedSnapshot(false);
+      return () => {
+        active = false;
+      };
+    }
+    setCacheReady(false);
+    void readTrendingCache(cacheKey)
+      .then(cached => {
+        if (!active) return;
+        if (cached) {
+          setCandidates(cached.candidates ?? []);
+          setScope(cached.scope ?? 'global');
+          setSources(cached.sources ?? []);
+          setHasCachedSnapshot(true);
+        } else {
+          setHasCachedSnapshot(false);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setCacheReady(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [cacheKey, state.user?.uid]);
+
+  React.useEffect(() => {
+    if (!state.user?.uid || !cacheReady) return;
+    void writeTrendingCache(cacheKey, { scope, candidates, sources });
+  }, [cacheKey, cacheReady, candidates, scope, sources, state.user?.uid]);
 
   const addSource = () => {
     const url = sourceUrl.trim();
@@ -96,7 +142,7 @@ export const TrendingNewsScreen: React.FC = () => {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadTrends} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadAll({ force: true })} />}
     >
       <DMCard title={t('Your trending News')} subtitle={scopeLabel}>
         {candidates.length === 0 ? (

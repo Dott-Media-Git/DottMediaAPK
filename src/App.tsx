@@ -12,10 +12,21 @@ import { I18nProvider } from '@context/I18nContext';
 import { AppNavigator } from '@navigation/AppNavigator';
 import { colors } from '@constants/colors';
 import { FloatingAssistant } from '@components/FloatingAssistant';
+import { warmPrimaryScreenCaches } from '@services/appWarmCache';
 
 const RootView: React.FC = () => {
   const { state } = useAuth();
   const { mode } = useThemeMode();
+
+  useEffect(() => {
+    if (!state.hydrated || !state.user?.uid) return;
+    void warmPrimaryScreenCaches({
+      userId: state.user.uid,
+      orgId: (state.user as any)?.orgId ?? state.crmData?.orgId,
+      seedAnalytics: state.crmData?.analytics,
+    });
+  }, [state.crmData?.analytics, state.crmData?.orgId, state.hydrated, state.user]);
+
   return (
     <SafeAreaProvider>
       <GestureHandlerRootView style={styles.root}>
