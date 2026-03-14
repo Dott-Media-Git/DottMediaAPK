@@ -9,6 +9,7 @@ type AssistantContextPayload = {
   orgId?: string;
   businessGoals?: string;
   targetAudience?: string;
+  accountSnapshot?: string;
   analytics?: CRMAnalytics;
   currentScreen?: string;
   subscriptionStatus?: string;
@@ -61,6 +62,24 @@ const buildApiUrl = (path: string) => {
   return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
 };
 
+const buildEffectiveQuestion = (question: string, context: AssistantContextPayload) => {
+  const accountSnapshot = context.accountSnapshot?.trim();
+  const rules = [
+    'You are Dott Assistant for this authenticated Dott account.',
+    'Answer only about this account, its business, connected channels, analytics, automation, growth strategy, and actions available inside Dott.',
+    'If the request is unrelated, say briefly that you only handle the user account and business inside Dott.',
+    'Use the account snapshot below as the source of truth when summarizing performance or recommending actions.',
+    'When the user asks for growth or strategy advice, give concrete steps tied to the current account data.',
+    'If the user clearly approves a strategy, explain the exact action to implement next inside Dott.',
+  ].join(' ');
+
+  if (!accountSnapshot) {
+    return `${rules}\n\nUser question: ${question}`;
+  }
+
+  return `${rules}\n\nAccount snapshot:\n${accountSnapshot}\n\nUser question: ${question}`;
+};
+
 const authHeader = async (userId: string) => {
   const token = await getIdToken();
   if (token) return `Bearer ${token}`;
@@ -73,6 +92,7 @@ export const askAssistant = async (question: string, context: AssistantContextPa
   if (!endpoint) {
     return buildLocalResponse(question, context);
   }
+  const effectiveQuestion = buildEffectiveQuestion(question, context);
 
   try {
     const authorization = await authHeader(context.userId);
@@ -87,7 +107,7 @@ export const askAssistant = async (question: string, context: AssistantContextPa
         Authorization: authorization
       },
       body: JSON.stringify({
-        question,
+        question: effectiveQuestion,
         context: {
           company: context.company,
           orgId: context.orgId,

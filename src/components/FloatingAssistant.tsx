@@ -16,13 +16,45 @@ import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useAssistant } from '@context/AssistantContext';
 import { useI18n } from '@context/I18nContext';
-import { fetchLiveSocialStats, resolveAnalyticsScopeId, type LiveSocialStats } from '@services/analytics';
+import {
+  fetchAnalytics,
+  fetchEngagementStats,
+  fetchFollowupStats,
+  fetchInboundStats,
+  fetchLiveSocialStats,
+  fetchOutboundStats,
+  fetchWebLeadStats,
+  resolveAnalyticsScopeId,
+  type DashboardAnalytics,
+  type EngagementStats,
+  type FollowupStats,
+  type InboundStats,
+  type LiveSocialStats,
+  type OutboundStats,
+  type WebLeadStats,
+} from '@services/analytics';
 import { askAssistant } from '@services/assistant';
 
 type Message = {
   id: string;
   role: 'assistant' | 'user';
   text: string;
+};
+
+type AssistantSnapshotInput = {
+  companyName?: string;
+  subscriptionStatus?: string;
+  currentScreen?: string;
+  fallbackChannels: string[];
+  businessGoals?: string;
+  targetAudience?: string;
+  liveSocial: LiveSocialStats | null;
+  analytics: DashboardAnalytics | null;
+  outbound: OutboundStats | null;
+  inbound: InboundStats | null;
+  engagement: EngagementStats | null;
+  followups: FollowupStats | null;
+  webLeads: WebLeadStats | null;
 };
 
 export const FloatingAssistant: React.FC = () => {
@@ -34,6 +66,7 @@ export const FloatingAssistant: React.FC = () => {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [liveSocial, setLiveSocial] = useState<LiveSocialStats | null>(null);
+  const [accountSnapshot, setAccountSnapshot] = useState('');
   const analyticsScopeId = useMemo(
     () => resolveAnalyticsScopeId(state.user?.uid, ((state.user as any)?.orgId ?? state.crmData?.orgId) as string | undefined),
     [state.user?.uid, state.user, state.crmData?.orgId]
@@ -59,21 +92,27 @@ export const FloatingAssistant: React.FC = () => {
     [t]
   );
 
+  const baseConnectedChannels = useMemo(
+    () =>
+      [
+        state.crmData?.instagram ? 'instagram' : null,
+        state.crmData?.facebook ? 'facebook' : null,
+        state.crmData?.linkedin ? 'linkedin' : null,
+      ].filter(Boolean) as string[],
+    [state.crmData?.instagram, state.crmData?.facebook, state.crmData?.linkedin]
+  );
+
   const context = useMemo(() => {
-    const connectedChannels = [
-      state.crmData?.instagram ? 'instagram' : null,
-      state.crmData?.facebook ? 'facebook' : null,
-      state.crmData?.linkedin ? 'linkedin' : null
-    ].filter(Boolean) as string[];
     return {
       userId: state.user?.uid ?? 'guest',
       company: state.crmData?.companyName,
       orgId: ((state.user as any)?.orgId ?? state.crmData?.orgId) as string | undefined,
       businessGoals: state.crmData?.businessGoals,
       targetAudience: state.crmData?.targetAudience,
+      accountSnapshot,
       analytics: state.crmData?.analytics,
       subscriptionStatus: state.subscriptionStatus,
-      connectedChannels,
+      connectedChannels: baseConnectedChannels,
       currentScreen,
       locale
     };
@@ -84,10 +123,9 @@ export const FloatingAssistant: React.FC = () => {
     state.crmData?.orgId,
     state.crmData?.businessGoals,
     state.crmData?.targetAudience,
+    accountSnapshot,
     state.crmData?.analytics,
-    state.crmData?.instagram,
-    state.crmData?.facebook,
-    state.crmData?.linkedin,
+    baseConnectedChannels,
     state.subscriptionStatus,
     currentScreen,
     locale
@@ -126,28 +164,80 @@ export const FloatingAssistant: React.FC = () => {
     let cancelled = false;
     if (!state.user?.uid) {
       setLiveSocial(null);
+      setAccountSnapshot('');
       return () => {
         cancelled = true;
       };
     }
 
-    void fetchLiveSocialStats(state.user.uid, analyticsScopeId, 24)
-      .then(stats => {
+    void Promise.all([
+      fetchLiveSocialStats(state.user.uid, analyticsScopeId, 24),
+      fetchAnalytics(state.user.uid),
+      fetchOutboundStats(state.user.uid, analyticsScopeId),
+      fetchInboundStats(state.user.uid, analyticsScopeId),
+      fetchEngagementStats(state.user.uid, analyticsScopeId),
+      fetchFollowupStats(state.user.uid, analyticsScopeId),
+      fetchWebLeadStats(state.user.uid, analyticsScopeId),
+    ])
+      .then(([stats, analytics, outbound, inbound, engagement, followups, webLeads]) => {
         if (!cancelled) {
           setLiveSocial(stats);
+          setAccountSnapshot(
+            buildAccountSnapshot({
+              companyName: state.crmData?.companyName,
+              subscriptionStatus: state.subscriptionStatus,
+              currentScreen,
+              fallbackChannels: baseConnectedChannels,
+              businessGoals: state.crmData?.businessGoals,
+              targetAudience: state.crmData?.targetAudience,
+              liveSocial: stats,
+              analytics,
+              outbound,
+              inbound,
+              engagement,
+              followups,
+              webLeads,
+            })
+          );
         }
       })
       .catch(error => {
         console.warn('Failed to load live assistant summary', error);
         if (!cancelled) {
           setLiveSocial(null);
+          setAccountSnapshot(
+            buildAccountSnapshot({
+              companyName: state.crmData?.companyName,
+              subscriptionStatus: state.subscriptionStatus,
+              currentScreen,
+              fallbackChannels: baseConnectedChannels,
+              businessGoals: state.crmData?.businessGoals,
+              targetAudience: state.crmData?.targetAudience,
+              liveSocial: null,
+              analytics: null,
+              outbound: null,
+              inbound: null,
+              engagement: null,
+              followups: null,
+              webLeads: null,
+            })
+          );
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [state.user?.uid, analyticsScopeId]);
+  }, [
+    state.user?.uid,
+    analyticsScopeId,
+    state.crmData?.companyName,
+    state.crmData?.businessGoals,
+    state.crmData?.targetAudience,
+    state.subscriptionStatus,
+    currentScreen,
+    baseConnectedChannels,
+  ]);
 
   useEffect(() => {
     setMessages(prev => {
@@ -262,6 +352,107 @@ const buildPerformanceSummary = (
       conversions: Math.round(liveSocial.summary.conversions ?? 0)
     }
   );
+};
+
+const whole = (value: number | undefined | null) => Math.round(Number(value ?? 0));
+
+const rate = (value: number | undefined | null) => `${Math.round(Number(value ?? 0) * 100)}%`;
+
+const buildAccountSnapshot = ({
+  companyName,
+  subscriptionStatus,
+  currentScreen,
+  fallbackChannels,
+  businessGoals,
+  targetAudience,
+  liveSocial,
+  analytics,
+  outbound,
+  inbound,
+  engagement,
+  followups,
+  webLeads,
+}: AssistantSnapshotInput) => {
+  const liveChannels = liveSocial
+    ? Object.entries(liveSocial.platforms)
+        .filter(([name, stats]) => name !== 'web' && stats.connected)
+        .map(([name]) => name)
+    : [];
+  const connectedChannels = Array.from(new Set([...fallbackChannels, ...liveChannels]));
+
+  const channelBreakdown = liveSocial
+    ? Object.entries(liveSocial.platforms)
+        .filter(([name, stats]) => name !== 'web' && stats.connected)
+        .map(
+          ([name, stats]) =>
+            `${name}: ${whole(stats.views)} views, ${whole(stats.interactions)} interactions, ${whole(
+              stats.conversions,
+            )} conversions`,
+        )
+        .join('; ')
+    : 'No live channel metrics available.';
+
+  const jobs = analytics?.jobBreakdown
+    ? `Jobs: ${whole(analytics.jobBreakdown.active)} active, ${whole(analytics.jobBreakdown.queued)} queued, ${whole(
+        analytics.jobBreakdown.failed,
+      )} failed.`
+    : 'Jobs: unavailable.';
+
+  const history = analytics?.history?.length
+    ? analytics.history
+        .slice(-3)
+        .map(
+          row => `${row.date}: ${whole(row.engagement)} engagement, ${whole(row.conversions)} conversions`,
+        )
+        .join(' | ')
+    : 'Recent history unavailable.';
+
+  return [
+    companyName ? `Business: ${companyName}.` : '',
+    subscriptionStatus ? `Plan: ${subscriptionStatus}.` : '',
+    currentScreen ? `Current screen: ${currentScreen}.` : '',
+    connectedChannels.length ? `Connected channels: ${connectedChannels.join(', ')}.` : 'Connected channels: none.',
+    businessGoals ? `Business goals: ${businessGoals}.` : '',
+    targetAudience ? `Target audience: ${targetAudience}.` : '',
+    liveSocial
+      ? `Today live: ${whole(liveSocial.summary.views)} views, ${whole(liveSocial.summary.interactions)} interactions, ${whole(
+          liveSocial.summary.conversions,
+        )} conversions, engagement rate ${rate(liveSocial.summary.engagementRate)}.`
+      : 'Today live: unavailable.',
+    liveSocial
+      ? `Web: ${whole(liveSocial.web.visitors)} visitors, ${whole(liveSocial.web.interactions)} interactions, ${whole(
+          liveSocial.web.redirectClicks,
+        )} bet/info clicks.`
+      : '',
+    `Channel breakdown: ${channelBreakdown}`,
+    outbound
+      ? `Outbound: ${whole(outbound.prospectsContacted)} contacted, ${whole(outbound.responders)} responders, ${whole(
+          outbound.replies,
+        )} replies, ${whole(outbound.conversions)} conversions.`
+      : 'Outbound: unavailable.',
+    inbound
+      ? `Inbound: ${whole(inbound.messages)} messages, ${whole(inbound.leads)} leads, sentiment ${whole(
+          inbound.avgSentiment,
+        )}.`
+      : 'Inbound: unavailable.',
+    engagement
+      ? `Engagement: ${whole(engagement.comments)} comments, ${whole(engagement.replies)} replies, ${whole(
+          engagement.conversions,
+        )} conversions.`
+      : 'Engagement: unavailable.',
+    followups
+      ? `Follow-ups: ${whole(followups.sent)} sent, ${whole(followups.replies)} replies, ${whole(
+          followups.conversions,
+        )} conversions.`
+      : 'Follow-ups: unavailable.',
+    webLeads
+      ? `Web leads: ${whole(webLeads.leads)} leads from ${whole(webLeads.messages)} messages.`
+      : 'Web leads: unavailable.',
+    jobs,
+    `Recent performance: ${history}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
 };
 
 const styles = StyleSheet.create({
