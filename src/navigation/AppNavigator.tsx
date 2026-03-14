@@ -124,8 +124,10 @@ const DrawerNavigator = () => {
     <Drawer.Navigator
       initialRouteName="Dashboard"
       backBehavior="history"
+      detachInactiveScreens={false}
       drawerContent={props => <CustomDrawerContent {...props} screens={drawerScreens} />}
       screenOptions={({ navigation }) => ({
+        freezeOnBlur: true,
         headerStyle: { backgroundColor: colors.background },
         headerTintColor: colors.text,
         sceneContainerStyle: { backgroundColor: colors.background },

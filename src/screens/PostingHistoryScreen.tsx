@@ -5,6 +5,7 @@ import { VictoryAxis, VictoryChart, VictoryLine, VictoryScatter, VictoryTheme } 
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { fetchSocialHistory, type SocialHistory, type SocialPost } from '@services/social';
+import { readCachedValue, writeCachedValue } from '@services/localCache';
 import { useI18n } from '@context/I18nContext';
 
 const getTimestampSeconds = (timestamp?: { seconds?: number; _seconds?: number }) => {
@@ -68,16 +69,23 @@ export const PostingHistoryScreen: React.FC = () => {
     daily: [],
   });
   const [refreshing, setRefreshing] = useState(false);
+  const [historyCacheReady, setHistoryCacheReady] = useState(false);
+  const [hasCachedHistory, setHasCachedHistory] = useState(false);
+  const cacheKey = useMemo(
+    () => `dott.postingHistory.v1:${state.user?.uid ?? 'guest'}`,
+    [state.user?.uid],
+  );
 
   const load = useCallback(
-    async (options?: { silent?: boolean }) => {
+    async (options?: { silent?: boolean; force?: boolean }) => {
       if (!state.user) return;
-      if (!options?.silent) {
+      if (!options?.silent && (!hasCachedHistory || options?.force)) {
         setRefreshing(true);
       }
       try {
-        const payload = await fetchSocialHistory({ noCache: true });
+        const payload = await fetchSocialHistory({ noCache: options?.force });
         setHistory(payload);
+        setHasCachedHistory(true);
       } catch (error) {
         console.warn('Failed to load history', error);
       } finally {
@@ -86,21 +94,56 @@ export const PostingHistoryScreen: React.FC = () => {
         }
       }
     },
-    [state.user]
+    [hasCachedHistory, state.user]
   );
+
+  useEffect(() => {
+    let active = true;
+    if (!state.user?.uid) {
+      setHistoryCacheReady(true);
+      setHasCachedHistory(false);
+      return () => {
+        active = false;
+      };
+    }
+    setHistoryCacheReady(false);
+    void readCachedValue<SocialHistory>(cacheKey, 1000 * 60 * 20)
+      .then(cached => {
+        if (!active) return;
+        if (cached) {
+          setHistory(cached);
+          setHasCachedHistory(true);
+        } else {
+          setHasCachedHistory(false);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setHistoryCacheReady(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [cacheKey, state.user?.uid]);
+
+  useEffect(() => {
+    if (!state.user?.uid || !historyCacheReady) return;
+    void writeCachedValue(cacheKey, history);
+  }, [cacheKey, history, historyCacheReady, state.user?.uid]);
 
   useEffect(() => {
     if (!state.user) return;
     const interval = setInterval(() => {
-      load({ silent: true }).catch(() => undefined);
+      load({ silent: true, force: true }).catch(() => undefined);
     }, 30000);
     return () => clearInterval(interval);
   }, [load, state.user]);
 
   useFocusEffect(
     useCallback(() => {
-      void load();
-    }, [load])
+      void load({ silent: hasCachedHistory, force: !hasCachedHistory });
+    }, [hasCachedHistory, load])
   );
 
   const today = new Date();
@@ -210,7 +253,7 @@ export const PostingHistoryScreen: React.FC = () => {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load()} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load({ force: true })} />}
     >
       <View style={styles.card}>
         <View style={styles.cardHeader}>
