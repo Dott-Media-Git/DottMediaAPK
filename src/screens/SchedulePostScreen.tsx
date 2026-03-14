@@ -63,6 +63,75 @@ const formatCountLabel = (count: number, singular: string, plural: string) =>
 const IMAGE_URL_PATTERN = /\.(png|jpe?g|gif|webp|avif|svg)(\?|#|$)/i;
 const VIDEO_URL_PATTERN = /\.(mp4|mov|webm|mkv|m4v)(\?|#|$)/i;
 const URL_PATTERN = /(https?:\/\/[^\s]+)/gi;
+const BWIN_SPORTS_MARKERS = [
+  'bwinbet',
+  'sports',
+  'sport',
+  'football',
+  'soccer',
+  'match',
+  'fixture',
+  'fixtures',
+  'odds',
+  'bet',
+  'betting',
+  'goal',
+  'goals',
+  'result',
+  'results',
+  'table',
+  'standings',
+  'top scorer',
+  'top scorers',
+  'prediction',
+  'predictions',
+  'highlight',
+  'highlights',
+  'premier league',
+  'champions league',
+  'la liga',
+  'serie a',
+  'bundesliga',
+  'ligue 1',
+  'transfer',
+];
+const BWIN_BLOCKED_MARKERS = [
+  'dott media',
+  'ai sales bot',
+  'sales bot',
+  'crm',
+  'lead gen',
+  'lead generation',
+  'outreach automation',
+  'social media marketing',
+  'appointment booking',
+  'book a demo',
+  'growth partner',
+  'build your pipeline',
+  'pipeline',
+  'digital playground',
+  'executive suite',
+  'humanoid robot',
+];
+const BWIN_BLOCKED_MEDIA_MARKERS = [
+  'youthful robot',
+  'digital playground poster',
+  'executive suite',
+  'whatsapp video 2026-01-02',
+];
+const BWIN_ALLOWED_MEDIA_MARKERS = [
+  'bwin',
+  'football',
+  'soccer',
+  'sports',
+  'highlight',
+  'table-image',
+  'top-scorer',
+  'prediction',
+  'standings',
+  'news',
+  'result',
+];
 
 export const SchedulePostScreen: React.FC = () => {
   const { state } = useAuth();
@@ -91,6 +160,11 @@ export const SchedulePostScreen: React.FC = () => {
   const webFileInputRef = useRef<any>(null);
   const webDateInputRef = useRef<any>(null);
   const webTimeInputRef = useRef<any>(null);
+  const isBwinAccount = useMemo(() => {
+    const company = `${state.crmData?.companyName ?? ''}`.trim().toLowerCase();
+    const email = `${state.user?.email ?? ''}`.trim().toLowerCase();
+    return company.includes('bwinbet') || email.includes('bwinbet');
+  }, [state.crmData?.companyName, state.user?.email]);
 
   useEffect(() => {
     return () => {
@@ -336,6 +410,34 @@ export const SchedulePostScreen: React.FC = () => {
       showNotice(t('Add a caption first.'));
       return false;
     }
+    if (isBwinAccount) {
+      const combinedText = [normalizedCaption, normalizedHashtags, videoTitle.trim()]
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean)
+        .join('\n');
+      const combinedMedia = [videoUrl, youtubeVideoUrl, tiktokVideoUrl, reelsVideoUrl, ...images]
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean)
+        .join('\n');
+      const combined = `${combinedText}\n${combinedMedia}`;
+      const hasBlockedText = BWIN_BLOCKED_MARKERS.some(marker => combined.includes(marker));
+      const hasBlockedMedia = BWIN_BLOCKED_MEDIA_MARKERS.some(marker => combinedMedia.includes(marker));
+      const hasSportsText = BWIN_SPORTS_MARKERS.some(marker => combinedText.includes(marker));
+      const hasSportsMedia = BWIN_ALLOWED_MEDIA_MARKERS.some(marker => combinedMedia.includes(marker));
+
+      if (hasBlockedText) {
+        showNotice(t('Bwinbet posts must stay sports-only. Dott Media promo content is blocked for this account.'));
+        return false;
+      }
+      if (hasBlockedMedia) {
+        showNotice(t('Bwinbet posts must use sports media only. This media looks unrelated to sports.'));
+        return false;
+      }
+      if (!hasSportsText && !hasSportsMedia) {
+        showNotice(t('Bwinbet content must stay sports and betting focused.'));
+        return false;
+      }
+    }
     return true;
   };
 
@@ -374,9 +476,10 @@ export const SchedulePostScreen: React.FC = () => {
 
   const submit = async () => {
     if (!state.user) return;
+    if (!validateSchedule()) return;
     setLoading(true);
     try {
-      await schedulePost({
+      const result = await schedulePost({
         userId: state.user.uid,
         platforms: selectedPlatforms,
         images,
@@ -390,9 +493,35 @@ export const SchedulePostScreen: React.FC = () => {
         scheduledFor: date.toISOString(),
         timesPerDay,
       });
+      const scheduledCount = Array.isArray(result?.scheduled)
+        ? result.scheduled.length
+        : typeof result?.scheduled === 'number'
+          ? result.scheduled
+          : 0;
+      if (scheduledCount <= 0) {
+        setPreviewVisible(false);
+        if (result?.reason === 'limit_reached') {
+          showNotice(t('Nothing was scheduled. You have already reached today\'s schedule limit for this account.'));
+          return;
+        }
+        showNotice(t('Nothing was scheduled. Please review your post details and try again.'));
+        return;
+      }
       setPreviewVisible(false);
       resetForm();
-      showNotice(t('Schedule successful. Your post has been added to the queue.'));
+      if (result?.trimmed) {
+        showNotice(
+          t('Schedule successful. {{count}} post(s) were added to the queue. Some were trimmed by today\'s limit.', {
+            count: scheduledCount,
+          }),
+        );
+        return;
+      }
+      showNotice(
+        t('Schedule successful. {{count}} post(s) were added to the queue.', {
+          count: scheduledCount,
+        }),
+      );
     } catch (error: any) {
       Alert.alert(t('Failed'), error.message);
     } finally {
