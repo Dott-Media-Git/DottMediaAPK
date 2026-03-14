@@ -1,9 +1,28 @@
 import OpenAI from 'openai';
 import { config } from '../config';
-import { AnalyticsService } from './analyticsService';
+import { firestore } from '../db/firestore';
+import {
+  AnalyticsService,
+  getActivityHeatmap,
+  getEngagementStats,
+  getFollowupStats,
+  getInboundStats,
+  getOutboundStats,
+  getWebLeadStats,
+  getWebTrafficStats,
+  type ActivityHeatmapDaily,
+  type AnalyticsSummary,
+  type EngagementStats,
+  type FollowupStats,
+  type InboundStats,
+  type OutboundStats,
+  type WebLeadStats,
+  type WebTrafficStats,
+} from './analyticsService';
 import { SocialAnalyticsService } from '../packages/services/socialAnalyticsService';
 import { AssistantStrategyService } from './assistantStrategyService';
 import { KnowledgeBaseService } from './knowledgeBaseService';
+import { getLiveSocialMetrics, type LiveSocialMetrics } from './liveSocialMetricsService';
 
 const openai = new OpenAI({ apiKey: config.openAI.apiKey });
 const analyticsService = new AnalyticsService();
@@ -99,6 +118,9 @@ type AssistantContext = {
   userId?: string;
   userEmail?: string;
   company?: string;
+  orgId?: string;
+  businessGoals?: string;
+  targetAudience?: string;
   currentScreen?: string;
   subscriptionStatus?: string;
   connectedChannels?: string[];
@@ -110,6 +132,117 @@ type AssistantContext = {
     feedbackScore?: number;
   };
 };
+
+type AssistantAccountSnapshot = {
+  company?: string;
+  orgId?: string;
+  email?: string;
+  phone?: string;
+  businessGoals?: string;
+  targetAudience?: string;
+  subscriptionStatus?: string;
+  connectedChannels: string[];
+  analyticsSummary: AnalyticsSummary;
+  liveSocial: LiveSocialMetrics;
+  outbound: OutboundStats;
+  inbound: InboundStats;
+  engagement: EngagementStats;
+  followups: FollowupStats;
+  webLeads: WebLeadStats;
+  webTraffic: WebTrafficStats;
+  activityHeatmap: ActivityHeatmapDaily[];
+  socialDaily: Array<Record<string, unknown>>;
+};
+
+const emptyLiveSocialMetrics = (): LiveSocialMetrics => ({
+  generatedAt: new Date(0).toISOString(),
+  lookbackHours: 72,
+  summary: {
+    views: 0,
+    interactions: 0,
+    engagementRate: 0,
+    conversions: 0,
+  },
+  web: {
+    visitors: 0,
+    interactions: 0,
+    redirectClicks: 0,
+    engagementRate: 0,
+  },
+  platforms: {
+    facebook: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
+    instagram: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
+    threads: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
+    x: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
+    web: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
+  },
+});
+
+const emptyAnalyticsSummary = (): AnalyticsSummary => ({
+  leads: 0,
+  engagement: 0,
+  conversions: 0,
+  feedbackScore: 0,
+  jobBreakdown: {
+    active: 0,
+    queued: 0,
+    failed: 0,
+  },
+  recentJobs: [],
+  history: [],
+});
+
+const emptyOutboundStats = (): OutboundStats => ({
+  prospectsContacted: 0,
+  responders: 0,
+  replies: 0,
+  positiveReplies: 0,
+  conversions: 0,
+  demoBookings: 0,
+  conversionRate: 0,
+});
+
+const emptyInboundStats = (): InboundStats => ({
+  messages: 0,
+  leads: 0,
+  avgSentiment: 0,
+  conversionRate: 0,
+});
+
+const emptyEngagementStats = (): EngagementStats => ({
+  comments: 0,
+  replies: 0,
+  conversions: 0,
+  conversionRate: 0,
+});
+
+const emptyFollowupStats = (): FollowupStats => ({
+  sent: 0,
+  replies: 0,
+  conversions: 0,
+  replyRate: 0,
+  conversionRate: 0,
+});
+
+const emptyWebLeadStats = (): WebLeadStats => ({
+  leads: 0,
+  messages: 0,
+  conversionRate: 0,
+});
+
+const emptyWebTrafficStats = (): WebTrafficStats => ({
+  visitors: 0,
+  interactions: 0,
+  redirectClicks: 0,
+  engagementRate: 0,
+  sourceVisitors: {},
+  sourceInteractions: {},
+  sourceRedirectClicks: {},
+  placementVisitors: {},
+  placementInteractions: {},
+  placementRedirectClicks: {},
+  sourcePlacementRedirectClicks: {},
+});
 
 export class AssistantService {
   private shouldProvideWeeklySummary(question: string) {
@@ -169,15 +302,22 @@ export class AssistantService {
 
   private shouldDraftStrategy(question: string) {
     const normalized = question.toLowerCase();
-    return /\b(strategy|marketing plan|growth plan|campaign plan|strategy plan|go to market|g2m)\b/.test(normalized);
+    return (
+      /\b(strategy|growth strategy|marketing plan|growth plan|campaign plan|strategy plan|action plan|go to market|g2m)\b/.test(
+        normalized,
+      ) ||
+      (/\b(solution|solutions|recommendation|recommendations)\b/.test(normalized) &&
+        /\b(grow|growth|improve|performance|account|business|marketing)\b/.test(normalized))
+    );
   }
 
   private shouldApplyStrategy(question: string) {
     const normalized = question.toLowerCase();
-    const approve = /\b(approve|accept|apply|implement|go ahead|activate|start)\b/.test(normalized);
-    const mentionsStrategy = /\b(strategy|plan)\b/.test(normalized);
+    const approve = /\b(approve|approved|accept|apply|implement|go ahead|activate|start|do it)\b/.test(normalized);
+    const mentionsStrategy = /\b(strategy|plan|draft)\b/.test(normalized);
     const hasId = /strat-[a-z0-9]{6}/i.test(normalized);
-    return approve && (mentionsStrategy || hasId);
+    const referencesLatestDraft = /\b(this|that|it)\b/.test(normalized);
+    return approve && (mentionsStrategy || hasId || referencesLatestDraft);
   }
 
   private extractStrategyId(question: string) {
@@ -244,6 +384,294 @@ export class AssistantService {
       return `${label} ${words.down} ${Number(absDiff.toFixed(1))}${unit} (${words.now} ${formattedCurrent})`;
     }
     return `${label} ${words.flat} ${formattedCurrent}`;
+  }
+
+  private formatWholeNumber(value: number) {
+    return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.max(0, Number(value ?? 0)));
+  }
+
+  private isBettingBrand(snapshot: Pick<AssistantAccountSnapshot, 'company' | 'businessGoals'>) {
+    const haystack = `${snapshot.company ?? ''} ${snapshot.businessGoals ?? ''}`.toLowerCase();
+    return haystack.includes('bwin') || haystack.includes('bet');
+  }
+
+  private getConversionLabel(snapshot: Pick<AssistantAccountSnapshot, 'company' | 'businessGoals'>) {
+    return this.isBettingBrand(snapshot) ? 'bet button clicks' : 'conversions';
+  }
+
+  private async safeResolve<T>(label: string, action: () => Promise<T>, fallback: T) {
+    try {
+      return await action();
+    } catch (error) {
+      console.warn(`[assistant] failed to load ${label}`, (error as Error).message);
+      return fallback;
+    }
+  }
+
+  private resolveConnectedChannels(userData: Record<string, any> | undefined, fallback: string[] = []) {
+    const accounts = (userData?.socialAccounts ?? {}) as Record<string, any>;
+    const detected = [
+      accounts.facebook?.accessToken && accounts.facebook?.pageId ? 'facebook' : null,
+      accounts.instagram?.accessToken && accounts.instagram?.accountId ? 'instagram' : null,
+      accounts.threads?.accessToken && accounts.threads?.accountId ? 'threads' : null,
+      accounts.linkedin?.accessToken && accounts.linkedin?.urn ? 'linkedin' : null,
+      accounts.twitter?.accessToken && accounts.twitter?.accessSecret ? 'x' : null,
+      accounts.tiktok?.accessToken && (accounts.tiktok?.openId || accounts.tiktok?.accountId) ? 'tiktok' : null,
+      accounts.youtube?.accessToken && (accounts.youtube?.refreshToken || accounts.youtube?.channelId) ? 'youtube' : null,
+      accounts.whatsapp?.accessToken && accounts.whatsapp?.phoneNumberId ? 'whatsapp' : null,
+    ].filter(Boolean) as string[];
+
+    if (detected.length) {
+      return Array.from(new Set(detected));
+    }
+    return Array.from(new Set(fallback.filter(Boolean)));
+  }
+
+  private buildPlatformHighlights(snapshot: AssistantAccountSnapshot) {
+    const platforms = Object.entries(snapshot.liveSocial.platforms)
+      .filter(([name, stats]) => name !== 'web' && stats.connected)
+      .map(([name, stats]) => ({
+        name,
+        views: Number(stats.views ?? 0),
+        interactions: Number(stats.interactions ?? 0),
+        conversions: Number(stats.conversions ?? 0),
+      }))
+      .sort((a, b) => b.views - a.views)
+      .slice(0, 3);
+
+    if (!platforms.length) {
+      return 'No connected social channels are currently returning live metrics.';
+    }
+
+    return platforms
+      .map(
+        platform =>
+          `${platform.name}: ${this.formatWholeNumber(platform.views)} views, ${this.formatWholeNumber(
+            platform.interactions,
+          )} interactions, ${this.formatWholeNumber(platform.conversions)} ${this.getConversionLabel(snapshot)}`,
+      )
+      .join('; ');
+  }
+
+  private buildPostingActivitySummary(rows: Array<Record<string, unknown>>) {
+    if (!rows.length) {
+      return 'Posting activity in the last 7 days is not available yet.';
+    }
+    const totals = rows.reduce(
+      (acc, row) => {
+        acc.posted += Number(row.postsPosted ?? 0);
+        acc.failed += Number(row.postsFailed ?? 0);
+        acc.skipped += Number(row.postsSkipped ?? 0);
+        const perPlatform = (row.perPlatform ?? {}) as Record<string, number>;
+        Object.entries(perPlatform).forEach(([platform, count]) => {
+          acc.platformCounts[platform] = (acc.platformCounts[platform] ?? 0) + Number(count ?? 0);
+        });
+        return acc;
+      },
+      {
+        posted: 0,
+        failed: 0,
+        skipped: 0,
+        platformCounts: {} as Record<string, number>,
+      },
+    );
+
+    const topPlatforms = Object.entries(totals.platformCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([platform, count]) => `${platform} ${this.formatWholeNumber(count)}`)
+      .join(', ');
+
+    return `Posting in the last 7 days: ${this.formatWholeNumber(totals.posted)} posted, ${this.formatWholeNumber(
+      totals.failed,
+    )} failed, ${this.formatWholeNumber(totals.skipped)} skipped.${topPlatforms ? ` Top channels: ${topPlatforms}.` : ''}`;
+  }
+
+  private buildDailyReviewSummary(snapshot: AssistantAccountSnapshot) {
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const todayRow = snapshot.activityHeatmap.find(row => row.date === todayKey);
+    if (!todayRow) {
+      return 'Today has no recorded activity yet.';
+    }
+    return `Today so far: ${this.formatWholeNumber(todayRow.views)} views, ${this.formatWholeNumber(
+      todayRow.interactions,
+    )} interactions, ${this.formatWholeNumber(todayRow.outbound)} outbound actions, ${this.formatWholeNumber(
+      todayRow.conversions,
+    )} ${this.getConversionLabel(snapshot)}.`;
+  }
+
+  private buildWeeklyPerformanceSummary(snapshot: AssistantAccountSnapshot) {
+    const weekRows = snapshot.activityHeatmap.slice(-7);
+    if (!weekRows.length) {
+      return 'Weekly performance is still warming up; I do not have enough recent live activity yet.';
+    }
+    const totals = weekRows.reduce(
+      (acc, row) => {
+        acc.views += Number(row.views ?? 0);
+        acc.interactions += Number(row.interactions ?? 0);
+        acc.outbound += Number(row.outbound ?? 0);
+        acc.conversions += Number(row.conversions ?? 0);
+        return acc;
+      },
+      { views: 0, interactions: 0, outbound: 0, conversions: 0 },
+    );
+    return `This week so far: ${this.formatWholeNumber(totals.views)} views, ${this.formatWholeNumber(
+      totals.interactions,
+    )} interactions, ${this.formatWholeNumber(totals.outbound)} outbound actions, ${this.formatWholeNumber(
+      totals.conversions,
+    )} ${this.getConversionLabel(snapshot)}.`;
+  }
+
+  private buildMetricInsight(snapshot: AssistantAccountSnapshot, metric?: string) {
+    const conversionLabel = this.getConversionLabel(snapshot);
+    switch (metric) {
+      case 'views':
+        return `Live views across connected channels are ${this.formatWholeNumber(
+          snapshot.liveSocial.summary.views,
+        )} over the last ${snapshot.liveSocial.lookbackHours} hours. ${this.buildPlatformHighlights(snapshot)}`;
+      case 'interactions':
+        return `Live interactions are ${this.formatWholeNumber(
+          snapshot.liveSocial.summary.interactions,
+        )} with an engagement rate of ${snapshot.liveSocial.summary.engagementRate.toFixed(2)}%. ${this.buildPlatformHighlights(
+          snapshot,
+        )}`;
+      case 'outbound':
+        return `Outbound activity has sent ${this.formatWholeNumber(
+          snapshot.outbound.prospectsContacted,
+        )} messages, produced ${this.formatWholeNumber(snapshot.outbound.replies)} replies, and ${this.formatWholeNumber(
+          snapshot.outbound.conversions,
+        )} conversions.`;
+      case 'conversions':
+        return `Current ${conversionLabel} are ${this.formatWholeNumber(
+          snapshot.liveSocial.summary.conversions || snapshot.webTraffic.redirectClicks || snapshot.outbound.conversions,
+        )}. Web redirect clicks are ${this.formatWholeNumber(snapshot.webTraffic.redirectClicks)} and outbound conversions are ${this.formatWholeNumber(snapshot.outbound.conversions)}.`;
+      default:
+        return [
+          this.buildDailyReviewSummary(snapshot),
+          this.buildWeeklyPerformanceSummary(snapshot),
+          `Live social summary: ${this.formatWholeNumber(snapshot.liveSocial.summary.views)} views, ${this.formatWholeNumber(
+            snapshot.liveSocial.summary.interactions,
+          )} interactions, ${this.formatWholeNumber(snapshot.liveSocial.summary.conversions)} ${conversionLabel}.`,
+          `Outbound: ${this.formatWholeNumber(snapshot.outbound.prospectsContacted)} contacted, ${this.formatWholeNumber(
+            snapshot.outbound.replies,
+          )} replies, ${this.formatWholeNumber(snapshot.outbound.conversions)} conversions.`,
+        ].join(' ');
+    }
+  }
+
+  private async loadAccountSnapshot(context: AssistantContext): Promise<AssistantAccountSnapshot | null> {
+    if (!context.userId) {
+      return null;
+    }
+
+    const [profileSnap, userSnap] = await Promise.all([
+      this.safeResolve('profile', () => firestore.collection('profiles').doc(context.userId!).get(), null),
+      this.safeResolve('user', () => firestore.collection('users').doc(context.userId!).get(), null),
+    ]);
+
+    const profileData = (profileSnap?.data() as Record<string, any> | undefined) ?? {};
+    const crmData = (profileData.crmData as Record<string, any> | undefined) ?? {};
+    const userData = (userSnap?.data() as Record<string, any> | undefined) ?? {};
+    const scopeId =
+      context.orgId?.trim() || `${crmData.orgId ?? ''}`.trim() || `${userData.orgId ?? ''}`.trim() || undefined;
+    const analyticsScope = {
+      userId: context.userId,
+      scopeId,
+    };
+
+    const [
+      analyticsSummary,
+      liveSocial,
+      outbound,
+      inbound,
+      engagement,
+      followups,
+      webLeads,
+      webTraffic,
+      activityHeatmap,
+      socialDaily,
+    ] = await Promise.all([
+      this.safeResolve('analytics summary', () => analyticsService.getSummary(context.userId!), emptyAnalyticsSummary()),
+      this.safeResolve('live social metrics', () => getLiveSocialMetrics(context.userId!, { scope: analyticsScope }), emptyLiveSocialMetrics()),
+      this.safeResolve('outbound stats', () => getOutboundStats(analyticsScope), emptyOutboundStats()),
+      this.safeResolve('inbound stats', () => getInboundStats(analyticsScope), emptyInboundStats()),
+      this.safeResolve('engagement stats', () => getEngagementStats(analyticsScope), emptyEngagementStats()),
+      this.safeResolve('follow-up stats', () => getFollowupStats(analyticsScope), emptyFollowupStats()),
+      this.safeResolve('web lead stats', () => getWebLeadStats(analyticsScope), emptyWebLeadStats()),
+      this.safeResolve('web traffic stats', () => getWebTrafficStats(analyticsScope), emptyWebTrafficStats()),
+      this.safeResolve('activity heatmap', () => getActivityHeatmap(analyticsScope, 14), [] as ActivityHeatmapDaily[]),
+      this.safeResolve('social daily', () => socialAnalyticsService.getDailySummary(context.userId!, 7), [] as Array<Record<string, unknown>>),
+    ]);
+
+    return {
+      company: context.company ?? crmData.companyName ?? userData.name,
+      orgId: scopeId,
+      email: context.userEmail ?? crmData.email ?? userData.email,
+      phone: crmData.phone,
+      businessGoals: context.businessGoals ?? crmData.businessGoals,
+      targetAudience: context.targetAudience ?? crmData.targetAudience,
+      subscriptionStatus: context.subscriptionStatus ?? profileData.subscriptionStatus,
+      connectedChannels: this.resolveConnectedChannels(userData, context.connectedChannels),
+      analyticsSummary,
+      liveSocial,
+      outbound,
+      inbound,
+      engagement,
+      followups,
+      webLeads,
+      webTraffic,
+      activityHeatmap,
+      socialDaily,
+    };
+  }
+
+  private buildAccountContextBlock(snapshot: AssistantAccountSnapshot) {
+    const conversionLabel = this.getConversionLabel(snapshot);
+    const automationLine = snapshot.analyticsSummary.recentJobs.length
+      ? snapshot.analyticsSummary.recentJobs
+          .slice(0, 4)
+          .map(job => `${job.status}${job.updatedAt ? ` (${job.updatedAt})` : ''}`)
+          .join(', ')
+      : 'none';
+
+    return [
+      snapshot.company ? `Account company: ${snapshot.company}` : '',
+      snapshot.email ? `Primary email: ${snapshot.email}` : '',
+      snapshot.phone ? `Primary phone: ${snapshot.phone}` : '',
+      snapshot.businessGoals ? `Business goals: ${snapshot.businessGoals}` : '',
+      snapshot.targetAudience ? `Target audience: ${snapshot.targetAudience}` : '',
+      snapshot.subscriptionStatus ? `Subscription status: ${snapshot.subscriptionStatus}` : '',
+      `Connected channels: ${snapshot.connectedChannels.length ? snapshot.connectedChannels.join(', ') : 'none connected'}`,
+      this.buildDailyReviewSummary(snapshot),
+      this.buildWeeklyPerformanceSummary(snapshot),
+      `Live social performance (last ${snapshot.liveSocial.lookbackHours}h): ${this.formatWholeNumber(
+        snapshot.liveSocial.summary.views,
+      )} views, ${this.formatWholeNumber(snapshot.liveSocial.summary.interactions)} interactions, engagement rate ${snapshot.liveSocial.summary.engagementRate.toFixed(
+        2,
+      )}%, ${this.formatWholeNumber(snapshot.liveSocial.summary.conversions)} ${conversionLabel}.`,
+      `Top platform view: ${this.buildPlatformHighlights(snapshot)}`,
+      `Outbound engine: ${this.formatWholeNumber(snapshot.outbound.prospectsContacted)} contacted, ${this.formatWholeNumber(
+        snapshot.outbound.replies,
+      )} replies, ${this.formatWholeNumber(snapshot.outbound.positiveReplies)} positive replies, ${this.formatWholeNumber(
+        snapshot.outbound.conversions,
+      )} conversions, ${this.formatWholeNumber(snapshot.outbound.demoBookings)} demos booked.`,
+      `Inbound and engagement: ${this.formatWholeNumber(snapshot.inbound.messages)} inbound messages, ${this.formatWholeNumber(
+        snapshot.inbound.leads,
+      )} qualified leads, ${this.formatWholeNumber(snapshot.engagement.comments)} comments, ${this.formatWholeNumber(
+        snapshot.engagement.replies,
+      )} replies sent, ${this.formatWholeNumber(snapshot.engagement.conversions)} engagement conversions.`,
+      `Follow-ups and web: ${this.formatWholeNumber(snapshot.followups.sent)} follow-ups sent, ${this.formatWholeNumber(
+        snapshot.followups.replies,
+      )} replies, ${this.formatWholeNumber(snapshot.webTraffic.visitors)} website visitors, ${this.formatWholeNumber(
+        snapshot.webTraffic.redirectClicks,
+      )} web redirect clicks, ${this.formatWholeNumber(snapshot.webLeads.leads)} web leads.`,
+      this.buildPostingActivitySummary(snapshot.socialDaily),
+      `Automation/job status: active ${this.formatWholeNumber(snapshot.analyticsSummary.jobBreakdown.active)}, queued ${this.formatWholeNumber(
+        snapshot.analyticsSummary.jobBreakdown.queued,
+      )}, failed ${this.formatWholeNumber(snapshot.analyticsSummary.jobBreakdown.failed)}. Recent jobs: ${automationLine}.`,
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
 
   private async buildWeeklySummary(userId: string, locale: Locale) {
@@ -581,6 +1009,7 @@ export class AssistantService {
 
   async answer(question: string, context: AssistantContext) {
     const locale = this.resolveLocale(context.locale);
+    const accountSnapshot = await this.loadAccountSnapshot(context);
 
     if (context.userId && this.shouldSendMonthlyReport(question)) {
       try {
@@ -619,12 +1048,8 @@ export class AssistantService {
       }
     }
 
-    if (context.userId && this.shouldProvideWeeklySummary(question)) {
-      try {
-        return { type: 'text', text: await this.buildWeeklySummary(context.userId, locale) };
-      } catch (error) {
-        console.error('Weekly summary failed', error);
-      }
+    if (accountSnapshot && this.shouldProvideWeeklySummary(question)) {
+      return { type: 'text', text: this.buildMetricInsight(accountSnapshot) };
     }
 
     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -670,7 +1095,7 @@ export class AssistantService {
             properties: {
               metric: {
                 type: 'string',
-                enum: ['leads', 'engagement', 'conversions', 'feedback'],
+                enum: ['views', 'interactions', 'outbound', 'conversions', 'account_summary'],
                 description: 'The metric to analyze',
               },
             },
@@ -693,22 +1118,36 @@ export class AssistantService {
             .map((entry, index) => `${index + 1}. ${entry.title}: ${entry.summary}${entry.url ? ` (Source: ${entry.url})` : ''}`)
             .join('\n')}`
         : '';
+    const accountContextBlock = accountSnapshot ? this.buildAccountContextBlock(accountSnapshot) : '';
 
     const systemPrompt = [
-      'You are Dotti, an AI sales agent and assistant inside the Dott Media CRM mobile app.',
-      'Your goal is to help the user manage their marketing automation, analyze data, and navigate the app.',
-      'You have access to tools to control the app. Use them when the user asks to go somewhere or needs specific data.',
-      'You can draft marketing strategies based on performance, ask for approval, and then implement them.',
+      'You are Dott Assistant, an OpenAI-powered business assistant inside the Dott Media app.',
+      'Only answer questions about the authenticated user account, its connected channels, automation, performance, posting history, audience, business goals, growth strategy, and navigation inside Dott.',
+      'If the user asks for anything unrelated to their account or business, reply briefly that you can only help with their account and business inside Dott.',
+      'Base every answer on the account data provided below. Never invent metrics or connected channels.',
+      'When the user asks for a summary, give a clear performance summary grounded in the live account data.',
+      'When the user asks for growth help, diagnose what is happening, explain the bottleneck, suggest a practical strategy, and explain what can be implemented inside Dott.',
+      'If a strategy has already been drafted and the user approves it, implementation can be triggered. Acknowledge that clearly and keep the approval path simple.',
       'You can email a monthly performance report to the user when requested.',
-      'Keep answers conversational, professional, and concise (under 3 sentences unless detailed analysis is asked).',
+      'Use the app tools only when the user asks to navigate or asks for a metric-specific account insight.',
+      'Keep answers professional, direct, and useful. Use short paragraphs. Stay concise unless the user asks for a detailed breakdown.',
       `Respond in ${responseLanguage}.`,
-      context.company ? `User Company: ${context.company}` : '',
+      accountSnapshot?.company ? `User Company: ${accountSnapshot.company}` : context.company ? `User Company: ${context.company}` : '',
       context.currentScreen ? `User is currently viewing: ${context.currentScreen}` : '',
-      context.subscriptionStatus ? `Subscription status: ${context.subscriptionStatus}` : '',
-      context.connectedChannels?.length ? `Connected channels: ${context.connectedChannels.join(', ')}` : 'Connected channels: none listed',
+      accountSnapshot?.subscriptionStatus
+        ? `Subscription status: ${accountSnapshot.subscriptionStatus}`
+        : context.subscriptionStatus
+          ? `Subscription status: ${context.subscriptionStatus}`
+          : '',
+      accountSnapshot?.connectedChannels?.length
+        ? `Connected channels: ${accountSnapshot.connectedChannels.join(', ')}`
+        : context.connectedChannels?.length
+          ? `Connected channels: ${context.connectedChannels.join(', ')}`
+          : 'Connected channels: none listed',
       context.analytics
-        ? `Current Snapshot: Leads=${context.analytics.leads ?? 'n/a'}, Engagement=${context.analytics.engagement ?? 'n/a'}%, Conversions=${context.analytics.conversions ?? 'n/a'}, Feedback=${context.analytics.feedbackScore ?? 'n/a'}/5`
+        ? `Legacy CRM snapshot: Leads=${context.analytics.leads ?? 'n/a'}, Engagement=${context.analytics.engagement ?? 'n/a'}%, Conversions=${context.analytics.conversions ?? 'n/a'}`
         : '',
+      accountContextBlock ? `Live account data:\n${accountContextBlock}` : '',
       knowledgeBlock,
     ]
       .filter(Boolean)
@@ -740,8 +1179,9 @@ export class AssistantService {
             console.error('Failed to parse tool arguments', parseError);
           }
 
-          if (toolCall.function.name === 'get_insights' && context.userId) {
-            return { type: 'text', text: await this.buildWeeklySummary(context.userId, locale) };
+          if (toolCall.function.name === 'get_insights' && accountSnapshot) {
+            const metric = typeof (params as { metric?: unknown })?.metric === 'string' ? (params as { metric?: string }).metric : undefined;
+            return { type: 'text', text: this.buildMetricInsight(accountSnapshot, metric) };
           }
 
           return {

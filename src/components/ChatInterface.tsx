@@ -102,7 +102,7 @@ export const ChatInterface: React.FC = () => {
                                 color={colors.border}
                             />
                             <Text style={styles.emptyStateText}>
-                                {t("Hi! I'm Dotti. Ask me anything about your leads, performance, or navigation.")}
+                                {t("Hi! I'm your Dott assistant. Ask about your account performance, channels, business, or the next move to grow faster.")}
                             </Text>
                         </View>
                     )}

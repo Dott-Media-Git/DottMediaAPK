@@ -16,6 +16,7 @@ import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useAssistant } from '@context/AssistantContext';
 import { useI18n } from '@context/I18nContext';
+import { fetchLiveSocialStats, resolveAnalyticsScopeId, type LiveSocialStats } from '@services/analytics';
 import { askAssistant } from '@services/assistant';
 
 type Message = {
@@ -32,11 +33,16 @@ export const FloatingAssistant: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [liveSocial, setLiveSocial] = useState<LiveSocialStats | null>(null);
+  const analyticsScopeId = useMemo(
+    () => resolveAnalyticsScopeId(state.user?.uid, ((state.user as any)?.orgId ?? state.crmData?.orgId) as string | undefined),
+    [state.user?.uid, state.user, state.crmData?.orgId]
+  );
   const [messages, setMessages] = useState<Message[]>(() => [
     {
       id: 'welcome',
       role: 'assistant',
-      text: buildPerformanceSummary(state.crmData?.analytics, state.crmData?.companyName, t)
+      text: buildPerformanceSummary(state.crmData?.companyName, liveSocial, t)
     }
   ]);
 
@@ -44,11 +50,11 @@ export const FloatingAssistant: React.FC = () => {
 
   const quickPrompts = useMemo(
     () => [
-      t('What plan am I on?'),
-      t('Which channels are connected?'),
-      t('Is my billing active?'),
+      t('Summarize my account today'),
+      t('Which channels are connected right now?'),
       t('How is my performance this week?'),
-      t('What should I check next?')
+      t('Recommend a growth strategy'),
+      t('What should I optimize next?')
     ],
     [t]
   );
@@ -62,6 +68,9 @@ export const FloatingAssistant: React.FC = () => {
     return {
       userId: state.user?.uid ?? 'guest',
       company: state.crmData?.companyName,
+      orgId: ((state.user as any)?.orgId ?? state.crmData?.orgId) as string | undefined,
+      businessGoals: state.crmData?.businessGoals,
+      targetAudience: state.crmData?.targetAudience,
       analytics: state.crmData?.analytics,
       subscriptionStatus: state.subscriptionStatus,
       connectedChannels,
@@ -71,6 +80,10 @@ export const FloatingAssistant: React.FC = () => {
   }, [
     state.user?.uid,
     state.crmData?.companyName,
+    state.user,
+    state.crmData?.orgId,
+    state.crmData?.businessGoals,
+    state.crmData?.targetAudience,
     state.crmData?.analytics,
     state.crmData?.instagram,
     state.crmData?.facebook,
@@ -110,18 +123,45 @@ export const FloatingAssistant: React.FC = () => {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    if (!state.user?.uid) {
+      setLiveSocial(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void fetchLiveSocialStats(state.user.uid, analyticsScopeId, 24)
+      .then(stats => {
+        if (!cancelled) {
+          setLiveSocial(stats);
+        }
+      })
+      .catch(error => {
+        console.warn('Failed to load live assistant summary', error);
+        if (!cancelled) {
+          setLiveSocial(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [state.user?.uid, analyticsScopeId]);
+
+  useEffect(() => {
     setMessages(prev => {
       if (prev.length === 1 && prev[0].id === 'welcome') {
         return [
           {
             ...prev[0],
-            text: buildPerformanceSummary(state.crmData?.analytics, state.crmData?.companyName, t)
+            text: buildPerformanceSummary(state.crmData?.companyName, liveSocial, t)
           }
         ];
       }
       return prev;
     });
-  }, [state.crmData?.analytics, state.crmData?.companyName, t]);
+  }, [state.crmData?.companyName, liveSocial, t]);
 
   if (!canDisplay) {
     return null;
@@ -136,7 +176,7 @@ export const FloatingAssistant: React.FC = () => {
               <View style={styles.panelHeader}>
                 <View>
                   <Text style={styles.panelTitle}>{t('Dott Assistant')}</Text>
-                  <Text style={styles.panelSubtitle}>{t('Ask about performance or where to go next.')}</Text>
+                  <Text style={styles.panelSubtitle}>{t('Ask about your account, performance, or next move.')}</Text>
                 </View>
                 <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
                   <Ionicons name="close" size={20} color={colors.text} />
@@ -205,22 +245,21 @@ export const FloatingAssistant: React.FC = () => {
 };
 
 const buildPerformanceSummary = (
-  analytics: { leads: number; engagement: number; conversions: number; feedbackScore: number } | undefined,
   companyName: string | undefined,
+  liveSocial: LiveSocialStats | null,
   t: (key: string, params?: Record<string, string | number>) => string
 ) => {
-  if (!analytics) {
-    return t('Hi! I am your Dott assistant. Ask me about performance metrics or where to head next in the app.');
+  if (!liveSocial) {
+    return t('Hi! I am your Dott assistant. Ask me about your account, performance, or where to focus next.');
   }
-  const companyTag = companyName ? ` ${companyName} ${t('team')}` : '';
+  const companyTag = companyName ? ` ${companyName}` : '';
   return t(
-    'Hi{{company}}! Leads are at {{leads}}, engagement {{engagement}}%, conversions {{conversions}} and feedback {{feedback}}/5. Ask for deeper insight or guidance.',
+    'Hi{{company}} team! Views are at {{views}}, interactions {{interactions}}, conversions {{conversions}}. Ask for your account summary, growth strategy, or next move.',
     {
       company: companyTag,
-      leads: analytics.leads,
-      engagement: analytics.engagement,
-      conversions: analytics.conversions,
-      feedback: analytics.feedbackScore
+      views: Math.round(liveSocial.summary.views ?? 0),
+      interactions: Math.round(liveSocial.summary.interactions ?? 0),
+      conversions: Math.round(liveSocial.summary.conversions ?? 0)
     }
   );
 };

@@ -12,6 +12,9 @@ const BodySchema = z.object({
   context: z
     .object({
       company: z.string().optional(),
+      orgId: z.string().optional(),
+      businessGoals: z.string().optional(),
+      targetAudience: z.string().optional(),
       currentScreen: z.string().optional(),
       subscriptionStatus: z.string().optional(),
       connectedChannels: z.array(z.string()).optional(),

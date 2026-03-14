@@ -94,6 +94,9 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const context = {
         currentScreen,
         company: authState.crmData?.companyName,
+        orgId: ((authState.user as any)?.orgId ?? authState.crmData?.orgId) as string | undefined,
+        businessGoals: authState.crmData?.businessGoals,
+        targetAudience: authState.crmData?.targetAudience,
         analytics: authState.crmData?.analytics,
         subscriptionStatus: authState.subscriptionStatus,
         connectedChannels,

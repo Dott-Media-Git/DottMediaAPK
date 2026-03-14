@@ -6,6 +6,9 @@ import { translate, type Locale } from '@constants/i18n';
 type AssistantContextPayload = {
   userId: string;
   company?: string;
+  orgId?: string;
+  businessGoals?: string;
+  targetAudience?: string;
   analytics?: CRMAnalytics;
   currentScreen?: string;
   subscriptionStatus?: string;
@@ -15,19 +18,10 @@ type AssistantContextPayload = {
 
 const buildLocalResponse = (question: string, context: AssistantContextPayload) => {
   const locale = context.locale ?? 'en';
-  const metrics = context.analytics;
-  const performanceLine = metrics
-    ? translate(
-        locale,
-        'Here is the latest snapshot: leads {{leads}}, engagement {{engagement}}%, conversions {{conversions}} and customer feedback {{feedback}}/5.',
-        {
-          leads: metrics.leads,
-          engagement: metrics.engagement,
-          conversions: metrics.conversions,
-          feedback: metrics.feedbackScore
-        }
-      )
-    : translate(locale, 'I will keep an eye on your metrics once data is available.');
+  const performanceLine = translate(
+    locale,
+    'I can summarize your account performance, connected channels, and growth opportunities as soon as live data is available.'
+  );
 
   const channels = context.connectedChannels?.length
     ? context.connectedChannels.join(', ')
@@ -35,17 +29,30 @@ const buildLocalResponse = (question: string, context: AssistantContextPayload) 
   const plan = context.subscriptionStatus ? context.subscriptionStatus.toUpperCase() : translate(locale, 'unknown');
   const summary = translate(locale, 'Plan: {{plan}}. Connected channels: {{channels}}.', { plan, channels });
 
-  let guidance = translate(locale, 'Tap Dashboard for trends or Controls to tweak automation settings.');
+  const businessContext = [
+    context.company ? translate(locale, 'Business: {{value}}.', { value: context.company }) : '',
+    context.businessGoals ? translate(locale, 'Goals: {{value}}.', { value: context.businessGoals }) : '',
+    context.targetAudience ? translate(locale, 'Audience: {{value}}.', { value: context.targetAudience }) : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  let guidance = translate(
+    locale,
+    'Ask about your account performance, posting activity, connected channels, or the next strategy for your business.'
+  );
   if (context.currentScreen === 'Dashboard') {
-    guidance = translate(locale, 'Review the charts up top, then open Controls to adjust campaigns.');
+    guidance = translate(locale, 'Review the dashboard trends, then ask for a performance summary or a growth strategy.');
   } else if (context.currentScreen === 'Controls') {
-    guidance = translate(locale, 'Scroll to Automation Controls to pause/resume or edit prompts.');
+    guidance = translate(locale, 'Use Controls to adjust automation settings, then ask me what should be optimized next.');
   } else if (context.currentScreen === 'Support') {
-    guidance = translate(locale, 'You can reach support here; head back to Dashboard anytime for KPI insights.');
+    guidance = translate(locale, 'Support is here if needed, but I can only answer questions about your account and business.');
   }
 
-  const followUp = question ? translate(locale, "Let's revisit that question once I'm connected.") : '';
-  return `${performanceLine} ${summary} ${guidance} ${followUp}`.trim();
+  const followUp = question
+    ? translate(locale, "I only handle questions about your account, business, channels, and performance inside Dott.")
+    : '';
+  return `${performanceLine} ${summary} ${businessContext} ${guidance} ${followUp}`.trim();
 };
 
 const buildApiUrl = (path: string) => {
@@ -83,6 +90,9 @@ export const askAssistant = async (question: string, context: AssistantContextPa
         question,
         context: {
           company: context.company,
+          orgId: context.orgId,
+          businessGoals: context.businessGoals,
+          targetAudience: context.targetAudience,
           currentScreen: context.currentScreen,
           analytics: context.analytics,
           subscriptionStatus: context.subscriptionStatus,
