@@ -98,6 +98,7 @@ export const warmPrimaryScreenCaches = async ({
       rollingStatsResult,
       todayStatsResult,
       heatmapResult,
+      rollingPerformanceResult,
       historyResult,
       trendsResult,
       sourcesResult,
@@ -107,6 +108,7 @@ export const warmPrimaryScreenCaches = async ({
       fetchLiveSocialStats(userId, scopeId, 72),
       fetchLiveSocialStats(userId, scopeId, getHoursSinceMidnight()),
       fetchActivityHeatmap(userId, scopeId, 7),
+      fetchActivityHeatmap(userId, scopeId, 30),
       fetchSocialHistory(),
       fetchTrendingNews(userId),
       fetchTrendSources(userId),
@@ -128,6 +130,10 @@ export const warmPrimaryScreenCaches = async ({
         : emptyLiveSocialStats;
     const activityHeatmapRows =
       heatmapResult.status === 'fulfilled' && Array.isArray(heatmapResult.value) ? heatmapResult.value : [];
+    const rollingPerformanceRows =
+      rollingPerformanceResult.status === 'fulfilled' && Array.isArray(rollingPerformanceResult.value)
+        ? rollingPerformanceResult.value
+        : activityHeatmapRows;
 
     void writeDashboardCache(buildDashboardCacheKey(userId, scopeId), {
       analytics,
@@ -136,6 +142,7 @@ export const warmPrimaryScreenCaches = async ({
       todayLiveSocialStats,
       activityHeatmapRows,
       activityHeatmapRestRows: activityHeatmapRows,
+      rollingPerformanceRows,
     });
 
     if (historyResult.status === 'fulfilled') {

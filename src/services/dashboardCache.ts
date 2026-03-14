@@ -13,6 +13,7 @@ export type DashboardCacheSnapshot = {
   todayLiveSocialStats: LiveSocialStats;
   activityHeatmapRows: ActivityHeatmapDaily[];
   activityHeatmapRestRows: ActivityHeatmapDaily[];
+  rollingPerformanceRows: ActivityHeatmapDaily[];
 };
 
 const DASHBOARD_CACHE_TTL_MS = 1000 * 60 * 60 * 6;

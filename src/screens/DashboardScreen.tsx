@@ -38,6 +38,8 @@ import {
 type ChartMetric = 'views' | 'interactions' | 'outbound' | 'conversions';
 type ReviewRangeKey = '7d' | '14d' | '30d' | '365d';
 type HeatmapGrouping = 'day' | 'month' | 'year';
+const LIVE_SOCIAL_ROLLING_DAYS = 30;
+const LIVE_SOCIAL_ROLLING_HOURS = LIVE_SOCIAL_ROLLING_DAYS * 24;
 
 const REVIEW_RANGE_OPTIONS: Array<{ key: ReviewRangeKey; label: string; shortLabel: string; days: number }> = [
   { key: '7d', label: 'Last 7 days', shortLabel: '7 days', days: 7 },
@@ -167,6 +169,31 @@ const buildChartScale = (values: number[]) => {
 
 const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
 
+const hasLiveDashboardSignal = (
+  analytics: DashboardAnalytics,
+  outboundStats: OutboundStats,
+  liveSocialStats: LiveSocialStats,
+  todayLiveSocialStats: LiveSocialStats,
+  activityHeatmapRows: ActivityHeatmapDaily[],
+  activityHeatmapRestRows: ActivityHeatmapDaily[],
+) => {
+  if ((analytics.history?.length ?? 0) > 0) return true;
+  if (Number(analytics.leads ?? 0) > 0) return true;
+  if (Number(analytics.engagement ?? 0) > 0) return true;
+  if (Number(analytics.conversions ?? 0) > 0) return true;
+  if (Number(outboundStats.prospectsContacted ?? 0) > 0) return true;
+  if (Number(outboundStats.conversions ?? 0) > 0) return true;
+  if (Number(liveSocialStats.summary.views ?? 0) > 0) return true;
+  if (Number(liveSocialStats.summary.interactions ?? 0) > 0) return true;
+  if (Number(liveSocialStats.web.redirectClicks ?? 0) > 0) return true;
+  if (Number(todayLiveSocialStats.summary.views ?? 0) > 0) return true;
+  if (Number(todayLiveSocialStats.summary.interactions ?? 0) > 0) return true;
+  if (Number(todayLiveSocialStats.web.redirectClicks ?? 0) > 0) return true;
+  if (activityHeatmapRows.some(row => Number(row.views ?? 0) > 0 || Number(row.interactions ?? 0) > 0)) return true;
+  if (activityHeatmapRestRows.some(row => Number(row.views ?? 0) > 0 || Number(row.interactions ?? 0) > 0)) return true;
+  return false;
+};
+
 export const DashboardScreen: React.FC = () => {
   const { state } = useAuth();
   const { t, locale } = useI18n();
@@ -195,6 +222,7 @@ export const DashboardScreen: React.FC = () => {
   const [todayLiveSocialStats, setTodayLiveSocialStats] = useState<LiveSocialStats>(() => emptyLiveSocialStats);
   const [activityHeatmapRows, setActivityHeatmapRows] = useState<ActivityHeatmapDaily[]>([]);
   const [activityHeatmapRestRows, setActivityHeatmapRestRows] = useState<ActivityHeatmapDaily[]>([]);
+  const [rollingPerformanceRows, setRollingPerformanceRows] = useState<ActivityHeatmapDaily[]>([]);
   const [liveSocialLoading, setLiveSocialLoading] = useState(false);
   const [selectedRangeKey, setSelectedRangeKey] = useState<ReviewRangeKey>('7d');
   const [rangeMenuOpen, setRangeMenuOpen] = useState(false);
@@ -213,13 +241,32 @@ export const DashboardScreen: React.FC = () => {
       .then(snapshot => {
         if (!active) return;
         if (snapshot) {
-          setAnalytics(createEmptyAnalytics(snapshot.analytics));
-          setOutboundStats(snapshot.outboundStats);
-          setLiveSocialStats(snapshot.liveSocialStats);
-          setTodayLiveSocialStats(snapshot.todayLiveSocialStats);
-          setActivityHeatmapRows(snapshot.activityHeatmapRows);
-          setActivityHeatmapRestRows(snapshot.activityHeatmapRestRows);
-          setHasCachedSnapshot(true);
+          const cachedAnalytics = createEmptyAnalytics(snapshot.analytics);
+          const cachedOutboundStats = snapshot.outboundStats;
+          const cachedLiveSocialStats = snapshot.liveSocialStats;
+          const cachedTodayLiveSocialStats = snapshot.todayLiveSocialStats;
+          const cachedHeatmapRows = snapshot.activityHeatmapRows;
+          const cachedHeatmapRestRows = snapshot.activityHeatmapRestRows;
+          const cachedRollingPerformanceRows = snapshot.rollingPerformanceRows ?? cachedHeatmapRestRows;
+          if (
+            hasLiveDashboardSignal(
+              cachedAnalytics,
+              cachedOutboundStats,
+              cachedLiveSocialStats,
+              cachedTodayLiveSocialStats,
+              cachedHeatmapRows,
+              cachedHeatmapRestRows,
+            )
+          ) {
+            setAnalytics(cachedAnalytics);
+            setOutboundStats(cachedOutboundStats);
+            setLiveSocialStats(cachedLiveSocialStats);
+            setTodayLiveSocialStats(cachedTodayLiveSocialStats);
+            setActivityHeatmapRows(cachedHeatmapRows);
+            setActivityHeatmapRestRows(cachedHeatmapRestRows);
+            setRollingPerformanceRows(cachedRollingPerformanceRows);
+            setHasCachedSnapshot(true);
+          }
         }
       })
       .finally(() => {
@@ -241,6 +288,7 @@ export const DashboardScreen: React.FC = () => {
       todayLiveSocialStats,
       activityHeatmapRows,
       activityHeatmapRestRows,
+      rollingPerformanceRows,
     });
   }, [
     activityHeatmapRestRows,
@@ -250,6 +298,7 @@ export const DashboardScreen: React.FC = () => {
     dashboardCacheKey,
     liveSocialStats,
     outboundStats,
+    rollingPerformanceRows,
     state.user?.uid,
     todayLiveSocialStats,
   ]);
@@ -403,6 +452,31 @@ export const DashboardScreen: React.FC = () => {
   }, [analyticsScopeId, selectedRange.days, state.user?.uid]);
 
   useEffect(() => {
+    if (!state.user?.uid) {
+      setRollingPerformanceRows([]);
+      return;
+    }
+    let active = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const refreshRollingPerformance = async () => {
+      const rows = await fetchActivityHeatmap(state.user?.uid, analyticsScopeId, LIVE_SOCIAL_ROLLING_DAYS);
+      if (!active) return;
+      setRollingPerformanceRows(rows);
+    };
+
+    void refreshRollingPerformance();
+    timer = setInterval(() => {
+      void refreshRollingPerformance();
+    }, 120000);
+
+    return () => {
+      active = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [analyticsScopeId, state.user?.uid]);
+
+  useEffect(() => {
     let mounted = true;
     let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -456,13 +530,101 @@ export const DashboardScreen: React.FC = () => {
     return formatCount(value);
   };
 
+  const todayDateKey = toDateKey(new Date());
+
+  const rollingPerformanceSummary = useMemo(() => {
+    const byDate = new Map<
+      string,
+      { date: string; views: number; interactions: number; outbound: number; conversions: number; redirectClicks: number }
+    >();
+
+    const mergeRow = (row?: Partial<ActivityHeatmapDaily> & { date?: string }) => {
+      const date = `${row?.date ?? ''}`.trim();
+      if (!date) return;
+      const existing =
+        byDate.get(date) ??
+        { date, views: 0, interactions: 0, outbound: 0, conversions: 0, redirectClicks: 0 };
+      existing.views = Math.max(existing.views, Number(row?.views ?? 0));
+      existing.interactions = Math.max(existing.interactions, Number(row?.interactions ?? 0));
+      existing.outbound = Math.max(existing.outbound, Number(row?.outbound ?? 0));
+      existing.conversions = Math.max(existing.conversions, Number(row?.conversions ?? 0));
+      existing.redirectClicks = Math.max(existing.redirectClicks, Number(row?.redirectClicks ?? 0));
+      byDate.set(date, existing);
+    };
+
+    rollingPerformanceRows.forEach(mergeRow);
+    mergeRow({
+      date: todayDateKey,
+      views: Number(todayLiveSocialStats.summary.views ?? 0),
+      interactions: Number(todayLiveSocialStats.summary.interactions ?? 0),
+      conversions: Number(todayLiveSocialStats.summary.conversions ?? 0),
+      redirectClicks: Number(todayLiveSocialStats.web.redirectClicks ?? 0),
+    });
+
+    const rows = Array.from(byDate.values()).filter(
+      row =>
+        row.views > 0 ||
+        row.interactions > 0 ||
+        row.outbound > 0 ||
+        row.conversions > 0 ||
+        row.redirectClicks > 0,
+    );
+
+    const totals = rows.reduce(
+      (acc, row) => {
+        acc.views += Number(row.views ?? 0);
+        acc.interactions += Number(row.interactions ?? 0);
+        acc.outbound += Number(row.outbound ?? 0);
+        acc.conversions += Number(row.conversions ?? 0);
+        acc.redirectClicks += Number(row.redirectClicks ?? 0);
+        return acc;
+      },
+      { views: 0, interactions: 0, outbound: 0, conversions: 0, redirectClicks: 0 },
+    );
+
+    const summaryViews = totals.views > 0 ? totals.views : Number(liveSocialStats.summary.views ?? 0);
+    const summaryInteractions =
+      totals.interactions > 0 ? totals.interactions : Number(liveSocialStats.summary.interactions ?? 0);
+    const summaryRedirectClicks =
+      totals.redirectClicks > 0 ? totals.redirectClicks : Number(liveSocialStats.web.redirectClicks ?? 0);
+    const summaryConversions =
+      summaryRedirectClicks > 0
+        ? summaryRedirectClicks
+        : totals.conversions > 0
+          ? totals.conversions
+          : Number(liveSocialStats.summary.conversions ?? 0);
+
+    return {
+      availableDays: rows.length,
+      views: summaryViews,
+      interactions: summaryInteractions,
+      outbound: totals.outbound,
+      conversions: summaryConversions,
+      redirectClicks: summaryRedirectClicks,
+      engagementRate:
+        summaryViews > 0 ? Number(((summaryInteractions / summaryViews) * 100).toFixed(2)) : 0,
+    };
+  }, [liveSocialStats.summary.conversions, liveSocialStats.summary.interactions, liveSocialStats.summary.views, liveSocialStats.web.redirectClicks, rollingPerformanceRows, todayDateKey, todayLiveSocialStats]);
+
+  const liveSocialSubtitle = useMemo(() => {
+    if (liveSocialLoading && rollingPerformanceSummary.availableDays === 0) {
+      return t('Pulling latest social metrics...');
+    }
+    if (rollingPerformanceSummary.availableDays > 0 && rollingPerformanceSummary.availableDays < LIVE_SOCIAL_ROLLING_DAYS) {
+      return t('All available live data so far since the account started');
+    }
+    return t('Rolling live total across the last {{days}} days', { days: LIVE_SOCIAL_ROLLING_DAYS });
+  }, [liveSocialLoading, rollingPerformanceSummary.availableDays, t]);
+
   const heroStats = [
-    { label: t('Interactions'), value: formatCount(liveSocialStats.summary.interactions) },
+    { label: t('Interactions'), value: formatCount(rollingPerformanceSummary.interactions) },
     { label: t('Outbound'), value: formatCount(outboundStats.prospectsContacted) },
-    { label: t('Views'), value: formatCount(liveSocialStats.summary.views) },
+    { label: t('Views'), value: formatCount(rollingPerformanceSummary.views) },
     {
       label: isBwinbetAccount ? t('Bet button clicks') : t('Conversions'),
-      value: isBwinbetAccount ? formatCount(liveSocialStats.web.redirectClicks) : formatCount(outboundStats.conversions),
+      value: isBwinbetAccount
+        ? formatCount(rollingPerformanceSummary.redirectClicks)
+        : formatCount(rollingPerformanceSummary.conversions),
     }
   ];
 
@@ -475,8 +637,6 @@ export const DashboardScreen: React.FC = () => {
           return t('{{label}} marked {{status}}', { label, status: job.status });
         })
       : [t('No recent activity yet')];
-
-  const todayDateKey = toDateKey(new Date());
 
   const dailyReviewStats = useMemo(() => {
     const summary = {
@@ -879,32 +1039,31 @@ export const DashboardScreen: React.FC = () => {
       </DMCard>
       <DMCard
         title={t('Live Social Performance')}
-        subtitle={
-          liveSocialLoading
-            ? t('Pulling latest social metrics...')
-            : t('Meta + X across the last {{hours}}h', { hours: liveSocialStats.lookbackHours })
-        }
+        subtitle={liveSocialSubtitle}
       >
         <View style={styles.liveSummaryRow}>
           <View style={styles.liveSummaryItem}>
             <Text style={styles.liveSummaryLabel}>{t('Views')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(liveSocialStats.summary.views)}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(rollingPerformanceSummary.views)}</Text>
           </View>
           <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
             <Text style={styles.liveSummaryLabel}>{t('Interactions')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(liveSocialStats.summary.interactions)}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(rollingPerformanceSummary.interactions)}</Text>
           </View>
         </View>
         <View style={styles.liveSummaryRow}>
           <View style={styles.liveSummaryItem}>
             <Text style={styles.liveSummaryLabel}>{t('Engagement')}</Text>
-            <Text style={styles.liveSummaryValue}>{liveSocialStats.summary.engagementRate.toFixed(2)}%</Text>
+            <Text style={styles.liveSummaryValue}>{rollingPerformanceSummary.engagementRate.toFixed(2)}%</Text>
           </View>
           <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
             <Text style={styles.liveSummaryLabel}>{t('Conversions')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(liveSocialStats.summary.conversions)}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(rollingPerformanceSummary.conversions)}</Text>
           </View>
         </View>
+        <Text style={styles.liveSnapshotHint}>
+          {t('Channel rows below reflect the latest connected-channel snapshot.')}
+        </Text>
         {isBwinbetAccount ? (
           <View style={styles.liveSummaryRow}>
             <View style={styles.liveSummaryItem}>
@@ -1004,13 +1163,6 @@ export const DashboardScreen: React.FC = () => {
         }
         subtitle={heatmapSubtitle}
       >
-        <View style={styles.rangeSummaryRow}>
-          <Text style={styles.rangeSummaryLabel}>{t('Range')}</Text>
-          <TouchableOpacity style={styles.rangeButtonInline} onPress={() => setRangeMenuOpen(true)}>
-            <Text style={styles.rangeButtonText}>{t(selectedRange.label)}</Text>
-            <Ionicons name="chevron-down" size={16} color={colors.text} />
-          </TouchableOpacity>
-        </View>
         <View style={styles.chartMetricRow}>
           {(['views', 'interactions', 'outbound', 'conversions'] as const).map(metric => (
             <TouchableOpacity
@@ -1429,6 +1581,12 @@ const styles = StyleSheet.create({
     color: colors.subtext,
     fontSize: 11,
     marginTop: 6,
+  },
+  liveSnapshotHint: {
+    color: colors.subtext,
+    fontSize: 11,
+    marginBottom: 10,
+    lineHeight: 17,
   },
   channelMatrix: {
     marginTop: 10,
