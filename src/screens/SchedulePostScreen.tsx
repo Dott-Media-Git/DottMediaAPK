@@ -149,6 +149,18 @@ export const SchedulePostScreen: React.FC = () => {
     outline: 'none',
     fontSize: '15px',
   } as const;
+  const webHiddenPickerInputStyle = {
+    ...webDateInputStyle,
+    position: 'absolute',
+    opacity: 0,
+    width: '1px',
+    minWidth: '1px',
+    minHeight: '1px',
+    height: '1px',
+    padding: 0,
+    border: '0px solid transparent',
+    pointerEvents: 'none',
+  } as const;
 
   const formatDateInputValue = (value: Date) => {
     const year = value.getFullYear();
@@ -379,8 +391,8 @@ export const SchedulePostScreen: React.FC = () => {
         timesPerDay,
       });
       setPreviewVisible(false);
-      Alert.alert(t('Scheduled'), t('Posts added to queue.'));
       resetForm();
+      showNotice(t('Schedule successful. Your post has been added to the queue.'));
     } catch (error: any) {
       Alert.alert(t('Failed'), error.message);
     } finally {
@@ -496,7 +508,7 @@ export const SchedulePostScreen: React.FC = () => {
                   type: 'date',
                   value: formatDateInputValue(date),
                   onChange: (event: any) => updateScheduledDate(event?.target?.value ?? ''),
-                  style: webDateInputStyle,
+                  style: webHiddenPickerInputStyle,
                 })}
               </View>
               <View style={styles.scheduleField}>
@@ -510,7 +522,7 @@ export const SchedulePostScreen: React.FC = () => {
                   type: 'time',
                   value: formatTimeInputValue(date),
                   onChange: (event: any) => updateScheduledTime(event?.target?.value ?? ''),
-                  style: webDateInputStyle,
+                  style: webHiddenPickerInputStyle,
                 })}
               </View>
             </View>
