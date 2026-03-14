@@ -54,6 +54,7 @@ const initializeAutomation = async () => {
       import('./jobs/prospectJob.js'),
       import('./jobs/followupJob.js'),
       import('./jobs/autoPostJob.js'),
+      import('./jobs/socialQueueJob.js'),
       import('./jobs/instagramCommentPollJob.js'),
       import('./workers/youtubeWorker.js'),
     ]);
