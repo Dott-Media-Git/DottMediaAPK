@@ -493,6 +493,7 @@ export const DashboardScreen: React.FC = () => {
       summary.interactions = Math.max(summary.interactions, Number(row.interactions ?? 0));
       summary.outbound = Math.max(summary.outbound, Number(row.outbound ?? 0));
       summary.conversions = Math.max(summary.conversions, Number(row.conversions ?? 0));
+      summary.redirectClicks = Math.max(summary.redirectClicks, Number(row.redirectClicks ?? 0));
     };
 
     applyHeatmapRow(activityHeatmapRows.find(row => row.date === todayDateKey));
@@ -1003,6 +1004,13 @@ export const DashboardScreen: React.FC = () => {
         }
         subtitle={heatmapSubtitle}
       >
+        <View style={styles.rangeSummaryRow}>
+          <Text style={styles.rangeSummaryLabel}>{t('Range')}</Text>
+          <TouchableOpacity style={styles.rangeButtonInline} onPress={() => setRangeMenuOpen(true)}>
+            <Text style={styles.rangeButtonText}>{t(selectedRange.label)}</Text>
+            <Ionicons name="chevron-down" size={16} color={colors.text} />
+          </TouchableOpacity>
+        </View>
         <View style={styles.chartMetricRow}>
           {(['views', 'interactions', 'outbound', 'conversions'] as const).map(metric => (
             <TouchableOpacity
@@ -1213,6 +1221,20 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     marginBottom: 12
   },
+  rangeSummaryRow: {
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  rangeSummaryLabel: {
+    color: colors.subtext,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
   rangeButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1221,6 +1243,17 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 999,
     backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  rangeButtonInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: colors.backgroundAlt,
     borderWidth: 1,
     borderColor: colors.border,
   },

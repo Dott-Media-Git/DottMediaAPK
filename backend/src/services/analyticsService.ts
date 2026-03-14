@@ -34,6 +34,7 @@ export type ActivityHeatmapDaily = {
   interactions: number;
   outbound: number;
   conversions: number;
+  redirectClicks?: number;
 };
 
 const RatingWeights: Record<string, number> = {
@@ -101,7 +102,8 @@ const activityHeatmapScore = (rows: ActivityHeatmapDaily[]) =>
       Number(row.views ?? 0) +
       Number(row.interactions ?? 0) +
       Number(row.outbound ?? 0) +
-      Number(row.conversions ?? 0),
+      Number(row.conversions ?? 0) +
+      Number(row.redirectClicks ?? 0),
     0,
   );
 
@@ -119,11 +121,13 @@ const mergeActivityHeatmapRow = (
       interactions: 0,
       outbound: 0,
       conversions: 0,
+      redirectClicks: 0,
     } as ActivityHeatmapDaily);
   existing.views = Math.max(existing.views, Number(incoming.views ?? 0));
   existing.interactions = Math.max(existing.interactions, Number(incoming.interactions ?? 0));
   existing.outbound = Math.max(existing.outbound, Number(incoming.outbound ?? 0));
   existing.conversions = Math.max(existing.conversions, Number(incoming.conversions ?? 0));
+  existing.redirectClicks = Math.max(Number(existing.redirectClicks ?? 0), Number(incoming.redirectClicks ?? 0));
   target.set(date, existing);
 };
 
@@ -142,6 +146,7 @@ const readActivityHeatmapScope = async (scope: AnalyticsScope | undefined, limit
     mergeActivityHeatmapRow(byDate, String(data.date ?? doc.id ?? ''), {
       views: Number(data.visitors ?? 0),
       interactions: Number(data.interactions ?? 0),
+      redirectClicks: Number(data.redirectClicks ?? 0),
     });
   });
 
@@ -194,6 +199,7 @@ const readActivityHeatmapSupabaseScope = async (
     mergeActivityHeatmapRow(byDate, row.date, {
       views: Number((row.counters as any)?.visitors ?? 0),
       interactions: Number((row.counters as any)?.interactions ?? 0),
+      redirectClicks: Number((row.counters as any)?.redirectClicks ?? 0),
     });
   });
 

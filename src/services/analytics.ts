@@ -82,6 +82,7 @@ export type ActivityHeatmapDaily = {
   interactions: number;
   outbound: number;
   conversions: number;
+  redirectClicks?: number;
 };
 
 const emptyLiveSocialPlatformStats: LiveSocialPlatformStats = {
@@ -746,6 +747,7 @@ export const fetchActivityHeatmap = (userId?: string, scopeId?: string, days = 1
           interactions: toFiniteNumber(row?.interactions),
           outbound: toFiniteNumber(row?.outbound),
           conversions: toFiniteNumber(row?.conversions),
+          redirectClicks: toFiniteNumber(row?.redirectClicks),
         }))
       : [];
 
@@ -796,7 +798,8 @@ export const subscribeWebLeadStats = (
 const buildActivityHeatmap = (
   webTraffic: WebTrafficDailyDoc[],
   outbound: OutboundDailyDoc[],
-  engagement: EngagementDailyDoc[]
+  engagement: EngagementDailyDoc[],
+  dayLimit = 14,
 ): ActivityHeatmapDaily[] => {
   const byDate = new Map<
     string,
@@ -805,12 +808,14 @@ const buildActivityHeatmap = (
       interactions: number;
       outbound: number;
       conversions: number;
+      redirectClicks: number;
     }
   >();
 
   const ensureDate = (date?: string) => {
     if (!date) return null;
-    const existing = byDate.get(date) ?? { views: 0, interactions: 0, outbound: 0, conversions: 0 };
+    const existing =
+      byDate.get(date) ?? { views: 0, interactions: 0, outbound: 0, conversions: 0, redirectClicks: 0 };
     byDate.set(date, existing);
     return existing;
   };
@@ -820,6 +825,7 @@ const buildActivityHeatmap = (
     if (!row) return;
     row.views += Number(entry.visitors ?? 0);
     row.interactions += Number(entry.interactions ?? 0);
+    row.redirectClicks += Number(entry.redirectClicks ?? 0);
   });
 
   outbound.forEach(entry => {
@@ -838,13 +844,14 @@ const buildActivityHeatmap = (
 
   return Array.from(byDate.entries())
     .sort((a, b) => `${a[0]}`.localeCompare(`${b[0]}`))
-    .slice(-14)
+    .slice(-Math.max(dayLimit, 7))
     .map(([date, values]) => ({
       date,
       views: values.views,
       interactions: values.interactions,
       outbound: values.outbound,
       conversions: values.conversions,
+      redirectClicks: values.redirectClicks,
     }));
 };
 
@@ -862,11 +869,13 @@ const mergeActivityHeatmapRow = (
       interactions: 0,
       outbound: 0,
       conversions: 0,
+      redirectClicks: 0,
     } as ActivityHeatmapDaily);
   existing.views = Math.max(existing.views, Number(incoming.views ?? 0));
   existing.interactions = Math.max(existing.interactions, Number(incoming.interactions ?? 0));
   existing.outbound = Math.max(existing.outbound, Number(incoming.outbound ?? 0));
   existing.conversions = Math.max(existing.conversions, Number(incoming.conversions ?? 0));
+  existing.redirectClicks = Math.max(Number(existing.redirectClicks ?? 0), Number(incoming.redirectClicks ?? 0));
   target.set(date, existing);
 };
 
@@ -893,6 +902,7 @@ const loadActivityHeatmapScope = async (scopeKey: string, dayLimit: number) => {
     mergeActivityHeatmapRow(byDate, String(data.date ?? docSnap.id ?? ''), {
       views: Number(data.visitors ?? 0),
       interactions: Number(data.interactions ?? 0),
+      redirectClicks: Number(data.redirectClicks ?? 0),
     });
   });
 
@@ -935,7 +945,8 @@ const activityHeatmapScore = (rows: ActivityHeatmapDaily[]) =>
       Number(row.views ?? 0) +
       Number(row.interactions ?? 0) +
       Number(row.outbound ?? 0) +
-      Number(row.conversions ?? 0),
+      Number(row.conversions ?? 0) +
+      Number(row.redirectClicks ?? 0),
     0,
   );
 
@@ -943,26 +954,28 @@ export const subscribeLiveActivityHeatmap = (
   scopeId: string | undefined,
   onData: (rows: ActivityHeatmapDaily[]) => void,
   onError?: (err: unknown) => void,
-  fallbackScopeId?: string
+  fallbackScopeId?: string,
+  days = 14,
 ): Unsubscribe | null => {
   if (!isFirebaseEnabled || !realtimeDb) return null;
 
   const scopeKey = resolveScopeKey(scopeId);
   const fallbackScopeKey = fallbackScopeId ? resolveScopeKey(fallbackScopeId) : '';
+  const dayLimit = Math.max(days, 7);
   const webTrafficRef = query(
     collection(realtimeDb, 'analytics', scopeKey, 'webTrafficDaily'),
     orderBy('date', 'desc'),
-    limit(14)
+    limit(dayLimit)
   );
   const outboundRef = query(
     collection(realtimeDb, 'analytics', scopeKey, 'outboundDaily'),
     orderBy('date', 'desc'),
-    limit(14)
+    limit(dayLimit)
   );
   const engagementRef = query(
     collection(realtimeDb, 'analytics', scopeKey, 'engagementDaily'),
     orderBy('date', 'desc'),
-    limit(14)
+    limit(dayLimit)
   );
 
   let webTraffic: WebTrafficDailyDoc[] = [];
@@ -973,8 +986,13 @@ export const subscribeLiveActivityHeatmap = (
   let fallbackEngagement: EngagementDailyDoc[] = [];
 
   const emit = () => {
-    const primaryRows = buildActivityHeatmap(webTraffic, outbound, engagement);
-    const fallbackRows = buildActivityHeatmap(fallbackWebTraffic, fallbackOutbound, fallbackEngagement);
+    const primaryRows = buildActivityHeatmap(webTraffic, outbound, engagement, dayLimit);
+    const fallbackRows = buildActivityHeatmap(
+      fallbackWebTraffic,
+      fallbackOutbound,
+      fallbackEngagement,
+      dayLimit,
+    );
     const preferredRows =
       activityHeatmapScore(fallbackRows) > activityHeatmapScore(primaryRows)
         ? fallbackRows
@@ -1019,17 +1037,17 @@ export const subscribeLiveActivityHeatmap = (
   const fallbackWebTrafficRef = query(
     collection(realtimeDb, 'analytics', fallbackScopeKey, 'webTrafficDaily'),
     orderBy('date', 'desc'),
-    limit(14)
+    limit(dayLimit)
   );
   const fallbackOutboundRef = query(
     collection(realtimeDb, 'analytics', fallbackScopeKey, 'outboundDaily'),
     orderBy('date', 'desc'),
-    limit(14)
+    limit(dayLimit)
   );
   const fallbackEngagementRef = query(
     collection(realtimeDb, 'analytics', fallbackScopeKey, 'engagementDaily'),
     orderBy('date', 'desc'),
-    limit(14)
+    limit(dayLimit)
   );
 
   const unsubFallbackWebTraffic = onSnapshot(
