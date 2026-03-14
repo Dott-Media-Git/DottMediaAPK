@@ -457,8 +457,14 @@ export class AssistantService {
     if (!rows.length) {
       return 'Posting activity in the last 7 days is not available yet.';
     }
+    type PostingActivityTotals = {
+      posted: number;
+      failed: number;
+      skipped: number;
+      platformCounts: Record<string, number>;
+    };
     const totals = rows.reduce(
-      (acc, row) => {
+      (acc: PostingActivityTotals, row) => {
         acc.posted += Number(row.postsPosted ?? 0);
         acc.failed += Number(row.postsFailed ?? 0);
         acc.skipped += Number(row.postsSkipped ?? 0);
@@ -473,7 +479,7 @@ export class AssistantService {
         failed: 0,
         skipped: 0,
         platformCounts: {} as Record<string, number>,
-      },
+      } satisfies PostingActivityTotals,
     );
 
     const topPlatforms = Object.entries(totals.platformCounts)
