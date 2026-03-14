@@ -79,6 +79,7 @@ export const SchedulePostScreen: React.FC = () => {
   const [timesPerDay, setTimesPerDay] = useState(1);
   const [date, setDate] = useState(new Date());
   const [showPicker, setShowPicker] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
   const [imageUrlInput, setImageUrlInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
@@ -88,6 +89,8 @@ export const SchedulePostScreen: React.FC = () => {
   const noticeOffset = useRef(new Animated.Value(-120)).current;
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const webFileInputRef = useRef<any>(null);
+  const webDateInputRef = useRef<any>(null);
+  const webTimeInputRef = useRef<any>(null);
 
   useEffect(() => {
     return () => {
@@ -130,6 +133,57 @@ export const SchedulePostScreen: React.FC = () => {
   const normalizedCaption = caption.trim();
   const normalizedHashtags = formatHashtags(hashtags);
   const isWeb = Platform.OS === 'web';
+  const preferredDateLabel = date.toLocaleDateString();
+  const preferredTimeLabel = date.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  const webDateInputStyle = {
+    width: '100%',
+    minHeight: '46px',
+    border: `1px solid ${colors.border}`,
+    borderRadius: '12px',
+    padding: '0 12px',
+    backgroundColor: colors.card,
+    color: colors.text,
+    outline: 'none',
+    fontSize: '15px',
+  } as const;
+
+  const formatDateInputValue = (value: Date) => {
+    const year = value.getFullYear();
+    const month = `${value.getMonth() + 1}`.padStart(2, '0');
+    const day = `${value.getDate()}`.padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const formatTimeInputValue = (value: Date) => {
+    const hours = `${value.getHours()}`.padStart(2, '0');
+    const minutes = `${value.getMinutes()}`.padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+
+  const updateScheduledDate = (value: string) => {
+    if (!value) return;
+    const [year, month, day] = value.split('-').map(Number);
+    if (![year, month, day].every(Number.isFinite)) return;
+    setDate(prev => {
+      const next = new Date(prev);
+      next.setFullYear(year, month - 1, day);
+      return next;
+    });
+  };
+
+  const updateScheduledTime = (value: string) => {
+    if (!value) return;
+    const [hours, minutes] = value.split(':').map(Number);
+    if (![hours, minutes].every(Number.isFinite)) return;
+    setDate(prev => {
+      const next = new Date(prev);
+      next.setHours(hours, minutes, 0, 0);
+      return next;
+    });
+  };
 
   const showNotice = (message: string) => {
     setNoticeMessage(message);
@@ -352,6 +406,14 @@ export const SchedulePostScreen: React.FC = () => {
     webFileInputRef.current?.click?.();
   };
 
+  const openWebSchedulePicker = (kind: 'date' | 'time') => {
+    if (!isWeb) return;
+    const inputRef = kind === 'date' ? webDateInputRef : webTimeInputRef;
+    inputRef.current?.showPicker?.();
+    inputRef.current?.focus?.();
+    inputRef.current?.click?.();
+  };
+
   const handleWebFileChange = async (event: any) => {
     const files = Array.from(event?.target?.files ?? []);
     if (files.length) {
@@ -419,14 +481,71 @@ export const SchedulePostScreen: React.FC = () => {
             ))}
           </View>
 
-          <Text style={styles.label}>{t('Schedule Date & Time')}</Text>
-          <TouchableOpacity style={styles.dateInput} onPress={() => setShowPicker(true)}>
-            <Text style={styles.dateText}>{date.toLocaleString()}</Text>
-          </TouchableOpacity>
-          {showPicker && (
+          <Text style={styles.label}>{t('Preferred Schedule')}</Text>
+          <Text style={styles.helper}>{t('Choose the exact date and time you want this post to go out.')}</Text>
+          {isWeb ? (
+            <View style={styles.scheduleGrid}>
+              <View style={styles.scheduleField}>
+                <Text style={styles.scheduleFieldLabel}>{t('Preferred Date')}</Text>
+                <TouchableOpacity style={styles.schedulePreviewButton} onPress={() => openWebSchedulePicker('date')}>
+                  <Text style={styles.schedulePreviewValue}>{preferredDateLabel}</Text>
+                  <Text style={styles.schedulePreviewAction}>{t('Change')}</Text>
+                </TouchableOpacity>
+                {React.createElement('input', {
+                  ref: webDateInputRef,
+                  type: 'date',
+                  value: formatDateInputValue(date),
+                  onChange: (event: any) => updateScheduledDate(event?.target?.value ?? ''),
+                  style: webDateInputStyle,
+                })}
+              </View>
+              <View style={styles.scheduleField}>
+                <Text style={styles.scheduleFieldLabel}>{t('Preferred Time')}</Text>
+                <TouchableOpacity style={styles.schedulePreviewButton} onPress={() => openWebSchedulePicker('time')}>
+                  <Text style={styles.schedulePreviewValue}>{preferredTimeLabel}</Text>
+                  <Text style={styles.schedulePreviewAction}>{t('Change')}</Text>
+                </TouchableOpacity>
+                {React.createElement('input', {
+                  ref: webTimeInputRef,
+                  type: 'time',
+                  value: formatTimeInputValue(date),
+                  onChange: (event: any) => updateScheduledTime(event?.target?.value ?? ''),
+                  style: webDateInputStyle,
+                })}
+              </View>
+            </View>
+          ) : (
+            <View style={styles.scheduleGrid}>
+              <View style={styles.scheduleField}>
+                <Text style={styles.scheduleFieldLabel}>{t('Preferred Date')}</Text>
+                <TouchableOpacity
+                  style={styles.dateInput}
+                  onPress={() => {
+                    setPickerMode('date');
+                    setShowPicker(true);
+                  }}
+                >
+                  <Text style={styles.dateText}>{preferredDateLabel}</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.scheduleField}>
+                <Text style={styles.scheduleFieldLabel}>{t('Preferred Time')}</Text>
+                <TouchableOpacity
+                  style={styles.dateInput}
+                  onPress={() => {
+                    setPickerMode('time');
+                    setShowPicker(true);
+                  }}
+                >
+                  <Text style={styles.dateText}>{preferredTimeLabel}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+          {showPicker && !isWeb && (
             <DateTimePicker
               value={date}
-              mode="datetime"
+              mode={pickerMode}
               onChange={(_, selected) => {
                 setShowPicker(false);
                 if (selected) setDate(selected);
@@ -651,6 +770,10 @@ export const SchedulePostScreen: React.FC = () => {
               <View style={styles.previewMetaCard}>
                 <Text style={styles.previewMetaLabel}>{t('Schedule')}</Text>
                 <Text style={styles.previewMetaValue}>{date.toLocaleString()}</Text>
+                <Text style={styles.previewMetaLabel}>{t('Preferred Date')}</Text>
+                <Text style={styles.previewMetaValue}>{preferredDateLabel}</Text>
+                <Text style={styles.previewMetaLabel}>{t('Preferred Time')}</Text>
+                <Text style={styles.previewMetaValue}>{preferredTimeLabel}</Text>
                 <Text style={styles.previewMetaLabel}>{t('Times per day')}</Text>
                 <Text style={styles.previewMetaValue}>{timesPerDay}</Text>
               </View>
@@ -848,11 +971,55 @@ const styles = StyleSheet.create({
   },
   chipActive: { borderColor: colors.accent, backgroundColor: 'rgba(139,93,255,0.2)' },
   chipText: { color: colors.text },
+  scheduleGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  scheduleField: {
+    flexGrow: 1,
+    minWidth: 180,
+  },
+  scheduleFieldLabel: {
+    color: colors.subtext,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  schedulePreviewButton: {
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.backgroundAlt,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  schedulePreviewValue: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  schedulePreviewAction: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
   dateInput: {
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 12,
-    padding: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: colors.card,
   },
   dateText: { color: colors.text },
   helper: { color: colors.subtext, marginTop: 4 },

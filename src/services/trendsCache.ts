@@ -5,6 +5,7 @@ export type TrendsCacheSnapshot = {
   scope: 'global' | 'football';
   candidates: TrendCandidate[];
   sources: TrendSourceInput[];
+  connectedSources?: string[];
 };
 
 const TRENDS_CACHE_TTL_MS = 1000 * 60 * 60 * 2;

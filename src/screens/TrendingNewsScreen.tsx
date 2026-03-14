@@ -22,6 +22,7 @@ export const TrendingNewsScreen: React.FC = () => {
   const [candidates, setCandidates] = useState<TrendCandidate[]>([]);
   const [scope, setScope] = useState<'global' | 'football'>('global');
   const [sources, setSources] = useState<TrendSourceInput[]>([]);
+  const [connectedSources, setConnectedSources] = useState<string[]>([]);
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceLabel, setSourceLabel] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -43,9 +44,22 @@ export const TrendingNewsScreen: React.FC = () => {
         fetchTrendingNews(state.user.uid),
         fetchTrendSources(state.user.uid),
       ]);
+      const resolvedSources = sourceData.sources ?? [];
+      const resolvedConnectedSources = Array.from(
+        new Set(
+          [
+            ...(trendData.sources ?? []).map(source => source.label ?? source.url),
+            ...resolvedSources.map(source => source.label ?? source.url),
+            ...(trendData.candidates ?? []).flatMap(candidate => candidate.sources ?? []),
+          ]
+            .map(value => value?.trim())
+            .filter(Boolean) as string[],
+        ),
+      );
       setCandidates(trendData.candidates ?? []);
       setScope(trendData.scope ?? 'global');
-      setSources(sourceData.sources ?? []);
+      setSources(resolvedSources);
+      setConnectedSources(resolvedConnectedSources);
       setHasCachedSnapshot(true);
     } catch (error: any) {
       if (!hasCachedSnapshot) {
@@ -83,9 +97,11 @@ export const TrendingNewsScreen: React.FC = () => {
           setCandidates(cached.candidates ?? []);
           setScope(cached.scope ?? 'global');
           setSources(cached.sources ?? []);
+          setConnectedSources(cached.connectedSources ?? []);
           setHasCachedSnapshot(true);
         } else {
           setHasCachedSnapshot(false);
+          setConnectedSources([]);
         }
       })
       .finally(() => {
@@ -100,8 +116,8 @@ export const TrendingNewsScreen: React.FC = () => {
 
   React.useEffect(() => {
     if (!state.user?.uid || !cacheReady) return;
-    void writeTrendingCache(cacheKey, { scope, candidates, sources });
-  }, [cacheKey, cacheReady, candidates, scope, sources, state.user?.uid]);
+    void writeTrendingCache(cacheKey, { scope, candidates, sources, connectedSources });
+  }, [cacheKey, cacheReady, candidates, connectedSources, scope, sources, state.user?.uid]);
 
   const addSource = () => {
     const url = sourceUrl.trim();
@@ -145,6 +161,20 @@ export const TrendingNewsScreen: React.FC = () => {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadAll({ force: true })} />}
     >
       <DMCard title={t('Your trending News')} subtitle={scopeLabel}>
+        {connectedSources.length ? (
+          <View style={styles.connectedSourcesWrap}>
+            <Text style={styles.connectedSourcesLabel}>{t('Connected sources')}</Text>
+            <View style={styles.connectedSourcesRow}>
+              {connectedSources.map(source => (
+                <View key={source} style={styles.connectedSourceChip}>
+                  <Text style={styles.connectedSourceChipText} numberOfLines={1}>
+                    {source}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
         {candidates.length === 0 ? (
           <Text style={styles.emptyText}>{t('No trending topics yet. Pull to refresh.')}</Text>
         ) : (
@@ -230,6 +260,36 @@ const styles = StyleSheet.create({
   emptyText: {
     color: colors.subtext,
     fontSize: 13,
+  },
+  connectedSourcesWrap: {
+    marginBottom: 12,
+  },
+  connectedSourcesLabel: {
+    color: colors.subtext,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  connectedSourcesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  connectedSourceChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: colors.backgroundAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    maxWidth: '100%',
+  },
+  connectedSourceChipText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '600',
   },
   trendItem: {
     paddingVertical: 12,
