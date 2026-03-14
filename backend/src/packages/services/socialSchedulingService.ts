@@ -1,6 +1,7 @@
 import admin from 'firebase-admin';
 import { firestore } from '../../db/firestore';
 import { supabaseFallbackService } from '../../services/supabaseFallbackService';
+import { validateBwinSportsContent } from '../../services/bwinContentGuard';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
@@ -35,6 +36,17 @@ export type SchedulePayload = {
 export class SocialSchedulingService {
   async schedulePosts(payload: SchedulePayload) {
     if (!payload.platforms.length) throw new Error('At least one platform is required');
+    const bwinValidation = validateBwinSportsContent({
+      userId: payload.userId,
+      caption: payload.caption,
+      hashtags: payload.hashtags,
+      videoTitle: payload.videoTitle,
+      imageUrls: payload.images,
+      videoUrl: payload.videoUrl,
+    });
+    if (!bwinValidation.ok) {
+      throw new Error(bwinValidation.reason ?? 'Bwinbet scheduled posts must stay sports-only.');
+    }
     const hasYoutube = payload.platforms.includes('youtube');
     const hasTikTok = payload.platforms.includes('tiktok');
     const hasReels = payload.platforms.includes('instagram_reels');

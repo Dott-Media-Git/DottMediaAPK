@@ -13,6 +13,7 @@ import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from '../..
 import { canUsePrimarySocialDefaults } from '../../utils/socialAccess';
 import { supabaseFallbackService } from '../../services/supabaseFallbackService';
 import { resolveFacebookPageId } from '../../services/socialAccountResolver';
+import { isBwinScopeUser, validateBwinSportsContent } from '../../services/bwinContentGuard';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
@@ -90,13 +91,8 @@ const platformPublishers: Record<string, PlatformPublisher> = {
 };
 
 export class SocialPostingService {
-  private getBwinScopeId() {
-    return (process.env.BWIN_SCOPE_ID ?? process.env.BWIN_TRACK_OWNER_ID ?? '').trim();
-  }
-
   private isBwinScopeUser(userId: string) {
-    const bwinScopeId = this.getBwinScopeId();
-    return Boolean(bwinScopeId) && userId.trim() === bwinScopeId;
+    return isBwinScopeUser(userId);
   }
 
   private async getRuntimeFallbackAccounts(userId: string): Promise<SocialAccounts> {
@@ -233,6 +229,35 @@ export class SocialPostingService {
     for (const post of posts) {
       const key = `${post.userId}_${post.targetDate}`;
       const currentCount = counts.get(key) ?? 0;
+      const bwinValidation = validateBwinSportsContent({
+        userId: post.userId,
+        caption: post.caption,
+        hashtags: post.hashtags,
+        videoTitle: post.videoTitle,
+        imageUrls: post.imageUrls,
+        videoUrl: post.videoUrl,
+      });
+      if (!bwinValidation.ok) {
+        const message = bwinValidation.reason ?? 'Bwinbet scheduled posts must stay sports-only.';
+        try {
+          await scheduledPostsCollection.doc(post.id).update({
+            status: 'failed',
+            errorMessage: message,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        } catch (error) {
+          console.warn('[social-posting] firestore bwin content-guard update failed', error);
+        }
+        await supabaseFallbackService.updateScheduledPost(post.id, {
+          status: 'failed',
+          errorMessage: message,
+          updatedAt: new Date(),
+        });
+        await this.log(post, 'failed', undefined, message);
+        await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'failed' });
+        continue;
+      }
+
       if (currentCount >= MAX_PER_DAY) {
         try {
           await scheduledPostsCollection.doc(post.id).update({
