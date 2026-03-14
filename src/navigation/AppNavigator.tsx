@@ -4,7 +4,7 @@ import { NavigationContainer, DefaultTheme, Theme } from '@react-navigation/nati
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createDrawerNavigator, DrawerContentScrollView, DrawerItem } from '@react-navigation/drawer';
 import { Ionicons } from '@expo/vector-icons';
-import { TouchableOpacity, View, Text, StyleSheet } from 'react-native';
+import { TouchableOpacity, View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
@@ -104,14 +104,16 @@ const adminDrawerScreen = {
   icon: 'shield-checkmark-outline'
 };
 
+const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
+
 const DrawerNavigator = () => {
-  const isDarkTheme = colors.background.toLowerCase() === '#05040f';
+  const isDarkTheme = normalizeLower(colors.background) === '#05040f';
   const inactiveColor = isDarkTheme ? colors.subtext : colors.text;
   const labelColor = isDarkTheme ? colors.subtext : colors.text;
   const { t } = useI18n();
   const { state } = useAuth();
   const isAdminUser = useMemo(() => {
-    const email = state.user?.email?.toLowerCase() ?? '';
+    const email = normalizeLower(state.user?.email);
     return email === 'brasioxirin@gmail.com' || Boolean((state.user as any)?.isAdmin);
   }, [state.user]);
   const drawerScreens = useMemo(
@@ -121,6 +123,7 @@ const DrawerNavigator = () => {
   return (
     <Drawer.Navigator
       initialRouteName="Dashboard"
+      backBehavior="history"
       drawerContent={props => <CustomDrawerContent {...props} screens={drawerScreens} />}
       screenOptions={({ navigation }) => ({
         headerStyle: { backgroundColor: colors.background },
@@ -174,7 +177,15 @@ const CustomDrawerContent = (props: any) => {
 };
 
 export const AppNavigator: React.FC = () => {
-  const { isAuthenticated, needsSubscription, needsOnboarding } = useAuth();
+  const { isAuthenticated, needsSubscription, needsOnboarding, state } = useAuth();
+
+  if (!state.hydrated) {
+    return (
+      <View style={styles.bootLoader}>
+        <ActivityIndicator size="large" color={colors.accent} />
+      </View>
+    );
+  }
 
   return (
     <NavigationContainer
@@ -225,5 +236,11 @@ const styles = StyleSheet.create({
   drawerLabel: {
     fontSize: 14,
     fontWeight: '600'
+  },
+  bootLoader: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
   }
 });

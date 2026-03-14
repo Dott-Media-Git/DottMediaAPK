@@ -16,10 +16,13 @@ import {
   sendSubscriptionActivated
 } from '@services/make';
 import { scheduleWelcomeNotification } from '@services/notifications';
+import { clearCachedValue, readCachedValue, writeCachedValue } from '@services/localCache';
 import type { AuthUser, CRMAnalytics, CRMData, SubscriptionStatus } from '@models/crm';
 import { signInWithSocial } from '@services/firebase';
 
 export type { AuthUser, CRMAnalytics, CRMData, SubscriptionStatus } from '@models/crm';
+
+const AUTH_CACHE_KEY = 'dott.auth.state.v1';
 
 type AuthState = {
   user: AuthUser | null;
@@ -27,6 +30,7 @@ type AuthState = {
   crmData?: CRMData;
   onboardingComplete: boolean;
   loading: boolean;
+  hydrated: boolean;
 };
 
 type SignInPayload = {
@@ -38,6 +42,7 @@ type SignInPayload = {
 
 type AuthAction =
   | { type: 'SET_LOADING'; payload: boolean }
+  | { type: 'HYDRATE_CACHE'; payload: SignInPayload }
   | { type: 'SIGN_IN'; payload: SignInPayload }
   | { type: 'SIGN_OUT' }
   | { type: 'UPDATE_SUBSCRIPTION'; payload: SubscriptionStatus }
@@ -57,7 +62,8 @@ const initialState: AuthState = {
   subscriptionStatus: 'none',
   crmData: undefined,
   onboardingComplete: false,
-  loading: false
+  loading: false,
+  hydrated: false
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -84,6 +90,7 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
   switch (action.type) {
     case 'SET_LOADING':
       return { ...state, loading: action.payload };
+    case 'HYDRATE_CACHE':
     case 'SIGN_IN':
       return {
         ...state,
@@ -91,10 +98,11 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
         subscriptionStatus: action.payload.subscriptionStatus,
         crmData: action.payload.crmData,
         onboardingComplete: action.payload.onboardingComplete,
-        loading: false
+        loading: false,
+        hydrated: true
       };
     case 'SIGN_OUT':
-      return initialState;
+      return { ...initialState, hydrated: true };
     case 'UPDATE_SUBSCRIPTION':
       return { ...state, subscriptionStatus: action.payload };
     case 'UPDATE_CRM_DATA': {
@@ -117,6 +125,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [state, dispatch] = useReducer(authReducer, initialState);
 
   useEffect(() => {
+    let active = true;
+    void readCachedValue<SignInPayload>(AUTH_CACHE_KEY, 1000 * 60 * 60 * 12).then(cached => {
+      if (!active || !cached?.user) return;
+      dispatch({ type: 'HYDRATE_CACHE', payload: cached });
+    });
+
     const unsubscribe = observeAuthState(async authUser => {
       if (!authUser) {
         dispatch({ type: 'SIGN_OUT' });
@@ -145,8 +159,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       }
     });
-    return unsubscribe;
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!state.hydrated) return;
+    if (!state.user) {
+      void clearCachedValue(AUTH_CACHE_KEY);
+      return;
+    }
+    void writeCachedValue(AUTH_CACHE_KEY, {
+      user: state.user,
+      subscriptionStatus: state.subscriptionStatus,
+      crmData: state.crmData,
+      onboardingComplete: state.onboardingComplete
+    });
+  }, [state.user, state.subscriptionStatus, state.crmData, state.onboardingComplete, state.hydrated]);
 
   const signIn = async (email: string, password: string) => {
     dispatch({ type: 'SET_LOADING', payload: true });

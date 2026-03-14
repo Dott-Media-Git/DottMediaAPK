@@ -1,11 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { VictoryAxis, VictoryBar, VictoryChart, VictoryLabel, VictoryTheme } from 'victory-native';
 import { DMCard } from '@components/DMCard';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
+import { buildDashboardCacheKey, readDashboardCache, writeDashboardCache } from '@services/dashboardCache';
 import {
   ActivityHeatmapDaily,
   fetchAnalytics,
@@ -24,6 +36,15 @@ import {
 } from '@services/analytics';
 
 type ChartMetric = 'views' | 'interactions' | 'outbound' | 'conversions';
+type ReviewRangeKey = '7d' | '14d' | '30d' | '365d';
+type HeatmapGrouping = 'day' | 'month' | 'year';
+
+const REVIEW_RANGE_OPTIONS: Array<{ key: ReviewRangeKey; label: string; shortLabel: string; days: number }> = [
+  { key: '7d', label: 'Last 7 days', shortLabel: '7 days', days: 7 },
+  { key: '14d', label: '2 weeks', shortLabel: '2 weeks', days: 14 },
+  { key: '30d', label: '1 month', shortLabel: '1 month', days: 30 },
+  { key: '365d', label: '1 year', shortLabel: '1 year', days: 365 },
+];
 
 const createEmptyAnalytics = (seed?: Partial<DashboardAnalytics>): DashboardAnalytics => ({
   leads: seed?.leads ?? 0,
@@ -120,6 +141,18 @@ const formatDayOfWeek = (date: string, locale?: string) => {
   return parsed.toLocaleDateString(locale ?? undefined, { weekday: 'short' });
 };
 
+const formatMonthLabel = (date: string, locale?: string) => {
+  const parsed = parseChartDate(date);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleDateString(locale ?? undefined, { month: 'short' });
+};
+
+const getHeatmapGrouping = (days: number): HeatmapGrouping => {
+  if (days >= 365) return 'year';
+  if (days >= 30) return 'month';
+  return 'day';
+};
+
 const buildChartScale = (values: number[]) => {
   const maxValue = values.reduce((max, value) => Math.max(max, value), 0);
   if (maxValue <= 0) {
@@ -137,6 +170,7 @@ const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
 export const DashboardScreen: React.FC = () => {
   const { state } = useAuth();
   const { t, locale } = useI18n();
+  const { width: viewportWidth } = useWindowDimensions();
   const orgId = (state.user as any)?.orgId ?? state.crmData?.orgId;
   const isBwinbetAccount = useMemo(() => {
     const primary = normalizeLower(state.user?.email);
@@ -146,6 +180,10 @@ export const DashboardScreen: React.FC = () => {
   const analyticsScopeId = useMemo(
     () => resolveAnalyticsScopeId(state.user?.uid, orgId),
     [state.user?.uid, orgId]
+  );
+  const dashboardCacheKey = useMemo(
+    () => buildDashboardCacheKey(state.user?.uid, analyticsScopeId),
+    [state.user?.uid, analyticsScopeId],
   );
   const [analytics, setAnalytics] = useState<DashboardAnalytics>(() =>
     createEmptyAnalytics(state.crmData?.analytics)
@@ -158,6 +196,63 @@ export const DashboardScreen: React.FC = () => {
   const [activityHeatmapRows, setActivityHeatmapRows] = useState<ActivityHeatmapDaily[]>([]);
   const [activityHeatmapRestRows, setActivityHeatmapRestRows] = useState<ActivityHeatmapDaily[]>([]);
   const [liveSocialLoading, setLiveSocialLoading] = useState(false);
+  const [selectedRangeKey, setSelectedRangeKey] = useState<ReviewRangeKey>('7d');
+  const [rangeMenuOpen, setRangeMenuOpen] = useState(false);
+  const [cacheReady, setCacheReady] = useState(false);
+  const [hasCachedSnapshot, setHasCachedSnapshot] = useState(false);
+  const selectedRange = useMemo(
+    () => REVIEW_RANGE_OPTIONS.find(option => option.key === selectedRangeKey) ?? REVIEW_RANGE_OPTIONS[0],
+    [selectedRangeKey],
+  );
+
+  useEffect(() => {
+    let active = true;
+    setCacheReady(false);
+    setHasCachedSnapshot(false);
+    void readDashboardCache(dashboardCacheKey)
+      .then(snapshot => {
+        if (!active) return;
+        if (snapshot) {
+          setAnalytics(createEmptyAnalytics(snapshot.analytics));
+          setOutboundStats(snapshot.outboundStats);
+          setLiveSocialStats(snapshot.liveSocialStats);
+          setTodayLiveSocialStats(snapshot.todayLiveSocialStats);
+          setActivityHeatmapRows(snapshot.activityHeatmapRows);
+          setActivityHeatmapRestRows(snapshot.activityHeatmapRestRows);
+          setHasCachedSnapshot(true);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setCacheReady(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [dashboardCacheKey]);
+
+  useEffect(() => {
+    if (!cacheReady || !state.user?.uid) return;
+    void writeDashboardCache(dashboardCacheKey, {
+      analytics,
+      outboundStats,
+      liveSocialStats,
+      todayLiveSocialStats,
+      activityHeatmapRows,
+      activityHeatmapRestRows,
+    });
+  }, [
+    activityHeatmapRestRows,
+    activityHeatmapRows,
+    analytics,
+    cacheReady,
+    dashboardCacheKey,
+    liveSocialStats,
+    outboundStats,
+    state.user?.uid,
+    todayLiveSocialStats,
+  ]);
 
   useEffect(() => {
     let isMounted = true;
@@ -182,7 +277,9 @@ export const DashboardScreen: React.FC = () => {
 
     const loadAnalytics = async () => {
       if (!state.user) return;
-      setLoading(true);
+      if (!hasCachedSnapshot) {
+        setLoading(true);
+      }
       if (orgId) {
         unsubscribe =
           subscribeOrgDashboardAnalytics(
@@ -199,9 +296,7 @@ export const DashboardScreen: React.FC = () => {
             state.user?.uid
           ) ?? null;
 
-        if (!unsubscribe) {
-          await refreshRestAnalytics();
-        }
+        await refreshRestAnalytics();
         return;
       }
 
@@ -220,11 +315,9 @@ export const DashboardScreen: React.FC = () => {
           analyticsScopeId
         ) ?? null;
 
-      if (!unsubscribe) {
-        const loaded = await refreshRestAnalytics();
-        if (!loaded && isMounted && state.crmData) {
-          setAnalytics(createEmptyAnalytics(state.crmData.analytics));
-        }
+      const loaded = await refreshRestAnalytics();
+      if (!loaded && !unsubscribe && isMounted && state.crmData) {
+        setAnalytics(createEmptyAnalytics(state.crmData.analytics));
       }
     };
     loadAnalytics();
@@ -232,7 +325,7 @@ export const DashboardScreen: React.FC = () => {
       isMounted = false;
       if (unsubscribe) unsubscribe();
     };
-  }, [analyticsScopeId, orgId, state.user?.uid, state.crmData]);
+  }, [analyticsScopeId, hasCachedSnapshot, orgId, state.user?.uid, state.crmData]);
 
   useEffect(() => {
     if (!state.user?.uid) {
@@ -257,9 +350,7 @@ export const DashboardScreen: React.FC = () => {
         state.user?.uid
       ) ?? null;
 
-    if (!outboundUnsub) {
-      void refreshRestOutbound();
-    }
+    void refreshRestOutbound();
 
     return () => {
       mounted = false;
@@ -276,7 +367,7 @@ export const DashboardScreen: React.FC = () => {
     let active = true;
     let timer: ReturnType<typeof setInterval> | null = null;
     const refreshRestActivityHeatmap = async () => {
-      const rows = await fetchActivityHeatmap(state.user?.uid, analyticsScopeId, 14);
+      const rows = await fetchActivityHeatmap(state.user?.uid, analyticsScopeId, selectedRange.days);
       if (!active) return;
       setActivityHeatmapRestRows(rows);
     };
@@ -297,7 +388,8 @@ export const DashboardScreen: React.FC = () => {
             void refreshRestActivityHeatmap();
           }
         },
-        state.user?.uid
+        state.user?.uid,
+        selectedRange.days,
       ) ?? null;
     void refreshRestActivityHeatmap();
     timer = setInterval(() => {
@@ -308,7 +400,7 @@ export const DashboardScreen: React.FC = () => {
       if (timer) clearInterval(timer);
       unsubscribe?.();
     };
-  }, [analyticsScopeId, state.user?.uid]);
+  }, [analyticsScopeId, selectedRange.days, state.user?.uid]);
 
   useEffect(() => {
     let mounted = true;
@@ -316,7 +408,9 @@ export const DashboardScreen: React.FC = () => {
 
     const refreshLiveSocial = async () => {
       if (!state.user?.uid) return;
-      setLiveSocialLoading(true);
+      if (!hasCachedSnapshot) {
+        setLiveSocialLoading(true);
+      }
       try {
         const [rollingStats, todayStats] = await Promise.all([
           fetchLiveSocialStats(state.user.uid, analyticsScopeId, 72),
@@ -344,7 +438,7 @@ export const DashboardScreen: React.FC = () => {
       mounted = false;
       if (timer) clearInterval(timer);
     };
-  }, [analyticsScopeId, state.user?.uid]);
+  }, [analyticsScopeId, hasCachedSnapshot, state.user?.uid]);
 
   const historySeries = useMemo(
     () => analytics.history ?? [],
@@ -382,21 +476,59 @@ export const DashboardScreen: React.FC = () => {
         })
       : [t('No recent activity yet')];
 
+  const todayDateKey = toDateKey(new Date());
+
+  const dailyReviewStats = useMemo(() => {
+    const summary = {
+      views: Number(todayLiveSocialStats.summary.views ?? 0),
+      interactions: Number(todayLiveSocialStats.summary.interactions ?? 0),
+      outbound: 0,
+      conversions: Number(todayLiveSocialStats.summary.conversions ?? 0),
+      redirectClicks: Number(todayLiveSocialStats.web.redirectClicks ?? 0),
+    };
+
+    const applyHeatmapRow = (row?: Partial<ActivityHeatmapDaily>) => {
+      if (!row) return;
+      summary.views = Math.max(summary.views, Number(row.views ?? 0));
+      summary.interactions = Math.max(summary.interactions, Number(row.interactions ?? 0));
+      summary.outbound = Math.max(summary.outbound, Number(row.outbound ?? 0));
+      summary.conversions = Math.max(summary.conversions, Number(row.conversions ?? 0));
+    };
+
+    applyHeatmapRow(activityHeatmapRows.find(row => row.date === todayDateKey));
+    applyHeatmapRow(activityHeatmapRestRows.find(row => row.date === todayDateKey));
+
+    const todayHistory = historySeries.find(row => row.date === todayDateKey);
+    if (todayHistory) {
+      summary.views = Math.max(summary.views, Number(todayHistory.leads ?? 0));
+      summary.interactions = Math.max(summary.interactions, Number(todayHistory.engagement ?? 0));
+      summary.outbound = Math.max(summary.outbound, Number(todayHistory.conversions ?? 0));
+      summary.conversions = Math.max(summary.conversions, Number(todayHistory.conversions ?? 0));
+    }
+
+    return summary;
+  }, [activityHeatmapRestRows, activityHeatmapRows, historySeries, todayDateKey, todayLiveSocialStats]);
+
   const handleDrilldown = (metric: ChartMetric) => {
+    const dailyConversionValue = isBwinbetAccount ? dailyReviewStats.redirectClicks : dailyReviewStats.conversions;
     const metricMap: Record<ChartMetric, string> = {
-      views: t('Live visibility is {{value}} views across connected channels.', {
-        value: formatCount(liveSocialStats.summary.views),
+      views: t('Today so far, visibility is {{value}} views across connected channels.', {
+        value: formatCount(dailyReviewStats.views),
       }),
-      interactions: t('Live interaction volume is {{value}}. Keep content cadence consistent to sustain engagement.', {
-        value: formatCount(liveSocialStats.summary.interactions),
+      interactions: t('Today so far, interaction volume is {{value}}. Keep content cadence consistent to sustain engagement.', {
+        value: formatCount(dailyReviewStats.interactions),
       }),
-      outbound: t('Outbound has contacted {{value}} prospects. Keep reply handling fast for best conversion.', {
-        value: formatCount(outboundStats.prospectsContacted),
+      outbound: t('Today so far, outbound activity is {{value}}. Keep reply handling fast for best conversion.', {
+        value: formatCount(dailyReviewStats.outbound),
       }),
-      conversions: t(
-        'Conversions are currently {{value}}. Tighten your follow-up cadence or revise offers for better results.',
-        { value: formatCount(outboundStats.conversions) }
-      )
+      conversions: isBwinbetAccount
+        ? t('Today so far, bet button clicks are at {{value}}. Keep pairing stronger CTAs with current match moments.', {
+            value: formatCount(dailyConversionValue),
+          })
+        : t(
+            'Today so far, conversions are at {{value}}. Tighten your follow-up cadence or revise offers for better results.',
+            { value: formatCount(dailyConversionValue) }
+          )
     };
     Alert.alert(t('Metric details'), metricMap[metric]);
   };
@@ -407,29 +539,29 @@ export const DashboardScreen: React.FC = () => {
         {
           key: 'views' as const,
           label: t('Views'),
-          value: formatCount(liveSocialStats.summary.views),
-          hint: t('Live channel visibility'),
+          value: formatCount(dailyReviewStats.views),
+          hint: t('Today across connected channels'),
         },
         {
           key: 'interactions' as const,
           label: t('Interactions'),
-          value: formatCount(liveSocialStats.summary.interactions),
-          hint: t('Cross-channel interactions'),
+          value: formatCount(dailyReviewStats.interactions),
+          hint: t('Today across connected channels'),
         },
         {
           key: 'outbound' as const,
           label: t('Outbound'),
-          value: formatCount(outboundStats.prospectsContacted),
-          hint: t('Prospects contacted'),
+          value: formatCount(dailyReviewStats.outbound),
+          hint: t('Today so far'),
         },
         {
           key: 'conversions' as const,
-          label: t('Conversions'),
-          value: formatCount(outboundStats.conversions),
-          hint: t('Live conversion count'),
+          label: isBwinbetAccount ? t('Bet button clicks') : t('Conversions'),
+          value: formatCount(isBwinbetAccount ? dailyReviewStats.redirectClicks : dailyReviewStats.conversions),
+          hint: t('Today so far'),
         },
       ],
-    [liveSocialStats.summary.interactions, liveSocialStats.summary.views, outboundStats.conversions, outboundStats.prospectsContacted, t]
+    [dailyReviewStats, isBwinbetAccount, t]
   );
 
   const outboundMetrics = useMemo(
@@ -502,6 +634,11 @@ export const DashboardScreen: React.FC = () => {
     return `${t('Updated')}: ${parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   }, [liveSocialStats.generatedAt, t]);
 
+  const heatmapGrouping = useMemo<HeatmapGrouping>(
+    () => getHeatmapGrouping(selectedRange.days),
+    [selectedRange.days],
+  );
+
   const heatmapSeries = useMemo(
     () => {
       const liveByDate = new Map(
@@ -540,7 +677,7 @@ export const DashboardScreen: React.FC = () => {
         ]),
       );
 
-      return buildDateWindow(7).map((date, index, arr) => {
+      const dailySeries = buildDateWindow(selectedRange.days).map((date, index, arr) => {
         const live = liveByDate.get(date);
         const rest = restByDate.get(date);
         const fallback = historyByDate.get(date);
@@ -581,6 +718,8 @@ export const DashboardScreen: React.FC = () => {
         return {
           date,
           label: isToday ? t('Today') : formatDayOfWeek(date, locale),
+          isToday,
+          bucketKey: date,
           value:
             chartMetric === 'views'
               ? merged.views
@@ -591,16 +730,122 @@ export const DashboardScreen: React.FC = () => {
                   : merged.conversions,
         };
       });
+
+      if (heatmapGrouping === 'day') {
+        return dailySeries;
+      }
+
+      const grouped = new Map<
+        string,
+        {
+          date: string;
+          label: string;
+          isToday: boolean;
+          bucketKey: string;
+          value: number;
+        }
+      >();
+
+      dailySeries.forEach(item => {
+        const parsed = parseChartDate(item.date);
+        if (Number.isNaN(parsed.getTime())) return;
+        const bucketKey =
+          heatmapGrouping === 'year'
+            ? `${parsed.getFullYear()}`
+            : `${parsed.getFullYear()}-${`${parsed.getMonth() + 1}`.padStart(2, '0')}`;
+        const label =
+          heatmapGrouping === 'year'
+            ? `${parsed.getFullYear()}`
+            : parsed.toLocaleDateString(locale ?? undefined, { month: 'short', year: 'numeric' });
+        const existing = grouped.get(bucketKey);
+        if (existing) {
+          existing.value += item.value;
+          existing.isToday = existing.isToday || item.isToday;
+          existing.date = item.date;
+          return;
+        }
+        grouped.set(bucketKey, {
+          date: item.date,
+          label,
+          isToday: item.isToday,
+          bucketKey,
+          value: item.value,
+        });
+      });
+
+      return Array.from(grouped.values()).sort((a, b) => `${a.date}`.localeCompare(`${b.date}`));
     },
-    [activityHeatmapRestRows, activityHeatmapRows, chartMetric, historySeries, locale, t, todayLiveSocialStats]
+    [
+      activityHeatmapRestRows,
+      activityHeatmapRows,
+      chartMetric,
+      heatmapGrouping,
+      historySeries,
+      locale,
+      selectedRange.days,
+      t,
+      todayLiveSocialStats,
+    ]
   );
+
+  const heatmapChartData = useMemo(
+    () => heatmapSeries.map((item, index) => ({ ...item, index })),
+    [heatmapSeries],
+  );
+
+  const heatmapTickValues = useMemo(() => {
+    if (heatmapGrouping !== 'day') {
+      return heatmapChartData.map(item => item.index);
+    }
+    return heatmapChartData.map(item => item.index);
+  }, [heatmapChartData, heatmapGrouping]);
+
+  const chartWidth = useMemo(() => {
+    const base = Math.max(viewportWidth - 88, 320);
+    if (heatmapGrouping === 'day') {
+      if (selectedRange.days <= 7) return base;
+      return Math.max(base, heatmapChartData.length * 54);
+    }
+    if (heatmapGrouping === 'month') {
+      return Math.max(base, heatmapChartData.length * 140);
+    }
+    return Math.max(base, heatmapChartData.length * 180);
+  }, [heatmapChartData.length, heatmapGrouping, selectedRange.days, viewportWidth]);
+
+  const barWidth =
+    heatmapGrouping === 'year' ? 56 : heatmapGrouping === 'month' ? 44 : selectedRange.days <= 7 ? 30 : 24;
+  const showHeatmapValueLabels = heatmapGrouping !== 'day' || selectedRange.days <= 14;
 
   const heatmapScale = useMemo(
     () => buildChartScale(heatmapSeries.map(item => item.value)),
     [heatmapSeries]
   );
 
+  const formatHeatmapTick = (index: number) => {
+    const item = heatmapChartData[index];
+    if (!item) return '';
+    if (heatmapGrouping === 'year') return item.label;
+    if (heatmapGrouping === 'month') return item.label;
+    if (item.isToday) return t('Today');
+    return formatDayOfWeek(item.date, locale);
+  };
+
+  const heatmapSubtitle = useMemo(() => {
+    const metricLabel = t(chartMetric.charAt(0).toUpperCase() + chartMetric.slice(1));
+    if (heatmapGrouping === 'year') {
+      return t('Live {{metric}} grouped by year', { metric: metricLabel });
+    }
+    if (heatmapGrouping === 'month') {
+      return t('Live {{metric}} grouped by month', { metric: metricLabel });
+    }
+    return t('Last {{count}} days of {{metric}}', {
+      count: Math.min(heatmapSeries.length, selectedRange.days),
+      metric: metricLabel,
+    });
+  }, [chartMetric, heatmapGrouping, heatmapSeries.length, selectedRange.days, t]);
+
   return (
+    <>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.hero}>
         <Text style={styles.heroEyebrow}>{t('Live cockpit')}</Text>
@@ -709,26 +954,28 @@ export const DashboardScreen: React.FC = () => {
         ) : null}
         <Text style={styles.liveUpdatedAt}>{liveUpdatedLabel}</Text>
       </DMCard>
-      <DMCard title={t('Daily Reviews')} subtitle={loading ? t('Refreshing data...') : t('Pulse across the last 24h')}>
+      <DMCard title={t('Daily Reviews')} subtitle={loading ? t('Refreshing data...') : t('Live statistics for today so far')}>
         <View style={styles.kpiRow}>
           <View style={styles.kpiItem}>
             <Text style={styles.kpiLabel}>{t('Views')}</Text>
-            <Text style={styles.kpiValue}>{formatCount(liveSocialStats.summary.views)}</Text>
+            <Text style={styles.kpiValue}>{formatCount(dailyReviewStats.views)}</Text>
           </View>
           <View style={styles.kpiItem}>
             <Text style={styles.kpiLabel}>{t('Interactions')}</Text>
-            <Text style={styles.kpiValue}>{formatCount(liveSocialStats.summary.interactions)}</Text>
+            <Text style={styles.kpiValue}>{formatCount(dailyReviewStats.interactions)}</Text>
           </View>
         </View>
         <View style={styles.kpiRow}>
           <View style={styles.kpiItem}>
             <Text style={styles.kpiLabel}>{t('Outbound')}</Text>
-            <Text style={styles.kpiValue}>{formatCount(outboundStats.prospectsContacted)}</Text>
+            <Text style={styles.kpiValue}>{formatCount(dailyReviewStats.outbound)}</Text>
           </View>
           <View style={styles.kpiItem}>
             <Text style={styles.kpiLabel}>{isBwinbetAccount ? t('Bet button clicks') : t('Conversions')}</Text>
             <Text style={styles.kpiValue}>
-              {isBwinbetAccount ? formatCount(liveSocialStats.web.redirectClicks) : formatCount(outboundStats.conversions)}
+              {isBwinbetAccount
+                ? formatCount(dailyReviewStats.redirectClicks)
+                : formatCount(dailyReviewStats.conversions)}
             </Text>
           </View>
         </View>
@@ -748,10 +995,13 @@ export const DashboardScreen: React.FC = () => {
       </DMCard>
       <DMCard
         title={t('Activity Heatmap')}
-        subtitle={t('Last {{count}} days of {{metric}}', {
-          count: Math.min(heatmapSeries.length, 7),
-          metric: t(chartMetric.charAt(0).toUpperCase() + chartMetric.slice(1))
-        })}
+        headerRight={
+          <TouchableOpacity style={styles.rangeButton} onPress={() => setRangeMenuOpen(true)}>
+            <Text style={styles.rangeButtonText}>{t(selectedRange.shortLabel)}</Text>
+            <Ionicons name="chevron-down" size={16} color={colors.text} />
+          </TouchableOpacity>
+        }
+        subtitle={heatmapSubtitle}
       >
         <View style={styles.chartMetricRow}>
           {(['views', 'interactions', 'outbound', 'conversions'] as const).map(metric => (
@@ -774,54 +1024,61 @@ export const DashboardScreen: React.FC = () => {
             </TouchableOpacity>
           ))}
         </View>
-        <View style={styles.chartFrame}>
-          <VictoryChart
-            animate={{ duration: 500 }}
-            theme={VictoryTheme.material}
-            height={300}
-            domain={{ y: [0, heatmapScale.top * 1.12] }}
-            domainPadding={{ x: 24, y: 18 }}
-            padding={{ top: 42, bottom: 52, left: 54, right: 22 }}
-          >
-            <VictoryAxis
-              style={{
-                axis: { stroke: colors.border },
-                tickLabels: { fill: colors.subtext, fontSize: 11, padding: 10 },
-                grid: { stroke: 'transparent' }
-              }}
-            />
-            <VictoryAxis
-              dependentAxis
-              tickValues={heatmapScale.ticks}
-              tickFormat={tick => formatAxisCount(Number(tick))}
-              style={{
-                axis: { stroke: colors.border },
-                tickLabels: { fill: colors.subtext, fontSize: 11, padding: 6 },
-                grid: { stroke: 'rgba(155, 169, 202, 0.16)', strokeDasharray: '4,6' }
-              }}
-            />
-            <VictoryBar
-              cornerRadius={{ top: 10, bottom: 4 }}
-              style={{
-                data: {
-                  fill: ({ datum }) =>
-                    datum.label === t('Today') ? colors.accentSecondary : colors.accent,
-                },
-                labels: {
-                  fill: colors.text,
-                  fontSize: 10,
-                  fontWeight: '700',
-                },
-              }}
-              data={heatmapSeries}
-              x="label"
-              y="value"
-              labels={({ datum }) => (datum.value > 0 ? formatCount(datum.value) : '')}
-              labelComponent={<VictoryLabel dy={-10} />}
-              barWidth={30}
-            />
-          </VictoryChart>
-        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chartScroller}>
+          <View style={[styles.chartFrame, { width: chartWidth }]}>
+            <VictoryChart
+              width={chartWidth}
+              animate={{ duration: 500 }}
+              theme={VictoryTheme.material}
+              height={300}
+              domain={{ y: [0, heatmapScale.top * 1.12] }}
+              domainPadding={{ x: heatmapGrouping === 'day' ? 18 : 28, y: 18 }}
+              padding={{ top: 42, bottom: 52, left: 54, right: 22 }}
+            >
+              <VictoryAxis
+                tickValues={heatmapTickValues}
+                tickFormat={tick => formatHeatmapTick(Number(tick))}
+                style={{
+                  axis: { stroke: colors.border },
+                  tickLabels: { fill: colors.subtext, fontSize: selectedRange.days > 30 ? 10 : 11, padding: 10 },
+                  grid: { stroke: 'transparent' }
+                }}
+              />
+              <VictoryAxis
+                dependentAxis
+                tickValues={heatmapScale.ticks}
+                tickFormat={tick => formatAxisCount(Number(tick))}
+                style={{
+                  axis: { stroke: colors.border },
+                  tickLabels: { fill: colors.subtext, fontSize: 11, padding: 6 },
+                  grid: { stroke: 'rgba(155, 169, 202, 0.16)', strokeDasharray: '4,6' }
+                }}
+              />
+              <VictoryBar
+                cornerRadius={{ top: 10, bottom: 4 }}
+                style={{
+                  data: {
+                    fill: ({ datum }) =>
+                      datum.isToday ? colors.accentSecondary : colors.accent,
+                  },
+                  labels: {
+                    fill: colors.text,
+                    fontSize: selectedRange.days > 30 ? 8 : 10,
+                    fontWeight: '700',
+                  },
+                }}
+                data={heatmapChartData}
+                x="index"
+                y="value"
+                labels={({ datum }) =>
+                  datum.value > 0 && (showHeatmapValueLabels || datum.isToday) ? formatCount(datum.value) : ''
+                }
+                labelComponent={<VictoryLabel dy={-10} />}
+                barWidth={barWidth}
+              />
+            </VictoryChart>
+          </View>
+        </ScrollView>
       </DMCard>
       <DMCard title={t('Automation Log')} subtitle={t('Recent events across your CRM scenarios')}>
         {logItems.map(item => (
@@ -831,6 +1088,37 @@ export const DashboardScreen: React.FC = () => {
         ))}
       </DMCard>
     </ScrollView>
+    <Modal visible={rangeMenuOpen} transparent animationType="fade">
+      <Pressable style={styles.modalBackdrop} onPress={() => setRangeMenuOpen(false)}>
+        <Pressable style={styles.modalCard} onPress={() => undefined}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{t('Activity range')}</Text>
+            <TouchableOpacity onPress={() => setRangeMenuOpen(false)} style={styles.modalClose}>
+              <Ionicons name="close" size={18} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+          {REVIEW_RANGE_OPTIONS.map(option => {
+            const active = option.key === selectedRangeKey;
+            return (
+              <TouchableOpacity
+                key={option.key}
+                style={[styles.modalOption, active && styles.modalOptionActive]}
+                onPress={() => {
+                  setSelectedRangeKey(option.key);
+                  setRangeMenuOpen(false);
+                }}
+              >
+                <Text style={[styles.modalOptionText, active && styles.modalOptionTextActive]}>
+                  {t(option.label)}
+                </Text>
+                {active ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
+              </TouchableOpacity>
+            );
+          })}
+        </Pressable>
+      </Pressable>
+    </Modal>
+    </>
   );
 };
 
@@ -909,6 +1197,7 @@ const styles = StyleSheet.create({
     marginRight: 0
   },
   kpiLabel: {
+    color: colors.text,
     fontSize: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.6
@@ -923,6 +1212,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     marginBottom: 12
+  },
+  rangeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  rangeButtonText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
   },
   metricChip: {
     paddingHorizontal: 14,
@@ -957,6 +1262,9 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     paddingTop: 8,
     overflow: 'hidden'
+  },
+  chartScroller: {
+    paddingBottom: 4,
   },
   metricSummaryRow: {
     flexDirection: 'row',
@@ -1125,6 +1433,62 @@ const styles = StyleSheet.create({
     color: colors.subtext,
     marginTop: 8,
     lineHeight: 18
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(8, 10, 16, 0.72)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    borderRadius: 24,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  modalTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  modalClose: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  modalOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginTop: 10,
+  },
+  modalOptionActive: {
+    borderColor: colors.accent,
+    backgroundColor: 'rgba(0, 214, 255, 0.08)',
+  },
+  modalOptionText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalOptionTextActive: {
+    color: colors.accent,
   },
   logItem: {
     color: colors.subtext,

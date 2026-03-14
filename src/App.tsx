@@ -42,7 +42,6 @@ export default function App() {
         setFontsReady(true);
       }
     };
-    const timeoutId = setTimeout(finalize, 1500);
 
     Font.loadAsync(Ionicons.font)
       .then(finalize)
@@ -50,7 +49,6 @@ export default function App() {
 
     return () => {
       isMounted = false;
-      clearTimeout(timeoutId);
     };
   }, []);
 
