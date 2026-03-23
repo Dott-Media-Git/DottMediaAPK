@@ -30,6 +30,7 @@ import type { TrendCandidate } from '../types/footballTrends.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
+import { validateBwinSportsContent } from './bwinContentGuard.js';
 
 type AutoPostJob = {
   userId: string;
@@ -3297,6 +3298,20 @@ export class AutoPostService {
               : 'Missing Instagram Reels video URL';
         results.push({ platform, status: 'failed', error: errorMessage });
         historyEntries.push({ platform, status: 'failed', caption, errorMessage });
+        continue;
+      }
+
+      const bwinValidation = validateBwinSportsContent({
+        userId,
+        caption,
+        videoTitle,
+        imageUrls: videoUrl ? [] : imageUrls,
+        videoUrl,
+      });
+      if (!bwinValidation.ok) {
+        const errorMessage = bwinValidation.reason ?? 'Bwinbet auto-post content must stay sports-only.';
+        results.push({ platform, status: 'failed', error: errorMessage });
+        historyEntries.push({ platform, status: 'failed', caption, errorMessage, videoUrl, videoTitle });
         continue;
       }
 
