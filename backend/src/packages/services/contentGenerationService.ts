@@ -140,12 +140,25 @@ export class ContentGenerationService {
   }
 
   private async generateCaptions(params: GenerationParams) {
-    const systemPrompt = `You create high-performing social media copy for Instagram, LinkedIn, and Twitter.
+    const context = `${params.businessType} ${params.prompt}`.toLowerCase();
+    const sportsMode = /\b(bwin|sport|sports|football|soccer|bet|betting|fixture|fixtures|odds|result|results|goal|highlight|league|table|prediction)\b/.test(
+      context,
+    );
+    const systemPrompt = sportsMode
+      ? `You create high-performing social media copy for Instagram, LinkedIn, and Twitter for football and sports betting brands.
+Focus on fixtures, results, highlights, odds, tables, predictions, and matchday energy.
+Do not mention CRM, lead generation, demos, pipelines, appointment booking, robots, outreach automation, or B2B services.
+Return JSON with keys:
+caption_instagram, caption_linkedin, caption_x, hashtags_instagram (comma separated), hashtags_generic (comma separated 15-25 hashtags).`
+      : `You create high-performing social media copy for Instagram, LinkedIn, and Twitter.
 Focus on the product/services and outcomes, not the image scene.
 Avoid describing clothing, suits, ties, executive suites, or photography/lighting.
 Emphasize real services like CRM, social media marketing, lead generation, outreach automation, analytics, AI automation, and appointment booking.
 Return JSON with keys:
 caption_instagram, caption_linkedin, caption_x, hashtags_instagram (comma separated), hashtags_generic (comma separated 15-25 hashtags).`;
+    const userPrompt = sportsMode
+      ? `Prompt: ${params.prompt}\nBusiness type: ${params.businessType}\nFocus: football updates, odds, fixtures, results, highlights, tables, predictions, and sports engagement.\nTone: energetic, sports-focused, concise, and betting-friendly.`
+      : `Prompt: ${params.prompt}\nBusiness type: ${params.businessType}\nServices: CRM, social media marketing, lead generation, outreach automation, analytics, AI automation, appointment booking, auto-replies.\nTone: energetic, helpful, growth-minded.`;
 
     const completion = await this.client.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -153,10 +166,7 @@ caption_instagram, caption_linkedin, caption_x, hashtags_instagram (comma separa
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: systemPrompt },
-        {
-          role: 'user',
-          content: `Prompt: ${params.prompt}\nBusiness type: ${params.businessType}\nServices: CRM, social media marketing, lead generation, outreach automation, analytics, AI automation, appointment booking, auto-replies.\nTone: energetic, helpful, growth-minded.`,
-        },
+        { role: 'user', content: userPrompt },
       ],
     });
 

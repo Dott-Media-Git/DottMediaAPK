@@ -514,6 +514,31 @@ class SupabaseFallbackService {
     };
   }
 
+  async claimAutopostRun(
+    userId: string,
+    field: 'next_run' | 'reels_next_run' | 'story_next_run' | 'trend_next_run',
+    expectedRun: unknown,
+    nextRun: unknown,
+  ) {
+    if (!this.isConfigured() || !userId) return false;
+    const expectedIso = toIsoString(expectedRun);
+    const nextIso = toIsoString(nextRun);
+    if (!expectedIso || !nextIso) return false;
+    const rows = await this.request<any[]>('PATCH', 'dott_autopost_jobs', {
+      params: {
+        select: 'user_id',
+        user_id: `eq.${userId}`,
+        [field]: `eq.${expectedIso}`,
+      },
+      prefer: 'return=representation',
+      body: {
+        [field]: nextIso,
+        updated_at: NOW(),
+      },
+    });
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
   async getDueAutopostJobs(field: 'next_run' | 'reels_next_run' | 'story_next_run' | 'trend_next_run', before: Date) {
     if (!this.isConfigured()) return [];
     const rows = await this.request<any[]>('GET', 'dott_autopost_jobs', {

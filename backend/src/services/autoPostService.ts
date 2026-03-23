@@ -30,7 +30,7 @@ import type { TrendCandidate } from '../types/footballTrends.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
-import { validateBwinSportsContent } from './bwinContentGuard.js';
+import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from './bwinContentGuard.js';
 
 type AutoPostJob = {
   userId: string;
@@ -236,6 +236,17 @@ export class AutoPostService {
     "Ready to grow? Let's talk.",
     'Ask for a quick demo today.',
   ];
+  private defaultBwinFallbackCaption =
+    'Bwinbet Uganda football update. Stay on top of fixtures, results, odds, and matchday talking points.\n\nBet now: https://bwinbetug.com | More info: www.bwinbetug.info';
+  private defaultBwinFallbackHashtags =
+    'BwinbetUganda, FootballUpdate, Matchday, FootballNews, Soccer, BettingTips, OddsUpdate, MatchPreview, Results, Highlights, TopScorers, LiveTable';
+  private bwinFallbackCaptionVariants = [
+    'More match details on www.bwinbetug.info.',
+    'Track more fixtures and odds on www.bwinbetug.info.',
+    'Place your bets at https://bwinbetug.com.',
+    'Stay with Bwinbet Uganda for more football updates.',
+    'More football insight is live on www.bwinbetug.info.',
+  ];
   private defaultXHighlightAccounts = [
     'ChampionsLeague',
     'SerieA_EN',
@@ -283,13 +294,8 @@ export class AutoPostService {
     return (process.env.PRIMARY_SOCIAL_DEFAULT_EMAIL ?? 'brasioxirin@gmail.com').trim().toLowerCase();
   }
 
-  private getBwinScopeId() {
-    return (process.env.BWIN_SCOPE_ID ?? process.env.BWIN_TRACK_OWNER_ID ?? '').trim();
-  }
-
   private isBwinScopeUser(userId: string) {
-    const bwinScopeId = this.getBwinScopeId();
-    return Boolean(bwinScopeId) && userId.trim() === bwinScopeId;
+    return isKnownBwinScopeUser(userId);
   }
 
   private async getRuntimeFallbackAccounts(userId: string): Promise<SocialAccounts> {
@@ -438,6 +444,7 @@ export class AutoPostService {
       }
     >();
     for (const [userId, job] of dueStandard) {
+      if (!(await this.claimDueRun(userId, job, 'next_run', now))) continue;
       const outcome = await this.executeJob(userId, job);
       processed += 1;
       results.set(userId, {
@@ -448,6 +455,7 @@ export class AutoPostService {
       });
     }
     for (const [userId, job] of dueReels) {
+      if (!(await this.claimDueRun(userId, job, 'reels_next_run', now))) continue;
       const outcome = await this.executeJob(userId, job, {
         platforms: ['instagram_reels'],
         intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
@@ -466,6 +474,7 @@ export class AutoPostService {
       });
     }
     for (const [userId, job] of dueStories) {
+      if (!(await this.claimDueRun(userId, job, 'story_next_run', now))) continue;
       const outcome = await this.executeTrendStories(userId, job);
       processed += 1;
       const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
@@ -477,6 +486,7 @@ export class AutoPostService {
       });
     }
     for (const [userId, job] of dueTrends) {
+      if (!(await this.claimDueRun(userId, job, 'trend_next_run', now))) continue;
       const outcome = await this.executeTrendPosts(userId, job);
       processed += 1;
       const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
@@ -858,6 +868,7 @@ export class AutoPostService {
         }
       >();
       for (const [userId, job] of dueStandard) {
+        if (!(await this.claimDueRun(userId, job, 'next_run', now))) continue;
         const outcome = await this.executeJob(userId, job);
         processed += 1;
         results.set(userId, {
@@ -868,6 +879,7 @@ export class AutoPostService {
         });
       }
       for (const [userId, job] of dueReels) {
+        if (!(await this.claimDueRun(userId, job, 'reels_next_run', now))) continue;
         const outcome = await this.executeJob(userId, job, {
           platforms: ['instagram_reels'],
           intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
@@ -886,6 +898,7 @@ export class AutoPostService {
         });
       }
       for (const [userId, job] of dueStories) {
+        if (!(await this.claimDueRun(userId, job, 'story_next_run', now))) continue;
         const outcome = await this.executeTrendStories(userId, job);
         processed += 1;
         const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
@@ -897,6 +910,7 @@ export class AutoPostService {
         });
       }
       for (const [userId, job] of dueTrends) {
+        if (!(await this.claimDueRun(userId, job, 'trend_next_run', now))) continue;
         const outcome = await this.executeTrendPosts(userId, job);
         processed += 1;
         const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
@@ -1063,6 +1077,63 @@ export class AutoPostService {
         };
       }
       throw error;
+    }
+  }
+
+  private getClaimedRunValue(
+    job: AutoPostJob,
+    field: 'next_run' | 'reels_next_run' | 'story_next_run' | 'trend_next_run',
+  ) {
+    switch (field) {
+      case 'reels_next_run':
+        return job.reelsNextRun;
+      case 'story_next_run':
+        return job.storyNextRun;
+      case 'trend_next_run':
+        return job.trendNextRun;
+      case 'next_run':
+      default:
+        return job.nextRun;
+    }
+  }
+
+  private getClaimNextRunDate(
+    job: AutoPostJob,
+    field: 'next_run' | 'reels_next_run' | 'story_next_run' | 'trend_next_run',
+    now: Date,
+  ) {
+    const hours =
+      field === 'reels_next_run'
+        ? job.reelsIntervalHours ?? this.defaultReelsIntervalHours
+        : field === 'story_next_run'
+          ? job.storyIntervalHours ?? this.defaultStoryIntervalHours
+          : field === 'trend_next_run'
+            ? job.trendIntervalHours ?? 4
+            : job.intervalHours && job.intervalHours > 0
+              ? job.intervalHours
+              : this.defaultIntervalHours;
+    return new Date(now.getTime() + Math.max(hours, 0.05) * 60 * 60 * 1000);
+  }
+
+  private async claimDueRun(
+    userId: string,
+    job: AutoPostJob,
+    field: 'next_run' | 'reels_next_run' | 'story_next_run' | 'trend_next_run',
+    now: admin.firestore.Timestamp,
+  ) {
+    if (!supabaseFallbackService.isConfigured()) return true;
+    const expectedRun = this.getClaimedRunValue(job, field);
+    if (!expectedRun) return false;
+    const nextRun = this.getClaimNextRunDate(job, field, now.toDate());
+    try {
+      return await supabaseFallbackService.claimAutopostRun(userId, field, expectedRun, nextRun);
+    } catch (error) {
+      console.warn('[autopost] failed to claim due run in supabase fallback', {
+        userId,
+        field,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
     }
   }
 
@@ -1421,7 +1492,7 @@ export class AutoPostService {
   }
 
   private mergeTrendRecentKeys(existing: string[], used: string[]) {
-    const maxHistory = Math.max(Number(process.env.AUTOPOST_TREND_KEY_HISTORY ?? 80), 20);
+    const maxHistory = Math.max(Number(process.env.AUTOPOST_TREND_KEY_HISTORY ?? 180), 40);
     const next = [...used, ...existing]
       .map(value => String(value || '').toLowerCase().trim())
       .filter(Boolean);
@@ -1536,19 +1607,66 @@ export class AutoPostService {
     return `${type}:${normalized}`.slice(0, 320);
   }
 
+  private normalizeNewsText(value: string) {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/https?:\/\/\S+/g, ' ')
+      .replace(/[_|]+/g, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\b(?:live|latest|breaking|update|updates|report|reports|reported|watch)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private normalizeNewsLink(value: string) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+      const parsed = new URL(raw);
+      parsed.hash = '';
+      ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid'].forEach(param =>
+        parsed.searchParams.delete(param),
+      );
+      const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+      const pathname = parsed.pathname.replace(/\/+$/, '').toLowerCase();
+      const search = parsed.search ? parsed.search.toLowerCase() : '';
+      return `${host}${pathname}${search}`;
+    } catch {
+      return raw.toLowerCase().replace(/\s+/g, ' ').trim();
+    }
+  }
+
+  private buildNewsCandidateKeys(candidate: TrendCandidate, item = candidate.items?.[0]) {
+    const topic = this.normalizeNewsText(candidate.topic || '');
+    const headline = this.normalizeNewsText(item?.title || candidate.sampleTitles?.[0] || candidate.topic || '');
+    const source = this.normalizeNewsText(item?.sourceLabel || candidate.sources?.[0] || '');
+    const link = this.normalizeNewsLink(item?.link || '');
+    const rawKeys = [
+      headline ? this.buildTrendContentKey('news', headline) : '',
+      topic && headline ? this.buildTrendContentKey('news', `${topic}|${headline}`) : '',
+      headline && source ? this.buildTrendContentKey('news', `${headline}|${source}`) : '',
+      link ? this.buildTrendContentKey('news', link) : '',
+      headline && link ? this.buildTrendContentKey('news', `${headline}|${link}`) : '',
+    ];
+    return rawKeys.filter((value, index, arr) => Boolean(value) && arr.indexOf(value) === index);
+  }
+
+  private hasRecentTrendKeys(keys: string[], recentSet: Set<string>) {
+    return keys.some(key => recentSet.has(key));
+  }
+
   private buildNewsCandidateKey(candidate: TrendCandidate, item = candidate.items?.[0]) {
-    const topic = candidate.topic || '';
-    const headline = item?.title || candidate.sampleTitles?.[0] || topic;
-    const link = item?.link || '';
-    return this.buildTrendContentKey('news', `${topic}|${headline}|${link}`);
+    return this.buildNewsCandidateKeys(candidate, item)[0] ?? '';
   }
 
   private pickFreshNewsCandidate(candidates: TrendCandidate[], recentSet: Set<string>) {
     for (const candidate of candidates) {
       const item = candidate.items?.[0];
-      const key = this.buildNewsCandidateKey(candidate, item);
-      if (!recentSet.has(key)) {
-        return { candidate, item, key };
+      const keys = this.buildNewsCandidateKeys(candidate, item);
+      if (keys.length && !this.hasRecentTrendKeys(keys, recentSet)) {
+        return { candidate, item, key: keys[0], keys };
       }
     }
     return null;
@@ -1589,9 +1707,10 @@ export class AutoPostService {
         return parsed.toString();
       }
       if (host.includes('bbci.co.uk') || host.includes('bbc.co.uk') || host.includes('bbc.com')) {
+        parsed.pathname = parsed.pathname.replace(/\/ace\/standard\/\d+\//i, '/ace/standard/1600/');
         parsed.searchParams.set('w', '1600');
         parsed.searchParams.set('h', '900');
-        parsed.searchParams.set('quality', '90');
+        parsed.searchParams.set('quality', '95');
         return parsed.toString();
       }
       if (host.includes('espncdn.com') || host.includes('espn.com')) {
@@ -1796,6 +1915,115 @@ export class AutoPostService {
     return `${title}\n\nUpdate time: ${stamp} EAT\nBet now: https://bwinbetug.com | More info: www.bwinbetug.info`;
   }
 
+  private escapeSvgText(value: string) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private trimTextForCard(value: string, maxLength = 120) {
+    const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) return '';
+    if (normalized.length <= maxLength) return normalized;
+    return `${normalized.slice(0, Math.max(maxLength - 1, 1)).trimEnd()}…`;
+  }
+
+  private wrapCardText(value: string, maxCharsPerLine = 22, maxLines = 4) {
+    const words = this.trimTextForCard(value, maxCharsPerLine * maxLines + 16).split(/\s+/).filter(Boolean);
+    const lines: string[] = [];
+    let current = '';
+    for (const word of words) {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length <= maxCharsPerLine || !current) {
+        current = next;
+        continue;
+      }
+      lines.push(current);
+      current = word;
+      if (lines.length >= maxLines - 1) break;
+    }
+    if (lines.length < maxLines && current) {
+      lines.push(current);
+    }
+    return lines.slice(0, maxLines);
+  }
+
+  private deriveBwinHeadline(source: string) {
+    const quoted = String(source || '').match(/"([^"]{6,160})"/);
+    if (quoted?.[1]) return this.trimTextForCard(quoted[1], 110);
+    const cleaned = String(source || '')
+      .replace(/^(create|generate)\s+(?:a|an)\s+/i, '')
+      .replace(/\b(?:editorial|realistic|football|sports|poster|image|graphic|card|update|visual)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return this.trimTextForCard(cleaned || 'Latest football update', 110);
+  }
+
+  private async generateBwinSportsFallbackImage(headline: string, subline?: string) {
+    const width = 1600;
+    const height = 1600;
+    const headlineLines = this.wrapCardText(headline || 'Latest football update', 21, 4);
+    const sublineLines = this.wrapCardText(
+      subline || 'Fixtures, results, odds, and football highlights',
+      34,
+      3,
+    );
+    const headlineSvg = headlineLines
+      .map(
+        (line, index) =>
+          `<text x="110" y="${410 + index * 122}" font-family="Arial, Helvetica, sans-serif" font-size="102" font-weight="800" fill="#111111">${this.escapeSvgText(
+            line,
+          )}</text>`,
+      )
+      .join('');
+    const sublineSvg = sublineLines
+      .map(
+        (line, index) =>
+          `<text x="110" y="${980 + index * 62}" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="500" fill="#111111">${this.escapeSvgText(
+            line,
+          )}</text>`,
+      )
+      .join('');
+    const svg = `
+      <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#ffd54d"/>
+            <stop offset="100%" stop-color="#ffb700"/>
+          </linearGradient>
+        </defs>
+        <rect width="${width}" height="${height}" fill="url(#bg)"/>
+        <rect x="0" y="0" width="${width}" height="200" fill="#111111"/>
+        <rect x="0" y="${height - 210}" width="${width}" height="210" fill="#111111"/>
+        <rect x="92" y="286" width="${width - 184}" height="8" fill="#111111" opacity="0.16"/>
+        <rect x="92" y="1120" width="${width - 184}" height="8" fill="#111111" opacity="0.16"/>
+        <text x="110" y="142" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="800" fill="#ffd54d">BWINBET UGANDA</text>
+        <text x="110" y="256" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="700" fill="#111111">FOOTBALL UPDATE</text>
+        ${headlineSvg}
+        ${sublineSvg}
+        <text x="110" y="${height - 116}" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" fill="#ffd54d">www.bwinbetug.info</text>
+      </svg>
+    `;
+
+    try {
+      let pipeline = sharp(Buffer.from(svg)).png();
+      const logoPath = this.resolveBwinNewsLogoPath();
+      if (logoPath) {
+        const logo = await sharp(logoPath).resize({ width: 380, withoutEnlargement: true }).png().toBuffer();
+        pipeline = pipeline.composite([{ input: logo, top: 40, left: width - 420 }]);
+      }
+      const output = await pipeline.png({ compressionLevel: 1, palette: false }).toBuffer();
+      const publicUrl = await saveGeneratedImageBuffer(output, 'png');
+      return publicUrl ? [publicUrl] : [];
+    } catch (error) {
+      console.warn('[autopost] failed to generate bwin sports fallback image', error);
+      return [];
+    }
+  }
+
   private async generateFootballCardImage(prompt: string, recentSet: Set<string>) {
     try {
       const generated = await contentGenerationService.generateContent({
@@ -1803,12 +2031,12 @@ export class AutoPostService {
         businessType: 'Football content card',
         imageCount: 1,
       });
-      const images = this.resolveImageUrls(generated.images ?? [], recentSet, false);
-      return images.slice(0, 1);
+      const images = this.selectFreshImages(generated.images ?? [], recentSet);
+      if (images.length) return images.slice(0, 1);
     } catch (error) {
       console.warn('[autopost] football card image generation failed', error);
-      return [];
     }
+    return this.generateBwinSportsFallbackImage(this.deriveBwinHeadline(prompt));
   }
 
   private extractResultEntries(candidates: TrendCandidate[], recentSet: Set<string>) {
@@ -2818,12 +3046,13 @@ export class AutoPostService {
         if (staleStructuredCaption) {
           restoreNewsBaseline();
         }
-        const currentNewsKey = topCandidate ? this.buildNewsCandidateKey(topCandidate, topItem) : '';
-        const currentNewsFresh = Boolean(currentNewsKey) && !trendRecentSet.has(currentNewsKey);
+        const currentNewsKeys = topCandidate ? this.buildNewsCandidateKeys(topCandidate, topItem) : [];
+        const currentNewsFresh = currentNewsKeys.length > 0 && !this.hasRecentTrendKeys(currentNewsKeys, trendRecentSet);
         const freshNews = this.pickFreshNewsCandidate(footballCandidates, trendRecentSet);
         const effectiveNewsCandidate = currentNewsFresh ? topCandidate : freshNews?.candidate;
         const effectiveNewsItem = currentNewsFresh ? topItem : freshNews?.item;
-        const effectiveNewsKey = currentNewsFresh ? currentNewsKey : freshNews?.key;
+        const effectiveNewsKeys = currentNewsFresh ? currentNewsKeys : freshNews?.keys ?? [];
+        const effectiveNewsKey = effectiveNewsKeys[0];
         if (effectiveNewsCandidate && (!caption || !currentNewsFresh || staleStructuredCaption)) {
           const source = effectiveNewsItem?.sourceLabel || effectiveNewsCandidate.sources?.[0] || 'Football source';
           const headline = effectiveNewsItem?.title || effectiveNewsCandidate.topic;
@@ -2845,15 +3074,20 @@ export class AutoPostService {
             imageUrls = [resolvedImage];
           }
         }
+        if (!effectiveNewsCandidate) {
+          trendTopic = 'Latest football update';
+          caption = this.buildFootballFallbackCaption(trendTopic, 'news', scheduleTimezone);
+          setUnifiedCaption();
+        }
         if (!caption) {
           caption = topCandidate?.topic
             ? `${topCandidate.topic}\n\nBet now: https://bwinbetug.com | More info: www.bwinbetug.info`
             : this.buildFootballFallbackCaption(undefined, selectedContentType, scheduleTimezone);
           setUnifiedCaption();
         }
-        if (effectiveNewsKey && !trendRecentSet.has(effectiveNewsKey)) {
+        if (effectiveNewsKey && !this.hasRecentTrendKeys(effectiveNewsKeys, trendRecentSet)) {
           trendContentKey = effectiveNewsKey;
-          usedTrendKeys.push(effectiveNewsKey);
+          usedTrendKeys.push(...effectiveNewsKeys);
         }
         if (!imageUrls.length && trendTopic) {
           imageUrls = await this.generateFootballCardImage(
@@ -3135,12 +3369,16 @@ export class AutoPostService {
       'threads',
     ]);
     const enableYouTubeShorts = this.useYouTubeShorts(job);
+    const isBwinUser = this.isBwinScopeUser(userId);
     const basePrompt =
       job.prompt ??
-      'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in an executive suite; friendly humanoid robot wearing a tie and glasses, assisting a diverse team, natural expressions, premium interior finishes, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.';
-    const styledPrompt = this.applyNeonPreference(basePrompt);
-    let runPrompt = this.buildVisualPrompt(styledPrompt);
-    const businessType = job.businessType ?? 'AI CRM + automation agency';
+      (isBwinUser
+        ? 'Create a sharp football matchday visual for Bwinbet Uganda featuring real match energy, players in action, stadium atmosphere, and clean editorial sports composition.'
+        : 'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in an executive suite; friendly humanoid robot wearing a tie and glasses, assisting a diverse team, natural expressions, premium interior finishes, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.');
+    let runPrompt = isBwinUser
+      ? this.buildBwinVisualPrompt(basePrompt)
+      : this.buildVisualPrompt(this.applyNeonPreference(basePrompt));
+    const businessType = job.businessType ?? (isBwinUser ? 'Sports betting brand' : 'AI CRM + automation agency');
     const recentImages = this.getRecentImageHistory(job);
     const recentSet = new Set(recentImages);
     const fallbackVideoPool = this.getFallbackVideoPool();
@@ -3153,7 +3391,7 @@ export class AutoPostService {
       if (optionalVideoPlatforms.has(platform) && hasGenericVideo) return false;
       return true;
     });
-    const requireAiImages = needsImages ? this.requireAiImages(job) : false;
+    const requireAiImages = needsImages ? (isBwinUser ? false : this.requireAiImages(job)) : false;
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
 
     let generated: GeneratedContent | null = options.generatedContent
@@ -3177,7 +3415,7 @@ export class AutoPostService {
           generated.images = fresh;
           break;
         }
-        runPrompt = this.buildVisualPrompt(basePrompt);
+        runPrompt = isBwinUser ? this.buildBwinVisualPrompt(basePrompt) : this.buildVisualPrompt(basePrompt);
       }
       if (!generated) {
         if (generationError) {
@@ -3197,7 +3435,7 @@ export class AutoPostService {
     const credentials = await this.resolveCredentials(userId);
     const results: PostResult[] = [];
     const finalGenerated = generated;
-    const imageUrls = needsImages
+    let imageUrls = needsImages
       ? options.generatedContent
         ? this.resolveApprovedImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages)
         : this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages)
@@ -3206,11 +3444,15 @@ export class AutoPostService {
       Pick<AutoPostJob, 'videoCursor' | 'youtubeVideoCursor' | 'tiktokVideoCursor' | 'reelsVideoCursor'>
     > = {};
     let usedGenericVideo = false;
-    const fallbackCopy = this.buildFallbackCopy(job);
+    const fallbackCopy = this.buildFallbackCopy(job, userId);
     const recentCaptions = this.getRecentCaptionHistory(job);
     const captionHistory = new Set(recentCaptions);
     const usedCaptions: string[] = [];
     const historyEntries: HistoryEntry[] = [];
+
+    if (isBwinUser && needsImages) {
+      imageUrls = await this.ensureBwinSafeImageUrls(imageUrls, finalGenerated, basePrompt);
+    }
 
     if (requireAiImages && imageUrls.length === 0) {
       const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
@@ -3255,7 +3497,7 @@ export class AutoPostService {
       const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
       const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
       const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
-      const { caption, signature } = this.ensureCaptionVariety(platform, brandedCaption, captionHistory);
+      const { caption, signature } = this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
       const isVideoPlatform = videoPlatforms.has(platform as VideoPlatform);
       const supportsVideo = isVideoPlatform || optionalVideoPlatforms.has(platform);
       let videoUrl: string | undefined;
@@ -3660,11 +3902,12 @@ export class AutoPostService {
     return [caption, hashtags].filter(Boolean).join('\n\n');
   }
 
-  private buildFallbackCopy(job: AutoPostJob) {
-    const caption = job.fallbackCaption?.trim() || this.defaultFallbackCaption;
-    let hashtags = job.fallbackHashtags?.trim() || this.defaultFallbackHashtags;
+  private buildFallbackCopy(job: AutoPostJob, userId?: string) {
+    const isBwinUser = userId ? this.isBwinScopeUser(userId) : false;
+    const caption = job.fallbackCaption?.trim() || (isBwinUser ? this.defaultBwinFallbackCaption : this.defaultFallbackCaption);
+    let hashtags = job.fallbackHashtags?.trim() || (isBwinUser ? this.defaultBwinFallbackHashtags : this.defaultFallbackHashtags);
     if (!this.formatHashtags(hashtags)) {
-      hashtags = this.defaultFallbackHashtags;
+      hashtags = isBwinUser ? this.defaultBwinFallbackHashtags : this.defaultFallbackHashtags;
     }
     return { caption, hashtags };
   }
@@ -3892,6 +4135,58 @@ export class AutoPostService {
     return this.withCacheBuster(chosen);
   }
 
+  private buildBwinVisualPrompt(basePrompt: string) {
+    const scenes = [
+      'matchday action in a floodlit football stadium',
+      'players celebrating a goal in front of a packed stand',
+      'dynamic pre-kickoff tunnel walk with footballers',
+      'goalkeeper save sequence under bright stadium lights',
+      'close-up football action with crowd blur and sharp ball detail',
+      'stadium-side football editorial visual with match tension',
+    ];
+    const compositions = [
+      'editorial sports photograph',
+      'high-energy matchday poster composition',
+      'sharp action frame with clean space for a headline',
+      'broadcast-style football still with premium clarity',
+    ];
+    const details = [
+      'real players, real kit texture, no robots, no office scenes',
+      'clear faces, sharp pitch detail, clean stadium lighting',
+      'premium sports photography style, motion energy, no logos added',
+      'crisp football atmosphere with strong depth and contrast',
+    ];
+    const pick = (items: string[]) => items[Math.floor(Math.random() * items.length)];
+    const ref = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    return `${basePrompt} Scene: ${pick(scenes)}. Composition: ${pick(compositions)}. Details: ${pick(details)}. Ref ${ref}.`;
+  }
+
+  private isBwinUnsafeFallbackImage(url: string) {
+    const normalized = String(url || '').toLowerCase().trim();
+    if (!normalized) return false;
+    if (normalized.includes('/fallback-images/')) return true;
+    return [
+      'robot',
+      'bot',
+      'executive',
+      'playground',
+      'teenage',
+      'holographic chart',
+      'corporate poster',
+    ].some(marker => normalized.includes(marker));
+  }
+
+  private async ensureBwinSafeImageUrls(images: string[], content: GeneratedContent, basePrompt: string) {
+    const safeImages = (images ?? []).filter(url => url && !this.isBwinUnsafeFallbackImage(url));
+    if (safeImages.length) return safeImages;
+    const fallbackHeadline =
+      content.caption_instagram?.trim() ||
+      content.caption_x?.trim() ||
+      content.caption_linkedin?.trim() ||
+      this.deriveBwinHeadline(basePrompt);
+    return this.generateBwinSportsFallbackImage(fallbackHeadline);
+  }
+
   private buildVisualPrompt(basePrompt: string) {
     const sceneContext = this.getSceneContext();
     const style = this.getVisualStyle(basePrompt);
@@ -4048,12 +4343,13 @@ export class AutoPostService {
     return true;
   }
 
-  private ensureCaptionVariety(platform: string, caption: string, history: Set<string>) {
+  private ensureCaptionVariety(platform: string, caption: string, history: Set<string>, userId?: string) {
     const signature = this.buildCaptionSignature(platform, caption);
     if (!history.has(signature)) {
       return { caption, signature };
     }
-    for (const variant of this.fallbackCaptionVariants) {
+    const variants = userId && this.isBwinScopeUser(userId) ? this.bwinFallbackCaptionVariants : this.fallbackCaptionVariants;
+    for (const variant of variants) {
       const candidate = this.appendCaptionSuffix(caption, variant, platform);
       const candidateSignature = this.buildCaptionSignature(platform, candidate);
       if (!history.has(candidateSignature)) {
