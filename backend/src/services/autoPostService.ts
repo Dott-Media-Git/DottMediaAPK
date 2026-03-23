@@ -1745,10 +1745,10 @@ export class AutoPostService {
         if (!source || !logoBuffer) return url;
         try {
           const metadata = await sharp(source).metadata();
-          const width = Math.max(Number(metadata.width ?? 1600), 800);
-          const height = Math.max(Number(metadata.height ?? 900), 600);
-          const margin = Math.max(Math.round(width * 0.025), 18);
-          const logoWidth = Math.max(Math.min(Math.round(width * 0.24), 360), 180);
+          const width = Number(metadata.width ?? 0);
+          if (!width) return url;
+          const margin = Math.max(Math.round(width * 0.02), 12);
+          const logoWidth = Math.max(Math.min(Math.round(width * 0.22), 320), 120);
           const resizedLogo = await sharp(logoBuffer)
             .resize({ width: logoWidth, withoutEnlargement: true })
             .png()
