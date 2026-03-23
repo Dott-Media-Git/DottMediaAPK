@@ -29,6 +29,7 @@ import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage }
 import type { TrendCandidate } from '../types/footballTrends.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
+import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 
 type AutoPostJob = {
   userId: string;
@@ -1695,6 +1696,82 @@ export class AutoPostService {
     return enhanced ? [enhanced] : normalized;
   }
 
+  private resolveBwinNewsLogoPath() {
+    const configured = process.env.BWINBET_LOGO_PATH?.trim();
+    const candidates = [
+      configured ? path.resolve(configured) : null,
+      path.resolve(process.cwd(), '../docs/brand-kits/assets/bwinbetug-logo.jpeg'),
+      path.resolve(process.cwd(), 'docs/brand-kits/assets/bwinbetug-logo.jpeg'),
+    ].filter((value): value is string => Boolean(value));
+    return candidates.find(candidate => fs.existsSync(candidate)) ?? null;
+  }
+
+  private async loadImageBuffer(url: string) {
+    try {
+      if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(url)) {
+        const [, base64] = url.split(',', 2);
+        return base64 ? Buffer.from(base64, 'base64') : null;
+      }
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 20000,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        },
+      });
+      return Buffer.from(response.data);
+    } catch (error) {
+      console.warn('[autopost] failed to load image buffer', { url, error });
+      return null;
+    }
+  }
+
+  private async brandBwinNewsImages(imageUrls: string[]) {
+    const logoPath = this.resolveBwinNewsLogoPath();
+    if (!logoPath || !imageUrls.length) return imageUrls;
+
+    let logoBuffer: Buffer | null = null;
+    try {
+      logoBuffer = await sharp(logoPath).png().toBuffer();
+    } catch (error) {
+      console.warn('[autopost] failed to prepare bwin logo', error);
+      return imageUrls;
+    }
+
+    const branded = await Promise.all(
+      imageUrls.map(async url => {
+        const source = await this.loadImageBuffer(url);
+        if (!source || !logoBuffer) return url;
+        try {
+          const metadata = await sharp(source).metadata();
+          const width = Math.max(Number(metadata.width ?? 1600), 800);
+          const height = Math.max(Number(metadata.height ?? 900), 600);
+          const margin = Math.max(Math.round(width * 0.025), 18);
+          const logoWidth = Math.max(Math.min(Math.round(width * 0.24), 360), 180);
+          const resizedLogo = await sharp(logoBuffer)
+            .resize({ width: logoWidth, withoutEnlargement: true })
+            .png()
+            .toBuffer();
+          const logoMeta = await sharp(resizedLogo).metadata();
+          const left = Math.max(width - Number(logoMeta.width ?? logoWidth) - margin, margin);
+          const top = margin;
+          const output = await sharp(source)
+            .rotate()
+            .composite([{ input: resizedLogo, left, top }])
+            .jpeg({ quality: 90, mozjpeg: true, chromaSubsampling: '4:4:4' })
+            .toBuffer();
+          return await saveGeneratedImageBuffer(output, 'jpg');
+        } catch (error) {
+          console.warn('[autopost] failed to brand bwin news image', { url, error });
+          return url;
+        }
+      }),
+    );
+
+    return branded.filter(Boolean);
+  }
+
   private formatTrendClock(timezone = 'Africa/Kampala') {
     try {
       return new Intl.DateTimeFormat('en-GB', {
@@ -2786,8 +2863,9 @@ export class AutoPostService {
       }
     }
 
-    if (scope === 'football' && selectedContentType === 'news' && imageUrls.length) {
+    if (scope === 'football' && this.isBwinScopeUser(userId) && selectedContentType === 'news' && imageUrls.length) {
       imageUrls = await this.improveNewsImageQuality(imageUrls, platforms);
+      imageUrls = await this.brandBwinNewsImages(imageUrls);
     }
 
     // Football trend videos must come from approved source feeds/highlight tweets only.
