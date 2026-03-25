@@ -3098,6 +3098,7 @@ export class AutoPostService {
       }
     }
 
+    // Keep Bwin football news imagery source-aligned, but always apply the Bwin corner mark before publish.
     if (scope === 'football' && this.isBwinScopeUser(userId) && selectedContentType === 'news' && imageUrls.length) {
       imageUrls = await this.improveNewsImageQuality(imageUrls, platforms);
       imageUrls = await this.brandBwinNewsImages(imageUrls);
