@@ -118,6 +118,38 @@ function buildContentKey(candidate) {
   return crypto.createHash('sha1').update(raw).digest('hex');
 }
 
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function wrapText(text, maxCharsPerLine = 34, maxLines = 3) {
+  const words = String(text || '')
+    .split(/\s+/)
+    .filter(Boolean);
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxCharsPerLine) {
+      current = candidate;
+      continue;
+    }
+    if (current) lines.push(current);
+    current = word;
+    if (lines.length === maxLines - 1) break;
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  if (lines.length === maxLines && words.join(' ').length > lines.join(' ').length) {
+    lines[maxLines - 1] = `${lines[maxLines - 1].replace(/[.?!,:;]+$/, '').trim()}...`;
+  }
+  return lines;
+}
+
 function supabaseHeaders() {
   return {
     apikey: requireEnv('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY),
@@ -221,7 +253,7 @@ async function incrementSocialDaily(postedCountByPlatform) {
   );
 }
 
-async function brandImageToTemp(sourceUrl) {
+async function brandImageToTemp(sourceUrl, title) {
   const imageResp = await axios.get(sourceUrl, {
     responseType: 'arraybuffer',
     timeout: 60000,
@@ -237,9 +269,47 @@ async function brandImageToTemp(sourceUrl) {
   const margin = Math.max(Math.round(width * 0.02), 18);
   const left = Math.max(width - (logoMeta.width || 0) - margin, 0);
   const top = margin;
+  const panelWidth = Math.min(Math.round(width * 0.76), 920);
+  const panelHeight = Math.min(Math.round(height * 0.28), 220);
+  const panelLeft = margin;
+  const panelTop = height - panelHeight - margin;
+  const titleLines = wrapText(title, width >= 1200 ? 34 : 28, 3);
+  const titleSvg = titleLines
+    .map((line, index) => {
+      const y = panelTop + 118 + index * 48;
+      return `<text x="${panelLeft + 36}" y="${y}" fill="#f7fff8" font-size="42" font-weight="800" font-family="Arial, Segoe UI, sans-serif">${escapeXml(line)}</text>`;
+    })
+    .join('');
+  const overlaySvg = `
+  <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="newsCard" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="rgba(11,63,40,0.92)"/>
+        <stop offset="52%" stop-color="rgba(18,112,63,0.88)"/>
+        <stop offset="100%" stop-color="rgba(111,214,145,0.82)"/>
+      </linearGradient>
+      <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#b5ffd0"/>
+        <stop offset="100%" stop-color="#23d16b"/>
+      </linearGradient>
+      <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
+        <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="rgba(0,0,0,0.28)"/>
+      </filter>
+    </defs>
+    <g filter="url(#shadow)">
+      <rect x="${panelLeft}" y="${panelTop}" rx="28" ry="28" width="${panelWidth}" height="${panelHeight}" fill="url(#newsCard)"/>
+      <rect x="${panelLeft + 22}" y="${panelTop + 20}" rx="12" ry="12" width="222" height="34" fill="rgba(255,255,255,0.12)"/>
+      <text x="${panelLeft + 38}" y="${panelTop + 43}" fill="#d6ffe5" font-size="18" font-weight="700" font-family="Arial, Segoe UI, sans-serif" letter-spacing="1.1">BWIN FOOTBALL NEWS</text>
+      <rect x="${panelLeft + 22}" y="${panelTop + 72}" rx="3" ry="3" width="${Math.min(panelWidth - 44, 250)}" height="6" fill="url(#accent)"/>
+      ${titleSvg}
+    </g>
+  </svg>`;
   const output = await sharp(source)
     .rotate()
-    .composite([{ input: resizedLogo, left, top }])
+    .composite([
+      { input: Buffer.from(overlaySvg), top: 0, left: 0 },
+      { input: resizedLogo, left, top },
+    ])
     .jpeg({ quality: 92, mozjpeg: true })
     .toBuffer();
   const tempFile = path.join(os.tmpdir(), `bwin-news-${crypto.randomUUID()}.jpg`);
@@ -392,7 +462,7 @@ async function main() {
     return;
   }
 
-  const branded = await brandImageToTemp(candidate.imageUrl);
+  const branded = await brandImageToTemp(candidate.imageUrl, candidate.title);
   let publicImageUrl = '';
   try {
     publicImageUrl = await uploadToCatbox(branded.buffer);
