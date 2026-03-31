@@ -444,6 +444,15 @@ async function chooseCandidate() {
       }
     }
     if (!imageUrl) continue;
+    try {
+      await axios.get(imageUrl, {
+        timeout: 20000,
+        responseType: 'arraybuffer',
+        headers: { 'User-Agent': 'DottMedia-BwinNewsWorker/1.0' },
+      });
+    } catch {
+      continue;
+    }
     return {
       ...item,
       imageUrl,
