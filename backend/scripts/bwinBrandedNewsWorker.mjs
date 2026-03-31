@@ -300,7 +300,7 @@ async function brandImageToTemp(sourceUrl, title) {
     <g filter="url(#shadow)">
       <rect x="${panelLeft}" y="${panelTop}" rx="28" ry="28" width="${panelWidth}" height="${panelHeight}" fill="url(#newsCard)"/>
       <rect x="${panelLeft + 22}" y="${panelTop + 20}" rx="12" ry="12" width="222" height="34" fill="rgba(255,255,255,0.12)"/>
-      <text x="${panelLeft + 38}" y="${panelTop + 43}" fill="#d6ffe5" font-size="18" font-weight="700" font-family="Arial, Segoe UI, sans-serif" letter-spacing="1.1">BWIN FOOTBALL NEWS</text>
+      <text x="${panelLeft + 38}" y="${panelTop + 43}" fill="#d6ffe5" font-size="18" font-weight="700" font-family="Arial, Segoe UI, sans-serif" letter-spacing="1.1">BWINBET FOOTBALL NEWS</text>
       <rect x="${panelLeft + 22}" y="${panelTop + 72}" rx="3" ry="3" width="${Math.min(panelWidth - 44, 250)}" height="6" fill="url(#accent)"/>
       ${titleSvg}
     </g>
