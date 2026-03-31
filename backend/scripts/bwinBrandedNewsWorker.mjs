@@ -263,6 +263,7 @@ async function brandImageToTemp(sourceUrl, title) {
   const logoBuffer = await sharp(logoPath).png().toBuffer();
   const metadata = await sharp(source).metadata();
   const width = metadata.width || 1280;
+  const height = metadata.height || 720;
   const targetWidth = Math.max(Math.round(width * 0.18), 180);
   const resizedLogo = await sharp(logoBuffer).resize({ width: targetWidth, withoutEnlargement: true }).png().toBuffer();
   const logoMeta = await sharp(resizedLogo).metadata();
