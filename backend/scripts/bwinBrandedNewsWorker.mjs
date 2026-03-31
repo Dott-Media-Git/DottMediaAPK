@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -7,7 +8,6 @@ import { fileURLToPath } from 'url';
 import axios from 'axios';
 import { load } from 'cheerio';
 import admin from 'firebase-admin';
-import sharp from 'sharp';
 
 const BWIN_USER_ID = process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53';
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
@@ -22,7 +22,7 @@ const RSS_FEEDS = [
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..', '..');
-const logoPath = path.join(repoRoot, 'docs', 'brand-kits', 'assets', 'bwinbetug-logo.jpeg');
+const posterRendererPath = path.join(__dirname, 'render_bwin_news_poster_refined.py');
 
 const todayDate = () => new Date().toISOString().slice(0, 10);
 
@@ -125,29 +125,6 @@ function escapeXml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
-}
-
-function wrapText(text, maxCharsPerLine = 34, maxLines = 3) {
-  const words = String(text || '')
-    .split(/\s+/)
-    .filter(Boolean);
-  const lines = [];
-  let current = '';
-  for (const word of words) {
-    const candidate = current ? `${current} ${word}` : word;
-    if (candidate.length <= maxCharsPerLine) {
-      current = candidate;
-      continue;
-    }
-    if (current) lines.push(current);
-    current = word;
-    if (lines.length === maxLines - 1) break;
-  }
-  if (current && lines.length < maxLines) lines.push(current);
-  if (lines.length === maxLines && words.join(' ').length > lines.join(' ').length) {
-    lines[maxLines - 1] = `${lines[maxLines - 1].replace(/[.?!,:;]+$/, '').trim()}...`;
-  }
-  return lines;
 }
 
 function supabaseHeaders() {
@@ -254,68 +231,39 @@ async function incrementSocialDaily(postedCountByPlatform) {
 }
 
 async function brandImageToTemp(sourceUrl, title) {
-  const imageResp = await axios.get(sourceUrl, {
-    responseType: 'arraybuffer',
-    timeout: 60000,
-    headers: { 'User-Agent': 'DottMedia-BwinNewsWorker/1.0' },
-  });
-  const source = Buffer.from(imageResp.data);
-  const logoBuffer = await sharp(logoPath).png().toBuffer();
-  const metadata = await sharp(source).metadata();
-  const width = metadata.width || 1280;
-  const height = metadata.height || 720;
-  const targetWidth = Math.max(Math.round(width * 0.18), 180);
-  const resizedLogo = await sharp(logoBuffer).resize({ width: targetWidth, withoutEnlargement: true }).png().toBuffer();
-  const logoMeta = await sharp(resizedLogo).metadata();
-  const margin = Math.max(Math.round(width * 0.02), 18);
-  const left = Math.max(width - (logoMeta.width || 0) - margin, 0);
-  const top = margin;
-  const panelWidth = Math.min(Math.round(width * 0.76), 920);
-  const panelHeight = Math.min(Math.round(height * 0.28), 220);
-  const panelLeft = margin;
-  const panelTop = height - panelHeight - margin;
-  const titleLines = wrapText(title, width >= 1200 ? 34 : 28, 3);
-  const titleSvg = titleLines
-    .map((line, index) => {
-      const y = panelTop + 118 + index * 48;
-      return `<text x="${panelLeft + 36}" y="${y}" fill="#f7fff8" font-size="42" font-weight="800" font-family="Arial, Segoe UI, sans-serif">${escapeXml(line)}</text>`;
-    })
-    .join('');
-  const overlaySvg = `
-  <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="newsCard" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="rgba(11,63,40,0.92)"/>
-        <stop offset="52%" stop-color="rgba(18,112,63,0.88)"/>
-        <stop offset="100%" stop-color="rgba(111,214,145,0.82)"/>
-      </linearGradient>
-      <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
-        <stop offset="0%" stop-color="#b5ffd0"/>
-        <stop offset="100%" stop-color="#23d16b"/>
-      </linearGradient>
-      <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
-        <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="rgba(0,0,0,0.28)"/>
-      </filter>
-    </defs>
-    <g filter="url(#shadow)">
-      <rect x="${panelLeft}" y="${panelTop}" rx="28" ry="28" width="${panelWidth}" height="${panelHeight}" fill="url(#newsCard)"/>
-      <rect x="${panelLeft + 22}" y="${panelTop + 20}" rx="12" ry="12" width="222" height="34" fill="rgba(255,255,255,0.12)"/>
-      <text x="${panelLeft + 38}" y="${panelTop + 43}" fill="#d6ffe5" font-size="18" font-weight="700" font-family="Arial, Segoe UI, sans-serif" letter-spacing="1.1">BWINBET FOOTBALL NEWS</text>
-      <rect x="${panelLeft + 22}" y="${panelTop + 72}" rx="3" ry="3" width="${Math.min(panelWidth - 44, 250)}" height="6" fill="url(#accent)"/>
-      ${titleSvg}
-    </g>
-  </svg>`;
-  const output = await sharp(source)
-    .rotate()
-    .composite([
-      { input: Buffer.from(overlaySvg), top: 0, left: 0 },
-      { input: resizedLogo, left, top },
-    ])
-    .jpeg({ quality: 92, mozjpeg: true })
-    .toBuffer();
   const tempFile = path.join(os.tmpdir(), `bwin-news-${crypto.randomUUID()}.jpg`);
-  await fs.writeFile(tempFile, output);
-  return { tempFile, buffer: output };
+  await new Promise((resolve, reject) => {
+    const child = spawn(
+      'python',
+      [
+        posterRendererPath,
+        '--out',
+        tempFile,
+        '--title',
+        title,
+        '--image-url',
+        sourceUrl,
+      ],
+      {
+        cwd: repoRoot,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    let stderr = '';
+    child.stderr.on('data', chunk => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`Poster renderer failed with code ${code}: ${stderr.trim()}`));
+    });
+  });
+  const buffer = await fs.readFile(tempFile);
+  return { tempFile, buffer };
 }
 
 async function uploadToCatbox(fileBuffer) {
