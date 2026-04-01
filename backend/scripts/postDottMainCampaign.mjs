@@ -14,6 +14,10 @@ const FORCED_SLUG = (process.env.DOTT_CAMPAIGN_FORCE_SLUG || '').trim();
 const BYPASS_DEDUPE = /^(1|true|yes)$/i.test((process.env.DOTT_CAMPAIGN_BYPASS_DEDUPE || '').trim());
 const ASSET_BASE_URL =
   (process.env.DOTT_CAMPAIGN_ASSET_BASE_URL || 'https://raw.githubusercontent.com/Dott-Media-Git/DottMediaAPK/main').replace(/\/$/, '');
+const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPTS ?? 20), 5);
+const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_MS ?? 3000), 1000);
+const PUBLISH_RETRIES = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRIES ?? 3), 1);
+const PUBLISH_RETRY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRY_DELAY_MS ?? 4000), 1000);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -273,6 +277,48 @@ async function publishToInstagram({ accountId, accessToken, imageUrl, caption })
   return { id: mediaId, permalink: meta.data?.permalink || null };
 }
 
+async function waitForInstagramMediaReady(creationId, accessToken) {
+  for (let attempt = 0; attempt < READY_ATTEMPTS; attempt += 1) {
+    const status = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${creationId}`, {
+      params: {
+        fields: 'status_code,status',
+        access_token: accessToken,
+      },
+      timeout: 30000,
+    });
+    const code = status.data?.status_code;
+    if (code === 'FINISHED') return true;
+    if (code === 'ERROR') {
+      throw new Error(`Instagram media container error: ${JSON.stringify(status.data?.status ?? {})}`);
+    }
+    await new Promise(resolve => setTimeout(resolve, READY_DELAY_MS));
+  }
+  return false;
+}
+
+async function publishInstagramContainer(baseUrl, creationId, accessToken) {
+  let lastError;
+  for (let attempt = 0; attempt < PUBLISH_RETRIES; attempt += 1) {
+    try {
+      const publish = await axios.post(
+        `${baseUrl}/media_publish`,
+        new URLSearchParams({
+          creation_id: creationId,
+          access_token: accessToken,
+        }),
+        { timeout: 60000 },
+      );
+      return publish.data?.id;
+    } catch (error) {
+      lastError = error;
+      if (attempt < PUBLISH_RETRIES - 1) {
+        await new Promise(resolve => setTimeout(resolve, PUBLISH_RETRY_DELAY_MS));
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function publishToInstagramReel({ accountId, accessToken, videoUrl, caption }) {
   const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
   const create = await axios.post(
@@ -287,28 +333,11 @@ async function publishToInstagramReel({ accountId, accessToken, videoUrl, captio
   );
   const creationId = create.data?.id;
   if (!creationId) throw new Error('Instagram reels container creation failed');
-  for (let attempt = 0; attempt < 15; attempt += 1) {
-    const status = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${creationId}`, {
-      params: {
-        fields: 'status_code',
-        access_token: accessToken,
-      },
-      timeout: 30000,
-    });
-    const code = status.data?.status_code;
-    if (code === 'FINISHED') break;
-    if (code === 'ERROR') throw new Error('Instagram reels container returned ERROR');
-    await new Promise(resolve => setTimeout(resolve, 2000));
+  const ready = await waitForInstagramMediaReady(creationId, accessToken);
+  if (!ready) {
+    throw new Error('Instagram reel container not ready for publishing');
   }
-  const publish = await axios.post(
-    `${baseUrl}/media_publish`,
-    new URLSearchParams({
-      creation_id: creationId,
-      access_token: accessToken,
-    }),
-    { timeout: 60000 },
-  );
-  const mediaId = publish.data?.id;
+  const mediaId = await publishInstagramContainer(baseUrl, creationId, accessToken);
   if (!mediaId) throw new Error('Instagram reel publish failed');
   const meta = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
     params: {
