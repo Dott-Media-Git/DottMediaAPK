@@ -14,6 +14,8 @@ const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v19.0';
 const WORKER_TAG = 'bwin_news_worker';
+const WORKER_CONFIG_BUCKET = 'worker-config';
+const WORKER_CONFIG_OBJECT = 'bwin-meta-accounts.json';
 const RSS_FEEDS = [
   'https://feeds.bbci.co.uk/sport/football/rss.xml',
   'https://www.espn.com/espn/rss/soccer/news',
@@ -43,6 +45,32 @@ function initFirebase() {
 }
 
 async function getBwinAccounts() {
+  if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const response = await axios.get(
+        `${SUPABASE_URL}/storage/v1/object/authenticated/${WORKER_CONFIG_BUCKET}/${WORKER_CONFIG_OBJECT}`,
+        {
+          headers: {
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+          timeout: 30000,
+        },
+      );
+      const payload = response.data || {};
+      const facebook = payload.facebook || {};
+      const instagram = payload.instagram || {};
+      if (facebook.pageId && facebook.accessToken && instagram.accountId && instagram.accessToken) {
+        return { facebook, instagram };
+      }
+    } catch (error) {
+      console.warn(
+        '[bwin-news-worker] supabase credential config unavailable',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
   initFirebase();
   const snap = await admin.firestore().collection('users').doc(BWIN_USER_ID).get();
   const data = snap.data() || {};

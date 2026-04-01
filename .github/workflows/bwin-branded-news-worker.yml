@@ -48,7 +48,6 @@ jobs:
 
       - name: Validate required secrets
         run: |
-          test -n "$FIREBASE_SERVICE_ACCOUNT_JSON"
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
 
