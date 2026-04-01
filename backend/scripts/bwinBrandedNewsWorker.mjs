@@ -31,10 +31,14 @@ function requireEnv(name, value) {
   return value;
 }
 
+function loadServiceAccount() {
+  const raw = requireEnv('FIREBASE_SERVICE_ACCOUNT_JSON', process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  return JSON.parse(raw);
+}
+
 function initFirebase() {
   if (admin.apps.length) return admin.app();
-  const raw = requireEnv('FIREBASE_SERVICE_ACCOUNT_JSON', process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-  const parsed = JSON.parse(raw);
+  const parsed = loadServiceAccount();
   return admin.initializeApp({ credential: admin.credential.cert(parsed) });
 }
 
@@ -266,19 +270,23 @@ async function brandImageToTemp(sourceUrl, title) {
   return { tempFile, buffer };
 }
 
-async function uploadToCatbox(fileBuffer) {
-  const form = new FormData();
-  form.set('reqtype', 'fileupload');
-  form.set('fileToUpload', new Blob([fileBuffer], { type: 'image/jpeg' }), 'bwin-news.jpg');
-  const response = await fetch('https://catbox.moe/user/api.php', {
-    method: 'POST',
-    body: form,
+async function uploadToSupabaseStorage(fileBuffer) {
+  requireEnv('SUPABASE_URL', SUPABASE_URL);
+  requireEnv('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
+  const bucket = 'bwin-news';
+  const objectPath = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.jpg`;
+  await axios.post(`${SUPABASE_URL}/storage/v1/object/${bucket}/${objectPath}`, fileBuffer, {
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'image/jpeg',
+      'x-upsert': 'true',
+    },
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+    timeout: 60000,
   });
-  const text = (await response.text()).trim();
-  if (!response.ok || !/^https?:\/\//i.test(text)) {
-    throw new Error(`Catbox upload failed: ${text || response.status}`);
-  }
-  return text;
+  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${objectPath}`;
 }
 
 async function publishToInstagram({ accountId, accessToken, imageUrl, caption }) {
@@ -423,7 +431,7 @@ async function main() {
   const branded = await brandImageToTemp(candidate.imageUrl, candidate.title);
   let publicImageUrl = '';
   try {
-    publicImageUrl = await uploadToCatbox(branded.buffer);
+    publicImageUrl = await uploadToSupabaseStorage(branded.buffer);
     const captions = buildCaptions(candidate.title);
 
     const [instagramResult, facebookResult] = await Promise.all([
