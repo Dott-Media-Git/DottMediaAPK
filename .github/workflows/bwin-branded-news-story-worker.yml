@@ -1,16 +1,16 @@
-name: Bwin Branded News Worker
+name: Bwin Branded News Story Worker
 
 on:
   schedule:
-    - cron: '12 * * * *'
+    - cron: '17 */4 * * *'
   workflow_dispatch:
 
 concurrency:
-  group: bwin-branded-news-worker
+  group: bwin-branded-news-story-worker
   cancel-in-progress: false
 
 jobs:
-  post-branded-news:
+  post-branded-news-stories:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -19,6 +19,7 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       BWIN_USER_ID: 1zvY9nNyXMcfxdPQEyx0bIdK7r53
       META_GRAPH_VERSION: v19.0
+      BWIN_NEWS_TARGET: stories
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -47,7 +48,7 @@ jobs:
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
 
-      - name: Run Bwin branded news worker
+      - name: Run Bwin branded news story worker
         run: |
           set +e
           output=$(node scripts/bwinBrandedNewsWorker.mjs 2>&1)
@@ -55,7 +56,7 @@ jobs:
           printf '%s\n' "$output"
           if [ "$status" -ne 0 ]; then
             clean_output=$(printf '%s' "$output" | tr '\n' ' ' | tr '\r' ' ')
-            echo "::error title=Bwin worker failure::$clean_output"
+            echo "::error title=Bwin story worker failure::$clean_output"
             exit "$status"
           fi
         working-directory: backend
