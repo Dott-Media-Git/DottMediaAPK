@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -11,13 +10,17 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v19.0';
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
 const WORKER_TAG = 'dott_main_campaign_worker';
+const FORCED_SLUG = (process.env.DOTT_CAMPAIGN_FORCE_SLUG || '').trim();
+const BYPASS_DEDUPE = /^(1|true|yes)$/i.test((process.env.DOTT_CAMPAIGN_BYPASS_DEDUPE || '').trim());
+const ASSET_BASE_URL =
+  (process.env.DOTT_CAMPAIGN_ASSET_BASE_URL || 'https://raw.githubusercontent.com/Dott-Media-Git/DottMediaAPK/main').replace(/\/$/, '');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const campaignDir = path.resolve(__dirname, '..', 'public', 'campaign-images', 'dottmain');
 
 const CAMPAIGN_ITEMS = [
   {
+    type: 'image',
     slug: 'services-ai-workflows',
     filename: 'services-ai-workflows.jpeg',
     instagramCaption:
@@ -26,6 +29,7 @@ const CAMPAIGN_ITEMS = [
       "Tech. Automation. Branding.\n\nDott Media helps businesses scale with AI workflow integration, websites, apps, automation, branding, and media production.\n\nGet started: www.dott-media.org\nMessage us for a quote.\n\n#DottMedia #Automation #Branding #AIForBusiness #WebDevelopment #AppDevelopment #BusinessGrowth",
   },
   {
+    type: 'image',
     slug: 'best-ai-automation-services',
     filename: 'best-ai-automation-services.jpeg',
     instagramCaption:
@@ -34,6 +38,7 @@ const CAMPAIGN_ITEMS = [
       "Best AI automation services for brands that want to move faster.\n\nWe help businesses save time and grow with AI-powered tools and automation workflows.\n\nGet up to 10% off selected services.\nVisit: www.dott-media.org\n\n#DottMedia #AIAutomation #MarketingAutomation #BusinessAutomation #AIServices #DigitalGrowth",
   },
   {
+    type: 'image',
     slug: 'best-ai-tech-services',
     filename: 'best-ai-tech-services.jpeg',
     instagramCaption:
@@ -42,12 +47,31 @@ const CAMPAIGN_ITEMS = [
       "Best AI and tech services for modern brands.\n\nFrom workflow integration to websites, automation, and brand identity, Dott Media builds systems that help you grow.\n\nSend a quote request today: www.dott-media.org\n\n#DottMedia #TechServices #AIServices #BrandIdentity #WebAndAppDevelopment #GrowthSystems",
   },
   {
+    type: 'image',
     slug: 'special-deals-first-service',
     filename: 'special-deals-first-service.jpeg',
     instagramCaption:
       "Dott Media can help you grow faster with AI-powered tools, automation, branding, and content systems.\n\nSpecial deals are available on your first service.\n\nLink in bio.\n\n#DottMedia #SpecialOffer #AIForBusiness #CreativeMedia #DigitalMarketing #AutomationAgency",
     facebookCaption:
       "Dott Media can help you grow faster with AI-powered tools, automation, branding, and content systems.\n\nSpecial deals are available on your first service.\nVisit: www.dott-media.org\n\n#DottMedia #SpecialOffer #AIForBusiness #CreativeMedia #DigitalMarketing #AutomationAgency",
+  },
+  {
+    type: 'image',
+    slug: 'social-ai-connectivity',
+    filename: 'social-ai-connectivity.jpeg',
+    instagramCaption:
+      "One AI system can connect your socials, automate your workflows, and keep your brand moving around the clock.\n\nDott Media builds growth systems for modern businesses.\n\nDM us to set yours up.\n\n#DottMedia #AIForBusiness #Automation #SocialMediaSystems #GrowthSystems #DigitalStrategy",
+    facebookCaption:
+      "One AI system can connect your socials, automate your workflows, and keep your brand moving around the clock.\n\nDott Media builds growth systems for modern businesses.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AIForBusiness #Automation #SocialMediaSystems #GrowthSystems #DigitalStrategy",
+  },
+  {
+    type: 'video',
+    slug: 'dott-main-showcase-video',
+    filename: 'dott-main-showcase-video.mp4',
+    instagramCaption:
+      "Dott Media in motion.\n\nAI-powered systems, smarter marketing, stronger branding, and business automation that keeps working for you.\n\nDM us for a walkthrough.\n\n#DottMedia #AIAutomation #BusinessGrowth #BrandSystems #DigitalMedia #MarketingAutomation",
+    facebookCaption:
+      "Dott Media in motion.\n\nAI-powered systems, smarter marketing, stronger branding, and business automation that keeps working for you.\n\nVisit: www.dott-media.org\nMessage us for a walkthrough.\n\n#DottMedia #AIAutomation #BusinessGrowth #BrandSystems #DigitalMedia #MarketingAutomation",
   },
 ];
 
@@ -198,19 +222,9 @@ async function incrementSocialDaily(postedCountByPlatform) {
   );
 }
 
-async function uploadToCatbox(fileBuffer, filename) {
-  const form = new FormData();
-  form.set('reqtype', 'fileupload');
-  form.set('fileToUpload', new Blob([fileBuffer], { type: 'image/jpeg' }), filename);
-  const response = await fetch('https://catbox.moe/user/api.php', {
-    method: 'POST',
-    body: form,
-  });
-  const text = (await response.text()).trim();
-  if (!response.ok || !/^https?:\/\//i.test(text)) {
-    throw new Error(`Catbox upload failed: ${text || response.status}`);
-  }
-  return text;
+function buildAssetUrl(item) {
+  const segment = item.type === 'video' ? 'campaign-videos' : 'campaign-images';
+  return `${ASSET_BASE_URL}/backend/public/${segment}/dottmain/${encodeURIComponent(item.filename)}`;
 }
 
 async function publishToInstagram({ accountId, accessToken, imageUrl, caption }) {
@@ -259,6 +273,53 @@ async function publishToInstagram({ accountId, accessToken, imageUrl, caption })
   return { id: mediaId, permalink: meta.data?.permalink || null };
 }
 
+async function publishToInstagramReel({ accountId, accessToken, videoUrl, caption }) {
+  const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
+  const create = await axios.post(
+    `${baseUrl}/media`,
+    new URLSearchParams({
+      media_type: 'REELS',
+      video_url: videoUrl,
+      caption,
+      access_token: accessToken,
+    }),
+    { timeout: 60000 },
+  );
+  const creationId = create.data?.id;
+  if (!creationId) throw new Error('Instagram reels container creation failed');
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    const status = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${creationId}`, {
+      params: {
+        fields: 'status_code',
+        access_token: accessToken,
+      },
+      timeout: 30000,
+    });
+    const code = status.data?.status_code;
+    if (code === 'FINISHED') break;
+    if (code === 'ERROR') throw new Error('Instagram reels container returned ERROR');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  const publish = await axios.post(
+    `${baseUrl}/media_publish`,
+    new URLSearchParams({
+      creation_id: creationId,
+      access_token: accessToken,
+    }),
+    { timeout: 60000 },
+  );
+  const mediaId = publish.data?.id;
+  if (!mediaId) throw new Error('Instagram reel publish failed');
+  const meta = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
+    params: {
+      fields: 'id,permalink',
+      access_token: accessToken,
+    },
+    timeout: 30000,
+  });
+  return { id: mediaId, permalink: meta.data?.permalink || null };
+}
+
 async function publishToFacebook({ pageId, accessToken, imageUrl, caption }) {
   const response = await axios.post(
     `https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/photos`,
@@ -274,42 +335,78 @@ async function publishToFacebook({ pageId, accessToken, imageUrl, caption }) {
   return { id: remoteId };
 }
 
+async function publishToFacebookVideo({ pageId, accessToken, videoUrl, caption }) {
+  const response = await axios.post(
+    `https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/videos`,
+    new URLSearchParams({
+      file_url: videoUrl,
+      description: caption,
+      access_token: accessToken,
+    }),
+    { timeout: 60000 },
+  );
+  const remoteId = response.data?.post_id || response.data?.id;
+  if (!remoteId) throw new Error('Facebook video publish failed');
+  return { id: remoteId };
+}
+
 async function chooseItem() {
   const { ref, data } = await getCampaignState();
   const enabled = data.dottCampaignEnabled !== false;
   if (!enabled) {
     throw new Error('Dott main campaign is disabled');
   }
+  if (FORCED_SLUG) {
+    const forcedItem = CAMPAIGN_ITEMS.find(entry => entry.slug === FORCED_SLUG);
+    if (!forcedItem) {
+      throw new Error(`Unknown forced campaign slug: ${FORCED_SLUG}`);
+    }
+    return { ref, data, cursor: Number.isFinite(data.dottCampaignCursor) ? Number(data.dottCampaignCursor) : 0, item: forcedItem, forced: true };
+  }
   const cursor = Number.isFinite(data.dottCampaignCursor) ? Number(data.dottCampaignCursor) : 0;
   const item = CAMPAIGN_ITEMS[((cursor % CAMPAIGN_ITEMS.length) + CAMPAIGN_ITEMS.length) % CAMPAIGN_ITEMS.length];
-  return { ref, data, cursor, item };
+  return { ref, data, cursor, item, forced: false };
 }
 
 async function main() {
   const { facebook, instagram } = await getMainAccounts();
-  const { ref, cursor, item } = await chooseItem();
+  const { ref, cursor, item, forced } = await chooseItem();
   const contentKey = crypto.createHash('sha1').update(`${item.slug}|${hourBucket()}`).digest('hex');
-  if (await hasProcessedContent(contentKey)) {
+  if (!BYPASS_DEDUPE && (await hasProcessedContent(contentKey))) {
     console.log(JSON.stringify({ ok: true, skipped: true, reason: 'already_posted_this_hour', contentKey, slug: item.slug }));
     return;
   }
 
-  const localPath = path.join(campaignDir, item.filename);
-  const fileBuffer = await fs.readFile(localPath);
-  const hostedUrl = await uploadToCatbox(fileBuffer, item.filename);
+  const hostedUrl = buildAssetUrl(item);
 
-  const instagramResult = await publishToInstagram({
-    accountId: instagram.accountId,
-    accessToken: instagram.accessToken,
-    imageUrl: hostedUrl,
-    caption: item.instagramCaption,
-  });
-  const facebookResult = await publishToFacebook({
-    pageId: facebook.pageId,
-    accessToken: facebook.accessToken,
-    imageUrl: hostedUrl,
-    caption: item.facebookCaption,
-  });
+  const instagramResult =
+    item.type === 'video'
+      ? await publishToInstagramReel({
+          accountId: instagram.accountId,
+          accessToken: instagram.accessToken,
+          videoUrl: hostedUrl,
+          caption: item.instagramCaption,
+        })
+      : await publishToInstagram({
+          accountId: instagram.accountId,
+          accessToken: instagram.accessToken,
+          imageUrl: hostedUrl,
+          caption: item.instagramCaption,
+        });
+  const facebookResult =
+    item.type === 'video'
+      ? await publishToFacebookVideo({
+          pageId: facebook.pageId,
+          accessToken: facebook.accessToken,
+          videoUrl: hostedUrl,
+          caption: item.facebookCaption,
+        })
+      : await publishToFacebook({
+          pageId: facebook.pageId,
+          accessToken: facebook.accessToken,
+          imageUrl: hostedUrl,
+          caption: item.facebookCaption,
+        });
 
   const postedAt = new Date().toISOString();
   await addSocialLogs([
@@ -324,8 +421,8 @@ async function main() {
         slug: item.slug,
         filename: item.filename,
         worker: WORKER_TAG,
-        contentType: 'campaign_image',
-        imageUrl: hostedUrl,
+        contentType: item.type === 'video' ? 'campaign_video' : 'campaign_image',
+        ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
         instagram: instagramResult,
         facebook: facebookResult,
       },
@@ -341,8 +438,8 @@ async function main() {
         slug: item.slug,
         filename: item.filename,
         worker: WORKER_TAG,
-        contentType: 'campaign_image',
-        imageUrl: hostedUrl,
+        contentType: item.type === 'video' ? 'campaign_video' : 'campaign_image',
+        ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
         instagram: instagramResult,
       },
     },
@@ -357,21 +454,21 @@ async function main() {
         slug: item.slug,
         filename: item.filename,
         worker: WORKER_TAG,
-        contentType: 'campaign_image',
-        imageUrl: hostedUrl,
+        contentType: item.type === 'video' ? 'campaign_video' : 'campaign_image',
+        ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
         facebook: facebookResult,
       },
     },
   ]);
-  await incrementSocialDaily({ instagram: 1, facebook: 1 });
+  await incrementSocialDaily(item.type === 'video' ? { instagram_reels: 1, facebook: 1 } : { instagram: 1, facebook: 1 });
 
   await updateCampaignState(ref, {
     dottCampaignEnabled: true,
-    dottCampaignCursor: (cursor + 1) % CAMPAIGN_ITEMS.length,
+    dottCampaignCursor: forced ? cursor : (cursor + 1) % CAMPAIGN_ITEMS.length,
     dottCampaignItems: CAMPAIGN_ITEMS.map(entry => entry.filename),
     dottCampaignLastRunAt: admin.firestore.FieldValue.serverTimestamp(),
     dottCampaignLastResult: [
-      { platform: 'instagram', status: 'posted', remoteId: instagramResult.id },
+      { platform: item.type === 'video' ? 'instagram_reels' : 'instagram', status: 'posted', remoteId: instagramResult.id },
       { platform: 'facebook', status: 'posted', remoteId: facebookResult.id },
     ],
   });
@@ -381,7 +478,8 @@ async function main() {
       ok: true,
       contentKey,
       slug: item.slug,
-      imageUrl: hostedUrl,
+      mediaType: item.type,
+      ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
       instagram: instagramResult,
       facebook: facebookResult,
     }),
