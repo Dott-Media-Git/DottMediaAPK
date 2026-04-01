@@ -1,6 +1,14 @@
 name: Bwin Branded News Worker
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/bwin-branded-news-worker.yml'
+      - 'backend/scripts/bwinBrandedNewsWorker.mjs'
+      - 'backend/scripts/render_bwin_news_poster_refined.py'
+      - 'docs/brand-kits/assets/bwinbetug-logo-from-pdf.png'
   schedule:
     - cron: '12 * * * *'
   workflow_dispatch:
