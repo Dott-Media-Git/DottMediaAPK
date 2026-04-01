@@ -52,5 +52,14 @@ jobs:
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
 
       - name: Run Bwin branded news worker
-        run: node scripts/bwinBrandedNewsWorker.mjs
+        run: |
+          set +e
+          output=$(node scripts/bwinBrandedNewsWorker.mjs 2>&1)
+          status=$?
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ]; then
+            clean_output=$(printf '%s' "$output" | tr '\n' ' ' | tr '\r' ' ')
+            echo "::error title=Bwin worker failure::$clean_output"
+            exit "$status"
+          fi
         working-directory: backend
