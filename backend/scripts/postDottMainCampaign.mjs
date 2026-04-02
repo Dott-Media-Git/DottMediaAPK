@@ -69,6 +69,69 @@ const CAMPAIGN_ITEMS = [
       "One AI system can connect your socials, automate your workflows, and keep your brand moving around the clock.\n\nDott Media builds growth systems for modern businesses.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AIForBusiness #Automation #SocialMediaSystems #GrowthSystems #DigitalStrategy",
   },
   {
+    type: 'image',
+    slug: 'ai-drive-business-growth',
+    filename: 'ai-drive-business-growth.png',
+    instagramCaption:
+      "Let AI drive your business growth.\n\nDott Media builds AI sales agents that help you speed up sales, automate repetitive work, and drive growth while you stay focused on closing bigger opportunities.\n\nDM us to get started. Link in bio.\n\n#DottMedia #AISalesAgent #BusinessGrowth #SalesAutomation #AIForBusiness #GrowthSystems",
+    facebookCaption:
+      "Let AI drive your business growth.\n\nDott Media builds AI sales agents that help you speed up sales, automate repetitive work, and drive growth while you stay focused on bigger opportunities.\n\nLearn more: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AISalesAgent #BusinessGrowth #SalesAutomation #AIForBusiness #GrowthSystems",
+  },
+  {
+    type: 'image',
+    slug: 'increase-business-efficiency-speed',
+    filename: 'increase-business-efficiency-speed.png',
+    instagramCaption:
+      "Increase business efficiency and speed with an AI sales agent.\n\nLet AI handle follow-up, qualification, and repetitive sales tasks so your team can move faster and close more.\n\nDM us for a walkthrough. Link in bio.\n\n#DottMedia #AISalesAgent #BusinessEfficiency #SalesGrowth #Automation #AIForBusiness",
+    facebookCaption:
+      "Increase business efficiency and speed with an AI sales agent.\n\nLet AI handle follow-up, qualification, and repetitive sales tasks so your team can move faster and close more.\n\nVisit: www.dott-media.org\nMessage us for a walkthrough.\n\n#DottMedia #AISalesAgent #BusinessEfficiency #SalesGrowth #Automation #AIForBusiness",
+  },
+  {
+    type: 'image',
+    slug: 'boost-sales-ai-sales-agent',
+    filename: 'boost-sales-ai-sales-agent.png',
+    instagramCaption:
+      "Boost your sales with an AI sales agent.\n\nMore leads. More sales. More revenue.\n\nDott Media helps brands automate conversations, qualification, and follow-up so conversions can keep moving around the clock.\n\nDM us to set yours up.\n\n#DottMedia #AISalesAgent #LeadGeneration #SalesGrowth #RevenueGrowth #Automation",
+    facebookCaption:
+      "Boost your sales with an AI sales agent.\n\nMore leads. More sales. More revenue.\n\nDott Media helps brands automate conversations, qualification, and follow-up so conversions keep moving around the clock.\n\nVisit: www.dott-media.org\nMessage us to set yours up.\n\n#DottMedia #AISalesAgent #LeadGeneration #SalesGrowth #RevenueGrowth #Automation",
+  },
+  {
+    type: 'image',
+    slug: 'bot-efficiency-reduced-workload',
+    filename: 'bot-efficiency-reduced-workload.png',
+    instagramCaption:
+      "Bot efficiency. Reduced workload.\n\nOur AI sales agents take care of time-consuming tasks so your team can focus on strategy, service, and closing deals.\n\nDM us to see how it fits your business.\n\n#DottMedia #AISalesAgent #Productivity #WorkflowAutomation #BusinessSystems #AIForBusiness",
+    facebookCaption:
+      "Bot efficiency. Reduced workload.\n\nOur AI sales agents take care of time-consuming tasks so your team can focus on strategy, service, and closing deals.\n\nVisit: www.dott-media.org\nMessage us to see how it fits your business.\n\n#DottMedia #AISalesAgent #Productivity #WorkflowAutomation #BusinessSystems #AIForBusiness",
+  },
+  {
+    type: 'image',
+    slug: 'ai-sales-agent-team',
+    filename: 'ai-sales-agent-team.png',
+    instagramCaption:
+      "AI sales agent. Sell smarter. Close faster. 24/7.\n\nEngage, qualify, and close deals with a system that keeps working even when your team is offline.\n\nDM us for a demo. Link in bio.\n\n#DottMedia #AISalesAgent #CloseFaster #SalesSystems #AIForBusiness #DigitalGrowth",
+    facebookCaption:
+      "AI sales agent. Sell smarter. Close faster. 24/7.\n\nEngage, qualify, and close deals with a system that keeps working even when your team is offline.\n\nLearn more: www.dott-media.org\nMessage us for a demo.\n\n#DottMedia #AISalesAgent #CloseFaster #SalesSystems #AIForBusiness #DigitalGrowth",
+  },
+  {
+    type: 'image',
+    slug: 'ai-sales-agent-close-faster',
+    filename: 'ai-sales-agent-close-faster.png',
+    instagramCaption:
+      "AI sales agent for brands that want to sell smarter and close faster.\n\nDott Media helps you engage leads instantly, qualify opportunities, and keep conversations active 24/7.\n\nDM us to build yours.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadQualification #AlwaysOnSales #BusinessGrowth",
+    facebookCaption:
+      "AI sales agent for brands that want to sell smarter and close faster.\n\nDott Media helps you engage leads instantly, qualify opportunities, and keep conversations active 24/7.\n\nVisit: www.dott-media.org\nMessage us to build yours.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadQualification #AlwaysOnSales #BusinessGrowth",
+  },
+  {
+    type: 'image',
+    slug: 'meet-your-new-ai-sales-agent',
+    filename: 'meet-your-new-ai-sales-agent.png',
+    instagramCaption:
+      "Meet your new AI sales agent.\n\nNever miss a lead. Close more deals. Book meetings faster.\n\nDott Media builds sales systems that qualify prospects, answer objections, and keep your pipeline moving 24/7.\n\nDM us to get started.\n\n#DottMedia #AISalesAgent #CloseMoreDeals #LeadConversion #SalesSystems #Automation",
+    facebookCaption:
+      "Meet your new AI sales agent.\n\nNever miss a lead. Close more deals. Book meetings faster.\n\nDott Media builds sales systems that qualify prospects, answer objections, and keep your pipeline moving 24/7.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AISalesAgent #CloseMoreDeals #LeadConversion #SalesSystems #Automation",
+  },
+  {
     type: 'video',
     slug: 'dott-main-showcase-video',
     filename: 'dott-main-showcase-video.mp4',
