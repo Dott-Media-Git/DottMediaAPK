@@ -37,5 +37,16 @@ jobs:
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
 
       - name: Run Dott main campaign worker
-        run: node scripts/postDottMainCampaign.mjs
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            echo "Dott main campaign attempt ${attempt}/3"
+            if node scripts/postDottMainCampaign.mjs; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep 20
+            fi
+          done
+          exit 1
         working-directory: backend
