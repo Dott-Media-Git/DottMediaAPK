@@ -173,15 +173,45 @@ function limitParagraphSentences(value, maxSentences = 3) {
   return normalizeStoryParagraph(limited);
 }
 
+function splitParagraphIntoChunks(value, maxSentencesPerChunk = 2, maxCharsPerChunk = 320) {
+  const text = normalizeStoryParagraph(value);
+  if (!text) return [];
+  const sentences = text.match(/[^.!?]+[.!?]?/g)?.map(part => part.trim()).filter(Boolean) ?? [text];
+  const chunks = [];
+  let current = [];
+
+  const pushCurrent = () => {
+    if (!current.length) return;
+    const chunk = normalizeStoryParagraph(current.join(' '));
+    if (chunk) chunks.push(trimTextAtBoundary(chunk, maxCharsPerChunk));
+    current = [];
+  };
+
+  for (const sentence of sentences) {
+    const candidate = normalizeStoryParagraph([...current, sentence].join(' '));
+    if (
+      current.length &&
+      (current.length >= maxSentencesPerChunk || candidate.length > maxCharsPerChunk)
+    ) {
+      pushCurrent();
+    }
+    current.push(sentence);
+  }
+  pushCurrent();
+  return chunks;
+}
+
 function buildStoryText(paragraphs, maxChars = 950, maxParagraphs = 4) {
   const unique = [];
   const seen = new Set();
   for (const paragraph of paragraphs) {
-    const text = limitParagraphSentences(paragraph);
-    const key = text.toLowerCase();
-    if (!isUsefulStoryParagraph(text) || seen.has(key)) continue;
-    seen.add(key);
-    unique.push(text);
+    const chunks = splitParagraphIntoChunks(paragraph);
+    for (const chunk of chunks) {
+      const key = chunk.toLowerCase();
+      if (!isUsefulStoryParagraph(chunk) || seen.has(key)) continue;
+      seen.add(key);
+      unique.push(chunk);
+    }
   }
 
   let out = '';
@@ -255,7 +285,7 @@ async function extractArticleStory(articleUrl, feedDescription = '') {
         .map(node => $(node).text()),
     );
 
-    const story = buildStoryText([...paragraphs, ...metaDescription, feedText]);
+    const story = buildStoryText([...paragraphs, ...metaDescription]);
     if (story) return story;
   } catch (error) {
     console.warn(
