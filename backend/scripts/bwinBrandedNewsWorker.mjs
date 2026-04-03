@@ -201,6 +201,47 @@ function splitParagraphIntoChunks(value, maxSentencesPerChunk = 2, maxCharsPerCh
   return chunks;
 }
 
+function splitLongTextByWords(value, maxChars = 320) {
+  const text = normalizeStoryParagraph(value);
+  if (!text) return [];
+  const words = text.split(/\s+/).filter(Boolean);
+  const chunks = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (current && candidate.length > maxChars) {
+      chunks.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function formatStoryForCaption(value, maxParagraphChars = 320, maxParagraphs = 3) {
+  const text = normalizeStoryParagraph(value);
+  if (!text) return '';
+
+  let segments = text
+    .split(/\n{2,}/)
+    .map(segment => normalizeStoryParagraph(segment))
+    .filter(Boolean);
+
+  if (segments.length <= 1) {
+    const sentenceChunks = splitParagraphIntoChunks(text, 2, maxParagraphChars);
+    segments = sentenceChunks.length > 1 ? sentenceChunks : splitLongTextByWords(text, maxParagraphChars);
+  }
+
+  const paragraphs = [];
+  for (const segment of segments) {
+    if (paragraphs.length >= maxParagraphs) break;
+    paragraphs.push(trimTextAtBoundary(segment, maxParagraphChars));
+  }
+  return paragraphs.filter(Boolean).join('\n\n');
+}
+
 function buildStoryText(paragraphs, maxChars = 950, maxParagraphs = 4) {
   const unique = [];
   const seen = new Set();
@@ -228,7 +269,7 @@ function buildStoryText(paragraphs, maxChars = 950, maxParagraphs = 4) {
     out = next;
     paragraphCount += 1;
   }
-  return trimTextAtBoundary(out.trim(), maxChars);
+  return formatStoryForCaption(trimTextAtBoundary(out.trim(), maxChars), 320, 3);
 }
 
 async function extractArticleImage(articleUrl) {
@@ -659,16 +700,18 @@ function buildCaptionHashtags(title, storyText = '') {
 function buildCaptions(title, storyText = '') {
   const clean = cleanTitle(title);
   const story = String(storyText || '').trim();
+  const instagramStory = formatStoryForCaption(story, 240, 2);
+  const facebookStory = formatStoryForCaption(story, 320, 3);
   const hashtags = buildCaptionHashtags(clean, story);
   const instagramParts = [clean];
-  if (story) instagramParts.push(story);
+  if (instagramStory) instagramParts.push(instagramStory);
   instagramParts.push('Stay updated with Bwinbet Uganda.');
   instagramParts.push('More info: link in bio.');
   instagramParts.push('Bet now: link in bio.');
   instagramParts.push(hashtags);
 
   const facebookParts = [clean];
-  if (story) facebookParts.push(story);
+  if (facebookStory) facebookParts.push(facebookStory);
   facebookParts.push('Stay updated with Bwinbet Uganda.');
   facebookParts.push('More info: www.bwinbetug.info');
   facebookParts.push('Bet now: https://bwinbetug.com');
