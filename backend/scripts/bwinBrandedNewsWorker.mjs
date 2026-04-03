@@ -147,16 +147,37 @@ function normalizeStoryParagraph(value) {
 function isUsefulStoryParagraph(value) {
   const text = normalizeStoryParagraph(value);
   if (!text || text.length < 40) return false;
+  if (/^[-•]/.test(text)) return false;
   if (/^(advertisement|related topics|listen to the latest|copyright|all rights reserved)/i.test(text)) return false;
   if (/cookies|privacy policy|sign up|newsletter|follow us/i.test(text)) return false;
   return true;
 }
 
-function buildStoryText(paragraphs, maxChars = 1600) {
+function trimTextAtBoundary(value, maxChars) {
+  const text = normalizeStoryParagraph(value);
+  if (text.length <= maxChars) return text;
+  const slice = text.slice(0, maxChars);
+  const sentenceEnd = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('! '), slice.lastIndexOf('? '));
+  if (sentenceEnd > 140) return slice.slice(0, sentenceEnd + 1).trim();
+  const commaBreak = Math.max(slice.lastIndexOf(', '), slice.lastIndexOf('; '), slice.lastIndexOf(': '));
+  if (commaBreak > 140) return slice.slice(0, commaBreak).trim() + '...';
+  const wordBreak = slice.lastIndexOf(' ');
+  return (wordBreak > 100 ? slice.slice(0, wordBreak) : slice).trimEnd() + '...';
+}
+
+function limitParagraphSentences(value, maxSentences = 3) {
+  const text = normalizeStoryParagraph(value);
+  if (!text) return '';
+  const sentences = text.match(/[^.!?]+[.!?]?/g)?.map(part => part.trim()).filter(Boolean) ?? [text];
+  const limited = sentences.slice(0, maxSentences).join(' ');
+  return normalizeStoryParagraph(limited);
+}
+
+function buildStoryText(paragraphs, maxChars = 950, maxParagraphs = 4) {
   const unique = [];
   const seen = new Set();
   for (const paragraph of paragraphs) {
-    const text = normalizeStoryParagraph(paragraph);
+    const text = limitParagraphSentences(paragraph);
     const key = text.toLowerCase();
     if (!isUsefulStoryParagraph(text) || seen.has(key)) continue;
     seen.add(key);
@@ -164,17 +185,20 @@ function buildStoryText(paragraphs, maxChars = 1600) {
   }
 
   let out = '';
+  let paragraphCount = 0;
   for (const paragraph of unique) {
+    if (paragraphCount >= maxParagraphs) break;
     const next = out ? `${out}\n\n${paragraph}` : paragraph;
     if (next.length > maxChars) {
       if (!out) {
-        return paragraph.slice(0, Math.max(300, maxChars - 3)).trimEnd() + '...';
+        return trimTextAtBoundary(paragraph, Math.max(320, maxChars - 3));
       }
       break;
     }
     out = next;
+    paragraphCount += 1;
   }
-  return out.trim();
+  return trimTextAtBoundary(out.trim(), maxChars);
 }
 
 async function extractArticleImage(articleUrl) {
