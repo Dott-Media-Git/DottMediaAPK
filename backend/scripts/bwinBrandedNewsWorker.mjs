@@ -129,6 +129,54 @@ function normalizeNewsImageUrl(rawUrl) {
   return url.replace(/([?&])w=\d+/gi, '$1w=1600').replace(/([?&])h=\d+/gi, '$1h=900');
 }
 
+function extractPlainText(value) {
+  const html = String(value || '').trim();
+  if (!html) return '';
+  const $ = load(`<div>${html}</div>`);
+  return $('div').text().replace(/\s+/g, ' ').trim();
+}
+
+function normalizeStoryParagraph(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .trim();
+}
+
+function isUsefulStoryParagraph(value) {
+  const text = normalizeStoryParagraph(value);
+  if (!text || text.length < 40) return false;
+  if (/^(advertisement|related topics|listen to the latest|copyright|all rights reserved)/i.test(text)) return false;
+  if (/cookies|privacy policy|sign up|newsletter|follow us/i.test(text)) return false;
+  return true;
+}
+
+function buildStoryText(paragraphs, maxChars = 1600) {
+  const unique = [];
+  const seen = new Set();
+  for (const paragraph of paragraphs) {
+    const text = normalizeStoryParagraph(paragraph);
+    const key = text.toLowerCase();
+    if (!isUsefulStoryParagraph(text) || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(text);
+  }
+
+  let out = '';
+  for (const paragraph of unique) {
+    const next = out ? `${out}\n\n${paragraph}` : paragraph;
+    if (next.length > maxChars) {
+      if (!out) {
+        return paragraph.slice(0, Math.max(300, maxChars - 3)).trimEnd() + '...';
+      }
+      break;
+    }
+    out = next;
+  }
+  return out.trim();
+}
+
 async function extractArticleImage(articleUrl) {
   const response = await axios.get(articleUrl, {
     timeout: 30000,
@@ -146,6 +194,53 @@ async function extractArticleImage(articleUrl) {
     .map(normalizeNewsImageUrl)
     .filter(Boolean);
   return candidates[0] || '';
+}
+
+async function extractArticleStory(articleUrl, feedDescription = '') {
+  const feedText = extractPlainText(feedDescription);
+  try {
+    const response = await axios.get(articleUrl, {
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'DottMedia-BwinNewsWorker/1.0',
+        Accept: 'text/html,application/xhtml+xml',
+      },
+    });
+    const $ = load(response.data);
+    const metaDescription = [
+      $('meta[property="og:description"]').attr('content'),
+      $('meta[name="description"]').attr('content'),
+      $('meta[name="twitter:description"]').attr('content'),
+    ]
+      .map(value => normalizeStoryParagraph(value))
+      .filter(Boolean);
+
+    const selectors = [
+      'article p',
+      'main p',
+      '[data-testid=\"article-body\"] p',
+      '[data-component=\"text-block\"] p',
+      '.article-body p',
+      '.story-body p',
+      '.main-content p',
+      'section p',
+    ];
+    const paragraphs = selectors.flatMap(selector =>
+      $(selector)
+        .toArray()
+        .map(node => $(node).text()),
+    );
+
+    const story = buildStoryText([...paragraphs, ...metaDescription, feedText]);
+    if (story) return story;
+  } catch (error) {
+    console.warn(
+      '[bwin-news-worker] article story extraction failed',
+      articleUrl,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  return buildStoryText([feedText]);
 }
 
 function buildContentKey(candidate) {
@@ -495,11 +590,39 @@ function cleanTitle(title) {
   return title.replace(/\s+/g, ' ').trim();
 }
 
-function buildCaptions(title) {
+function buildCaptionHashtags(title, storyText = '') {
+  const normalized = `${title} ${storyText}`.toLowerCase();
+  const tags = ['#BwinbetUganda', '#FootballNews', '#FootballUpdates', '#BettingTips'];
+  if (/transfer|rumou?r|sign|deal|contract|bid/.test(normalized)) tags.push('#TransferNews');
+  if (/premier league|liverpool|manchester|arsenal|chelsea|tottenham|newcastle/.test(normalized)) tags.push('#PremierLeague');
+  if (/champions league|ucl/.test(normalized)) tags.push('#ChampionsLeague');
+  if (/world cup/.test(normalized)) tags.push('#WorldCup');
+  if (/la liga|real madrid|barcelona|atletico/.test(normalized)) tags.push('#LaLiga');
+  if (/serie a|inter|juventus|milan|napoli|roma/.test(normalized)) tags.push('#SerieA');
+  return Array.from(new Set(tags)).join(' ');
+}
+
+function buildCaptions(title, storyText = '') {
   const clean = cleanTitle(title);
+  const story = String(storyText || '').trim();
+  const hashtags = buildCaptionHashtags(clean, story);
+  const instagramParts = [clean];
+  if (story) instagramParts.push(story);
+  instagramParts.push('Stay updated with Bwinbet Uganda.');
+  instagramParts.push('More info: link in bio.');
+  instagramParts.push('Bet now: link in bio.');
+  instagramParts.push(hashtags);
+
+  const facebookParts = [clean];
+  if (story) facebookParts.push(story);
+  facebookParts.push('Stay updated with Bwinbet Uganda.');
+  facebookParts.push('More info: www.bwinbetug.info');
+  facebookParts.push('Bet now: https://bwinbetug.com');
+  facebookParts.push(hashtags);
+
   return {
-    instagram: `${clean}\n\nStay updated with Bwinbet Uganda.\nMore info: link in bio.`,
-    facebook: `${clean}\n\nStay updated with Bwinbet Uganda.\nMore info: www.bwinbetug.info\nBet now: https://bwinbetug.com`,
+    instagram: instagramParts.filter(Boolean).join('\n\n'),
+    facebook: facebookParts.filter(Boolean).join('\n\n'),
   };
 }
 
@@ -536,6 +659,7 @@ async function chooseCandidate() {
       }
     }
     if (!imageUrl) continue;
+    const storyText = await extractArticleStory(item.link, item.description);
     try {
       await axios.get(imageUrl, {
         timeout: 20000,
@@ -548,6 +672,7 @@ async function chooseCandidate() {
     return {
       ...item,
       imageUrl,
+      storyText,
       contentKey,
     };
   }
@@ -568,7 +693,7 @@ async function main() {
   try {
     const storyBuffer = IS_STORY_TARGET ? await buildStoryImageBuffer(branded.buffer) : null;
     publicImageUrl = await uploadToSupabaseStorage(storyBuffer || branded.buffer);
-    const captions = buildCaptions(candidate.title);
+    const captions = buildCaptions(candidate.title, candidate.storyText);
 
     let instagramResult = null;
     let facebookResult = null;
@@ -626,6 +751,7 @@ async function main() {
       contentType: IS_STORY_TARGET ? 'news_story' : 'news',
       target: IS_STORY_TARGET ? 'stories' : 'feed',
       title: cleanTitle(candidate.title),
+      storyText: candidate.storyText || '',
       sourceUrl: candidate.link,
       sourceImageUrl: candidate.imageUrl,
       brandedImageUrl: publicImageUrl,
