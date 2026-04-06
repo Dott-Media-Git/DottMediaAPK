@@ -569,24 +569,67 @@ async function waitForMediaReady(creationId, accessToken, maxAttempts = 15, dela
   return false;
 }
 
+function getAxiosErrorStatus(error) {
+  return Number(error?.response?.status || 0) || null;
+}
+
+function getAxiosErrorMessage(error) {
+  return error?.response?.data?.error?.message ?? error?.message ?? 'Unknown error';
+}
+
+function shouldRetryTransientMetaError(error) {
+  const status = getAxiosErrorStatus(error);
+  if (status && [429, 500, 502, 503, 504].includes(status)) return true;
+  const message = String(getAxiosErrorMessage(error)).toLowerCase();
+  return (
+    message.includes('temporarily unavailable') ||
+    message.includes('please reduce the amount of data') ||
+    message.includes('try again later') ||
+    message.includes('an unexpected error has occurred')
+  );
+}
+
+async function retryMetaRequest(task, { retries = 3, retryDelayMs = 3500 } = {}) {
+  let lastError = null;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetryTransientMetaError(error) || attempt >= retries - 1) {
+        throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
 async function publishWithRetry({ baseUrl, creationId, accessToken, retries = 2, retryDelayMs = 3000 }) {
   let lastError = null;
   for (let attempt = 0; attempt < retries; attempt += 1) {
     try {
-      const publish = await axios.post(
-        `${baseUrl}/media_publish`,
-        new URLSearchParams({
-          creation_id: creationId,
-          access_token: accessToken,
-        }),
-        { timeout: 60000 },
+      const publish = await retryMetaRequest(
+        () =>
+          axios.post(
+            `${baseUrl}/media_publish`,
+            new URLSearchParams({
+              creation_id: creationId,
+              access_token: accessToken,
+            }),
+            { timeout: 60000 },
+          ),
+        { retries: 2, retryDelayMs: Math.max(retryDelayMs, 4000) },
       );
       if (publish.data?.id) return publish.data.id;
       throw new Error('No ID returned from Instagram publish');
     } catch (error) {
       lastError = error;
-      const message = error?.response?.data?.error?.message ?? error?.message ?? '';
-      if (String(message).toLowerCase().includes('media id is not available') && attempt < retries - 1) {
+      const message = getAxiosErrorMessage(error);
+      if (
+        (String(message).toLowerCase().includes('media id is not available') || shouldRetryTransientMetaError(error)) &&
+        attempt < retries - 1
+      ) {
         await new Promise(resolve => setTimeout(resolve, retryDelayMs));
         continue;
       }
@@ -599,22 +642,26 @@ async function publishWithRetry({ baseUrl, creationId, accessToken, retries = 2,
 
 async function publishToInstagram({ accountId, accessToken, imageUrl, caption }) {
   const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
-  const create = await axios.post(
-    `${baseUrl}/media`,
-    new URLSearchParams({
-      image_url: imageUrl,
-      caption,
-      access_token: accessToken,
-    }),
-    { timeout: 60000 },
+  const create = await retryMetaRequest(
+    () =>
+      axios.post(
+        `${baseUrl}/media`,
+        new URLSearchParams({
+          image_url: imageUrl,
+          caption,
+          access_token: accessToken,
+        }),
+        { timeout: 60000 },
+      ),
+    { retries: 3, retryDelayMs: 4000 },
   );
-    const creationId = create.data?.id;
-    if (!creationId) throw new Error('Instagram container creation failed');
+  const creationId = create.data?.id;
+  if (!creationId) throw new Error('Instagram container creation failed');
 
-    const isReady = await waitForMediaReady(creationId, accessToken);
-    if (!isReady) throw new Error('Instagram media container not ready for publishing');
-    const mediaId = await publishWithRetry({ baseUrl, creationId, accessToken });
-    if (!mediaId) throw new Error('Instagram publish failed');
+  const isReady = await waitForMediaReady(creationId, accessToken);
+  if (!isReady) throw new Error('Instagram media container not ready for publishing');
+  const mediaId = await publishWithRetry({ baseUrl, creationId, accessToken, retries: 3, retryDelayMs: 4000 });
+  if (!mediaId) throw new Error('Instagram publish failed');
 
   const meta = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
     params: {
@@ -822,25 +869,37 @@ async function main() {
         });
       }
     } else {
-      [instagramResult, facebookResult] = await Promise.all([
-        publishToInstagram({
+      try {
+        instagramResult = await publishToInstagram({
           accountId: accounts.instagram.accountId,
           accessToken: accounts.instagram.accessToken,
           imageUrl: publicImageUrl,
           caption: captions.instagram,
-        }),
-        publishToFacebook({
+        });
+      } catch (error) {
+        failures.push({
+          platform: 'instagram',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      try {
+        facebookResult = await publishToFacebook({
           pageId: accounts.facebook.pageId,
           accessToken: accounts.facebook.accessToken,
           imageUrl: publicImageUrl,
           caption: captions.facebook,
-        }),
-      ]);
+        });
+      } catch (error) {
+        failures.push({
+          platform: 'facebook',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     if (!instagramResult && !facebookResult) {
       const detail = failures.map(entry => `${entry.platform}: ${entry.message}`).join(' | ');
-      throw new Error(detail || 'No social story platforms published successfully');
+      throw new Error(detail || `No social ${IS_STORY_TARGET ? 'story' : 'feed'} platforms published successfully`);
     }
 
     const payload = {
@@ -885,12 +944,12 @@ async function main() {
         payload: { ...payload, platform: 'instagram' },
       });
       dailyCounts[IS_STORY_TARGET ? 'instagram_story' : 'instagram'] = 1;
-    } else if (IS_STORY_TARGET) {
-      const failure = failures.find(entry => entry.platform === 'instagram_story');
+    } else {
+      const failure = failures.find(entry => entry.platform === (IS_STORY_TARGET ? 'instagram_story' : 'instagram'));
       if (failure) {
         logEntries.push({
           user_id: BWIN_USER_ID,
-          platform: 'instagram_story',
+          platform: IS_STORY_TARGET ? 'instagram_story' : 'instagram',
           scheduled_post_id: scheduledPostId,
           status: 'failed',
           response_id: null,
@@ -913,12 +972,12 @@ async function main() {
         payload: { ...payload, platform: 'facebook' },
       });
       dailyCounts[IS_STORY_TARGET ? 'facebook_story' : 'facebook'] = 1;
-    } else if (IS_STORY_TARGET) {
-      const failure = failures.find(entry => entry.platform === 'facebook_story');
+    } else {
+      const failure = failures.find(entry => entry.platform === (IS_STORY_TARGET ? 'facebook_story' : 'facebook'));
       if (failure) {
         logEntries.push({
           user_id: BWIN_USER_ID,
-          platform: 'facebook_story',
+          platform: IS_STORY_TARGET ? 'facebook_story' : 'facebook',
           scheduled_post_id: scheduledPostId,
           status: 'failed',
           response_id: null,
