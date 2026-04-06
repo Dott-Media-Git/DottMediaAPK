@@ -10,7 +10,6 @@ const WORKER_CONFIG_OBJECT = 'bwin-meta-accounts.json';
 const IG_MEDIA_LIMIT = Math.max(Number(process.env.BWIN_COMMENT_MEDIA_LIMIT ?? 12), 1);
 const COMMENT_LIMIT = Math.max(Number(process.env.BWIN_COMMENT_LIMIT ?? 10), 1);
 const WINDOW_HOURS = Math.max(Number(process.env.BWIN_COMMENT_WINDOW_HOURS ?? 48), 1);
-const INTERNAL_IG_USERNAMES = new Set(['bwinbet_analytics', 'bwinbetug25', 'dottmedia100']);
 
 function requireEnv(name, value) {
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
@@ -111,7 +110,7 @@ async function fetchInstagramComments(mediaId, instagram) {
   const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/comments`, {
     params: {
       access_token: instagram.accessToken,
-      fields: 'id,text,timestamp,from,username',
+      fields: 'id,text,timestamp,from,username,replies{id,from{id,username}}',
       limit: COMMENT_LIMIT,
     },
     timeout: 30000,
@@ -144,31 +143,41 @@ async function fetchFacebookComments(postId, facebook) {
 }
 
 async function replyToInstagramComment(commentId, message, instagram) {
-  await axios.post(`https://graph.facebook.com/${GRAPH_VERSION}/${commentId}/replies`, null, {
+  await axios.post(`https://graph.facebook.com/${GRAPH_VERSION}/${commentId}/likes`, null, {
+    params: { access_token: instagram.accessToken },
+    timeout: 30000,
+  }).catch(() => {});
+  return axios.post(`https://graph.facebook.com/${GRAPH_VERSION}/${commentId}/replies`, null, {
     params: {
       access_token: instagram.accessToken,
       message,
     },
     timeout: 30000,
   });
-  await axios.post(`https://graph.facebook.com/${GRAPH_VERSION}/${commentId}/likes`, null, {
-    params: { access_token: instagram.accessToken },
-    timeout: 30000,
-  }).catch(() => {});
 }
 
 async function replyToFacebookComment(commentId, message, facebook) {
-  await axios.post(`https://graph.facebook.com/${GRAPH_VERSION}/${commentId}/comments`, null, {
+  await axios.post(`https://graph.facebook.com/${GRAPH_VERSION}/${commentId}/likes`, null, {
+    params: { access_token: facebook.accessToken },
+    timeout: 30000,
+  }).catch(() => {});
+  return axios.post(`https://graph.facebook.com/${GRAPH_VERSION}/${commentId}/comments`, null, {
     params: {
       access_token: facebook.accessToken,
       message,
     },
     timeout: 30000,
   });
-  await axios.post(`https://graph.facebook.com/${GRAPH_VERSION}/${commentId}/likes`, null, {
-    params: { access_token: facebook.accessToken },
-    timeout: 30000,
-  }).catch(() => {});
+}
+
+function hasExistingInstagramReply(comment, instagram) {
+  const replies = Array.isArray(comment?.replies?.data) ? comment.replies.data : [];
+  const selfUsername = normalizeText(instagram.username).toLowerCase();
+  return replies.some(reply => {
+    const fromId = normalizeText(reply?.from?.id);
+    const fromUsername = normalizeText(reply?.from?.username).toLowerCase();
+    return fromId === normalizeText(instagram.accountId) || (selfUsername && fromUsername === selfUsername);
+  });
 }
 
 function buildLogEntry(platform, externalKey, status, payload, responseId = null, error = null) {
@@ -196,8 +205,14 @@ async function processInstagramComments(instagram) {
       const commentId = comment?.id;
       const text = normalizeText(comment?.text);
       const username = normalizeText(comment?.from?.username || comment?.username).toLowerCase();
+      const fromId = normalizeText(comment?.from?.id);
+      const selfUsername = normalizeText(instagram.username).toLowerCase();
       if (!commentId || !text || !isWithinWindow(comment?.timestamp)) continue;
-      if (INTERNAL_IG_USERNAMES.has(username)) continue;
+      if (fromId === normalizeText(instagram.accountId) || (selfUsername && username === selfUsername)) continue;
+      if (hasExistingInstagramReply(comment, instagram)) {
+        skipped += 1;
+        continue;
+      }
 
       const externalKey = `external:comment:instagram:${commentId}`;
       if (await hasProcessedComment(externalKey)) {
