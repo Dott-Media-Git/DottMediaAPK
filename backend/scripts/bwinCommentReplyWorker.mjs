@@ -58,15 +58,15 @@ function normalizeText(value) {
 function buildReply(text) {
   const body = normalizeText(text).toLowerCase();
   if (!body) {
-    return 'For more football updates visit www.bwinbetug.info, and place your bets at https://bwinbetug.com.';
+    return 'Thanks for the support. For more football updates or to place bets, follow the link in the bio.';
   }
   if (body.includes('?') || /\b(odds|which|when|where|who|how|ticket|bet|tips|prediction|fixture|game|match)\b/.test(body)) {
-    return 'For full match details, fixtures, and updates visit www.bwinbetug.info. When you are ready to place your bets, head to https://bwinbetug.com.';
+    return 'Thanks for the support. For more football updates or to place bets, follow the link in the bio.';
   }
   if (/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\s!?.]+$/u.test(body) || body.length <= 12) {
-    return 'Thanks for the support. For more football updates visit www.bwinbetug.info, and place your bets at https://bwinbetug.com.';
+    return 'Thanks for the support. For more football updates or to place bets, follow the link in the bio.';
   }
-  return 'Thanks for the comment. For more football updates visit www.bwinbetug.info, and place your bets at https://bwinbetug.com.';
+  return 'Thanks for the support. For more football updates or to place bets, follow the link in the bio.';
 }
 
 async function hasProcessedComment(externalKey) {

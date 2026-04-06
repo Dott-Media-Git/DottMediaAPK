@@ -2,7 +2,7 @@ name: Bwin Comment Reply Worker
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '* * * * *'
   workflow_dispatch:
 
 concurrency:
