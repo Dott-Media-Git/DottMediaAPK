@@ -71,9 +71,12 @@ export async function generateReply(
   kind: FallbackKind = 'message',
 ) {
   const profile = await getReplyProfile(userId);
+  if (profile === 'bwinbetug' && kind === 'comment') {
+    return 'Thanks for the support. For more football updates or to place bets, follow the link in the bio.';
+  }
   const bwinInstruction =
     kind === 'comment'
-      ? 'Always direct users to www.bwinbetug.info for more information and to https://bwinbetug.com to place bets.'
+      ? 'Reply with exactly: "Thanks for the support. For more football updates or to place bets, follow the link in the bio."'
       : 'Always direct users to www.bwinbetug.info for full details, fixtures, markets, or support.';
   const baseSystem =
     profile === 'bwinbetug'
