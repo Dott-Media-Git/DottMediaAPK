@@ -1,0 +1,52 @@
+name: Bwin Comment Reply Worker
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: bwin-comment-reply-worker
+  cancel-in-progress: false
+
+jobs:
+  reply-to-comments:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      BWIN_USER_ID: 1zvY9nNyXMcfxdPQEyx0bIdK7r53
+      META_GRAPH_VERSION: v19.0
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: backend
+
+      - name: Validate required secrets
+        run: |
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+
+      - name: Run Bwin comment reply worker
+        run: |
+          set +e
+          output=$(node scripts/bwinCommentReplyWorker.mjs 2>&1)
+          status=$?
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ]; then
+            clean_output=$(printf '%s' "$output" | tr '\n' ' ' | tr '\r' ' ')
+            echo "::error title=Bwin comment reply worker failure::$clean_output"
+            exit "$status"
+          fi
+        working-directory: backend
