@@ -571,45 +571,118 @@ async function chooseItem() {
   return { state, data, cursor, item, forced: false };
 }
 
+function getPendingRun(data, contentKey) {
+  const pending = data?.dottCampaignPendingRun;
+  if (!pending || typeof pending !== 'object') return null;
+  if (pending.contentKey !== contentKey) return null;
+  return {
+    contentKey,
+    slug: typeof pending.slug === 'string' ? pending.slug : '',
+    mediaType: pending.mediaType === 'video' ? 'video' : 'image',
+    filename: typeof pending.filename === 'string' ? pending.filename : '',
+    hostedUrl: typeof pending.hostedUrl === 'string' ? pending.hostedUrl : '',
+    startedAt: typeof pending.startedAt === 'string' ? pending.startedAt : new Date().toISOString(),
+    instagramResult: pending.instagramResult && typeof pending.instagramResult === 'object' ? pending.instagramResult : null,
+    facebookResult: pending.facebookResult && typeof pending.facebookResult === 'object' ? pending.facebookResult : null,
+  };
+}
+
+async function persistPendingRun(state, previousData, pendingRun) {
+  await updateCampaignState(state, previousData, {
+    dottCampaignPendingRun: pendingRun,
+    dottCampaignPendingRunAt: pendingRun?.startedAt || null,
+  });
+}
+
 async function main() {
   const { facebook, instagram } = await getMainAccounts();
   const { state, data, cursor, item, forced } = await chooseItem();
-  const contentKey = crypto.createHash('sha1').update(`${item.slug}|${hourBucket()}`).digest('hex');
+  let stateData = data;
+  const currentHour = hourBucket();
+  const contentKey = crypto.createHash('sha1').update(`${item.slug}|${currentHour}`).digest('hex');
+  const existingPendingRun = getPendingRun(stateData, contentKey);
   if (!BYPASS_DEDUPE && (await hasProcessedContent(contentKey))) {
+    await updateCampaignState(state, stateData, {
+      dottCampaignEnabled: true,
+      dottCampaignCursor: forced ? cursor : (cursor + 1) % CAMPAIGN_ITEMS.length,
+      dottCampaignLastRunAt: new Date().toISOString(),
+      dottCampaignPendingRun: null,
+      dottCampaignPendingRunAt: null,
+    });
     console.log(JSON.stringify({ ok: true, skipped: true, reason: 'already_posted_this_hour', contentKey, slug: item.slug }));
     return;
   }
 
   const hostedUrl = buildAssetUrl(item);
+  let pendingRun = existingPendingRun;
+  if (!pendingRun) {
+    pendingRun = {
+      contentKey,
+      slug: item.slug,
+      mediaType: item.type,
+      filename: item.filename,
+      hostedUrl,
+      startedAt: new Date().toISOString(),
+      instagramResult: null,
+      facebookResult: null,
+    };
+    await persistPendingRun(state, stateData, pendingRun);
+    stateData = {
+      ...(stateData && typeof stateData === 'object' ? stateData : {}),
+      dottCampaignPendingRun: pendingRun,
+      dottCampaignPendingRunAt: pendingRun.startedAt,
+    };
+  }
 
-  const instagramResult =
-    item.type === 'video'
-      ? await publishToInstagramReel({
-          accountId: instagram.accountId,
-          accessToken: instagram.accessToken,
-          videoUrl: hostedUrl,
-          caption: item.instagramCaption,
-        })
-      : await publishToInstagram({
-          accountId: instagram.accountId,
-          accessToken: instagram.accessToken,
-          imageUrl: hostedUrl,
-          caption: item.instagramCaption,
-        });
-  const facebookResult =
-    item.type === 'video'
-      ? await publishToFacebookVideo({
-          pageId: facebook.pageId,
-          accessToken: facebook.accessToken,
-          videoUrl: hostedUrl,
-          caption: item.facebookCaption,
-        })
-      : await publishToFacebook({
-          pageId: facebook.pageId,
-          accessToken: facebook.accessToken,
-          imageUrl: hostedUrl,
-          caption: item.facebookCaption,
-        });
+  let instagramResult = pendingRun.instagramResult;
+  if (!instagramResult) {
+    instagramResult =
+      item.type === 'video'
+        ? await publishToInstagramReel({
+            accountId: instagram.accountId,
+            accessToken: instagram.accessToken,
+            videoUrl: hostedUrl,
+            caption: item.instagramCaption,
+          })
+        : await publishToInstagram({
+            accountId: instagram.accountId,
+            accessToken: instagram.accessToken,
+            imageUrl: hostedUrl,
+            caption: item.instagramCaption,
+          });
+    pendingRun = { ...pendingRun, instagramResult };
+    await persistPendingRun(state, stateData, pendingRun);
+    stateData = {
+      ...(stateData && typeof stateData === 'object' ? stateData : {}),
+      dottCampaignPendingRun: pendingRun,
+      dottCampaignPendingRunAt: pendingRun.startedAt,
+    };
+  }
+
+  let facebookResult = pendingRun.facebookResult;
+  if (!facebookResult) {
+    facebookResult =
+      item.type === 'video'
+        ? await publishToFacebookVideo({
+            pageId: facebook.pageId,
+            accessToken: facebook.accessToken,
+            videoUrl: hostedUrl,
+            caption: item.facebookCaption,
+          })
+        : await publishToFacebook({
+            pageId: facebook.pageId,
+            accessToken: facebook.accessToken,
+            imageUrl: hostedUrl,
+            caption: item.facebookCaption,
+          });
+    pendingRun = { ...pendingRun, facebookResult };
+    await persistPendingRun(state, stateData, pendingRun);
+    stateData = {
+      ...(stateData && typeof stateData === 'object' ? stateData : {}),
+      dottCampaignPendingRun: pendingRun,
+      dottCampaignPendingRunAt: pendingRun.startedAt,
+    };
+  }
 
   const postedAt = new Date().toISOString();
   await addSocialLogs([
@@ -665,11 +738,13 @@ async function main() {
   ]);
   await incrementSocialDaily(item.type === 'video' ? { instagram_reels: 1, facebook: 1 } : { instagram: 1, facebook: 1 });
 
-  await updateCampaignState(state, data, {
+  await updateCampaignState(state, stateData, {
     dottCampaignEnabled: true,
     dottCampaignCursor: forced ? cursor : (cursor + 1) % CAMPAIGN_ITEMS.length,
     dottCampaignItems: CAMPAIGN_ITEMS.map(entry => entry.filename),
     dottCampaignLastRunAt: postedAt,
+    dottCampaignPendingRun: null,
+    dottCampaignPendingRunAt: null,
     dottCampaignLastResult: [
       { platform: item.type === 'video' ? 'instagram_reels' : 'instagram', status: 'posted', remoteId: instagramResult.id },
       { platform: 'facebook', status: 'posted', remoteId: facebookResult.id },
