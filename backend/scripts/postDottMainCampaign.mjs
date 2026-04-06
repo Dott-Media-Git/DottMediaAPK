@@ -12,6 +12,8 @@ const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').
 const WORKER_TAG = 'dott_main_campaign_worker';
 const FORCED_SLUG = (process.env.DOTT_CAMPAIGN_FORCE_SLUG || '').trim();
 const BYPASS_DEDUPE = /^(1|true|yes)$/i.test((process.env.DOTT_CAMPAIGN_BYPASS_DEDUPE || '').trim());
+const WORKER_CONFIG_BUCKET = 'worker-config';
+const WORKER_CONFIG_OBJECT = 'dott-main-meta-accounts.json';
 const ASSET_BASE_URL =
   (process.env.DOTT_CAMPAIGN_ASSET_BASE_URL || 'https://raw.githubusercontent.com/Dott-Media-Git/DottMediaAPK/main').replace(/\/$/, '');
 const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPTS ?? 20), 5);
@@ -161,11 +163,55 @@ function supabaseHeaders() {
   };
 }
 
+function hasSupabaseConfig() {
+  return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+}
+
 function hourBucket() {
   return new Date().toISOString().slice(0, 13);
 }
 
 async function getMainAccounts() {
+  const envFacebook = {
+    pageId: (process.env.DOTT_MAIN_FACEBOOK_PAGE_ID || '').trim(),
+    pageName: (process.env.DOTT_MAIN_FACEBOOK_PAGE_NAME || '').trim() || undefined,
+    accessToken: (process.env.DOTT_MAIN_FACEBOOK_ACCESS_TOKEN || '').trim(),
+  };
+  const envInstagram = {
+    accountId: (process.env.DOTT_MAIN_INSTAGRAM_ACCOUNT_ID || '').trim(),
+    username: (process.env.DOTT_MAIN_INSTAGRAM_USERNAME || '').trim() || undefined,
+    accessToken: (process.env.DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN || '').trim(),
+  };
+  if (envFacebook.pageId && envFacebook.accessToken && envInstagram.accountId && envInstagram.accessToken) {
+    return { facebook: envFacebook, instagram: envInstagram };
+  }
+
+  if (hasSupabaseConfig()) {
+    try {
+      const response = await axios.get(
+        `${SUPABASE_URL}/storage/v1/object/authenticated/${WORKER_CONFIG_BUCKET}/${WORKER_CONFIG_OBJECT}`,
+        {
+          headers: {
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+          timeout: 30000,
+        },
+      );
+      const payload = response.data || {};
+      const facebook = payload.facebook || {};
+      const instagram = payload.instagram || {};
+      if (facebook.pageId && facebook.accessToken && instagram.accountId && instagram.accessToken) {
+        return { facebook, instagram };
+      }
+    } catch (error) {
+      console.warn(
+        '[dott-main-campaign] supabase credential config unavailable',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
   initFirebase();
   const snap = await admin.firestore().collection('users').doc(DOTT_MAIN_USER_ID).get();
   const data = snap.data() || {};
@@ -181,14 +227,72 @@ async function getMainAccounts() {
 }
 
 async function getCampaignState() {
+  if (hasSupabaseConfig()) {
+    try {
+      const response = await axios.get(`${SUPABASE_URL}/rest/v1/dott_autopost_jobs`, {
+        headers: supabaseHeaders(),
+        params: {
+          select: '*',
+          user_id: `eq.${DOTT_MAIN_USER_ID}`,
+          limit: 1,
+        },
+        timeout: 30000,
+      });
+      const row = Array.isArray(response.data) && response.data.length ? response.data[0] : null;
+      if (row) {
+        return {
+          storage: 'supabase',
+          ref: null,
+          row,
+          data: typeof row.data === 'object' && row.data ? row.data : {},
+        };
+      }
+    } catch (error) {
+      console.warn(
+        '[dott-main-campaign] supabase state lookup failed',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
   initFirebase();
   const ref = admin.firestore().collection('autopostJobs').doc(DOTT_MAIN_USER_ID);
   const snap = await ref.get();
-  return { ref, data: snap.data() || {} };
+  return { storage: 'firestore', ref, row: null, data: snap.data() || {} };
 }
 
-async function updateCampaignState(ref, updates) {
-  await ref.set(
+async function updateCampaignState(state, previousData, updates) {
+  if (state.storage === 'supabase') {
+    const merged = {
+      ...(previousData && typeof previousData === 'object' ? previousData : {}),
+      ...updates,
+    };
+    await axios.patch(
+      `${SUPABASE_URL}/rest/v1/dott_autopost_jobs`,
+      {
+        active: merged.active !== false,
+        next_run: merged.nextRun ?? null,
+        reels_next_run: merged.reelsNextRun ?? null,
+        story_next_run: merged.storyNextRun ?? null,
+        trend_next_run: merged.trendNextRun ?? null,
+        data: merged,
+        updated_at: new Date().toISOString(),
+      },
+      {
+        headers: {
+          ...supabaseHeaders(),
+          Prefer: 'return=minimal',
+        },
+        params: {
+          user_id: `eq.${DOTT_MAIN_USER_ID}`,
+        },
+        timeout: 30000,
+      },
+    );
+    return;
+  }
+
+  await state.ref.set(
     {
       ...updates,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -443,7 +547,8 @@ async function publishToFacebookVideo({ pageId, accessToken, videoUrl, caption }
 }
 
 async function chooseItem() {
-  const { ref, data } = await getCampaignState();
+  const state = await getCampaignState();
+  const { data } = state;
   const enabled = data.dottCampaignEnabled !== false;
   if (!enabled) {
     throw new Error('Dott main campaign is disabled');
@@ -453,16 +558,22 @@ async function chooseItem() {
     if (!forcedItem) {
       throw new Error(`Unknown forced campaign slug: ${FORCED_SLUG}`);
     }
-    return { ref, data, cursor: Number.isFinite(data.dottCampaignCursor) ? Number(data.dottCampaignCursor) : 0, item: forcedItem, forced: true };
+    return {
+      state,
+      data,
+      cursor: Number.isFinite(data.dottCampaignCursor) ? Number(data.dottCampaignCursor) : 0,
+      item: forcedItem,
+      forced: true,
+    };
   }
   const cursor = Number.isFinite(data.dottCampaignCursor) ? Number(data.dottCampaignCursor) : 0;
   const item = CAMPAIGN_ITEMS[((cursor % CAMPAIGN_ITEMS.length) + CAMPAIGN_ITEMS.length) % CAMPAIGN_ITEMS.length];
-  return { ref, data, cursor, item, forced: false };
+  return { state, data, cursor, item, forced: false };
 }
 
 async function main() {
   const { facebook, instagram } = await getMainAccounts();
-  const { ref, cursor, item, forced } = await chooseItem();
+  const { state, data, cursor, item, forced } = await chooseItem();
   const contentKey = crypto.createHash('sha1').update(`${item.slug}|${hourBucket()}`).digest('hex');
   if (!BYPASS_DEDUPE && (await hasProcessedContent(contentKey))) {
     console.log(JSON.stringify({ ok: true, skipped: true, reason: 'already_posted_this_hour', contentKey, slug: item.slug }));
@@ -554,11 +665,11 @@ async function main() {
   ]);
   await incrementSocialDaily(item.type === 'video' ? { instagram_reels: 1, facebook: 1 } : { instagram: 1, facebook: 1 });
 
-  await updateCampaignState(ref, {
+  await updateCampaignState(state, data, {
     dottCampaignEnabled: true,
     dottCampaignCursor: forced ? cursor : (cursor + 1) % CAMPAIGN_ITEMS.length,
     dottCampaignItems: CAMPAIGN_ITEMS.map(entry => entry.filename),
-    dottCampaignLastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+    dottCampaignLastRunAt: postedAt,
     dottCampaignLastResult: [
       { platform: item.type === 'video' ? 'instagram_reels' : 'instagram', status: 'posted', remoteId: instagramResult.id },
       { platform: 'facebook', status: 'posted', remoteId: facebookResult.id },
