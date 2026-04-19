@@ -1,0 +1,89 @@
+name: Bwin Matchday Results Worker
+
+on:
+  schedule:
+    - cron: '55 21 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: Optional explicit match date in YYYYMMDD
+        required: false
+        type: string
+      leagues:
+        description: Optional comma-separated league ids
+        required: false
+        type: string
+      force:
+        description: Schedule even if entries already exist
+        required: false
+        default: false
+        type: boolean
+      spacing_hours:
+        description: Hours between league posts
+        required: false
+        default: '4'
+        type: string
+      start_delay_minutes:
+        description: Minutes before first queued post
+        required: false
+        default: '5'
+        type: string
+      platforms:
+        description: Comma-separated platforms to queue
+        required: false
+        default: 'instagram,facebook'
+        type: string
+
+concurrency:
+  group: bwin-matchday-results-worker
+  cancel-in-progress: false
+
+jobs:
+  schedule-bwin-matchday-results:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      MATCHDAY_RESULTS_DATE: ${{ github.event.inputs.date }}
+      MATCHDAY_LEAGUES: ${{ github.event.inputs.leagues }}
+      MATCHDAY_FORCE: ${{ github.event.inputs.force }}
+      MATCHDAY_RESULTS_SPACING_HOURS: ${{ github.event.inputs.spacing_hours || '4' }}
+      MATCHDAY_START_DELAY_MINUTES: ${{ github.event.inputs.start_delay_minutes || '5' }}
+      MATCHDAY_PLATFORMS: ${{ github.event.inputs.platforms || 'instagram,facebook' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: backend
+
+      - name: Install Python dependencies
+        run: python -m pip install --disable-pip-version-check pillow requests
+
+      - name: Validate required secrets
+        run: |
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+
+      - name: Queue latest matchday result posts
+        run: node scripts/runMatchdayScheduleNow.mjs
+
+      - name: Trigger live social queue
+        run: |
+          curl --fail --show-error --silent --max-time 180 \
+            https://dottmediaapk.onrender.com/api/social/runQueue
+        working-directory: backend

@@ -31,6 +31,8 @@ type ScheduledPost = {
   videoUrl?: string;
   videoTitle?: string;
   targetDate: string;
+  scheduledFor?: Date;
+  source?: string;
 };
 
 export interface SocialAccounts {
@@ -174,6 +176,10 @@ export class SocialPostingService {
     return 0;
   }
 
+  private isLimitExempt(post: ScheduledPost) {
+    return post.source === 'matchday_table';
+  }
+
   async runQueue(limit = 25) {
     const now = admin.firestore.Timestamp.now();
     const pendingById = new Map<string, ScheduledPost>();
@@ -185,20 +191,22 @@ export class SocialPostingService {
         .limit(limit)
         .get();
 
-      pendingSnap.docs.forEach(doc => {
-        const data = doc.data();
-        pendingById.set(doc.id, {
-          id: doc.id,
-          userId: data.userId as string,
+        pendingSnap.docs.forEach(doc => {
+          const data = doc.data();
+          pendingById.set(doc.id, {
+            id: doc.id,
+            userId: data.userId as string,
           platform: data.platform as string,
           caption: data.caption as string,
           hashtags: (data.hashtags as string) ?? '',
-          imageUrls: (data.imageUrls as string[]) ?? [],
-          videoUrl: (data.videoUrl as string | undefined) ?? undefined,
-          videoTitle: (data.videoTitle as string | undefined) ?? undefined,
-          targetDate: (data.targetDate as string) ?? new Date().toISOString().slice(0, 10),
+            imageUrls: (data.imageUrls as string[]) ?? [],
+            videoUrl: (data.videoUrl as string | undefined) ?? undefined,
+            videoTitle: (data.videoTitle as string | undefined) ?? undefined,
+            targetDate: (data.targetDate as string) ?? new Date().toISOString().slice(0, 10),
+            scheduledFor: data.scheduledFor?.toDate?.() ?? undefined,
+            source: (data.source as string | undefined) ?? undefined,
+          });
         });
-      });
     } catch (error) {
       console.warn('[social-posting] firestore pending queue fetch failed', error);
     }
@@ -215,15 +223,23 @@ export class SocialPostingService {
           videoUrl: (post.videoUrl as string | undefined) ?? undefined,
           videoTitle: (post.videoTitle as string | undefined) ?? undefined,
           targetDate: (post.targetDate as string) ?? new Date().toISOString().slice(0, 10),
+          scheduledFor: post.scheduledFor ? new Date(post.scheduledFor as string | Date) : undefined,
+          source: (post.source as string | undefined) ?? undefined,
         });
       });
     } catch (error) {
       console.warn('[social-posting] supabase pending queue fetch failed', error);
     }
-    const posts = Array.from(pendingById.values()).sort((a, b) => a.targetDate.localeCompare(b.targetDate));
+    const posts = Array.from(pendingById.values()).sort((a, b) => {
+      const aTime = a.scheduledFor?.getTime() ?? 0;
+      const bTime = b.scheduledFor?.getTime() ?? 0;
+      if (aTime !== bTime) return aTime - bTime;
+      return a.targetDate.localeCompare(b.targetDate);
+    });
     if (!posts.length) return { processed: 0 };
 
-    const counts = await this.buildCounts(posts.map(post => ({ userId: post.userId, targetDate: post.targetDate })));
+    const limitedPosts = posts.filter(post => !this.isLimitExempt(post));
+    const counts = await this.buildCounts(limitedPosts.map(post => ({ userId: post.userId, targetDate: post.targetDate })));
     let processed = 0;
 
     for (const post of posts) {
@@ -258,7 +274,7 @@ export class SocialPostingService {
         continue;
       }
 
-      if (currentCount >= MAX_PER_DAY) {
+      if (!this.isLimitExempt(post) && currentCount >= MAX_PER_DAY) {
         try {
           await scheduledPostsCollection.doc(post.id).update({
             status: 'skipped_limit',
@@ -404,25 +420,27 @@ export class SocialPostingService {
           remoteId: response.remoteId ?? null,
           updatedAt: new Date(),
         });
-        counts.set(key, currentCount + 1);
-        try {
-          await socialLimitsCollection.doc(key).set(
-            {
-              userId: post.userId,
-              date: post.targetDate,
-              postedCount: admin.firestore.FieldValue.increment(1),
-            },
-            { merge: true },
-          );
-        } catch (error) {
-          console.warn('[social-posting] firestore social limit increment failed', error);
+        if (!this.isLimitExempt(post)) {
+          counts.set(key, currentCount + 1);
+          try {
+            await socialLimitsCollection.doc(key).set(
+              {
+                userId: post.userId,
+                date: post.targetDate,
+                postedCount: admin.firestore.FieldValue.increment(1),
+              },
+              { merge: true },
+            );
+          } catch (error) {
+            console.warn('[social-posting] firestore social limit increment failed', error);
+          }
+          await supabaseFallbackService.incrementSocialLimit({
+            key,
+            userId: post.userId,
+            date: post.targetDate,
+            postedCount: 1,
+          });
         }
-        await supabaseFallbackService.incrementSocialLimit({
-          key,
-          userId: post.userId,
-          date: post.targetDate,
-          postedCount: 1,
-        });
         await this.log(post, 'posted', response.remoteId);
         await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'posted' });
         processed += 1;
