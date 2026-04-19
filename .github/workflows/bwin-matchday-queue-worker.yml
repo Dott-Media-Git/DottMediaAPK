@@ -1,0 +1,57 @@
+name: Bwin Matchday Queue Worker
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: bwin-matchday-queue-worker
+  cancel-in-progress: false
+
+jobs:
+  run-bwin-matchday-queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      ALLOW_MOCK_AUTH: 'false'
+      LINKEDIN_ORGANIZATION_ID: placeholder-org
+      ENCRYPTION_KEY: qjqgnHFe6YwuHcyIfG/ODHcVCegee18mpCdpGEfmYro=
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: backend
+
+      - name: Validate required secrets
+        run: |
+          test -n "$FIREBASE_SERVICE_ACCOUNT_JSON"
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+
+      - name: Run Bwin matchday queue
+        shell: bash
+        working-directory: backend
+        run: |
+          for attempt in 1 2 3; do
+            echo "Bwin matchday queue attempt ${attempt}/3"
+            if node --import tsx -e "import { socialPostingService } from './src/packages/services/socialPostingService.ts'; const result = await socialPostingService.runQueue(50); console.log(JSON.stringify(result, null, 2));"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep 20
+            fi
+          done
+          exit 1
