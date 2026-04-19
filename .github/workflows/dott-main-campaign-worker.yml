@@ -2,7 +2,7 @@ name: Dott Main Campaign Worker
 
 on:
   schedule:
-    - cron: '18 * * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -19,6 +19,7 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       DOTT_MAIN_USER_ID: cMPZQccGggbhZe9dbvtxFmBehP02
       META_GRAPH_VERSION: v19.0
+      DOTT_CAMPAIGN_ASSET_BASE_URL: https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

@@ -14,8 +14,10 @@ const FORCED_SLUG = (process.env.DOTT_CAMPAIGN_FORCE_SLUG || '').trim();
 const BYPASS_DEDUPE = /^(1|true|yes)$/i.test((process.env.DOTT_CAMPAIGN_BYPASS_DEDUPE || '').trim());
 const WORKER_CONFIG_BUCKET = 'worker-config';
 const WORKER_CONFIG_OBJECT = 'dott-main-meta-accounts.json';
-const ASSET_BASE_URL =
-  (process.env.DOTT_CAMPAIGN_ASSET_BASE_URL || 'https://raw.githubusercontent.com/Dott-Media-Git/DottMediaAPK/main').replace(/\/$/, '');
+const ASSET_BASE_URL = (
+  process.env.DOTT_CAMPAIGN_ASSET_BASE_URL ||
+  'https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign'
+).replace(/\/$/, '');
 const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPTS ?? 20), 5);
 const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_MS ?? 3000), 1000);
 const PUBLISH_RETRIES = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRIES ?? 3), 1);
@@ -134,6 +136,132 @@ const CAMPAIGN_ITEMS = [
       "Meet your new AI sales agent.\n\nNever miss a lead. Close more deals. Book meetings faster.\n\nDott Media builds sales systems that qualify prospects, answer objections, and keep your pipeline moving 24/7.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AISalesAgent #CloseMoreDeals #LeadConversion #SalesSystems #Automation",
   },
   {
+    type: 'image',
+    slug: 'ai-automates-sales-tasks',
+    filename: 'ai-automates-sales-tasks.png',
+    instagramCaption:
+      "AI that automates sales tasks effortlessly.\n\nLet Dott Media handle the repetitive work so your team can focus on closing.\n\nDM us to set yours up. Link in bio.\n\n#DottMedia #AISalesAgent #SalesAutomation #WorkflowAutomation #BusinessGrowth",
+    facebookCaption:
+      "AI that automates sales tasks effortlessly.\n\nLet Dott Media handle the repetitive work so your team can focus on closing.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AISalesAgent #SalesAutomation #WorkflowAutomation #BusinessGrowth",
+  },
+  {
+    type: 'image',
+    slug: 'ai-automates-sales-tasks-2',
+    filename: 'ai-automates-sales-tasks-2.png',
+    instagramCaption:
+      "Automate follow-ups, qualification, and outreach with AI.\n\nDott Media builds sales systems that keep your pipeline moving.\n\nDM us to get started.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadGeneration #BusinessSystems",
+    facebookCaption:
+      "Automate follow-ups, qualification, and outreach with AI.\n\nDott Media builds sales systems that keep your pipeline moving.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadGeneration #BusinessSystems",
+  },
+  {
+    type: 'image',
+    slug: 'ai-handles-heavy-lifting',
+    filename: 'ai-handles-heavy-lifting.png',
+    instagramCaption:
+      "AI handles the heavy lifting.\n\nFree your team to focus on strategy while automation runs the day-to-day.\n\nDM us to build yours. Link in bio.\n\n#DottMedia #Automation #AISalesAgent #Productivity #BusinessGrowth",
+    facebookCaption:
+      "AI handles the heavy lifting.\n\nFree your team to focus on strategy while automation runs the day-to-day.\n\nVisit: www.dott-media.org\nMessage us to build yours.\n\n#DottMedia #Automation #AISalesAgent #Productivity #BusinessGrowth",
+  },
+  {
+    type: 'image',
+    slug: 'ai-sales-team-transformation',
+    filename: 'ai-sales-team-transformation.png',
+    instagramCaption:
+      "Transform your sales team with AI.\n\nFrom faster response times to smarter qualification, Dott Media builds systems that scale.\n\nDM us to start. Link in bio.\n\n#DottMedia #AISalesAgent #SalesGrowth #Automation #DigitalTransformation",
+    facebookCaption:
+      "Transform your sales team with AI.\n\nFrom faster response times to smarter qualification, Dott Media builds systems that scale.\n\nVisit: www.dott-media.org\nMessage us to start.\n\n#DottMedia #AISalesAgent #SalesGrowth #Automation #DigitalTransformation",
+  },
+  {
+    type: 'image',
+    slug: 'empowering-sales-ai-innovation',
+    filename: 'empowering-sales-ai-innovation.png',
+    instagramCaption:
+      "Empower sales with AI innovation.\n\nDott Media builds AI agents that qualify, engage, and convert leads around the clock.\n\nDM us to learn more.\n\n#DottMedia #AISalesAgent #Innovation #LeadConversion #SalesAutomation",
+    facebookCaption:
+      "Empower sales with AI innovation.\n\nDott Media builds AI agents that qualify, engage, and convert leads around the clock.\n\nVisit: www.dott-media.org\nMessage us to learn more.\n\n#DottMedia #AISalesAgent #Innovation #LeadConversion #SalesAutomation",
+  },
+  {
+    type: 'image',
+    slug: 'revolutionize-sales-ai-power',
+    filename: 'revolutionize-sales-ai-power.png',
+    instagramCaption:
+      "Revolutionize sales with AI power.\n\nBuild a system that works 24/7 and never misses a lead.\n\nDM us to set it up. Link in bio.\n\n#DottMedia #AISalesAgent #SalesSystems #AlwaysOn #BusinessGrowth",
+    facebookCaption:
+      "Revolutionize sales with AI power.\n\nBuild a system that works 24/7 and never misses a lead.\n\nVisit: www.dott-media.org\nMessage us to set it up.\n\n#DottMedia #AISalesAgent #SalesSystems #AlwaysOn #BusinessGrowth",
+  },
+  {
+    type: 'image',
+    slug: 'revolutionize-your-sales-ai',
+    filename: 'revolutionize-your-sales-ai.png',
+    instagramCaption:
+      "Revolutionize your sales with AI.\n\nFrom outreach to follow-up, Dott Media builds smart systems that close.\n\nDM us to get started.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadGeneration #GrowthSystems",
+    facebookCaption:
+      "Revolutionize your sales with AI.\n\nFrom outreach to follow-up, Dott Media builds smart systems that close.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadGeneration #GrowthSystems",
+  },
+  {
+    type: 'image',
+    slug: 'revolutionize-your-sales-ai-2',
+    filename: 'revolutionize-your-sales-ai-2.png',
+    instagramCaption:
+      "AI sales systems that sell smarter and close faster.\n\nDott Media keeps your pipeline active 24/7.\n\nDM us for a walkthrough. Link in bio.\n\n#DottMedia #AISalesAgent #CloseFaster #SalesGrowth #Automation",
+    facebookCaption:
+      "AI sales systems that sell smarter and close faster.\n\nDott Media keeps your pipeline active 24/7.\n\nVisit: www.dott-media.org\nMessage us for a walkthrough.\n\n#DottMedia #AISalesAgent #CloseFaster #SalesGrowth #Automation",
+  },
+  {
+    type: 'image',
+    slug: 'ai-business-growth-family',
+    filename: 'ai-business-growth-family.png',
+    instagramCaption:
+      "AI-powered business growth without sacrificing family time.\n\nDott Media builds automation that gives you time back.\n\nDM us to get started. Link in bio.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #BusinessGrowth",
+    facebookCaption:
+      "AI-powered business growth without sacrificing family time.\n\nDott Media builds automation that gives you time back.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #BusinessGrowth",
+  },
+  {
+    type: 'image',
+    slug: 'family-time-ai-assistance',
+    filename: 'family-time-ai-assistance.png',
+    instagramCaption:
+      "Spend more time with family.\n\nLet AI handle the heavy lifting so your team can focus on what matters.\n\nDM us to build yours.\n\n#DottMedia #Automation #AISalesAgent #Productivity #FamilyTime",
+    facebookCaption:
+      "Spend more time with family.\n\nLet AI handle the heavy lifting so your team can focus on what matters.\n\nVisit: www.dott-media.org\nMessage us to build yours.\n\n#DottMedia #Automation #AISalesAgent #Productivity #FamilyTime",
+  },
+  {
+    type: 'image',
+    slug: 'father-son-sunset-jog',
+    filename: 'father-son-sunset-jog.png',
+    instagramCaption:
+      "Be present for the moments that matter.\n\nDott Media automates the busywork so you can focus on life and growth.\n\nDM us to get started.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #GrowthSystems",
+    facebookCaption:
+      "Be present for the moments that matter.\n\nDott Media automates the busywork so you can focus on life and growth.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #GrowthSystems",
+  },
+  {
+    type: 'image',
+    slug: 'riding-sunset-with-mom',
+    filename: 'riding-sunset-with-mom.png',
+    instagramCaption:
+      "Don’t miss the moments that matter.\n\nLet AI handle follow-ups and scheduling while you focus on your family.\n\nDM us to build yours.\n\n#DottMedia #Automation #AISalesAgent #FamilyFirst #BusinessGrowth",
+    facebookCaption:
+      "Don’t miss the moments that matter.\n\nLet AI handle follow-ups and scheduling while you focus on your family.\n\nVisit: www.dott-media.org\nMessage us to build yours.\n\n#DottMedia #Automation #AISalesAgent #FamilyFirst #BusinessGrowth",
+  },
+  {
+    type: 'image',
+    slug: 'riding-sunset-with-mom-2',
+    filename: 'riding-sunset-with-mom-2.png',
+    instagramCaption:
+      "More time for what matters.\n\nDott Media builds AI systems that free your schedule and grow your business.\n\nDM us to start.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #GrowthSystems",
+    facebookCaption:
+      "More time for what matters.\n\nDott Media builds AI systems that free your schedule and grow your business.\n\nVisit: www.dott-media.org\nMessage us to start.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #GrowthSystems",
+  },
+  {
+    type: 'image',
+    slug: 'spend-more-time-with-family',
+    filename: 'spend-more-time-with-family.png',
+    instagramCaption:
+      "Spend more time with family while AI handles the busywork.\n\nDott Media automates sales and operations so you can focus on life.\n\nDM us to get started.\n\n#DottMedia #Automation #AIForBusiness #FamilyTime #BusinessGrowth",
+    facebookCaption:
+      "Spend more time with family while AI handles the busywork.\n\nDott Media automates sales and operations so you can focus on life.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #Automation #AIForBusiness #FamilyTime #BusinessGrowth",
+  },
+  {
     type: 'video',
     slug: 'dott-main-showcase-video',
     filename: 'dott-main-showcase-video.mp4',
@@ -143,6 +271,15 @@ const CAMPAIGN_ITEMS = [
       "Dott Media in motion.\n\nAI-powered systems, smarter marketing, stronger branding, and business automation that keeps working for you.\n\nVisit: www.dott-media.org\nMessage us for a walkthrough.\n\n#DottMedia #AIAutomation #BusinessGrowth #BrandSystems #DigitalMedia #MarketingAutomation",
   },
 ];
+
+const EMOTION_IMAGE_SLUGS = new Set([
+  'ai-business-growth-family',
+  'family-time-ai-assistance',
+  'father-son-sunset-jog',
+  'riding-sunset-with-mom',
+  'riding-sunset-with-mom-2',
+  'spend-more-time-with-family',
+]);
 
 function requireEnv(name, value) {
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
@@ -169,6 +306,48 @@ function hasSupabaseConfig() {
 
 function hourBucket() {
   return new Date().toISOString().slice(0, 13);
+}
+
+function getCampaignBuckets() {
+  const images = CAMPAIGN_ITEMS.filter(item => item.type === 'image');
+  const videos = CAMPAIGN_ITEMS.filter(item => item.type === 'video');
+  const emotionImages = images.filter(item => EMOTION_IMAGE_SLUGS.has(item.slug));
+  const coreImages = images.filter(item => !EMOTION_IMAGE_SLUGS.has(item.slug));
+  return { images, videos, emotionImages, coreImages };
+}
+
+function pickItemForCursor(cursor) {
+  const { images, videos, emotionImages, coreImages } = getCampaignBuckets();
+  if (!images.length && !videos.length) {
+    throw new Error('Dott main campaign items are empty.');
+  }
+  if (!videos.length) {
+    const index = ((cursor % images.length) + images.length) % images.length;
+    return images[index];
+  }
+  if (!images.length) {
+    const index = ((cursor % videos.length) + videos.length) % videos.length;
+    return videos[index];
+  }
+
+  const sequenceIndex = ((cursor % 3) + 3) % 3; // image -> video -> image
+  if (sequenceIndex === 1) {
+    const videoIndex = Math.floor(cursor / 3);
+    const index = ((videoIndex % videos.length) + videos.length) % videos.length;
+    return videos[index];
+  }
+
+  const imageSlot = Math.floor(cursor / 3) * 2 + (sequenceIndex === 2 ? 1 : 0);
+  if (emotionImages.length && coreImages.length) {
+    const useEmotionSet = imageSlot % 2 === 0;
+    const set = useEmotionSet ? emotionImages : coreImages;
+    const setIndex = Math.floor(imageSlot / 2);
+    const index = ((setIndex % set.length) + set.length) % set.length;
+    return set[index];
+  }
+
+  const imageIndex = ((imageSlot % images.length) + images.length) % images.length;
+  return images[imageIndex];
 }
 
 async function getMainAccounts() {
@@ -567,7 +746,7 @@ async function chooseItem() {
     };
   }
   const cursor = Number.isFinite(data.dottCampaignCursor) ? Number(data.dottCampaignCursor) : 0;
-  const item = CAMPAIGN_ITEMS[((cursor % CAMPAIGN_ITEMS.length) + CAMPAIGN_ITEMS.length) % CAMPAIGN_ITEMS.length];
+  const item = pickItemForCursor(cursor);
   return { state, data, cursor, item, forced: false };
 }
 
@@ -604,7 +783,7 @@ async function main() {
   if (!BYPASS_DEDUPE && (await hasProcessedContent(contentKey))) {
     await updateCampaignState(state, stateData, {
       dottCampaignEnabled: true,
-      dottCampaignCursor: forced ? cursor : (cursor + 1) % CAMPAIGN_ITEMS.length,
+      dottCampaignCursor: forced ? cursor : cursor + 1,
       dottCampaignLastRunAt: new Date().toISOString(),
       dottCampaignPendingRun: null,
       dottCampaignPendingRunAt: null,
@@ -740,7 +919,7 @@ async function main() {
 
   await updateCampaignState(state, stateData, {
     dottCampaignEnabled: true,
-    dottCampaignCursor: forced ? cursor : (cursor + 1) % CAMPAIGN_ITEMS.length,
+    dottCampaignCursor: forced ? cursor : cursor + 1,
     dottCampaignItems: CAMPAIGN_ITEMS.map(entry => entry.filename),
     dottCampaignLastRunAt: postedAt,
     dottCampaignPendingRun: null,
