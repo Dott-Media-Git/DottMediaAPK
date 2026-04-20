@@ -1,0 +1,56 @@
+name: Bwin Prediction Settlement Worker
+
+on:
+  schedule:
+    - cron: '40 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run settlement generation without posting
+        required: false
+        default: false
+        type: boolean
+      lookback_days:
+        description: How many days of prediction batches to inspect
+        required: false
+        default: '7'
+        type: string
+      grace_hours:
+        description: Settlement grace period after the latest kickoff
+        required: false
+        default: '18'
+        type: string
+
+concurrency:
+  group: bwin-prediction-settlement-worker
+  cancel-in-progress: false
+
+jobs:
+  run-bwin-prediction-settlement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      META_GRAPH_VERSION: ${{ secrets.META_GRAPH_VERSION }}
+      BWIN_PREDICTION_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      BWIN_PREDICTION_LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '7' }}
+      BWIN_PREDICTION_SETTLEMENT_GRACE_HOURS: ${{ github.event.inputs.grace_hours || '18' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: backend
+
+      - name: Run Bwin prediction settlement worker
+        run: node scripts/settleBwinPredictionNow.mjs
+        working-directory: backend
