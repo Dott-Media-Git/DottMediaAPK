@@ -21,7 +21,7 @@ on:
       spacing_hours:
         description: Hours between league posts
         required: false
-        default: '4'
+        default: '3'
         type: string
       start_delay_minutes:
         description: Minutes before first queued post
@@ -48,7 +48,7 @@ jobs:
       MATCHDAY_RESULTS_DATE: ${{ github.event.inputs.date }}
       MATCHDAY_LEAGUES: ${{ github.event.inputs.leagues }}
       MATCHDAY_FORCE: ${{ github.event.inputs.force }}
-      MATCHDAY_RESULTS_SPACING_HOURS: ${{ github.event.inputs.spacing_hours || '4' }}
+      MATCHDAY_RESULTS_SPACING_HOURS: ${{ github.event.inputs.spacing_hours || '3' }}
       MATCHDAY_START_DELAY_MINUTES: ${{ github.event.inputs.start_delay_minutes || '5' }}
       MATCHDAY_PLATFORMS: ${{ github.event.inputs.platforms || 'instagram,facebook' }}
     steps:

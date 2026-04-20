@@ -207,7 +207,7 @@ async function scheduleMatchdayTables({ date, spacingHours }) {
 }
 
 const date = process.env.MATCHDAY_RESULTS_DATE || null;
-const spacingHours = Math.max(Number(process.env.MATCHDAY_RESULTS_SPACING_HOURS ?? 4), 1);
+const spacingHours = Math.max(Number(process.env.MATCHDAY_RESULTS_SPACING_HOURS ?? 3), 1);
 
 const result = await scheduleMatchdayTables({ date, spacingHours });
 console.log('[matchday] scheduled now', result);
