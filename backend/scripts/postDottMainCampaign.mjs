@@ -26,11 +26,15 @@ const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPT
 const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_MS ?? 3000), 1000);
 const PUBLISH_RETRIES = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRIES ?? 3), 1);
 const PUBLISH_RETRY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRY_DELAY_MS ?? 4000), 1000);
+const DEFAULT_VIDEO_INSTAGRAM_CAPTION =
+  "Dott Media in motion.\n\nAI-powered systems, smarter marketing, stronger branding, and business automation that keeps working for you.\n\nDM us for a walkthrough.\n\n#DottMedia #AIAutomation #BusinessGrowth #BrandSystems #DigitalMedia #MarketingAutomation";
+const DEFAULT_VIDEO_FACEBOOK_CAPTION =
+  "Dott Media in motion.\n\nAI-powered systems, smarter marketing, stronger branding, and business automation that keeps working for you.\n\nVisit: www.dott-media.org\nMessage us for a walkthrough.\n\n#DottMedia #AIAutomation #BusinessGrowth #BrandSystems #DigitalMedia #MarketingAutomation";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const CAMPAIGN_ITEMS = [
+const STATIC_CAMPAIGN_ITEMS = [
   {
     type: 'image',
     slug: 'services-ai-workflows',
@@ -269,10 +273,8 @@ const CAMPAIGN_ITEMS = [
     type: 'video',
     slug: 'dott-main-showcase-video',
     filename: 'dott-main-showcase-video.mp4',
-    instagramCaption:
-      "Dott Media in motion.\n\nAI-powered systems, smarter marketing, stronger branding, and business automation that keeps working for you.\n\nDM us for a walkthrough.\n\n#DottMedia #AIAutomation #BusinessGrowth #BrandSystems #DigitalMedia #MarketingAutomation",
-    facebookCaption:
-      "Dott Media in motion.\n\nAI-powered systems, smarter marketing, stronger branding, and business automation that keeps working for you.\n\nVisit: www.dott-media.org\nMessage us for a walkthrough.\n\n#DottMedia #AIAutomation #BusinessGrowth #BrandSystems #DigitalMedia #MarketingAutomation",
+    instagramCaption: DEFAULT_VIDEO_INSTAGRAM_CAPTION,
+    facebookCaption: DEFAULT_VIDEO_FACEBOOK_CAPTION,
   },
 ];
 
@@ -312,9 +314,57 @@ function hourBucket() {
   return new Date().toISOString().slice(0, 13);
 }
 
-function getCampaignBuckets() {
-  const images = CAMPAIGN_ITEMS.filter(item => item.type === 'image');
-  const videos = CAMPAIGN_ITEMS.filter(item => item.type === 'video');
+function sha1(input) {
+  return crypto.createHash('sha1').update(String(input || '')).digest('hex');
+}
+
+function sanitizeVideoName(rawUrl, fallback) {
+  if (!rawUrl) return fallback;
+  try {
+    const url = new URL(rawUrl);
+    const pathname = decodeURIComponent(url.pathname || '');
+    const filename = pathname.split('/').filter(Boolean).pop();
+    return filename || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function buildDynamicVideoItems(data) {
+  const urls = Array.from(
+    new Set(
+      [data?.reelsVideoUrls, data?.videoUrls]
+        .flat()
+        .flatMap(entry => (Array.isArray(entry) ? entry : [entry]))
+        .filter(entry => typeof entry === 'string' && /^https?:\/\//i.test(entry.trim()))
+        .map(entry => entry.trim()),
+    ),
+  );
+
+  return urls.map((assetUrl, index) => {
+    const digest = sha1(assetUrl).slice(0, 10);
+    return {
+      type: 'video',
+      slug: `dott-main-rotation-video-${digest}`,
+      filename: sanitizeVideoName(assetUrl, `dott-main-rotation-video-${index + 1}.mp4`),
+      assetUrl,
+      instagramCaption: DEFAULT_VIDEO_INSTAGRAM_CAPTION,
+      facebookCaption: DEFAULT_VIDEO_FACEBOOK_CAPTION,
+    };
+  });
+}
+
+function getCampaignItems(data) {
+  const dynamicVideos = buildDynamicVideoItems(data);
+  const imageItems = STATIC_CAMPAIGN_ITEMS.filter(item => item.type === 'image');
+  const staticVideos = STATIC_CAMPAIGN_ITEMS.filter(item => item.type === 'video');
+  return [...imageItems, ...dynamicVideos, ...staticVideos];
+}
+
+function getCampaignBuckets(data) {
+  const items = getCampaignItems(data);
+  const images = items.filter(item => item.type === 'image');
+  const videos = items.filter(item => item.type === 'video');
   const emotionImages = images.filter(item => EMOTION_IMAGE_SLUGS.has(item.slug));
   const coreImages = images.filter(item => !EMOTION_IMAGE_SLUGS.has(item.slug));
   return { images, videos, emotionImages, coreImages };
@@ -366,8 +416,8 @@ function advanceCampaignState(campaignState, item) {
   };
 }
 
-function pickItemForState(campaignState) {
-  const { images, videos, emotionImages, coreImages } = getCampaignBuckets();
+function pickItemForState(campaignState, data) {
+  const { images, videos, emotionImages, coreImages } = getCampaignBuckets(data);
   if (!images.length && !videos.length) {
     throw new Error('Dott main campaign items are empty.');
   }
@@ -395,6 +445,11 @@ function pickItemForState(campaignState) {
 
   const imageIndex = positiveMod(campaignState.imageCursor, images.length);
   return images[imageIndex] ?? images[0];
+}
+
+function resolveCampaignItemBySlug(slug, data) {
+  if (!slug) return null;
+  return getCampaignItems(data).find(item => item.slug === slug) || null;
 }
 
 async function getMainAccounts() {
@@ -527,6 +582,75 @@ async function updateCampaignState(state, previousData, updates) {
   );
 }
 
+function parseTimestamp(value) {
+  if (typeof value !== 'string') return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+async function getRecentCampaignRuns(data) {
+  if (!hasSupabaseConfig()) return [];
+  const since = parseTimestamp(data?.dottCampaignLastRunAt);
+  const params = {
+    select: 'posted_at,payload',
+    user_id: `eq.${DOTT_MAIN_USER_ID}`,
+    platform: `eq.${WORKER_TAG}`,
+    order: 'posted_at.asc',
+    limit: 120,
+  };
+  if (since !== null) {
+    params.posted_at = `gt.${new Date(since).toISOString()}`;
+  }
+  const response = await axios.get(`${SUPABASE_URL}/rest/v1/dott_social_logs`, {
+    headers: supabaseHeaders(),
+    params,
+    timeout: 30000,
+  });
+  return Array.isArray(response.data) ? response.data : [];
+}
+
+async function hydrateCampaignState(state, data) {
+  let campaignState = normalizeCampaignState(data);
+  const runs = await getRecentCampaignRuns(data);
+  if (!runs.length) {
+    return { data, campaignState, repaired: false };
+  }
+
+  let lastRunAt = typeof data?.dottCampaignLastRunAt === 'string' ? data.dottCampaignLastRunAt : null;
+  for (const run of runs) {
+    const slug = typeof run?.payload?.slug === 'string' ? run.payload.slug : '';
+    const item = resolveCampaignItemBySlug(slug, data);
+    if (!item) continue;
+    campaignState = advanceCampaignState(campaignState, item);
+    lastRunAt = run.posted_at || lastRunAt;
+  }
+
+  const repairedData = {
+    ...(data && typeof data === 'object' ? data : {}),
+    ...getCampaignStateFields(campaignState),
+  };
+  if (lastRunAt) {
+    repairedData.dottCampaignLastRunAt = lastRunAt;
+  }
+
+  const repaired =
+    repairedData.dottCampaignCursor !== data?.dottCampaignCursor ||
+    repairedData.dottCampaignPatternCursor !== data?.dottCampaignPatternCursor ||
+    repairedData.dottCampaignImageCursor !== data?.dottCampaignImageCursor ||
+    repairedData.dottCampaignVideoCursor !== data?.dottCampaignVideoCursor ||
+    repairedData.dottCampaignLastRunAt !== data?.dottCampaignLastRunAt;
+
+  if (repaired) {
+    await updateCampaignState(state, data, repairedData);
+  }
+
+  return {
+    data: repairedData,
+    campaignState,
+    repaired,
+  };
+}
+
 async function hasProcessedContent(contentKey) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return false;
   const response = await axios.get(`${SUPABASE_URL}/rest/v1/dott_social_logs`, {
@@ -620,6 +744,9 @@ async function incrementSocialDaily(postedCountByPlatform) {
 }
 
 function buildAssetUrl(item) {
+  if (item.assetUrl) {
+    return item.assetUrl;
+  }
   const baseUrl = item.type === 'video' ? VIDEO_ASSET_BASE_URL : IMAGE_ASSET_BASE_URL;
   return `${baseUrl}/${encodeURIComponent(item.filename)}`;
 }
@@ -774,14 +901,14 @@ async function publishToFacebookVideo({ pageId, accessToken, videoUrl, caption }
 
 async function chooseItem() {
   const state = await getCampaignState();
-  const { data } = state;
+  const hydrated = await hydrateCampaignState(state, state.data);
+  const { data, campaignState } = hydrated;
   const enabled = data.dottCampaignEnabled !== false;
   if (!enabled) {
     throw new Error('Dott main campaign is disabled');
   }
-  const campaignState = normalizeCampaignState(data);
   if (FORCED_SLUG) {
-    const forcedItem = CAMPAIGN_ITEMS.find(entry => entry.slug === FORCED_SLUG);
+    const forcedItem = resolveCampaignItemBySlug(FORCED_SLUG, data);
     if (!forcedItem) {
       throw new Error(`Unknown forced campaign slug: ${FORCED_SLUG}`);
     }
@@ -793,7 +920,7 @@ async function chooseItem() {
       forced: true,
     };
   }
-  const item = pickItemForState(campaignState);
+  const item = pickItemForState(campaignState, data);
   return { state, data, campaignState, item, forced: false };
 }
 
@@ -813,8 +940,9 @@ function getPendingRun(data, contentKey) {
   };
 }
 
-async function persistPendingRun(state, previousData, pendingRun) {
+async function persistPendingRun(state, previousData, campaignState, pendingRun) {
   await updateCampaignState(state, previousData, {
+    ...getCampaignStateFields(campaignState),
     dottCampaignPendingRun: pendingRun,
     dottCampaignPendingRunAt: pendingRun?.startedAt || null,
   });
@@ -853,7 +981,7 @@ async function main() {
       instagramResult: null,
       facebookResult: null,
     };
-    await persistPendingRun(state, stateData, pendingRun);
+    await persistPendingRun(state, stateData, campaignState, pendingRun);
     stateData = {
       ...(stateData && typeof stateData === 'object' ? stateData : {}),
       dottCampaignPendingRun: pendingRun,
@@ -878,7 +1006,7 @@ async function main() {
             caption: item.instagramCaption,
           });
     pendingRun = { ...pendingRun, instagramResult };
-    await persistPendingRun(state, stateData, pendingRun);
+    await persistPendingRun(state, stateData, campaignState, pendingRun);
     stateData = {
       ...(stateData && typeof stateData === 'object' ? stateData : {}),
       dottCampaignPendingRun: pendingRun,
@@ -903,7 +1031,7 @@ async function main() {
             caption: item.facebookCaption,
           });
     pendingRun = { ...pendingRun, facebookResult };
-    await persistPendingRun(state, stateData, pendingRun);
+    await persistPendingRun(state, stateData, campaignState, pendingRun);
     stateData = {
       ...(stateData && typeof stateData === 'object' ? stateData : {}),
       dottCampaignPendingRun: pendingRun,
@@ -968,7 +1096,7 @@ async function main() {
   await updateCampaignState(state, stateData, {
     dottCampaignEnabled: true,
     ...getCampaignStateFields(nextCampaignState),
-    dottCampaignItems: CAMPAIGN_ITEMS.map(entry => entry.filename),
+    dottCampaignItems: getCampaignItems(stateData).map(entry => entry.filename),
     dottCampaignLastRunAt: postedAt,
     dottCampaignPendingRun: null,
     dottCampaignPendingRunAt: null,
