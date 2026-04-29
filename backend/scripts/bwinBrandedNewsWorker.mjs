@@ -25,7 +25,9 @@ const RSS_FEEDS = [
 ];
 const MIN_SOURCE_IMAGE_WIDTH = Number(process.env.BWIN_NEWS_MIN_IMAGE_WIDTH || 900);
 const MIN_SOURCE_IMAGE_HEIGHT = Number(process.env.BWIN_NEWS_MIN_IMAGE_HEIGHT || 500);
+const MIN_SOURCE_IMAGE_BYTES = Number(process.env.BWIN_NEWS_MIN_IMAGE_BYTES || 25000);
 const MAX_CANDIDATE_SCAN = Number(process.env.BWIN_NEWS_MAX_CANDIDATES || 30);
+const MAX_IMAGE_CANDIDATE_PROBES = Number(process.env.BWIN_NEWS_MAX_IMAGE_PROBES || 18);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -123,21 +125,81 @@ function normalizeNewsImageUrl(rawUrl) {
   if (!url) return '';
   if (/bbc\.co\.uk|bbci\.co\.uk/i.test(url)) {
     return url
-      .replace(/\/(\d{2,4})x(\d{2,4})\//i, '/1024x576/')
-      .replace(/\/\d+\/cpsprodpb\//i, '/1024/cpsprodpb/')
-      .replace(/\/\d+\/\w+\//i, '/1024/')
-      .replace(/\/240\//g, '/1024/')
-      .replace(/\/320\//g, '/1024/')
-      .replace(/\/480\//g, '/1024/')
-      .replace(/\/640\//g, '/1024/');
+      .replace(/\/(\d{2,4})x(\d{2,4})\//i, '/1536x864/')
+      .replace(/\/\d+\/cpsprodpb\//i, '/1536/cpsprodpb/')
+      .replace(/\/\d+\/\w+\//i, '/1536/')
+      .replace(/\/240\//g, '/1536/')
+      .replace(/\/320\//g, '/1536/')
+      .replace(/\/480\//g, '/1536/')
+      .replace(/\/640\//g, '/1536/')
+      .replace(/([?&])w=\d+/gi, '$1w=1536')
+      .replace(/([?&])h=\d+/gi, '$1h=864');
   }
   return url.replace(/([?&])w=\d+/gi, '$1w=1600').replace(/([?&])h=\d+/gi, '$1h=900');
+}
+
+function uniqueStrings(values) {
+  return Array.from(new Set(values.map(value => String(value || '').trim()).filter(Boolean)));
+}
+
+function parseSrcsetUrls(rawValue) {
+  return String(rawValue || '')
+    .split(',')
+    .map(part => part.trim().split(/\s+/)[0])
+    .filter(Boolean);
+}
+
+function buildImageCandidateVariants(rawUrl) {
+  const normalized = normalizeNewsImageUrl(rawUrl);
+  if (!normalized) return [];
+
+  const variants = [normalized];
+  if (/bbc\.co\.uk|bbci\.co\.uk/i.test(normalized)) {
+    variants.push(normalized.replace(/\/(\d{2,4})x(\d{2,4})\//i, '/1536x864/'));
+    variants.push(normalized.replace(/\/(\d{2,4})x(\d{2,4})\//i, '/1024x576/'));
+    variants.push(normalized.replace(/\/\d+\/cpsprodpb\//i, '/1536/cpsprodpb/'));
+    variants.push(normalized.replace(/\/\d+\/cpsprodpb\//i, '/1024/cpsprodpb/'));
+    variants.push(
+      normalized
+        .replace(/\/240\//g, '/1536/')
+        .replace(/\/320\//g, '/1536/')
+        .replace(/\/480\//g, '/1536/')
+        .replace(/\/640\//g, '/1536/'),
+    );
+    variants.push(
+      normalized
+        .replace(/\/240\//g, '/1024/')
+        .replace(/\/320\//g, '/1024/')
+        .replace(/\/480\//g, '/1024/')
+        .replace(/\/640\//g, '/1024/'),
+    );
+  } else {
+    try {
+      const preferred = new URL(normalized);
+      preferred.searchParams.set('w', '1920');
+      preferred.searchParams.set('h', '1080');
+      variants.push(preferred.toString());
+
+      const secondary = new URL(normalized);
+      secondary.searchParams.set('w', '1600');
+      secondary.searchParams.set('h', '900');
+      variants.push(secondary.toString());
+    } catch {
+      // ignore malformed URLs here; the normalized value already remains in the set.
+    }
+  }
+  return uniqueStrings(variants);
 }
 
 function isBlockedNewsCandidate(item) {
   const link = String(item?.link || '').trim().toLowerCase();
   const title = cleanTitle(item?.title || '').toLowerCase();
   if (!link || !title) return true;
+  const isEspnStory = link.includes('espn.com/soccer/story/_/id/');
+  const isBbcFootballArticle =
+    /bbc\.(com|co\.uk)\/sport\/football\/articles\//i.test(link) ||
+    /bbc\.(com|co\.uk)\/sport\/football\/videos\//i.test(link);
+  if (!isEspnStory && !isBbcFootballArticle) return true;
   if (
     link.includes('bbc.co.uk/sounds') ||
     link.includes('bbc.co.uk/iplayer') ||
@@ -171,6 +233,7 @@ async function probeImageCandidate(imageUrl) {
     width: Number(metadata.width || 0),
     height: Number(metadata.height || 0),
     byteLength: buffer.length,
+    contentType: String(response.headers?.['content-type'] || ''),
   };
 }
 
@@ -178,8 +241,36 @@ function isUsableImageCandidate(probe) {
   return (
     probe.width >= MIN_SOURCE_IMAGE_WIDTH &&
     probe.height >= MIN_SOURCE_IMAGE_HEIGHT &&
-    probe.byteLength >= 25000
+    probe.byteLength >= MIN_SOURCE_IMAGE_BYTES
   );
+}
+
+function scoreImageCandidate(probe) {
+  const area = Math.max(0, probe.width) * Math.max(0, probe.height);
+  const byteBonus = Math.min(Math.max(0, probe.byteLength), 2_000_000) / 8;
+  const aspectRatio = probe.height ? probe.width / probe.height : 0;
+  const aspectBonus = aspectRatio >= 1.15 && aspectRatio <= 2.15 ? 280000 : 0;
+  const usableBonus = isUsableImageCandidate(probe) ? 5_000_000 : 0;
+  return area + byteBonus + aspectBonus + usableBonus;
+}
+
+function collectLdJsonImageUrls(value, bucket) {
+  if (!value) return;
+  if (typeof value === 'string') {
+    if (/^https?:\/\//i.test(value)) bucket.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach(entry => collectLdJsonImageUrls(entry, bucket));
+    return;
+  }
+  if (typeof value !== 'object') return;
+  const directKeys = ['image', 'thumbnailUrl', 'contentUrl', 'url'];
+  for (const key of directKeys) {
+    if (key in value) {
+      collectLdJsonImageUrls(value[key], bucket);
+    }
+  }
 }
 
 function extractPlainText(value) {
@@ -325,7 +416,7 @@ function buildStoryText(paragraphs, maxChars = 950, maxParagraphs = 4) {
   return formatStoryForCaption(trimTextAtBoundary(out.trim(), maxChars), 320, 3);
 }
 
-async function extractArticleImage(articleUrl) {
+async function extractArticleImageCandidates(articleUrl) {
   const response = await axios.get(articleUrl, {
     timeout: 30000,
     headers: {
@@ -334,13 +425,47 @@ async function extractArticleImage(articleUrl) {
     },
   });
   const $ = load(response.data);
-  const candidates = [
+  const rawCandidates = [
     $('meta[property="og:image"]').attr('content'),
     $('meta[name="twitter:image"]').attr('content'),
     $('meta[property="og:image:url"]').attr('content'),
-  ]
-    .map(normalizeNewsImageUrl)
-    .filter(Boolean);
+    $('meta[property="og:image:secure_url"]').attr('content'),
+    $('link[rel="image_src"]').attr('href'),
+  ];
+
+  $('script[type="application/ld+json"]').each((_, node) => {
+    const jsonText = $(node).contents().text().trim();
+    if (!jsonText) return;
+    try {
+      const parsed = JSON.parse(jsonText);
+      collectLdJsonImageUrls(parsed, rawCandidates);
+    } catch {
+      // Ignore malformed structured data blocks.
+    }
+  });
+
+  const articleSelectors = [
+    'meta[property="og:image"]',
+    'article img',
+    'main img',
+    'figure img',
+    'picture source',
+    '[data-component="image-block"] img',
+    '[data-testid="lede-image"] img',
+    'img',
+  ];
+
+  $(articleSelectors.join(',')).each((_, node) => {
+    rawCandidates.push($(node).attr('src'));
+    rawCandidates.push($(node).attr('data-src'));
+    rawCandidates.push(...parseSrcsetUrls($(node).attr('srcset')));
+  });
+
+  return uniqueStrings(rawCandidates.flatMap(buildImageCandidateVariants));
+}
+
+async function extractArticleImage(articleUrl) {
+  const candidates = await extractArticleImageCandidates(articleUrl);
   return candidates[0] || '';
 }
 
@@ -847,11 +972,12 @@ async function chooseCandidate() {
     const contentKey = buildContentKey(item);
     if (await hasProcessedContent(contentKey)) continue;
     let imageUrl = '';
+    let imageProbe = null;
     const imageCandidates = [];
-    if (item.image) imageCandidates.push(item.image);
+    if (item.image) imageCandidates.push(...buildImageCandidateVariants(item.image));
     try {
-      const articleImage = await extractArticleImage(item.link);
-      if (articleImage) imageCandidates.push(articleImage);
+      const articleImages = await extractArticleImageCandidates(item.link);
+      if (articleImages.length) imageCandidates.push(...articleImages);
     } catch (error) {
       console.warn(
         '[bwin-news-worker] article image extraction failed',
@@ -859,22 +985,40 @@ async function chooseCandidate() {
         error instanceof Error ? error.message : String(error),
       );
     }
-    const dedupedImageCandidates = Array.from(new Set(imageCandidates.map(normalizeNewsImageUrl).filter(Boolean)));
+
+    const dedupedImageCandidates = uniqueStrings(imageCandidates.flatMap(buildImageCandidateVariants)).slice(
+      0,
+      MAX_IMAGE_CANDIDATE_PROBES,
+    );
+    let bestImage = null;
     for (const candidateImageUrl of dedupedImageCandidates) {
       try {
         const probe = await probeImageCandidate(candidateImageUrl);
-        if (!isUsableImageCandidate(probe)) continue;
-        imageUrl = candidateImageUrl;
-        break;
+        const scored = {
+          ...probe,
+          url: candidateImageUrl,
+          score: scoreImageCandidate(probe),
+        };
+        if (!bestImage || scored.score > bestImage.score) {
+          bestImage = scored;
+        }
       } catch {
         continue;
       }
     }
-    if (!imageUrl) continue;
+    if (!bestImage) continue;
+    imageUrl = bestImage.url;
+    imageProbe = {
+      width: bestImage.width,
+      height: bestImage.height,
+      byteLength: bestImage.byteLength,
+      contentType: bestImage.contentType,
+    };
     const storyText = await extractArticleStory(item.link, item.description);
     return {
       ...item,
       imageUrl,
+      imageProbe,
       storyText,
       contentKey,
     };
@@ -969,6 +1113,7 @@ async function main() {
       storyText: candidate.storyText || '',
       sourceUrl: candidate.link,
       sourceImageUrl: candidate.imageUrl,
+      sourceImageProbe: candidate.imageProbe || null,
       brandedImageUrl: publicImageUrl,
       instagram: instagramResult,
       facebook: facebookResult,
@@ -1058,6 +1203,7 @@ async function main() {
         ok: true,
         title: cleanTitle(candidate.title),
         contentKey: candidate.contentKey,
+        sourceImageProbe: candidate.imageProbe || null,
         instagram: instagramResult,
         facebook: facebookResult,
         brandedImageUrl: publicImageUrl,

@@ -167,6 +167,19 @@ def cover_image(image: Image.Image, width: int, height: int) -> Image.Image:
     return resized.crop((left, top, left + width, top + height))
 
 
+def prepare_source_image(source: Image.Image) -> tuple[Image.Image, bool]:
+    image = source.convert("RGB")
+    width, height = image.size
+    low_res = width < 900 or height < 500 or (width * height) < 700_000
+    if low_res:
+        upscale = min(max(900 / max(width, 1), 500 / max(height, 1), 1.0), 2.6)
+        image = image.resize((int(width * upscale), int(height * upscale)), Image.LANCZOS)
+        image = image.filter(ImageFilter.GaussianBlur(radius=0.35))
+        image = ImageEnhance.Sharpness(image).enhance(1.08)
+        image = ImageEnhance.Contrast(image).enhance(1.02)
+    return image, low_res
+
+
 def wrap_title(title: str) -> list[str]:
     clean = " ".join(title.split())
     return textwrap.wrap(clean, width=20)[:3]
@@ -293,13 +306,16 @@ def render(
 
     response = requests.get(candidate["image"], timeout=35, headers={"User-Agent": USER_AGENT})
     response.raise_for_status()
-    source_rgb = cover_image(Image.open(BytesIO(response.content)).convert("RGB"), SIZE, SIZE)
+    prepared_source, low_res = prepare_source_image(Image.open(BytesIO(response.content)))
+    source_rgb = cover_image(prepared_source, SIZE, SIZE)
     subject_mask = build_subject_mask()
-    subject_rgb = ImageEnhance.Contrast(source_rgb).enhance(1.03)
-    subject_rgb = ImageEnhance.Sharpness(subject_rgb).enhance(1.04)
+    subject_rgb = ImageEnhance.Contrast(source_rgb).enhance(1.03 if not low_res else 1.02)
+    subject_rgb = ImageEnhance.Sharpness(subject_rgb).enhance(1.04 if not low_res else 1.02)
     subject_rgb = ImageEnhance.Color(subject_rgb).enhance(1.01)
 
     background_rgb = ImageEnhance.Contrast(source_rgb).enhance(1.01)
+    if low_res:
+        background_rgb = background_rgb.filter(ImageFilter.GaussianBlur(radius=1.4))
     background = background_rgb.convert("RGBA")
 
     bottom_fade = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
