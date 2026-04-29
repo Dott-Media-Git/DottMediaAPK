@@ -14,9 +14,13 @@ const FORCED_SLUG = (process.env.DOTT_CAMPAIGN_FORCE_SLUG || '').trim();
 const BYPASS_DEDUPE = /^(1|true|yes)$/i.test((process.env.DOTT_CAMPAIGN_BYPASS_DEDUPE || '').trim());
 const WORKER_CONFIG_BUCKET = 'worker-config';
 const WORKER_CONFIG_OBJECT = 'dott-main-meta-accounts.json';
-const ASSET_BASE_URL = (
-  process.env.DOTT_CAMPAIGN_ASSET_BASE_URL ||
-  'https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign'
+const IMAGE_ASSET_BASE_URL = (
+  process.env.DOTT_CAMPAIGN_IMAGE_BASE_URL ||
+  'https://cdn.jsdelivr.net/gh/Dott-Media-Git/DottMediaAPK@main/backend/public/campaign-images/dottmain'
+).replace(/\/$/, '');
+const VIDEO_ASSET_BASE_URL = (
+  process.env.DOTT_CAMPAIGN_VIDEO_BASE_URL ||
+  `${process.env.DOTT_CAMPAIGN_ASSET_BASE_URL || 'https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign'}/backend/public/campaign-videos/dottmain`
 ).replace(/\/$/, '');
 const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPTS ?? 20), 5);
 const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_MS ?? 3000), 1000);
@@ -316,38 +320,81 @@ function getCampaignBuckets() {
   return { images, videos, emotionImages, coreImages };
 }
 
-function pickItemForCursor(cursor) {
+function toNonNegativeInteger(value, fallback = 0) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.floor(Number(value)));
+}
+
+function positiveMod(value, divisor) {
+  if (!divisor) return 0;
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function normalizeCampaignState(data) {
+  const legacyCursor = toNonNegativeInteger(data?.dottCampaignCursor, 0);
+  const fullCycles = Math.floor(legacyCursor / 3);
+  const remainder = positiveMod(legacyCursor, 3);
+  const derivedVideoCursor = fullCycles + (remainder > 1 ? 1 : 0);
+  const derivedImageCursor = legacyCursor - derivedVideoCursor;
+
+  return {
+    legacyCursor,
+    patternCursor: positiveMod(
+      Number.isFinite(data?.dottCampaignPatternCursor) ? Number(data.dottCampaignPatternCursor) : remainder,
+      3,
+    ),
+    imageCursor: toNonNegativeInteger(data?.dottCampaignImageCursor, derivedImageCursor),
+    videoCursor: toNonNegativeInteger(data?.dottCampaignVideoCursor, derivedVideoCursor),
+  };
+}
+
+function getCampaignStateFields(campaignState) {
+  return {
+    dottCampaignCursor: campaignState.legacyCursor,
+    dottCampaignPatternCursor: campaignState.patternCursor,
+    dottCampaignImageCursor: campaignState.imageCursor,
+    dottCampaignVideoCursor: campaignState.videoCursor,
+  };
+}
+
+function advanceCampaignState(campaignState, item) {
+  return {
+    legacyCursor: campaignState.legacyCursor + 1,
+    patternCursor: positiveMod(campaignState.patternCursor + 1, 3),
+    imageCursor: campaignState.imageCursor + (item.type === 'image' ? 1 : 0),
+    videoCursor: campaignState.videoCursor + (item.type === 'video' ? 1 : 0),
+  };
+}
+
+function pickItemForState(campaignState) {
   const { images, videos, emotionImages, coreImages } = getCampaignBuckets();
   if (!images.length && !videos.length) {
     throw new Error('Dott main campaign items are empty.');
   }
   if (!videos.length) {
-    const index = ((cursor % images.length) + images.length) % images.length;
-    return images[index];
+    const index = positiveMod(campaignState.imageCursor, images.length);
+    return images[index] ?? images[0];
   }
   if (!images.length) {
-    const index = ((cursor % videos.length) + videos.length) % videos.length;
-    return videos[index];
+    const index = positiveMod(campaignState.videoCursor, videos.length);
+    return videos[index] ?? videos[0];
   }
 
-  const sequenceIndex = ((cursor % 3) + 3) % 3; // image -> video -> image
-  if (sequenceIndex === 1) {
-    const videoIndex = Math.floor(cursor / 3);
-    const index = ((videoIndex % videos.length) + videos.length) % videos.length;
-    return videos[index];
+  if (campaignState.patternCursor === 1) {
+    const index = positiveMod(campaignState.videoCursor, videos.length);
+    return videos[index] ?? videos[0];
   }
 
-  const imageSlot = Math.floor(cursor / 3) * 2 + (sequenceIndex === 2 ? 1 : 0);
   if (emotionImages.length && coreImages.length) {
-    const useEmotionSet = imageSlot % 2 === 0;
+    const useEmotionSet = campaignState.imageCursor % 2 === 0;
     const set = useEmotionSet ? emotionImages : coreImages;
-    const setIndex = Math.floor(imageSlot / 2);
-    const index = ((setIndex % set.length) + set.length) % set.length;
-    return set[index];
+    const setIndex = Math.floor(campaignState.imageCursor / 2);
+    const index = positiveMod(setIndex, set.length);
+    return set[index] ?? set[0];
   }
 
-  const imageIndex = ((imageSlot % images.length) + images.length) % images.length;
-  return images[imageIndex];
+  const imageIndex = positiveMod(campaignState.imageCursor, images.length);
+  return images[imageIndex] ?? images[0];
 }
 
 async function getMainAccounts() {
@@ -573,8 +620,8 @@ async function incrementSocialDaily(postedCountByPlatform) {
 }
 
 function buildAssetUrl(item) {
-  const segment = item.type === 'video' ? 'campaign-videos' : 'campaign-images';
-  return `${ASSET_BASE_URL}/backend/public/${segment}/dottmain/${encodeURIComponent(item.filename)}`;
+  const baseUrl = item.type === 'video' ? VIDEO_ASSET_BASE_URL : IMAGE_ASSET_BASE_URL;
+  return `${baseUrl}/${encodeURIComponent(item.filename)}`;
 }
 
 async function publishToInstagram({ accountId, accessToken, imageUrl, caption }) {
@@ -732,6 +779,7 @@ async function chooseItem() {
   if (!enabled) {
     throw new Error('Dott main campaign is disabled');
   }
+  const campaignState = normalizeCampaignState(data);
   if (FORCED_SLUG) {
     const forcedItem = CAMPAIGN_ITEMS.find(entry => entry.slug === FORCED_SLUG);
     if (!forcedItem) {
@@ -740,14 +788,13 @@ async function chooseItem() {
     return {
       state,
       data,
-      cursor: Number.isFinite(data.dottCampaignCursor) ? Number(data.dottCampaignCursor) : 0,
+      campaignState,
       item: forcedItem,
       forced: true,
     };
   }
-  const cursor = Number.isFinite(data.dottCampaignCursor) ? Number(data.dottCampaignCursor) : 0;
-  const item = pickItemForCursor(cursor);
-  return { state, data, cursor, item, forced: false };
+  const item = pickItemForState(campaignState);
+  return { state, data, campaignState, item, forced: false };
 }
 
 function getPendingRun(data, contentKey) {
@@ -775,15 +822,16 @@ async function persistPendingRun(state, previousData, pendingRun) {
 
 async function main() {
   const { facebook, instagram } = await getMainAccounts();
-  const { state, data, cursor, item, forced } = await chooseItem();
+  const { state, data, campaignState, item, forced } = await chooseItem();
   let stateData = data;
   const currentHour = hourBucket();
   const contentKey = crypto.createHash('sha1').update(`${item.slug}|${currentHour}`).digest('hex');
   const existingPendingRun = getPendingRun(stateData, contentKey);
+  const nextCampaignState = forced ? campaignState : advanceCampaignState(campaignState, item);
   if (!BYPASS_DEDUPE && (await hasProcessedContent(contentKey))) {
     await updateCampaignState(state, stateData, {
       dottCampaignEnabled: true,
-      dottCampaignCursor: forced ? cursor : cursor + 1,
+      ...getCampaignStateFields(nextCampaignState),
       dottCampaignLastRunAt: new Date().toISOString(),
       dottCampaignPendingRun: null,
       dottCampaignPendingRunAt: null,
@@ -919,7 +967,7 @@ async function main() {
 
   await updateCampaignState(state, stateData, {
     dottCampaignEnabled: true,
-    dottCampaignCursor: forced ? cursor : cursor + 1,
+    ...getCampaignStateFields(nextCampaignState),
     dottCampaignItems: CAMPAIGN_ITEMS.map(entry => entry.filename),
     dottCampaignLastRunAt: postedAt,
     dottCampaignPendingRun: null,

@@ -19,6 +19,8 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       DOTT_MAIN_USER_ID: cMPZQccGggbhZe9dbvtxFmBehP02
       META_GRAPH_VERSION: v19.0
+      DOTT_CAMPAIGN_IMAGE_BASE_URL: https://cdn.jsdelivr.net/gh/Dott-Media-Git/DottMediaAPK@main/backend/public/campaign-images/dottmain
+      DOTT_CAMPAIGN_VIDEO_BASE_URL: https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign/backend/public/campaign-videos/dottmain
       DOTT_CAMPAIGN_ASSET_BASE_URL: https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign
     steps:
       - name: Checkout repository
