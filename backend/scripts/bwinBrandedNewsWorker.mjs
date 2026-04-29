@@ -23,6 +23,9 @@ const RSS_FEEDS = [
   'https://feeds.bbci.co.uk/sport/football/rss.xml',
   'https://www.espn.com/espn/rss/soccer/news',
 ];
+const MIN_SOURCE_IMAGE_WIDTH = Number(process.env.BWIN_NEWS_MIN_IMAGE_WIDTH || 900);
+const MIN_SOURCE_IMAGE_HEIGHT = Number(process.env.BWIN_NEWS_MIN_IMAGE_HEIGHT || 500);
+const MAX_CANDIDATE_SCAN = Number(process.env.BWIN_NEWS_MAX_CANDIDATES || 30);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -120,13 +123,63 @@ function normalizeNewsImageUrl(rawUrl) {
   if (!url) return '';
   if (/bbc\.co\.uk|bbci\.co\.uk/i.test(url)) {
     return url
+      .replace(/\/(\d{2,4})x(\d{2,4})\//i, '/1024x576/')
       .replace(/\/\d+\/cpsprodpb\//i, '/1024/cpsprodpb/')
       .replace(/\/\d+\/\w+\//i, '/1024/')
       .replace(/\/240\//g, '/1024/')
       .replace(/\/320\//g, '/1024/')
-      .replace(/\/480\//g, '/1024/');
+      .replace(/\/480\//g, '/1024/')
+      .replace(/\/640\//g, '/1024/');
   }
   return url.replace(/([?&])w=\d+/gi, '$1w=1600').replace(/([?&])h=\d+/gi, '$1h=900');
+}
+
+function isBlockedNewsCandidate(item) {
+  const link = String(item?.link || '').trim().toLowerCase();
+  const title = cleanTitle(item?.title || '').toLowerCase();
+  if (!link || !title) return true;
+  if (
+    link.includes('bbc.co.uk/sounds') ||
+    link.includes('bbc.co.uk/iplayer') ||
+    link.includes('/iplayer/live/') ||
+    link.includes('bbcscotland') ||
+    link.includes('/live/')
+  ) {
+    return true;
+  }
+  if (
+    /^watch:|^listen:/.test(title) ||
+    /\bpodcast\b/.test(title) ||
+    /\bsportscene\b/.test(title) ||
+    /\bpreview\b/.test(title) ||
+    /\blive stream\b/.test(title)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+async function probeImageCandidate(imageUrl) {
+  const response = await axios.get(imageUrl, {
+    timeout: 20000,
+    responseType: 'arraybuffer',
+    headers: { 'User-Agent': 'DottMedia-BwinNewsWorker/1.0' },
+  });
+  const buffer = Buffer.from(response.data);
+  const metadata = await sharp(buffer).metadata();
+  return {
+    width: Number(metadata.width || 0),
+    height: Number(metadata.height || 0),
+    byteLength: buffer.length,
+  };
+}
+
+function isUsableImageCandidate(probe) {
+  return (
+    probe.width >= MIN_SOURCE_IMAGE_WIDTH &&
+    probe.height >= MIN_SOURCE_IMAGE_HEIGHT &&
+    probe.byteLength >= 25000
+  );
 }
 
 function extractPlainText(value) {
@@ -787,32 +840,38 @@ async function chooseCandidate() {
       image: normalizeNewsImageUrl(item.image),
       publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(0),
     }))
-    .filter(item => item.title && item.link)
+    .filter(item => item.title && item.link && !isBlockedNewsCandidate(item))
     .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
 
-  for (const item of dated.slice(0, 15)) {
+  for (const item of dated.slice(0, MAX_CANDIDATE_SCAN)) {
     const contentKey = buildContentKey(item);
     if (await hasProcessedContent(contentKey)) continue;
-    let imageUrl = item.image;
-    if (!imageUrl) {
+    let imageUrl = '';
+    const imageCandidates = [];
+    if (item.image) imageCandidates.push(item.image);
+    try {
+      const articleImage = await extractArticleImage(item.link);
+      if (articleImage) imageCandidates.push(articleImage);
+    } catch (error) {
+      console.warn(
+        '[bwin-news-worker] article image extraction failed',
+        item.link,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    const dedupedImageCandidates = Array.from(new Set(imageCandidates.map(normalizeNewsImageUrl).filter(Boolean)));
+    for (const candidateImageUrl of dedupedImageCandidates) {
       try {
-        imageUrl = await extractArticleImage(item.link);
-      } catch (error) {
-        console.warn('[bwin-news-worker] article image extraction failed', item.link, error instanceof Error ? error.message : String(error));
+        const probe = await probeImageCandidate(candidateImageUrl);
+        if (!isUsableImageCandidate(probe)) continue;
+        imageUrl = candidateImageUrl;
+        break;
+      } catch {
         continue;
       }
     }
     if (!imageUrl) continue;
     const storyText = await extractArticleStory(item.link, item.description);
-    try {
-      await axios.get(imageUrl, {
-        timeout: 20000,
-        responseType: 'arraybuffer',
-        headers: { 'User-Agent': 'DottMedia-BwinNewsWorker/1.0' },
-      });
-    } catch {
-      continue;
-    }
     return {
       ...item,
       imageUrl,

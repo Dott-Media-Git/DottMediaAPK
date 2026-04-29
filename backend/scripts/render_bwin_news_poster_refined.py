@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import textwrap
 from io import BytesIO
 from pathlib import Path
@@ -62,6 +63,7 @@ def normalize_news_image_url(url: str) -> str:
     if not value:
         return ""
     if "bbc.co.uk" in value or "bbci.co.uk" in value:
+        value = re.sub(r"/\d{2,4}x\d{2,4}/", "/1024x576/", value)
         return (
             value.replace("/240/", "/1024/")
             .replace("/320/", "/1024/")
@@ -325,8 +327,8 @@ def render(
 
     draw = ImageDraw.Draw(base)
     logo = prepare_logo()
-    logo = logo.resize((264, int(264 * logo.height / logo.width)), Image.LANCZOS)
-    logo = ImageEnhance.Sharpness(logo).enhance(1.08)
+    logo = logo.resize((320, int(320 * logo.height / logo.width)), Image.LANCZOS)
+    logo = ImageEnhance.Sharpness(logo).enhance(1.12)
     base.alpha_composite(logo, (38, 28))
     draw.text((SIZE - 365, 54), "www.bwinbetug.com", font=FONT_URL, fill=BLACK)
 
@@ -352,12 +354,12 @@ def render(
         draw.text((76, y + idx * line_height + 2), line, font=headline_font, fill=(0, 0, 0, 150))
         draw.text((74, y + idx * line_height), line, font=headline_font, fill=WHITE)
 
-    tag = "CLUB UPDATE"
+    tag = "BWINBET NEWS"
     tag_box = draw.multiline_textbbox((0, 0), tag.replace(" ", "\n"), font=FONT_TAG, spacing=2)
     tag_x = SIZE - (tag_box[2] - tag_box[0]) - 54
     tag_y = 792
     draw.multiline_text((tag_x + 2, tag_y + 2), tag.replace(" ", "\n"), font=FONT_TAG, fill=(0, 0, 0, 150), align="right", spacing=2)
-    draw.multiline_text((tag_x, tag_y), tag.replace(" ", "\n"), font=FONT_TAG, fill=WHITE, align="right", spacing=2)
+    draw.multiline_text((tag_x, tag_y), tag.replace(" ", "\n"), font=FONT_TAG, fill=YELLOW, align="right", spacing=2)
 
     footer = Image.new("RGBA", (SIZE, 116), FOOTER_GREEN + (232,))
     base.alpha_composite(footer, (0, SIZE - 116))
@@ -372,8 +374,7 @@ def render(
     draw.text((badge_x + 66, badge_y + 14), "Play", font=FONT_FOOTER, fill=YELLOW)
     draw.text((badge_x + 66, badge_y + 37), "Responsibly", font=FONT_FOOTER, fill=SOFT_WHITE)
 
-    final_rgb = base.convert("RGB").filter(ImageFilter.UnsharpMask(radius=0.7, percent=45, threshold=4))
-    final_rgb = final_rgb.filter(ImageFilter.GaussianBlur(radius=0.35))
+    final_rgb = base.convert("RGB").filter(ImageFilter.UnsharpMask(radius=0.8, percent=65, threshold=3))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     final_rgb.save(output_path, format="JPEG", quality=96, optimize=True)
     print(f"{candidate['title']} -> {output_path}")
