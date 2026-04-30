@@ -2,7 +2,7 @@ name: Dott Main Campaign Worker
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -46,13 +46,13 @@ jobs:
       - name: Run Dott main campaign worker
         shell: bash
         run: |
-          for attempt in 1 2 3; do
-            echo "Dott main campaign attempt ${attempt}/3"
+          for attempt in 1 2 3 4 5; do
+            echo "Dott main campaign attempt ${attempt}/5"
             if node scripts/postDottMainCampaign.mjs; then
               exit 0
             fi
-            if [ "$attempt" -lt 3 ]; then
-              sleep 20
+            if [ "$attempt" -lt 5 ]; then
+              sleep 45
             fi
           done
           exit 1
