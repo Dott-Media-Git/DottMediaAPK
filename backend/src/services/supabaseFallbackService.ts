@@ -49,6 +49,16 @@ type SocialDailyRecord = {
   perPlatform?: Record<string, number>;
 };
 
+type SocialLogRecord = {
+  userId: string;
+  platform: string;
+  scheduledPostId: string;
+  status: string;
+  responseId?: string | null;
+  error?: string | null;
+  postedAt?: unknown;
+};
+
 type MetricCounterTree = Record<string, unknown>;
 
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
@@ -475,7 +485,30 @@ class SupabaseFallbackService {
         postsSkipped: toNumber(row.posts_skipped),
         perPlatform: (row.per_platform as Record<string, number>) ?? {},
       })),
-    );
+      );
+  }
+
+  async getSocialLogsByUser(userId: string, limit = 250) {
+    if (!this.isConfigured() || !userId) return [] as SocialLogRecord[];
+    const rows = await this.request<any[]>('GET', 'dott_social_logs', {
+      params: {
+        select: '*',
+        user_id: `eq.${userId}`,
+        order: 'posted_at.desc',
+        limit,
+      },
+    });
+    return Array.isArray(rows)
+      ? rows.map(row => ({
+          userId: row.user_id,
+          platform: row.platform,
+          scheduledPostId: row.scheduled_post_id,
+          status: row.status,
+          responseId: row.response_id ?? null,
+          error: row.error ?? null,
+          postedAt: toTimestampStub(row.posted_at),
+        }))
+      : [];
   }
 
   async upsertAutopostJob(userId: string, job: Record<string, unknown>) {
@@ -544,6 +577,7 @@ class SupabaseFallbackService {
     const rows = await this.request<any[]>('GET', 'dott_autopost_jobs', {
       params: {
         select: '*',
+        active: 'eq.true',
         [field]: `lte.${before.toISOString()}`,
         order: `${field}.asc`,
         limit: 200,
@@ -559,6 +593,7 @@ class SupabaseFallbackService {
     const rows = await this.request<any[]>('GET', 'dott_autopost_jobs', {
       params: {
         select: '*',
+        active: 'eq.true',
         [field]: 'is.null',
         limit: 200,
       },
