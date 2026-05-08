@@ -2,6 +2,11 @@ import admin from 'firebase-admin';
 import { firestore } from '../../db/firestore';
 import { supabaseFallbackService } from '../../services/supabaseFallbackService';
 import { validateBwinSportsContent } from '../../services/bwinContentGuard';
+import {
+  getBwinAccountClosureMessage,
+  getBwinAccountClosureState,
+  isBwinAccountClosureActive,
+} from '../../services/bwinAccountClosureService';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
@@ -36,6 +41,19 @@ export type SchedulePayload = {
 export class SocialSchedulingService {
   async schedulePosts(payload: SchedulePayload) {
     if (!payload.platforms.length) throw new Error('At least one platform is required');
+    const closureState = await getBwinAccountClosureState(payload.userId);
+    if (closureState?.enabled) {
+      const shutdownAt = new Date(closureState.shutdownAt);
+      const scheduledAt = new Date(payload.scheduledFor);
+      if (await isBwinAccountClosureActive(payload.userId)) {
+        throw new Error(getBwinAccountClosureMessage(closureState));
+      }
+      if (Number.isFinite(scheduledAt.getTime()) && scheduledAt.getTime() >= shutdownAt.getTime()) {
+        throw new Error(
+          `Bwin scheduled posts must stay before ${shutdownAt.toISOString()} because the account is set to close then.`,
+        );
+      }
+    }
     const bwinValidation = validateBwinSportsContent({
       userId: payload.userId,
       caption: payload.caption,

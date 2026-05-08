@@ -12,6 +12,7 @@ import {
   uploadImageBuffer,
   upsertScheduledRows,
 } from './lib/bwinWorkerCommon.mjs';
+import { assertBwinAutomationOpen } from './lib/bwinAccountClosure.mjs';
 import { settlePredictionBatch } from './lib/bwinPredictionEngine.mjs';
 import { renderPredictionRecapBuffer } from './lib/bwinPredictionRender.mjs';
 
@@ -109,6 +110,7 @@ async function getOpenBatches() {
 }
 
 async function main() {
+  assertBwinAutomationOpen('Bwin prediction settlement worker');
   const rows = await getOpenBatches();
   if (!rows.length) {
     console.info('[bwin-prediction-settlement] No posted prediction batches found.');

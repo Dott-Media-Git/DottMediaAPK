@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { assertBwinAutomationOpen } from './lib/bwinAccountClosure.mjs';
 
 const BWIN_USER_ID = process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53';
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
@@ -323,6 +324,7 @@ async function processFacebookComments(facebook) {
 }
 
 async function main() {
+  assertBwinAutomationOpen('Bwin comment reply worker');
   requireEnv('SUPABASE_URL', SUPABASE_URL);
   requireEnv('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
 

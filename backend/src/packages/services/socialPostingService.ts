@@ -14,6 +14,11 @@ import { canUsePrimarySocialDefaults } from '../../utils/socialAccess';
 import { supabaseFallbackService } from '../../services/supabaseFallbackService';
 import { resolveFacebookPageId } from '../../services/socialAccountResolver';
 import { isBwinScopeUser, validateBwinSportsContent } from '../../services/bwinContentGuard';
+import {
+  getBwinAccountClosureMessage,
+  getBwinAccountClosureState,
+  isBwinAccountClosureActive,
+} from '../../services/bwinAccountClosureService';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
@@ -245,6 +250,27 @@ export class SocialPostingService {
     for (const post of posts) {
       const key = `${post.userId}_${post.targetDate}`;
       const currentCount = counts.get(key) ?? 0;
+      const closureState = await getBwinAccountClosureState(post.userId);
+      if (closureState?.enabled && (await isBwinAccountClosureActive(post.userId))) {
+        const message = getBwinAccountClosureMessage(closureState);
+        try {
+          await scheduledPostsCollection.doc(post.id).update({
+            status: 'failed',
+            errorMessage: message,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        } catch (error) {
+          console.warn('[social-posting] firestore bwin closure update failed', error);
+        }
+        await supabaseFallbackService.updateScheduledPost(post.id, {
+          status: 'failed',
+          errorMessage: message,
+          updatedAt: new Date(),
+        });
+        await this.log(post, 'failed', undefined, message);
+        await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'failed' });
+        continue;
+      }
       const bwinValidation = validateBwinSportsContent({
         userId: post.userId,
         caption: post.caption,

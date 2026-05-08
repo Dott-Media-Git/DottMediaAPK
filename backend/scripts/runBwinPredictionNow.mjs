@@ -11,6 +11,7 @@ import {
   uploadImageBuffer,
   upsertScheduledRows,
 } from './lib/bwinWorkerCommon.mjs';
+import { assertBwinAutomationOpen } from './lib/bwinAccountClosure.mjs';
 import { buildPredictionBatch } from './lib/bwinPredictionEngine.mjs';
 import { renderPredictionCardBuffer } from './lib/bwinPredictionRender.mjs';
 
@@ -28,9 +29,16 @@ function buildHashtagBlock() {
 
 function buildCaption(batch) {
   const leagueLine = batch.leagues.length ? `Leagues: ${batch.leagues.join(' | ')}` : 'Leagues: Mixed board';
+  const sourceLine =
+    batch.oddsMode === 'real'
+      ? 'This board is using live market odds.'
+      : batch.oddsMode === 'mixed'
+        ? 'This board is using live market odds where available.'
+        : 'This board is using the in-house model estimate.';
   return [
     'Today\'s Bwinbet prediction board is locked in.',
     'These picks are driven by fixture edge, standings strength and home advantage.',
+    sourceLine,
     leagueLine,
     'More football updates: www.bwinbetug.info',
     'Place bets: https://bwinbetug.com',
@@ -99,6 +107,7 @@ function createRow({ id, platform, status, batch, caption, hashtags, imageUrl, r
 }
 
 async function main() {
+  assertBwinAutomationOpen('Bwin prediction worker');
   const excludedEventIds = await loadExistingPredictedEventIds();
   const batch = await buildPredictionBatch({
     excludedEventIds,
@@ -117,10 +126,13 @@ async function main() {
 
   console.info('[bwin-prediction] batch ready', {
     batchKey: batch.batchKey,
+    oddsMode: batch.oddsMode,
+    oddsProviders: batch.oddsProviders,
     picks: batch.picks.map(pick => ({
       fixture: pick.fixture,
       market: pick.marketLabel,
-      odds: pick.estimatedOdds,
+      odds: pick.oddsDisplay || pick.estimatedOdds,
+      source: pick.oddsSource || 'model',
     })),
   });
 

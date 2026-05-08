@@ -31,6 +31,11 @@ import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from './bwinContentGuard.js';
+import {
+  getBwinAccountClosureMessage,
+  getBwinAccountClosureState,
+  isBwinAccountClosureActive,
+} from './bwinAccountClosureService.js';
 
 type AutoPostJob = {
   userId: string;
@@ -296,6 +301,37 @@ export class AutoPostService {
 
   private isBwinScopeUser(userId: string) {
     return isKnownBwinScopeUser(userId);
+  }
+
+  private async stopBwinAutomation(userId: string, job: AutoPostJob, message: string) {
+    const result = [{ platform: 'bwin_account_closure', status: 'failed' as const, error: message }];
+    const closedAt = admin.firestore.Timestamp.now();
+    const updatePayload = {
+      active: false,
+      nextRun: null,
+      reelsNextRun: null,
+      storyNextRun: null,
+      trendNextRun: null,
+      lastRunAt: closedAt,
+      reelsLastRunAt: closedAt,
+      storyLastRunAt: closedAt,
+      trendLastRunAt: closedAt,
+      lastResult: result,
+      reelsLastResult: result,
+      storyLastResult: result,
+      trendLastResult: result,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    try {
+      await autopostCollection.doc(userId).set(updatePayload, { merge: true });
+    } catch (error) {
+      console.warn('[autopost] failed to mark Bwin job closed', error);
+    }
+    await this.mirrorAutopostJob(userId, {
+      ...job,
+      ...updatePayload,
+      updatedAt: undefined,
+    } as unknown as AutoPostJob);
   }
 
   private async getRuntimeFallbackAccounts(userId: string): Promise<SocialAccounts> {
@@ -2362,6 +2398,16 @@ export class AutoPostService {
   }
 
   private async executeTrendStories(userId: string, job: AutoPostJob) {
+    if (await isBwinAccountClosureActive(userId)) {
+      const closureState = await getBwinAccountClosureState(userId);
+      const message = getBwinAccountClosureMessage(closureState);
+      await this.stopBwinAutomation(userId, job, message);
+      return {
+        posted: 0,
+        failed: [{ platform: 'stories', status: 'failed' as const, error: message }],
+        nextRun: null,
+      };
+    }
     const onNewRelease = job.storyOnNewRelease === true;
     const defaultPollMinutes = Math.max(Number(process.env.AUTOPOST_STORY_POLL_MINUTES ?? 5), 1);
     const pollMinutes = job.storyPollMinutes && job.storyPollMinutes > 0 ? job.storyPollMinutes : defaultPollMinutes;
@@ -2516,6 +2562,16 @@ export class AutoPostService {
   }
 
   private async executeTrendPosts(userId: string, job: AutoPostJob) {
+    if (await isBwinAccountClosureActive(userId)) {
+      const closureState = await getBwinAccountClosureState(userId);
+      const message = getBwinAccountClosureMessage(closureState);
+      await this.stopBwinAutomation(userId, job, message);
+      return {
+        posted: 0,
+        failed: [{ platform: 'trend', status: 'failed' as const, error: message }],
+        nextRun: null,
+      };
+    }
     const intervalHours = job.trendIntervalHours && job.trendIntervalHours > 0 ? job.trendIntervalHours : 4;
     const nextRunDate = new Date(Date.now() + intervalHours * 60 * 60 * 1000);
 
@@ -3349,6 +3405,16 @@ export class AutoPostService {
   }
 
   private async executeJob(userId: string, job: AutoPostJob, options: ExecuteOptions = {}) {
+    if (await isBwinAccountClosureActive(userId)) {
+      const closureState = await getBwinAccountClosureState(userId);
+      const message = getBwinAccountClosureMessage(closureState);
+      await this.stopBwinAutomation(userId, job, message);
+      return {
+        posted: 0,
+        failed: [{ platform: 'autopost', status: 'failed' as const, error: message }],
+        nextRun: null,
+      };
+    }
     const intervalHours =
       options.intervalHours ??
       (job.intervalHours && job.intervalHours > 0 ? job.intervalHours : this.defaultIntervalHours);

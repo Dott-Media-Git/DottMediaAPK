@@ -33,6 +33,9 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       META_GRAPH_VERSION: ${{ secrets.META_GRAPH_VERSION }}
+      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      APISPORTS_KEY: ${{ secrets.APISPORTS_KEY }}
+      RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
       BWIN_PREDICTION_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
       BWIN_PREDICTION_LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '7' }}
       BWIN_PREDICTION_SETTLEMENT_GRACE_HOURS: ${{ github.event.inputs.grace_hours || '18' }}

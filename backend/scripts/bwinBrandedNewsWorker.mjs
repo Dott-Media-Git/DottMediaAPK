@@ -9,6 +9,7 @@ import axios from 'axios';
 import { load } from 'cheerio';
 import admin from 'firebase-admin';
 import sharp from 'sharp';
+import { assertBwinAutomationOpen } from './lib/bwinAccountClosure.mjs';
 
 const BWIN_USER_ID = process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53';
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
@@ -1028,6 +1029,7 @@ async function chooseCandidate() {
 }
 
 async function main() {
+  assertBwinAutomationOpen(IS_STORY_TARGET ? 'Bwin story worker' : 'Bwin news worker');
   const accounts = await getBwinAccounts();
   const candidate = await chooseCandidate();
   if (!candidate) {

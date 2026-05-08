@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import { assertBwinAutomationOpen } from './lib/bwinAccountClosure.mjs';
 
 dotenv.config();
 
@@ -209,5 +210,6 @@ async function scheduleMatchdayTables({ date, spacingHours }) {
 const date = process.env.MATCHDAY_RESULTS_DATE || null;
 const spacingHours = Math.max(Number(process.env.MATCHDAY_RESULTS_SPACING_HOURS ?? 3), 1);
 
+assertBwinAutomationOpen('Bwin matchday scheduler');
 const result = await scheduleMatchdayTables({ date, spacingHours });
 console.log('[matchday] scheduled now', result);

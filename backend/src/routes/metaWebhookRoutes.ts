@@ -11,6 +11,11 @@ import {
   likeFacebookComment,
 } from '../services/autoReplyService.js';
 import { incrementEngagementAnalytics, incrementInboundAnalytics } from '../services/analyticsService.js';
+import {
+  getBwinAccountClosureMessage,
+  getBwinAccountClosureState,
+  isBwinAccountClosureActive,
+} from '../services/bwinAccountClosureService.js';
 import fs from 'fs';
 import path from 'path';
 import { firestore } from '../db/firestore.js';
@@ -323,6 +328,11 @@ router.post('/meta/webhook', async (req, res) => {
             logEvent('IG comment duplicate skipped', { commentId });
             continue;
           }
+          const instagramClosureState = await getBwinAccountClosureState(instagramContext?.userId);
+          if (instagramClosureState?.enabled && (await isBwinAccountClosureActive(instagramContext?.userId))) {
+            await updateReplyStatus(inbound.ref, 'failed', getBwinAccountClosureMessage(instagramClosureState));
+            continue;
+          }
           try {
             const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'comment');
             await likeInstagramComment(commentId, instagramContext?.accessToken).catch(err => console.warn('IG comment like failed', err));
@@ -364,6 +374,11 @@ router.post('/meta/webhook', async (req, res) => {
               scopeId: analyticsScopeId,
               raw: msg,
             });
+            const instagramClosureState = await getBwinAccountClosureState(instagramContext?.userId);
+            if (instagramClosureState?.enabled && (await isBwinAccountClosureActive(instagramContext?.userId))) {
+              await updateReplyStatus(inboundRef, 'failed', getBwinAccountClosureMessage(instagramClosureState));
+              continue;
+            }
             try {
               const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'message');
               await replyToInstagramMessage(senderId, reply, {
@@ -401,6 +416,11 @@ router.post('/meta/webhook', async (req, res) => {
             });
             if (!inbound.shouldProcess) {
               logEvent('FB comment duplicate skipped', { commentId });
+              continue;
+            }
+            const facebookClosureState = await getBwinAccountClosureState(facebookContext?.userId);
+            if (facebookClosureState?.enabled && (await isBwinAccountClosureActive(facebookContext?.userId))) {
+              await updateReplyStatus(inbound.ref, 'failed', getBwinAccountClosureMessage(facebookClosureState));
               continue;
             }
             try {
@@ -452,6 +472,11 @@ router.post('/meta/webhook', async (req, res) => {
             scopeId: analyticsScopeId,
             raw: event,
           });
+          const closureState = await getBwinAccountClosureState(context?.userId);
+          if (closureState?.enabled && (await isBwinAccountClosureActive(context?.userId))) {
+            await updateReplyStatus(inboundRef, 'failed', getBwinAccountClosureMessage(closureState));
+            continue;
+          }
           try {
             const platform = body.object === 'instagram' ? 'instagram' : 'facebook';
             const reply = await generateReply(message, platform, context?.userId, 'message');
