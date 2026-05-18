@@ -78,6 +78,8 @@ const ALLOWED_BWIN_MEDIA_MARKERS = [
 
 export type BwinContentValidationInput = {
   userId: string;
+  platform?: string;
+  platforms?: string[];
   caption?: string;
   hashtags?: string;
   videoTitle?: string;
@@ -91,6 +93,8 @@ export type BwinContentValidationResult = {
 };
 
 const normalize = (value?: string | null) => `${value ?? ''}`.trim().toLowerCase();
+
+const BWIN_VIDEO_PLATFORMS = new Set(['youtube', 'tiktok', 'instagram_reels']);
 
 export const resolveBwinScopeIds = () => {
   const envIds = [
@@ -117,10 +121,20 @@ export const validateBwinSportsContent = (
   const mediaParts = [...(input.imageUrls ?? []), input.videoUrl ?? '']
     .map(value => normalize(value))
     .filter(Boolean);
+  const platforms = [input.platform, ...(input.platforms ?? [])]
+    .map(value => normalize(value))
+    .filter(Boolean);
 
   const combinedText = textParts.join(' \n ');
   const combinedMedia = mediaParts.join(' \n ');
   const combined = `${combinedText} \n ${combinedMedia}`.trim();
+
+  if (input.videoUrl || platforms.some(platform => BWIN_VIDEO_PLATFORMS.has(platform))) {
+    return {
+      ok: false,
+      reason: 'Bwinbet short video posts are disabled. Use image/news, matchday, result, or prediction posts only.',
+    };
+  }
 
   if (!combined) {
     return {
