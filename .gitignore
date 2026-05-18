@@ -1,5 +1,7 @@
 node_modules
 node_modules
+.edge-headless-x/
+.release-worktree/
 .codex-local.json
 .expo/
 .firebase/
