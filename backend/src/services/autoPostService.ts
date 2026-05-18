@@ -4,6 +4,9 @@ import sharp from 'sharp';
 import * as cheerio from 'cheerio';
 import fs from 'fs';
 import path from 'path';
+import * as crypto from 'crypto';
+import os from 'os';
+import { spawn } from 'child_process';
 import { TwitterApi } from 'twitter-api-v2';
 import { firestore } from '../db/firestore.js';
 import { config } from '../config.js';
@@ -26,7 +29,7 @@ import { footballTrendContentService } from './footballTrendContentService.js';
 import { fetchHighlightlyFootballHighlights, type HighlightlyFootballHighlight } from './highlightlyService.js';
 import { resolveBrandIdForClient } from './brandKitService.js';
 import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage } from './tableImageService.js';
-import type { TrendCandidate } from '../types/footballTrends.js';
+import type { TrendCandidate, TrendItem } from '../types/footballTrends.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
@@ -92,6 +95,7 @@ type AutoPostJob = {
   xLastWeeklyAwardTweetId?: string;
   active?: boolean;
   recentImageUrls?: string[];
+  recentVideoUrls?: string[];
   fallbackCaption?: string;
   fallbackHashtags?: string;
   recentCaptions?: string[];
@@ -111,6 +115,7 @@ type AutoPostJob = {
   reelsVideoUrl?: string;
   reelsVideoUrls?: string[];
   reelsVideoCursor?: number;
+  reelsSourceMode?: 'dynamic' | 'static';
 };
 
 type PostResult = { platform: string; status: 'posted' | 'failed'; remoteId?: string | null; error?: string };
@@ -124,13 +129,14 @@ type HistoryEntry = {
   videoTitle?: string;
 };
 type VideoPlatform = 'youtube' | 'tiktok' | 'instagram_reels';
+type ReelSourceProfile = { key: string; pages: string[] };
 type FootballTrendContentType = 'news' | 'video' | 'result' | 'prediction' | 'table' | 'top_scorer';
 type ExecuteOptions = {
   platforms?: string[];
   intervalHours?: number;
-  nextRunField?: 'nextRun' | 'reelsNextRun';
-  lastRunField?: 'lastRunAt' | 'reelsLastRunAt';
-  resultField?: 'lastResult' | 'reelsLastResult';
+  nextRunField?: 'nextRun' | 'reelsNextRun' | 'storyNextRun';
+  lastRunField?: 'lastRunAt' | 'reelsLastRunAt' | 'storyLastRunAt';
+  resultField?: 'lastResult' | 'reelsLastResult' | 'storyLastResult';
   useGenericVideoFallback?: boolean;
   generatedContent?: GeneratedContent;
 };
@@ -209,7 +215,10 @@ const platformPublishers: Record<
 
 export class AutoPostService {
   private memoryStore = new Map<string, AutoPostJob>();
-  private useMemory = config.security.allowMockAuth;
+  private useMemory =
+    config.security.allowMockAuth &&
+    !process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim() &&
+    !process.env.FIREBASE_SERVICE_ACCOUNT?.trim();
   // Post every 4 hours by default; override with AUTOPOST_INTERVAL_MINUTES for tighter testing windows.
   private defaultIntervalHours = Math.max(Number(process.env.AUTOPOST_INTERVAL_MINUTES ?? 240) / 60, 0.05);
   // Reels auto-post every 4 hours by default; override with AUTOPOST_REELS_INTERVAL_MINUTES if needed.
@@ -242,15 +251,15 @@ export class AutoPostService {
     'Ask for a quick demo today.',
   ];
   private defaultBwinFallbackCaption =
-    'Bwinbet Uganda football update. Stay on top of fixtures, results, odds, and matchday talking points.\n\nBet now: https://bwinbetug.com | More info: www.bwinbetug.info';
+    'Football update. Stay on top of fixtures, results, and matchday talking points.';
   private defaultBwinFallbackHashtags =
-    'BwinbetUganda, FootballUpdate, Matchday, FootballNews, Soccer, BettingTips, OddsUpdate, MatchPreview, Results, Highlights, TopScorers, LiveTable';
+    'FootballUpdate, Matchday, FootballNews, Soccer, MatchPreview, Results, Highlights, TopScorers, LiveTable, FootballAnalytics';
   private bwinFallbackCaptionVariants = [
-    'More match details on www.bwinbetug.info.',
-    'Track more fixtures and odds on www.bwinbetug.info.',
-    'Place your bets at https://bwinbetug.com.',
-    'Stay with Bwinbet Uganda for more football updates.',
-    'More football insight is live on www.bwinbetug.info.',
+    'More match details available in bio.',
+    'Track more fixtures and football updates in bio.',
+    'Check the latest match context in bio.',
+    'Stay tuned for more football updates.',
+    'More football insight is live in bio.',
   ];
   private defaultXHighlightAccounts = [
     'ChampionsLeague',
@@ -670,14 +679,14 @@ export class AutoPostService {
       const baseCaption = [
         selectedTitle,
         selectedLink ? selectedLink : '',
-        'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+        'More football updates in bio.',
       ]
         .filter(Boolean)
         .join('\n');
       let imageUrls = selectedImage ? [selectedImage] : [];
       if (!imageUrls.length) {
         imageUrls = await this.generateFootballCardImage(
-          `${selectedTitle}\n\nFootball update card for Bwinbet Uganda in yellow and black.`,
+          `${selectedTitle}\n\nFootball update card with clean sports editorial styling.`,
           new Set<string>(),
         );
       }
@@ -873,7 +882,6 @@ export class AutoPostService {
       const dueStories = Array.from(this.memoryStore.entries()).filter(
         ([, job]) =>
           job.active !== false &&
-          job.storyTrendEnabled === true &&
           job.storyNextRun &&
           job.storyNextRun.toMillis() <= now.toMillis(),
       );
@@ -935,7 +943,15 @@ export class AutoPostService {
       }
       for (const [userId, job] of dueStories) {
         if (!(await this.claimDueRun(userId, job, 'story_next_run', now))) continue;
-        const outcome = await this.executeTrendStories(userId, job);
+        const outcome = job.storyTrendEnabled === true
+          ? await this.executeTrendStories(userId, job)
+          : await this.executeJob(userId, job, {
+              platforms: this.getStoryPlatforms(job),
+              intervalHours: job.storyIntervalHours ?? this.defaultStoryIntervalHours,
+              nextRunField: 'storyNextRun',
+              lastRunField: 'storyLastRunAt',
+              resultField: 'storyLastResult',
+            });
         processed += 1;
         const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
         results.set(userId, {
@@ -1072,9 +1088,17 @@ export class AutoPostService {
       }
       for (const doc of storiesSnap.docs) {
         const data = doc.data() as AutoPostJob;
-        if (data.active === false || data.storyTrendEnabled !== true) continue;
+        if (data.active === false) continue;
         this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
-        const outcome = await this.executeTrendStories(doc.id, data);
+        const outcome = data.storyTrendEnabled === true
+          ? await this.executeTrendStories(doc.id, data)
+          : await this.executeJob(doc.id, data, {
+              platforms: this.getStoryPlatforms(data),
+              intervalHours: data.storyIntervalHours ?? this.defaultStoryIntervalHours,
+              nextRunField: 'storyNextRun',
+              lastRunField: 'storyLastRunAt',
+              resultField: 'storyLastResult',
+            });
         processed += 1;
         const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
         results.set(doc.id, {
@@ -1194,8 +1218,16 @@ export class AutoPostService {
           reelsNextRun: reels.nextRun,
         };
       }
-      if (job.storyTrendEnabled && job.storyNextRun) {
-        const stories = await this.executeTrendStories(userId, job);
+      if (job.storyNextRun) {
+        const stories = job.storyTrendEnabled === true
+          ? await this.executeTrendStories(userId, job)
+          : await this.executeJob(userId, job, {
+              platforms: this.getStoryPlatforms(job),
+              intervalHours: job.storyIntervalHours ?? this.defaultStoryIntervalHours,
+              nextRunField: 'storyNextRun',
+              lastRunField: 'storyLastRunAt',
+              resultField: 'storyLastResult',
+            });
         return {
           ...standard,
           storyPosted: stories.posted,
@@ -1227,8 +1259,16 @@ export class AutoPostService {
         reelsNextRun: reels.nextRun,
       };
     }
-    if (job.storyTrendEnabled && job.storyNextRun) {
-      const stories = await this.executeTrendStories(userId, job);
+    if (job.storyNextRun) {
+      const stories = job.storyTrendEnabled === true
+        ? await this.executeTrendStories(userId, job)
+        : await this.executeJob(userId, job, {
+            platforms: this.getStoryPlatforms(job),
+            intervalHours: job.storyIntervalHours ?? this.defaultStoryIntervalHours,
+            nextRunField: 'storyNextRun',
+            lastRunField: 'storyLastRunAt',
+            resultField: 'storyLastResult',
+          });
       return {
         ...standard,
         storyPosted: stories.posted,
@@ -1409,8 +1449,7 @@ export class AutoPostService {
           !/\bbet now\b|\bmore info\b|\bplace your bet\b/i.test(line),
       );
 
-    sanitizedLines.push('Bet now — link in bio');
-    sanitizedLines.push('More info — link in bio');
+    sanitizedLines.push('More football updates in bio.');
 
     return Array.from(new Set(sanitizedLines)).join('\n');
   }
@@ -1418,16 +1457,15 @@ export class AutoPostService {
   private buildBwinInstagramSportsHashtags(caption: string) {
     const normalized = String(caption || '').toLowerCase();
     const tags = [
-      'BwinbetUG',
       'Football',
       'SportsUpdates',
       'Matchday',
-      'BetSmart',
-      'UgandaSports',
+      'FootballAnalytics',
+      'FootballUpdates',
     ];
 
     if (/\bprediction|\bodds\b|place your bet|bet now|match picks|football tips/i.test(normalized)) {
-      tags.push('MatchPredictions', 'BettingTips', 'OddsUpdate', 'FootballTips');
+      tags.push('MatchPredictions', 'FootballTips', 'MatchPreview');
     } else if (/\blive table\b|\btable update\b|\bstandings\b/i.test(normalized)) {
       tags.push('LeagueTable', 'FootballTable', 'TitleRace', 'TopTeams');
     } else if (/\btop scorers\b|\bgolden boot\b|\bgoals\b|\bscorer\b/i.test(normalized)) {
@@ -1476,7 +1514,7 @@ export class AutoPostService {
     return [
       `Video: ${headline}`,
       `Update time: ${this.formatTrendClock(timezone)} EAT`,
-      'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+      'More football updates in bio.',
     ]
       .filter(Boolean)
       .join('\n');
@@ -1498,7 +1536,7 @@ export class AutoPostService {
       competitionLine,
       sourceLine,
       `Update time: ${this.formatTrendClock(timezone)} EAT`,
-      'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+      'More football updates in bio.',
     ]
       .filter(Boolean)
       .join('\n');
@@ -1615,9 +1653,9 @@ export class AutoPostService {
   private getStructuredFootballSlot(job: AutoPostJob, now: Date) {
     const timezone = job.trendTimezone?.trim() || process.env.AUTOPOST_FOOTBALL_TZ?.trim() || 'Africa/Kampala';
     const hour = this.getHourForTimezone(now, timezone);
-    const predictionHours = new Set([9, 13, 17, 21]);
-    const tableHours = new Set([8]);
-    const topScorerHours = new Set([20]);
+    const predictionHours = new Set<number>();
+    const tableHours = new Set<number>();
+    const topScorerHours = new Set<number>();
     if (predictionHours.has(hour)) {
       return { contentType: 'prediction' as FootballTrendContentType, timezone, hour };
     }
@@ -1744,6 +1782,7 @@ export class AutoPostService {
       }
       if (host.includes('bbci.co.uk') || host.includes('bbc.co.uk') || host.includes('bbc.com')) {
         parsed.pathname = parsed.pathname.replace(/\/ace\/standard\/\d+\//i, '/ace/standard/1600/');
+        parsed.pathname = parsed.pathname.replace(/\/images\/ic\/\d+x\d+\//i, '/images/ic/1920x1080/');
         parsed.searchParams.set('w', '1600');
         parsed.searchParams.set('h', '900');
         parsed.searchParams.set('quality', '95');
@@ -1769,7 +1808,15 @@ export class AutoPostService {
       if (Number.isFinite(width) && width > 0 && width <= 500) return true;
       if (Number.isFinite(height) && height > 0 && height <= 350) return true;
       const url = rawUrl.toLowerCase();
-      if (url.includes('/thumb/') || url.includes('thumbnail') || url.includes('width=140')) return true;
+      if (
+        url.includes('/thumb/') ||
+        url.includes('thumbnail') ||
+        url.includes('width=140') ||
+        /\/ace\/standard\/(?:[1-5]\d{2}|\d{1,2})\//i.test(url) ||
+        /\/images\/ic\/(?:[1-5]\d{2}|\d{1,2})x(?:[1-3]\d{2}|\d{1,2})\//i.test(url)
+      ) {
+        return true;
+      }
       return false;
     } catch {
       return false;
@@ -1806,14 +1853,33 @@ export class AutoPostService {
 
   private async resolveBestNewsImageUrl(imageUrl?: string, articleUrl?: string) {
     const normalized = imageUrl ? this.toHighResolutionImageUrl(imageUrl) : '';
-    if (normalized && !this.isLikelyLowResolutionUrl(normalized)) {
-      return normalized;
+    if (normalized) {
+      const quality = await this.inspectNewsImageQuality(normalized);
+      if (!this.isLikelyLowResolutionUrl(normalized) && this.isUsableNewsImageQuality(quality)) {
+        return normalized;
+      }
+      const enhanced = this.isEnhanceableNewsImageQuality(quality) ? await this.enhanceImageToDataUrl(normalized) : null;
+      if (enhanced && this.isUsableNewsImageQuality(await this.inspectNewsImageQuality(enhanced))) {
+        return enhanced;
+      }
     }
     if (articleUrl) {
       const ogImage = await this.fetchOpenGraphImage(articleUrl);
-      if (ogImage) return this.toHighResolutionImageUrl(ogImage);
+      if (ogImage) {
+        const normalizedOgImage = this.toHighResolutionImageUrl(ogImage);
+        const quality = await this.inspectNewsImageQuality(normalizedOgImage);
+        if (this.isUsableNewsImageQuality(quality)) {
+          return normalizedOgImage;
+        }
+        const enhancedOgImage = this.isEnhanceableNewsImageQuality(quality)
+          ? await this.enhanceImageToDataUrl(normalizedOgImage)
+          : null;
+        if (enhancedOgImage && this.isUsableNewsImageQuality(await this.inspectNewsImageQuality(enhancedOgImage))) {
+          return enhancedOgImage;
+        }
+      }
     }
-    return normalized;
+    return null;
   }
 
   private async enhanceImageToDataUrl(url: string) {
@@ -1840,6 +1906,28 @@ export class AutoPostService {
     }
   }
 
+  private async inspectNewsImageQuality(url: string) {
+    const source = await this.loadImageBuffer(url);
+    if (!source) return null;
+    try {
+      const metadata = await sharp(source).metadata();
+      const width = Number(metadata.width ?? 0);
+      const height = Number(metadata.height ?? 0);
+      return { width, height, bytes: source.length };
+    } catch (error) {
+      console.warn('[autopost] failed to inspect bwin news image quality', { url, error });
+      return null;
+    }
+  }
+
+  private isUsableNewsImageQuality(quality: { width: number; height: number; bytes: number } | null) {
+    return Boolean(quality && quality.width >= 1200 && quality.height >= 675 && quality.bytes >= 80000);
+  }
+
+  private isEnhanceableNewsImageQuality(quality: { width: number; height: number; bytes: number } | null) {
+    return Boolean(quality && quality.width >= 640 && quality.height >= 360 && quality.bytes >= 25000);
+  }
+
   private async improveNewsImageQuality(imageUrls: string[], platforms: string[]) {
     const normalized = imageUrls
       .map(url => this.toHighResolutionImageUrl(url))
@@ -1847,19 +1935,22 @@ export class AutoPostService {
       .filter((value, index, arr) => arr.indexOf(value) === index);
     if (!normalized.length) return [];
     const xOnly = platforms.every(platform => platform === 'x' || platform === 'twitter');
-    if (!xOnly) return normalized;
-    const enhanced = await this.enhanceImageToDataUrl(normalized[0]);
-    return enhanced ? [enhanced] : normalized;
-  }
-
-  private resolveBwinNewsLogoPath() {
-    const configured = process.env.BWINBET_LOGO_PATH?.trim();
-    const candidates = [
-      configured ? path.resolve(configured) : null,
-      path.resolve(process.cwd(), '../docs/brand-kits/assets/bwinbetug-logo.jpeg'),
-      path.resolve(process.cwd(), 'docs/brand-kits/assets/bwinbetug-logo.jpeg'),
-    ].filter((value): value is string => Boolean(value));
-    return candidates.find(candidate => fs.existsSync(candidate)) ?? null;
+    const usable: string[] = [];
+    for (const url of normalized) {
+      const quality = await this.inspectNewsImageQuality(url);
+      if (this.isUsableNewsImageQuality(quality)) {
+        usable.push(url);
+        continue;
+      }
+      if (!this.isEnhanceableNewsImageQuality(quality)) {
+        continue;
+      }
+      const enhanced = await this.enhanceImageToDataUrl(url);
+      if (enhanced && (xOnly || this.isUsableNewsImageQuality(await this.inspectNewsImageQuality(enhanced)))) {
+        usable.push(enhanced);
+      }
+    }
+    return usable;
   }
 
   private async loadImageBuffer(url: string) {
@@ -1883,49 +1974,190 @@ export class AutoPostService {
     }
   }
 
-  private async brandBwinNewsImages(imageUrls: string[]) {
-    const logoPath = this.resolveBwinNewsLogoPath();
-    if (!logoPath || !imageUrls.length) return imageUrls;
+  private buildBwinFullStoryCaption(topic: string, items: TrendItem[], hashtags: string) {
+    const primary = items[0];
+    const headline = String(primary?.title || topic || 'Football update').replace(/\s+/g, ' ').trim();
+    const summary = this.formatBwinStoryParagraphs(primary?.summary || '');
+    const related = items
+      .slice(1, 3)
+      .map(item => String(item.title || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    const lines = [
+      headline,
+      summary,
+      related.length ? `Also developing: ${related.join(' | ')}` : '',
+      'More football updates in bio.',
+      hashtags,
+    ].filter(Boolean);
+    return lines.join('\n\n').trim();
+  }
 
-    let logoBuffer: Buffer | null = null;
-    try {
-      logoBuffer = await sharp(logoPath).png().toBuffer();
-    } catch (error) {
-      console.warn('[autopost] failed to prepare bwin logo', error);
-      return imageUrls;
+  private formatBwinStoryParagraphs(value: string, maxChars = 1200) {
+    const cleaned = String(value || '')
+      .replace(/Continue reading\.?/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned) return '';
+    const clipped = cleaned.length > maxChars ? `${cleaned.slice(0, maxChars).trimEnd()}...` : cleaned;
+    const sentences = clipped.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g)?.map(sentence => sentence.trim()).filter(Boolean) ?? [
+      clipped,
+    ];
+    const paragraphs: string[] = [];
+    let current = '';
+    for (const sentence of sentences) {
+      const next = current ? `${current} ${sentence}` : sentence;
+      if (next.length > 360 && current) {
+        paragraphs.push(current);
+        current = sentence;
+      } else {
+        current = next;
+      }
+      if (paragraphs.length >= 3) break;
     }
+    if (current && paragraphs.length < 4) paragraphs.push(current);
+    return paragraphs.join('\n\n');
+  }
 
-    const branded = await Promise.all(
-      imageUrls.map(async url => {
+  private async overlayNewsHeadline(source: Buffer, headline: string) {
+    const normalizedHeadline = this.trimTextForCard(headline, 120);
+    if (!normalizedHeadline) return source;
+    const width = 1800;
+    const height = 1800;
+    const lines = this.wrapCardText(normalizedHeadline, 22, 4);
+    const headlineSvg = lines
+      .map(
+        (line, index) =>
+          `<text x="96" y="${1280 + index * 104}" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="88" font-weight="900" fill="#ffffff">${this.escapeSvgText(line.toUpperCase())}</text>`,
+      )
+      .join('\n');
+    const svg = `
+      <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="shade" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#020617" stop-opacity="0"/>
+            <stop offset="0.48" stop-color="#020617" stop-opacity="0.18"/>
+            <stop offset="1" stop-color="#020617" stop-opacity="0.92"/>
+          </linearGradient>
+        </defs>
+        <rect width="${width}" height="${height}" fill="url(#shade)"/>
+        <rect x="96" y="1168" width="180" height="12" rx="6" fill="#38bdf8"/>
+        ${headlineSvg}
+      </svg>
+    `;
+    return sharp(source)
+      .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+      .jpeg({ quality: 94, mozjpeg: true, chromaSubsampling: '4:4:4' })
+      .toBuffer();
+  }
+
+  private async publishBwinNewsImageBuffer(buffer: Buffer) {
+    const supabaseUrl = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
+    const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
+    const bucket = (process.env.BWIN_NEWS_BUCKET ?? 'bwin-news').trim() || 'bwin-news';
+    if (supabaseUrl && serviceRoleKey) {
+      try {
+        const objectPath = `autopost/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.jpg`;
+        await axios.post(`${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`, buffer, {
+          headers: {
+            apikey: serviceRoleKey,
+            Authorization: `Bearer ${serviceRoleKey}`,
+            'Content-Type': 'image/jpeg',
+            'x-upsert': 'true',
+          },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+          timeout: 60000,
+        });
+        return `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+      } catch (error) {
+        console.warn('[autopost] failed to upload bwin news image to supabase', error);
+      }
+    }
+    return saveGeneratedImageBuffer(buffer, 'jpg');
+  }
+
+  private async renderBwinNewsPosterBuffer(sourceUrl: string, headline: string) {
+    if (!/^https?:\/\//i.test(sourceUrl) || !headline.trim()) return null;
+    const scriptCandidates = [
+      path.resolve(process.cwd(), 'scripts', 'render_football_analytics_news_poster.py'),
+      path.resolve(process.cwd(), 'backend', 'scripts', 'render_football_analytics_news_poster.py'),
+    ];
+    const scriptPath = scriptCandidates.find(candidate => fs.existsSync(candidate));
+    if (!scriptPath) return null;
+    const outputPath = path.join(os.tmpdir(), `bwin-news-${crypto.randomUUID()}.jpg`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('python', [scriptPath, '--out', outputPath, '--title', headline, '--image-url', sourceUrl], {
+          cwd: path.dirname(path.dirname(scriptPath)),
+          stdio: ['ignore', 'ignore', 'pipe'],
+        });
+        let stderr = '';
+        child.stderr.on('data', chunk => {
+          stderr += chunk.toString();
+        });
+        child.on('error', reject);
+        child.on('close', code => {
+          if (code === 0) {
+            resolve();
+            return;
+          }
+          reject(new Error(stderr.trim() || `renderer exited with code ${code}`));
+        });
+      });
+      return await fs.promises.readFile(outputPath);
+    } catch (error) {
+      console.warn('[autopost] bwin news poster renderer failed; using overlay fallback', error);
+      return null;
+    } finally {
+      await fs.promises.unlink(outputPath).catch(() => undefined);
+    }
+  }
+
+  private async finalizeNewsImages(imageUrls: string[], headline = '') {
+    const finalized: string[] = [];
+    for (const url of imageUrls) {
+      if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(url)) {
         const source = await this.loadImageBuffer(url);
-        if (!source || !logoBuffer) return url;
-        try {
-          const metadata = await sharp(source).metadata();
-          const width = Number(metadata.width ?? 0);
-          if (!width) return url;
-          const margin = Math.max(Math.round(width * 0.02), 12);
-          const logoWidth = Math.max(Math.min(Math.round(width * 0.22), 320), 120);
-          const resizedLogo = await sharp(logoBuffer)
-            .resize({ width: logoWidth, withoutEnlargement: true })
-            .png()
-            .toBuffer();
-          const logoMeta = await sharp(resizedLogo).metadata();
-          const left = Math.max(width - Number(logoMeta.width ?? logoWidth) - margin, margin);
-          const top = margin;
-          const output = await sharp(source)
+        if (source) {
+          const base = await sharp(source)
             .rotate()
-            .composite([{ input: resizedLogo, left, top }])
-            .jpeg({ quality: 90, mozjpeg: true, chromaSubsampling: '4:4:4' })
+            .resize(1800, 1800, { fit: 'cover', position: 'attention', withoutEnlargement: false })
+            .sharpen()
+            .jpeg({ quality: 94, mozjpeg: true, chromaSubsampling: '4:4:4' })
             .toBuffer();
-          return await saveGeneratedImageBuffer(output, 'jpg');
-        } catch (error) {
-          console.warn('[autopost] failed to brand bwin news image', { url, error });
-          return url;
+          const buffer = await this.overlayNewsHeadline(base, headline);
+          const publicUrl = await this.publishBwinNewsImageBuffer(buffer);
+          if (publicUrl) finalized.push(publicUrl);
         }
-      }),
-    );
-
-    return branded.filter(Boolean);
+        continue;
+      }
+      try {
+        const renderedPoster = await this.renderBwinNewsPosterBuffer(url, headline);
+        if (renderedPoster) {
+          const publicUrl = await this.publishBwinNewsImageBuffer(renderedPoster);
+          if (publicUrl) {
+            finalized.push(publicUrl);
+            continue;
+          }
+        }
+        const source = await this.loadImageBuffer(url);
+        if (!source) continue;
+        const base = await sharp(source)
+          .rotate()
+          .resize(1800, 1800, { fit: 'cover', position: 'attention', withoutEnlargement: false })
+          .sharpen()
+          .jpeg({ quality: 94, mozjpeg: true, chromaSubsampling: '4:4:4' })
+          .toBuffer();
+        const buffer = await this.overlayNewsHeadline(base, headline);
+        const publicUrl = await this.publishBwinNewsImageBuffer(buffer);
+        if (publicUrl) {
+          finalized.push(publicUrl);
+        }
+      } catch (error) {
+        console.warn('[autopost] failed to finalize news image', { url, error });
+      }
+    }
+    return finalized;
   }
 
   private formatTrendClock(timezone = 'Africa/Kampala') {
@@ -1948,7 +2180,7 @@ export class AutoPostService {
   ) {
     const title = topic?.trim() || `${contentType.replace(/_/g, ' ')} update`;
     const stamp = this.formatTrendClock(timezone);
-    return `${title}\n\nUpdate time: ${stamp} EAT\nBet now: https://bwinbetug.com | More info: www.bwinbetug.info`;
+    return `${title}\n\nUpdate time: ${stamp} EAT\nMore football updates in bio.`;
   }
 
   private escapeSvgText(value: string) {
@@ -2027,8 +2259,8 @@ export class AutoPostService {
       <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#ffd54d"/>
-            <stop offset="100%" stop-color="#ffb700"/>
+            <stop offset="0%" stop-color="#22c55e"/>
+            <stop offset="100%" stop-color="#0f766e"/>
           </linearGradient>
         </defs>
         <rect width="${width}" height="${height}" fill="url(#bg)"/>
@@ -2036,21 +2268,16 @@ export class AutoPostService {
         <rect x="0" y="${height - 210}" width="${width}" height="210" fill="#111111"/>
         <rect x="92" y="286" width="${width - 184}" height="8" fill="#111111" opacity="0.16"/>
         <rect x="92" y="1120" width="${width - 184}" height="8" fill="#111111" opacity="0.16"/>
-        <text x="110" y="142" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="800" fill="#ffd54d">BWINBET UGANDA</text>
+        <text x="110" y="142" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="800" fill="#22c55e">FOOTBALL UPDATE</text>
         <text x="110" y="256" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="700" fill="#111111">FOOTBALL UPDATE</text>
         ${headlineSvg}
         ${sublineSvg}
-        <text x="110" y="${height - 116}" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" fill="#ffd54d">www.bwinbetug.info</text>
+        <text x="110" y="${height - 116}" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" fill="#22c55e">PLAY RESPONSIBLY</text>
       </svg>
     `;
 
     try {
-      let pipeline = sharp(Buffer.from(svg)).png();
-      const logoPath = this.resolveBwinNewsLogoPath();
-      if (logoPath) {
-        const logo = await sharp(logoPath).resize({ width: 380, withoutEnlargement: true }).png().toBuffer();
-        pipeline = pipeline.composite([{ input: logo, top: 40, left: width - 420 }]);
-      }
+      const pipeline = sharp(Buffer.from(svg)).png();
       const output = await pipeline.png({ compressionLevel: 1, palette: false }).toBuffer();
       const publicUrl = await saveGeneratedImageBuffer(output, 'png');
       return publicUrl ? [publicUrl] : [];
@@ -2326,7 +2553,7 @@ export class AutoPostService {
           goalDiff: row.goalDiff ?? null,
         })),
         source: snapshot.source,
-        cta: 'Bet: https://bwinbetug.com | Info: www.bwinbetug.info',
+        cta: 'More football updates in bio',
         updatedAt: new Date().toISOString(),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -2348,7 +2575,7 @@ export class AutoPostService {
           goalDiff: row.goalDiff ?? null,
         })),
         source: snapshot.source,
-        cta: 'Bet: https://bwinbetug.com | Info: www.bwinbetug.info',
+        cta: 'More football updates in bio',
         updatedAt: new Date().toISOString(),
       });
       return `data:image/jpeg;base64,${buffer.toString('base64')}`;
@@ -2369,7 +2596,7 @@ export class AutoPostService {
           appearances: row.appearances ?? null,
         })),
         source: snapshot.source,
-        cta: 'Bet: https://bwinbetug.com | Info: www.bwinbetug.info',
+        cta: 'More football updates in bio',
         updatedAt: new Date().toISOString(),
       });
       return `data:image/jpeg;base64,${buffer.toString('base64')}`;
@@ -2386,8 +2613,8 @@ export class AutoPostService {
           fixture: pick.fixture,
           odds: pick.odds ?? null,
         })),
-        source: 'Bwinbet fixture scan',
-        cta: 'Bet: https://bwinbetug.com | Info: www.bwinbetug.info',
+        source: 'Fixture scan',
+        cta: 'More football updates in bio',
         updatedAt: new Date().toISOString(),
       });
       return `data:image/jpeg;base64,${buffer.toString('base64')}`;
@@ -2424,6 +2651,107 @@ export class AutoPostService {
 
     const recentImages = this.getRecentStoryImageHistory(job);
     const recentSet = new Set(recentImages);
+
+    if (this.isBwinScopeUser(userId)) {
+      const candidates = await getFootballTrendingCandidates({
+        maxCandidates: job.storyMaxCandidates ?? 8,
+        maxAgeHours: job.storyMaxAgeHours ?? 72,
+      });
+      const picked =
+        this.pickFreshNewsCandidate(candidates, new Set(this.getTrendRecentKeys(job)))?.candidate ?? candidates[0] ?? null;
+      const topItem = picked?.items?.[0];
+      const topic = topItem?.title?.trim() || picked?.topic?.trim() || 'Latest football update';
+      const summary = this.summarizeStory(topItem?.summary || picked?.sampleTitles?.[0] || topic, 260);
+      const sourceLabel = 'Football news';
+      const publishedKey = topItem?.publishedAt || picked?.publishedAt || '';
+      const linkKey = topItem?.link || '';
+      const trendKey = [sourceLabel, topic, linkKey, publishedKey]
+        .map(value => String(value || '').trim().toLowerCase())
+        .join('||');
+
+      if (onNewRelease && job.storyLastTrendKey && trendKey === job.storyLastTrendKey) {
+        const nextRecord: Partial<AutoPostJob> = {
+          storyLastRunAt: admin.firestore.Timestamp.now(),
+          storyNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+        };
+        await autopostCollection.doc(userId).set(
+          {
+            ...nextRecord,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        await this.mirrorAutopostJob(userId, { ...job, ...nextRecord });
+        return { posted: 0, failed: [], nextRun: nextRunDate.toISOString() };
+      }
+
+      const relatedImageUrl = (await this.resolveBestNewsImageUrl(topItem?.imageUrl?.trim(), topItem?.link?.trim())) || '';
+      const baseUrl = this.getPublicBaseUrl();
+      let finalImages: string[] = [];
+      if (baseUrl) {
+        const draftRef = firestore.collection('storyImageDrafts').doc();
+        await draftRef.set({
+          headline: topic,
+          summary,
+          source: sourceLabel,
+          imageUrl: relatedImageUrl || null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        finalImages = [`${baseUrl}/public/story-image/${draftRef.id}.png`];
+      } else if (relatedImageUrl && !recentSet.has(relatedImageUrl)) {
+        finalImages = [relatedImageUrl];
+      }
+      if (!finalImages.length) {
+        finalImages = await this.generateFootballCardImage(
+          `Create a vertical football news story image for "${topic}". Clean editorial sports style, no logos.`,
+          recentSet,
+        );
+      }
+
+      const credentials = await this.resolveCredentials(userId);
+      const results: PostResult[] = [];
+      const historyEntries: HistoryEntry[] = [];
+      for (const platform of platforms) {
+        const publisher = platformPublishers[platform];
+        if (!publisher) {
+          results.push({ platform, status: 'failed', error: 'unsupported_platform' });
+          historyEntries.push({ platform, status: 'failed', caption: topic, errorMessage: 'unsupported_platform' });
+          continue;
+        }
+        try {
+          const response = await publisher({ caption: topic, imageUrls: finalImages, credentials });
+          results.push({ platform, status: 'posted', remoteId: response.remoteId ?? null });
+          historyEntries.push({ platform, status: 'posted', caption: topic, remoteId: response.remoteId ?? null });
+        } catch (error: any) {
+          const message = error?.message ?? 'publish_failed';
+          results.push({ platform, status: 'failed', error: message });
+          historyEntries.push({ platform, status: 'failed', caption: topic, errorMessage: message });
+        }
+      }
+
+      const nextRecord: Partial<AutoPostJob> = {
+        storyLastRunAt: admin.firestore.Timestamp.now(),
+        storyNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+        storyLastResult: results,
+        storyLastTrendKey: trendKey,
+        storyRecentImageUrls: this.mergeRecentImages(recentImages, finalImages),
+      };
+      await autopostCollection.doc(userId).set(
+        {
+          ...nextRecord,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      await this.mirrorAutopostJob(userId, { ...job, ...nextRecord });
+      await this.recordHistory(userId, historyEntries, finalImages);
+      return {
+        posted: results.filter(result => result.status === 'posted').length,
+        failed: results.filter(result => result.status === 'failed'),
+        nextRun: nextRunDate.toISOString(),
+      };
+    }
+
     const { sources, mode } = await this.safeGetUserTrendConfig(userId);
     const candidates = await getNewsTrendingCandidates({
       sources,
@@ -2632,6 +2960,7 @@ export class AutoPostService {
     let newsBaselineCaption = '';
     let newsBaselineImages: string[] = [];
     let newsBaselineCaptions: Record<string, string> = {};
+    let newsOverlayHeadline = '';
     let footballCandidates: TrendCandidate[] = [];
     let baselineCandidate: TrendCandidate | null = null;
     let usedTableCursor: number | null = null;
@@ -2710,6 +3039,8 @@ export class AutoPostService {
             .filter(Boolean)
             .map(tag => (tag.startsWith('#') ? tag : `#${tag.replace(/^#+/, '')}`))
             .join(' ');
+          const fullStoryCaption = this.buildBwinFullStoryCaption(top.topic, items, tags);
+          newsOverlayHeadline = gen.content.poster?.headline?.trim() || top.topic || items[0]?.title || '';
 
           const baseCaptionByPlatform = (platform: string) => {
             if (platform === 'twitter' || platform === 'x') return gen.content.captions.viral_caption;
@@ -2718,7 +3049,7 @@ export class AutoPostService {
           };
 
           // Default caption for history and for platforms that don't override further down.
-          caption = [gen.content.captions.instagram, tags].filter(Boolean).join('\n\n').trim();
+          caption = fullStoryCaption || [gen.content.captions.instagram, tags].filter(Boolean).join('\n\n').trim();
           const mergedImages = [...sourceImageUrls, ...(gen.images ?? [])].filter(Boolean);
           imageUrls = Array.from(new Set(mergedImages)).slice(0, 4);
 
@@ -2728,7 +3059,11 @@ export class AutoPostService {
               .filter(Boolean)
               .join(p === 'twitter' || p === 'x' ? ' ' : '\n\n')
               .trim();
-            if (combined) trendCaptions[p] = combined;
+            if (p === 'twitter' || p === 'x') {
+              if (combined) trendCaptions[p] = combined;
+            } else if (caption) {
+              trendCaptions[p] = caption;
+            }
           }
         }
       } catch (error) {
@@ -2800,7 +3135,7 @@ export class AutoPostService {
             'Football predictions update',
             `Updated: ${updatedStamp} (${scheduleTimezone})`,
             picksLine,
-            'Place your bet: https://bwinbetug.com | More info: www.bwinbetug.info',
+            'More football updates in bio.',
           ]
             .filter(Boolean)
             .join('\n');
@@ -2853,7 +3188,7 @@ export class AutoPostService {
             `${snapshot.league} live table update`,
             `Updated: ${updatedStamp} (${scheduleTimezone})`,
             ...rows,
-            'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+            'More football updates in bio.',
           ]
             .filter(Boolean)
             .join('\n');
@@ -2916,7 +3251,7 @@ export class AutoPostService {
             `${snapshot.league} top scorers update`,
             `Updated: ${updatedStamp} (${scheduleTimezone})`,
             ...rows,
-            'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+            'More football updates in bio.',
           ]
             .filter(Boolean)
             .join('\n');
@@ -2947,6 +3282,9 @@ export class AutoPostService {
           selectedContentType = 'news';
         }
       }
+      if (this.isBwinScopeUser(userId) && selectedContentType === 'video' && this.areBwinShortVideosDisabled()) {
+        selectedContentType = 'news';
+      }
       if (selectedContentType === 'video') {
         highlightlyVideoSelection = await this.pickFreshHighlightlyVideoCandidate(userId, scheduleTimezone, trendRecentSet);
         if (highlightlyVideoSelection) {
@@ -2964,7 +3302,7 @@ export class AutoPostService {
             title,
             `Official source: ${source}`,
             `Updated: ${updatedStamp} (${scheduleTimezone})`,
-            'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+            'More football updates in bio.',
           ]
             .filter(Boolean)
             .join('\n');
@@ -2977,7 +3315,7 @@ export class AutoPostService {
           );
           if (!allowThirdPartyHighlightVideoRepublish) {
             imageUrls = await this.generateFootballCardImage(
-              `Create a premium branded football highlight alert card for Bwinbet UG. Headline: "${title}". Secondary line: "Official source: ${source}". Bold black-and-gold sports editorial design, sharp typography, dynamic football energy, no copyrighted logos, no watermarks, no club crests.`,
+              `Create a premium football highlight alert card. Headline: "${title}". Secondary line: "Official source: ${source}". Sharp sports editorial design, clean typography, dynamic football energy, no sportsbook logos, no watermarks, no club crests.`,
               new Set<string>(this.getRecentImageHistory(job)),
             );
           } else if (resolvedImage) {
@@ -3008,7 +3346,7 @@ export class AutoPostService {
             title,
             allowThirdPartyHighlightVideoRepublish ? `Source: ${source}` : `Official source: ${source}`,
             `Updated: ${updatedStamp} (${scheduleTimezone})`,
-            'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+            'More football updates in bio.',
           ]
             .filter(Boolean)
             .join('\n');
@@ -3027,7 +3365,7 @@ export class AutoPostService {
           );
           if (!allowThirdPartyHighlightVideoRepublish) {
             imageUrls = await this.generateFootballCardImage(
-              `Create a premium branded football highlight alert card for Bwinbet UG. Headline: "${title}". Secondary line: "Official source: ${source}". Bold black-and-gold sports editorial design, sharp typography, dynamic football energy, no copyrighted logos, no watermarks, no club crests.`,
+              `Create a premium football highlight alert card. Headline: "${title}". Secondary line: "Official source: ${source}". Sharp sports editorial design, clean typography, dynamic football energy, no sportsbook logos, no watermarks, no club crests.`,
               new Set<string>(this.getRecentImageHistory(job)),
             );
           } else if (resolvedImage) {
@@ -3050,7 +3388,7 @@ export class AutoPostService {
             'Football video highlight',
             'Top clip from trusted football sources',
             `Updated: ${updatedStamp} (${scheduleTimezone})`,
-            'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+            'More football updates in bio.',
           ]
             .filter(Boolean)
             .join('\n');
@@ -3075,7 +3413,7 @@ export class AutoPostService {
             `Updated: ${updatedStamp} (${scheduleTimezone})`,
             selectedResult.item.title,
             `Source: ${source}`,
-            'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+            'More football updates in bio.',
           ]
             .filter(Boolean)
             .join('\n');
@@ -3117,7 +3455,7 @@ export class AutoPostService {
             headline,
             `Source: ${source}`,
             `Update time: ${this.formatTrendClock(scheduleTimezone)} EAT`,
-            'Bet now: https://bwinbetug.com | More info: www.bwinbetug.info',
+            'More football updates in bio.',
           ]
             .filter(Boolean)
             .join('\n');
@@ -3137,7 +3475,7 @@ export class AutoPostService {
         }
         if (!caption) {
           caption = topCandidate?.topic
-            ? `${topCandidate.topic}\n\nBet now: https://bwinbetug.com | More info: www.bwinbetug.info`
+            ? `${topCandidate.topic}\n\nMore football updates in bio.`
             : this.buildFootballFallbackCaption(undefined, selectedContentType, scheduleTimezone);
           setUnifiedCaption();
         }
@@ -3157,16 +3495,22 @@ export class AutoPostService {
     // Keep Bwin football news imagery source-aligned, but always apply the Bwin corner mark before publish.
     if (scope === 'football' && this.isBwinScopeUser(userId) && selectedContentType === 'news' && imageUrls.length) {
       imageUrls = await this.improveNewsImageQuality(imageUrls, platforms);
-      imageUrls = await this.brandBwinNewsImages(imageUrls);
+      if (!imageUrls.length) {
+        imageUrls = await this.generateFootballCardImage(
+          `Create a high-resolution football breaking-news poster image for "${trendTopic || 'Latest football update'}". Clean typography space, dynamic stadium atmosphere, premium sports editorial quality.`,
+          new Set<string>(this.getRecentImageHistory(job)),
+        );
+      }
+      imageUrls = await this.finalizeNewsImages(imageUrls, newsOverlayHeadline || trendTopic);
     }
 
     // Football trend videos must come from approved source feeds/highlight tweets only.
-    // The only local/static exception is our owned Bwin branded highlight fallback for Meta feeds.
     const genericVideoSelection = this.selectNextGenericVideo(job, []);
     const trendVideoUrl = sourceVideoUrls[0] || (scope === 'football' ? undefined : genericVideoSelection.videoUrl);
     const videoCapablePlatforms = new Set(['twitter', 'x', 'facebook', 'facebook_story', 'instagram', 'linkedin']);
     const hasXPlatform = platforms.some(platform => platform === 'x' || platform === 'twitter');
-    const shouldUseVideoMode = scope === 'football' && selectedContentType === 'video';
+    const bwinShortVideosDisabled = this.isBwinScopeUser(userId) && this.areBwinShortVideosDisabled();
+    const shouldUseVideoMode = scope === 'football' && selectedContentType === 'video' && !bwinShortVideosDisabled;
     const weeklyAwardsEnabled = scope === 'football' && job.xWeeklyAwardsEnabled === true;
     const weeklyAwardsOnly = weeklyAwardsEnabled && job.xWeeklyAwardsOnly === true;
     const ownedBwinHighlightVideoUrl =
@@ -3419,12 +3763,37 @@ export class AutoPostService {
       options.intervalHours ??
       (job.intervalHours && job.intervalHours > 0 ? job.intervalHours : this.defaultIntervalHours);
     const isReelsRun = (options.nextRunField ?? 'nextRun') === 'reelsNextRun';
-    const effectiveIntervalHours = isReelsRun ? intervalHours : Math.max(intervalHours, this.defaultIntervalHours);
+    const isStoryRun = (options.nextRunField ?? 'nextRun') === 'storyNextRun';
+    const effectiveIntervalHours = Math.max(intervalHours, isReelsRun ? 0.25 : 0.05);
     const platforms = options.platforms ?? job.platforms ?? [];
     const nextRunField = options.nextRunField ?? 'nextRun';
     const lastRunField = options.lastRunField ?? 'lastRunAt';
     const resultField = options.resultField ?? 'lastResult';
-    const useGenericVideoFallback = options.useGenericVideoFallback !== false;
+    const clientFallbackProfile = this.getClientFallbackProfile(userId);
+    const useGenericVideoFallback = options.useGenericVideoFallback !== false && !clientFallbackProfile;
+    if (!platforms.length) {
+      const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
+      const updatePayload: Record<string, unknown> = {
+        [lastRunField]: admin.firestore.FieldValue.serverTimestamp(),
+        [resultField]: [],
+        [nextRunField]: admin.firestore.Timestamp.fromDate(nextRunDate),
+        active: job.active !== false,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      try {
+        await autopostCollection.doc(userId).set(updatePayload, { merge: true });
+      } catch (error) {
+        console.warn('[autopost] firestore no-platform update failed', error);
+      }
+      await this.mirrorAutopostJob(userId, {
+        ...job,
+        active: job.active !== false,
+        [lastRunField]: admin.firestore.Timestamp.now(),
+        [resultField]: [],
+        [nextRunField]: admin.firestore.Timestamp.fromDate(nextRunDate),
+      });
+      return { posted: 0, failed: [], nextRun: nextRunDate.toISOString() };
+    }
     const videoPlatforms = new Set<VideoPlatform>(['youtube', 'tiktok', 'instagram_reels']);
     const optionalVideoPlatforms = new Set([
       'facebook',
@@ -3440,7 +3809,7 @@ export class AutoPostService {
     const basePrompt =
       job.prompt ??
       (isBwinUser
-        ? 'Create a sharp football matchday visual for Bwinbet Uganda featuring real match energy, players in action, stadium atmosphere, and clean editorial sports composition.'
+        ? 'Create a sharp football matchday visual featuring real match energy, players in action, stadium atmosphere, and clean editorial sports composition.'
         : 'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in an executive suite; friendly humanoid robot wearing a tie and glasses, assisting a diverse team, natural expressions, premium interior finishes, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.');
     let runPrompt = isBwinUser
       ? this.buildBwinVisualPrompt(basePrompt)
@@ -3458,7 +3827,8 @@ export class AutoPostService {
       if (optionalVideoPlatforms.has(platform) && hasGenericVideo) return false;
       return true;
     });
-    const requireAiImages = needsImages ? (isBwinUser ? false : this.requireAiImages(job)) : false;
+    const clientPhotoProfile = needsImages ? clientFallbackProfile : null;
+    const requireAiImages = needsImages ? (isBwinUser || clientPhotoProfile ? false : this.requireAiImages(job)) : false;
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
 
     let generated: GeneratedContent | null = options.generatedContent
@@ -3468,6 +3838,16 @@ export class AutoPostService {
         }
       : null;
     let generationError: Error | null = null;
+    if (!generated && clientPhotoProfile) {
+      generated = {
+        images: [],
+        caption_instagram: '',
+        caption_linkedin: '',
+        caption_x: '',
+        hashtags_instagram: '',
+        hashtags_generic: '',
+      };
+    }
     if (!generated) {
       for (let attempt = 0; attempt < maxImageAttempts; attempt += 1) {
         try {
@@ -3504,9 +3884,11 @@ export class AutoPostService {
     const finalGenerated = generated;
     let imageUrls = needsImages
       ? options.generatedContent
-        ? this.resolveApprovedImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages)
-        : this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages)
+        ? this.resolveApprovedImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages, userId)
+        : this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages, userId)
       : [];
+    const recentVideos = this.getRecentVideoHistory(job);
+    const recentVideoSet = new Set(recentVideos);
     const cursorUpdates: Partial<
       Pick<AutoPostJob, 'videoCursor' | 'youtubeVideoCursor' | 'tiktokVideoCursor' | 'reelsVideoCursor'>
     > = {};
@@ -3516,9 +3898,31 @@ export class AutoPostService {
     const captionHistory = new Set(recentCaptions);
     const usedCaptions: string[] = [];
     const historyEntries: HistoryEntry[] = [];
+    let usedClientSourceImageUrl: string | null = null;
+
+    if (clientPhotoProfile) {
+      const sourcedPhoto = await this.pickClientPhotoImageUrl(clientPhotoProfile, isStoryRun ? 'story' : 'feed', recentSet);
+      if (sourcedPhoto) {
+        usedClientSourceImageUrl = sourcedPhoto;
+        const preparedPhoto = await this.prepareClientPhotoImageUrl(
+          sourcedPhoto,
+          clientPhotoProfile,
+          isStoryRun ? 'story' : 'feed',
+        );
+        imageUrls = [preparedPhoto ?? sourcedPhoto];
+      }
+    }
+
+    if (clientPhotoProfile && imageUrls.some(url => this.isDefaultDottFallbackImage(url))) {
+      imageUrls = await this.generateClientFallbackImageUrls(userId, job, isStoryRun, recentSet);
+    }
 
     if (isBwinUser && needsImages) {
       imageUrls = await this.ensureBwinSafeImageUrls(imageUrls, finalGenerated, basePrompt);
+    }
+
+    if (needsImages && imageUrls.length === 0) {
+      imageUrls = await this.generateClientFallbackImageUrls(userId, job, isStoryRun, recentSet);
     }
 
     if (requireAiImages && imageUrls.length === 0) {
@@ -3573,7 +3977,13 @@ export class AutoPostService {
       const tags = platform === 'youtube' && enableYouTubeShorts ? ['shorts'] : undefined;
 
       if (supportsVideo && isVideoPlatform) {
-        const platformSelection = this.selectNextVideo(job, platform as VideoPlatform, fallbackVideoPool);
+        const platformSelection = await this.selectNextVideo(
+          job,
+          platform as VideoPlatform,
+          fallbackVideoPool,
+          userId,
+          recentVideoSet,
+        );
         if (platformSelection.videoUrl) {
           videoUrl = platformSelection.videoUrl;
           if (platform === 'youtube' && typeof platformSelection.nextCursor === 'number') {
@@ -3612,6 +4022,7 @@ export class AutoPostService {
 
       const bwinValidation = validateBwinSportsContent({
         userId,
+        platform,
         caption,
         videoTitle,
         imageUrls: videoUrl ? [] : imageUrls,
@@ -3653,10 +4064,12 @@ export class AutoPostService {
               ? cursorUpdates.reelsVideoCursor
               : job.reelsVideoCursor;
           if (typeof retryCursor === 'number') {
-            const retrySelection = this.selectNextVideo(
+            const retrySelection = await this.selectNextVideo(
               { ...job, reelsVideoCursor: retryCursor },
               'instagram_reels',
               fallbackVideoPool,
+              userId,
+              new Set([...recentVideoSet, videoUrl].filter(Boolean) as string[]),
             );
             if (retrySelection.videoUrl && retrySelection.videoUrl !== videoUrl) {
               try {
@@ -3697,7 +4110,15 @@ export class AutoPostService {
     }
 
     const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
-    const nextRecentImages = this.mergeRecentImages(recentImages, imageUrls);
+    const nextRecentImages = this.mergeRecentImages(
+      recentImages,
+      [...imageUrls, usedClientSourceImageUrl].filter((url): url is string => Boolean(url)),
+    );
+    const postedVideoUrls = historyEntries
+      .filter(entry => entry.status === 'posted')
+      .map(entry => entry.videoUrl?.trim())
+      .filter((url): url is string => Boolean(url));
+    const nextRecentVideos = this.mergeRecentVideos(recentVideos, postedVideoUrls);
     const nextRecentCaptions = this.mergeRecentCaptions(recentCaptions, usedCaptions);
 
     if (usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number') {
@@ -3710,12 +4131,15 @@ export class AutoPostService {
       [nextRunField]: admin.firestore.Timestamp.fromDate(nextRunDate),
       active: job.active !== false,
       recentImageUrls: nextRecentImages,
+      recentVideoUrls: nextRecentVideos,
       recentCaptions: nextRecentCaptions,
       ...cursorUpdates,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
-    if (!isReelsRun) {
+    if (!isReelsRun && !isStoryRun) {
       updatePayload.intervalHours = effectiveIntervalHours;
+    } else if (isStoryRun) {
+      updatePayload.storyIntervalHours = effectiveIntervalHours;
     }
     try {
       await autopostCollection.doc(userId).set(updatePayload, { merge: true });
@@ -3728,6 +4152,7 @@ export class AutoPostService {
       ...job,
       active: job.active !== false,
       recentImageUrls: nextRecentImages,
+      recentVideoUrls: nextRecentVideos,
       recentCaptions: nextRecentCaptions,
       [resultField]: results,
       videoCursor:
@@ -3741,15 +4166,20 @@ export class AutoPostService {
       reelsVideoCursor:
         typeof cursorUpdates.reelsVideoCursor === 'number' ? cursorUpdates.reelsVideoCursor : job.reelsVideoCursor,
     };
-    if (!isReelsRun) {
+    if (!isReelsRun && !isStoryRun) {
       nextRecord.intervalHours = effectiveIntervalHours;
+    } else if (isStoryRun) {
+      nextRecord.storyIntervalHours = effectiveIntervalHours;
     }
     if (nextRunField === 'nextRun') {
       nextRecord.lastRunAt = admin.firestore.Timestamp.now();
       nextRecord.nextRun = admin.firestore.Timestamp.fromDate(nextRunDate);
-    } else {
+    } else if (nextRunField === 'reelsNextRun') {
       nextRecord.reelsLastRunAt = admin.firestore.Timestamp.now();
       nextRecord.reelsNextRun = admin.firestore.Timestamp.fromDate(nextRunDate);
+    } else {
+      nextRecord.storyLastRunAt = admin.firestore.Timestamp.now();
+      nextRecord.storyNextRun = admin.firestore.Timestamp.fromDate(nextRunDate);
     }
     await this.mirrorAutopostJob(userId, nextRecord);
 
@@ -4144,6 +4574,11 @@ export class AutoPostService {
     return job.recentImageUrls.filter(Boolean);
   }
 
+  private getRecentVideoHistory(job: AutoPostJob): string[] {
+    if (!Array.isArray(job.recentVideoUrls)) return [];
+    return job.recentVideoUrls.filter(Boolean);
+  }
+
   private getRecentCaptionHistory(job: AutoPostJob): string[] {
     if (!Array.isArray(job.recentCaptions)) return [];
     return job.recentCaptions.filter(Boolean);
@@ -4153,24 +4588,36 @@ export class AutoPostService {
     return images.filter(url => url && !recent.has(url));
   }
 
-  private resolveImageUrls(images: string[], recent: Set<string>, requireAiImages: boolean) {
+  private resolveImageUrls(images: string[], recent: Set<string>, requireAiImages: boolean, userId?: string) {
     const fresh = this.selectFreshImages(images, recent);
     if (fresh.length) return fresh;
     if (requireAiImages) return [];
-    const fallback = this.pickFallbackImage(recent);
+    const fallback = this.pickFallbackImage(recent, userId);
     return fallback ? [fallback] : images;
   }
 
-  private resolveApprovedImageUrls(images: string[], recent: Set<string>, requireAiImages: boolean) {
+  private resolveApprovedImageUrls(images: string[], recent: Set<string>, requireAiImages: boolean, userId?: string) {
     const approved = images.filter(Boolean);
     if (approved.length) return approved;
     if (requireAiImages) return [];
-    const fallback = this.pickFallbackImage(recent);
+    const fallback = this.pickFallbackImage(recent, userId);
     return fallback ? [fallback] : [];
   }
 
   private mergeRecentImages(existing: string[], used: string[]) {
-    const maxHistory = Math.max(Number(process.env.AUTOPOST_IMAGE_HISTORY ?? 12), 3);
+    const maxHistory = Math.max(Number(process.env.AUTOPOST_IMAGE_HISTORY ?? 400), 3);
+    const next = [...used, ...existing].filter(Boolean);
+    const seen = new Set<string>();
+    const unique = next.filter(url => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+    return unique.slice(0, maxHistory);
+  }
+
+  private mergeRecentVideos(existing: string[], used: string[]) {
+    const maxHistory = Math.max(Number(process.env.AUTOPOST_VIDEO_HISTORY ?? 300), 30);
     const next = [...used, ...existing].filter(Boolean);
     const seen = new Set<string>();
     const unique = next.filter(url => {
@@ -4193,7 +4640,16 @@ export class AutoPostService {
     return unique.slice(0, maxHistory);
   }
 
-  private pickFallbackImage(recent: Set<string>) {
+  private pickFallbackImage(recent: Set<string>, userId?: string) {
+    const clientProfile = userId ? this.getClientFallbackProfile(userId) : null;
+    if (clientProfile) {
+      const clientPool = [...clientProfile.curatedImages.feed, ...clientProfile.curatedImages.story];
+      const freshClientPool = clientPool.filter(url => !recent.has(url));
+      const pickFromClient = freshClientPool.length ? freshClientPool : clientPool;
+      if (pickFromClient.length) {
+        return this.withCacheBuster(pickFromClient[Math.floor(Math.random() * pickFromClient.length)]);
+      }
+    }
     const poolAll = this.getFallbackImagePool();
     const pool = poolAll.filter(url => !recent.has(url));
     const pickFrom = pool.length ? pool : poolAll;
@@ -4252,6 +4708,437 @@ export class AutoPostService {
       content.caption_linkedin?.trim() ||
       this.deriveBwinHeadline(basePrompt);
     return this.generateBwinSportsFallbackImage(fallbackHeadline);
+  }
+
+  private getClientFallbackProfile(userId: string) {
+    const profiles: Record<
+      string,
+      {
+        key: string;
+        brand: string;
+        accent: string;
+        dark: string;
+        light: string;
+        hooks: string[];
+        sublines: string[];
+        queries: string[];
+        curatedImages: {
+          feed: string[];
+          story: string[];
+        };
+      }
+    > = {
+      acmVetCcOiTHeGk5D7eDYieamDF3: {
+        key: 'carmarketplace',
+        brand: 'CARMARKETUG',
+        accent: '#f5c542',
+        dark: '#111418',
+        light: '#f8fafc',
+        hooks: ['Fresh arrivals', 'Budget match', 'Clean daily drives', 'Buyer checklist', 'Deal watch', 'Book a viewing'],
+        sublines: ['Search smarter', 'View with confidence', 'Message your budget', 'Find your next ride'],
+        queries: [
+          'Range Rover SUV',
+          'Audi Q3 SUV',
+          'Subaru Forester',
+          'Toyota Harrier',
+          'Toyota RAV4',
+          'Toyota Prado',
+          'Toyota Land Cruiser',
+          'Toyota Corolla',
+          'Toyota Fielder',
+          'Toyota Vitz',
+          'BMW X5',
+          'BMW 3 Series',
+          'Mercedes Benz C Class',
+          'Mercedes Benz GLE',
+          'electric car',
+          'hybrid car',
+          'Tesla electric car',
+          'Porsche 911',
+          'Lamborghini supercar',
+          'Ferrari supercar',
+          'McLaren supercar',
+        ],
+        curatedImages: {
+          feed: [
+            'https://loremflickr.com/1080/1080/rangerover?lock=41001',
+            'https://loremflickr.com/1080/1080/audiq3?lock=41002',
+            'https://loremflickr.com/1080/1080/subaruforester?lock=41003',
+            'https://loremflickr.com/1080/1080/toyotarav4?lock=41004',
+            'https://loremflickr.com/1080/1080/toyotaharrier?lock=41005',
+            'https://loremflickr.com/1080/1080/toyotalandcruiser?lock=41006',
+            'https://loremflickr.com/1080/1080/toyotaprado?lock=41007',
+            'https://loremflickr.com/1080/1080/toyotacorolla?lock=41008',
+            'https://loremflickr.com/1080/1080/toyotafielder?lock=41009',
+            'https://loremflickr.com/1080/1080/toyotavitz?lock=41010',
+            'https://loremflickr.com/1080/1080/bmwx5?lock=41011',
+            'https://loremflickr.com/1080/1080/bmw3series?lock=41012',
+            'https://loremflickr.com/1080/1080/mercedesbenz?lock=41013',
+            'https://loremflickr.com/1080/1080/mercedescclass?lock=41014',
+            'https://loremflickr.com/1080/1080/mercedesgle?lock=41015',
+            'https://loremflickr.com/1080/1080/electriccar?lock=41016',
+            'https://loremflickr.com/1080/1080/hybridcar?lock=41017',
+            'https://loremflickr.com/1080/1080/porsche911?lock=41018',
+            'https://loremflickr.com/1080/1080/lamborghini?lock=41019',
+            'https://loremflickr.com/1080/1080/ferrari?lock=41020',
+            'https://loremflickr.com/1080/1080/mclaren?lock=41021',
+          ],
+          story: [
+            'https://loremflickr.com/1080/1920/rangerover?lock=42001',
+            'https://loremflickr.com/1080/1920/audiq3?lock=42002',
+            'https://loremflickr.com/1080/1920/subaruforester?lock=42003',
+            'https://loremflickr.com/1080/1920/toyotarav4?lock=42004',
+            'https://loremflickr.com/1080/1920/toyotaharrier?lock=42005',
+            'https://loremflickr.com/1080/1920/toyotalandcruiser?lock=42006',
+            'https://loremflickr.com/1080/1920/toyotaprado?lock=42007',
+            'https://loremflickr.com/1080/1920/toyotacorolla?lock=42008',
+            'https://loremflickr.com/1080/1920/toyotafielder?lock=42009',
+            'https://loremflickr.com/1080/1920/toyotavitz?lock=42010',
+            'https://loremflickr.com/1080/1920/bmwx5?lock=42011',
+            'https://loremflickr.com/1080/1920/bmw3series?lock=42012',
+            'https://loremflickr.com/1080/1920/mercedesbenz?lock=42013',
+            'https://loremflickr.com/1080/1920/mercedescclass?lock=42014',
+            'https://loremflickr.com/1080/1920/mercedesgle?lock=42015',
+            'https://loremflickr.com/1080/1920/electriccar?lock=42016',
+            'https://loremflickr.com/1080/1920/hybridcar?lock=42017',
+            'https://loremflickr.com/1080/1920/porsche911?lock=42018',
+            'https://loremflickr.com/1080/1920/lamborghini?lock=42019',
+            'https://loremflickr.com/1080/1920/ferrari?lock=42020',
+            'https://loremflickr.com/1080/1920/mclaren?lock=42021',
+          ],
+        },
+      },
+      D1iNgjLKNRaQhH35M0NmGfw1LVD2: {
+        key: 'staysphere',
+        brand: 'STAY-SPHERE93',
+        accent: '#34d399',
+        dark: '#12201c',
+        light: '#f4fbf8',
+        hooks: ['Weekend stay', 'Comfort first', 'Short stay ready', 'Room spotlight', 'Easy booking', 'Dates open'],
+        sublines: ['Comfort made simple', 'Ask for availability', 'Dates open', 'Stay where it fits'],
+        queries: ['hotel room', 'apartment bedroom', 'short stay apartment', 'cozy accommodation', 'clean modern room'],
+        curatedImages: {
+          feed: [
+            'https://images.pexels.com/photos/271624/pexels-photo-271624.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/164595/pexels-photo-164595.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/1571460/pexels-photo-1571460.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/1457842/pexels-photo-1457842.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/6585751/pexels-photo-6585751.jpeg?auto=compress&cs=tinysrgb&w=1600',
+          ],
+          story: [
+            'https://images.pexels.com/photos/271624/pexels-photo-271624.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/164595/pexels-photo-164595.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/1571460/pexels-photo-1571460.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/1457842/pexels-photo-1457842.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/6585751/pexels-photo-6585751.jpeg?auto=compress&cs=tinysrgb&h=1920',
+          ],
+        },
+      },
+      vzdH1DnfFLVjlY8bBgC26WACmmw2: {
+        key: 'gamers44life',
+        brand: 'GAMERS44LIFE',
+        accent: '#60a5fa',
+        dark: '#111827',
+        light: '#f8fbff',
+        hooks: ['Weekend gaming', 'Rate the setup', 'Squad night', 'Clutch moment', 'Game of the day', 'Community check'],
+        sublines: ['Play more', 'Squad up', 'Drop your rank', 'Community check'],
+        queries: ['gaming setup', 'esports gaming', 'gamer desk', 'gaming controller', 'pc gaming setup'],
+        curatedImages: {
+          feed: [
+            'https://images.pexels.com/photos/3165335/pexels-photo-3165335.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/442576/pexels-photo-442576.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/7915357/pexels-photo-7915357.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/3945683/pexels-photo-3945683.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/777001/pexels-photo-777001.jpeg?auto=compress&cs=tinysrgb&w=1600',
+          ],
+          story: [
+            'https://images.pexels.com/photos/3165335/pexels-photo-3165335.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/442576/pexels-photo-442576.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/7915357/pexels-photo-7915357.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/3945683/pexels-photo-3945683.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/777001/pexels-photo-777001.jpeg?auto=compress&cs=tinysrgb&h=1920',
+          ],
+        },
+      },
+    };
+    return profiles[userId] ?? null;
+  }
+
+  private shuffled<T>(items: T[]) {
+    return [...items].sort(() => Math.random() - 0.5);
+  }
+
+  private pickClientPhotoQuery(profile: NonNullable<ReturnType<AutoPostService['getClientFallbackProfile']>>) {
+    return profile.queries[Math.floor(Math.random() * profile.queries.length)] ?? profile.queries[0] ?? profile.key;
+  }
+
+  private async fetchPexelsClientPhoto(
+    profile: NonNullable<ReturnType<AutoPostService['getClientFallbackProfile']>>,
+    format: 'feed' | 'story',
+    recentSet: Set<string>,
+  ) {
+    const apiKey = (process.env.PEXELS_API_KEY ?? process.env.CLIENT_IMAGE_PEXELS_API_KEY ?? '').trim();
+    if (!apiKey) return null;
+    try {
+      const query = this.pickClientPhotoQuery(profile);
+      const page = 1 + Math.floor(Math.random() * 8);
+      const response = await axios.get('https://api.pexels.com/v1/search', {
+        headers: { Authorization: apiKey },
+        params: {
+          query,
+          per_page: 30,
+          page,
+          orientation: format === 'story' ? 'portrait' : 'landscape',
+        },
+        timeout: 20000,
+      });
+      const photos = (response.data?.photos as Array<{ src?: Record<string, string> }> | undefined) ?? [];
+      const candidates = this.shuffled(
+        photos
+          .map(photo => (format === 'story' ? photo.src?.portrait || photo.src?.large2x : photo.src?.large2x || photo.src?.large))
+          .filter((url): url is string => Boolean(url)),
+      );
+      return candidates.find(url => !recentSet.has(url)) ?? null;
+    } catch (error) {
+      console.warn('[autopost] Pexels client image lookup failed', {
+        profile: profile.key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  private async fetchPixabayClientPhoto(
+    profile: NonNullable<ReturnType<AutoPostService['getClientFallbackProfile']>>,
+    format: 'feed' | 'story',
+    recentSet: Set<string>,
+  ) {
+    const apiKey = (process.env.PIXABAY_API_KEY ?? process.env.CLIENT_IMAGE_PIXABAY_API_KEY ?? '').trim();
+    if (!apiKey) return null;
+    try {
+      const query = this.pickClientPhotoQuery(profile);
+      const page = 1 + Math.floor(Math.random() * 5);
+      const response = await axios.get('https://pixabay.com/api/', {
+        params: {
+          key: apiKey,
+          q: query,
+          image_type: 'photo',
+          safesearch: true,
+          per_page: 50,
+          page,
+          orientation: format === 'story' ? 'vertical' : 'horizontal',
+        },
+        timeout: 20000,
+      });
+      const hits = (response.data?.hits as Array<{ largeImageURL?: string; webformatURL?: string }> | undefined) ?? [];
+      const candidates = this.shuffled(
+        hits.map(hit => hit.largeImageURL || hit.webformatURL).filter((url): url is string => Boolean(url)),
+      );
+      return candidates.find(url => !recentSet.has(url)) ?? null;
+    } catch (error) {
+      console.warn('[autopost] Pixabay client image lookup failed', {
+        profile: profile.key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  private pickCuratedClientPhoto(
+    profile: NonNullable<ReturnType<AutoPostService['getClientFallbackProfile']>>,
+    format: 'feed' | 'story',
+    recentSet: Set<string>,
+  ) {
+    const pool = [...(profile.curatedImages[format] ?? []), ...this.generatedClientPhotoPool(profile, format)];
+    const candidates = this.shuffled(pool).filter(url => !recentSet.has(url));
+    return candidates[0] ?? null;
+  }
+
+  private generatedClientPhotoPool(
+    profile: NonNullable<ReturnType<AutoPostService['getClientFallbackProfile']>>,
+    format: 'feed' | 'story',
+  ) {
+    const targetCount = 190;
+    const locksPerQuery = Math.max(Math.ceil(targetCount / Math.max(profile.queries.length, 1)), 8);
+    const dimensions = format === 'story' ? '1080/1920' : '1080/1080';
+    const keyOffsets: Record<string, number> = {
+      carmarketplace: 61000,
+      staysphere: 71000,
+      gamers44life: 81000,
+    };
+    const offset = keyOffsets[profile.key] ?? 90000;
+    const urls: string[] = [];
+    profile.queries.forEach((query, queryIndex) => {
+      const slug = query.toLowerCase().replace(/[^a-z0-9]+/g, '').trim() || profile.key;
+      for (let index = 0; index < locksPerQuery; index += 1) {
+        const lock = offset + queryIndex * 100 + index + (format === 'story' ? 50 : 0);
+        urls.push(`https://loremflickr.com/${dimensions}/${slug}?lock=${lock}`);
+      }
+    });
+    return urls.slice(0, targetCount);
+  }
+
+  private async pickClientPhotoImageUrl(
+    profile: NonNullable<ReturnType<AutoPostService['getClientFallbackProfile']>>,
+    format: 'feed' | 'story',
+    recentSet: Set<string>,
+  ) {
+    return (
+      (await this.fetchPexelsClientPhoto(profile, format, recentSet)) ||
+      (await this.fetchPixabayClientPhoto(profile, format, recentSet)) ||
+      this.pickCuratedClientPhoto(profile, format, recentSet)
+    );
+  }
+
+  private wrapFallbackWords(value: string, maxChars: number) {
+    const words = value.split(/\s+/);
+    const lines: string[] = [];
+    let current = '';
+    for (const word of words) {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length > maxChars && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = next;
+      }
+    }
+    if (current) lines.push(current);
+    return lines;
+  }
+
+  private escapeFallbackSvg(value: string) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  private buildClientFallbackSvg(
+    profile: NonNullable<ReturnType<AutoPostService['getClientFallbackProfile']>>,
+    format: 'feed' | 'story',
+  ) {
+    const width = 1080;
+    const height = format === 'story' ? 1920 : 1080;
+    const nonce = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const seed = crypto.createHash('sha256').update(`${profile.key}-${format}-${nonce}`).digest('hex');
+    const a = parseInt(seed.slice(0, 2), 16);
+    const b = parseInt(seed.slice(2, 4), 16);
+    const hook = profile.hooks[parseInt(seed.slice(4, 6), 16) % profile.hooks.length].toUpperCase();
+    const subline = profile.sublines[parseInt(seed.slice(6, 8), 16) % profile.sublines.length];
+    const titleLines = this.wrapFallbackWords(hook, format === 'story' ? 13 : 16).slice(0, 3);
+    const yBase = format === 'story' ? 640 : 365;
+    const titleSize = format === 'story' ? 118 : 100;
+    return `
+<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="${profile.dark}"/>
+      <stop offset="0.58" stop-color="#1f2937"/>
+      <stop offset="1" stop-color="${profile.accent}"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="32%" r="70%">
+      <stop offset="0" stop-color="${profile.accent}" stop-opacity="0.44"/>
+      <stop offset="1" stop-color="${profile.accent}" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="${width}" height="${height}" fill="url(#bg)"/>
+  <rect width="${width}" height="${height}" fill="url(#glow)"/>
+  <circle cx="${160 + a}" cy="${170 + b}" r="${format === 'story' ? 270 : 190}" fill="${profile.accent}" opacity="0.13"/>
+  <circle cx="${width - 145 - b}" cy="${height - 145 - a}" r="${format === 'story' ? 340 : 230}" fill="#ffffff" opacity="0.08"/>
+  <path d="M${90 + b} ${height - 280} C ${300 + a} ${height - 430}, ${620 - b} ${height - 160}, ${width - 80} ${height - 350}" fill="none" stroke="${profile.accent}" stroke-width="18" opacity="0.42"/>
+  <rect x="70" y="70" width="${width - 140}" height="${height - 140}" rx="42" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="3"/>
+  <text x="92" y="${format === 'story' ? 170 : 135}" fill="${profile.light}" font-family="Arial, Helvetica, sans-serif" font-size="${format === 'story' ? 44 : 34}" font-weight="700">${this.escapeFallbackSvg(profile.brand)}</text>
+  ${titleLines
+    .map(
+      (line, index) =>
+        `<text x="92" y="${yBase + index * (titleSize + 12)}" fill="${profile.light}" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="${titleSize}" font-weight="900">${this.escapeFallbackSvg(line)}</text>`,
+    )
+    .join('\n')}
+  <rect x="92" y="${format === 'story' ? height - 415 : height - 255}" width="${width - 184}" height="${format === 'story' ? 168 : 122}" rx="30" fill="#ffffff" opacity="0.12"/>
+  <text x="130" y="${format === 'story' ? height - 315 : height - 180}" fill="${profile.light}" font-family="Arial, Helvetica, sans-serif" font-size="${format === 'story' ? 52 : 38}" font-weight="700">${this.escapeFallbackSvg(subline)}</text>
+  <text x="130" y="${format === 'story' ? height - 240 : height - 130}" fill="${profile.light}" opacity="0.72" font-family="Arial, Helvetica, sans-serif" font-size="${format === 'story' ? 34 : 26}">Message us to get started</text>
+  <text x="${width - 92}" y="${height - 95}" text-anchor="end" fill="${profile.light}" opacity="0.45" font-family="Arial, Helvetica, sans-serif" font-size="24">${this.escapeFallbackSvg(seed.slice(0, 10).toUpperCase())}</text>
+</svg>`;
+  }
+
+  private async uploadClientFallbackImage(buffer: Buffer, profileKey: string, format: 'feed' | 'story') {
+    const supabaseUrl = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
+    const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
+    const bucket = process.env.CLIENT_CAMPAIGN_BUCKET?.trim() || 'dott-campaign';
+    if (supabaseUrl && serviceRoleKey) {
+      const objectPath = `client-autopost/${profileKey}/${new Date().toISOString().slice(0, 10)}/${format}-${Date.now()}-${crypto.randomUUID()}.jpg`;
+      await axios.post(`${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`, buffer, {
+        headers: {
+          Authorization: `Bearer ${serviceRoleKey}`,
+          apikey: serviceRoleKey,
+          'Content-Type': 'image/jpeg',
+          'x-upsert': 'true',
+        },
+        maxBodyLength: Infinity,
+        timeout: 30000,
+      });
+      return `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+    }
+    return saveGeneratedImageBuffer(buffer, 'jpg');
+  }
+
+  private async prepareClientPhotoImageUrl(
+    url: string,
+    profile: NonNullable<ReturnType<AutoPostService['getClientFallbackProfile']>>,
+    format: 'feed' | 'story',
+  ) {
+    try {
+      const source = await this.loadImageBuffer(url);
+      if (!source) return null;
+      const dimensions = format === 'story' ? { width: 1080, height: 1920 } : { width: 1080, height: 1080 };
+      const buffer = await sharp(source)
+        .rotate()
+        .resize(dimensions.width, dimensions.height, {
+          fit: 'cover',
+          position: 'attention',
+          withoutEnlargement: false,
+        })
+        .jpeg({ quality: 91, mozjpeg: true })
+        .toBuffer();
+      return this.uploadClientFallbackImage(buffer, profile.key, format);
+    } catch (error) {
+      console.warn('[autopost] client photo normalization failed', {
+        profile: profile.key,
+        format,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  private async generateClientFallbackImageUrls(
+    userId: string,
+    _job: AutoPostJob,
+    isStoryRun: boolean,
+    recentSet: Set<string>,
+  ) {
+    const profile = this.getClientFallbackProfile(userId);
+    if (!profile) return [];
+    try {
+      const format = isStoryRun ? 'story' : 'feed';
+      const photoUrl = await this.pickClientPhotoImageUrl(profile, format, recentSet);
+      if (photoUrl) {
+        return [await this.prepareClientPhotoImageUrl(photoUrl, profile, format) ?? photoUrl];
+      }
+      const svg = this.buildClientFallbackSvg(profile, format);
+      const buffer = await sharp(Buffer.from(svg)).jpeg({ quality: 90, mozjpeg: true }).toBuffer();
+      const url = await this.uploadClientFallbackImage(buffer, profile.key, format);
+      return recentSet.has(url) ? [] : [url];
+    } catch (error) {
+      console.warn('[autopost] client fallback image generation failed', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
   }
 
   private buildVisualPrompt(basePrompt: string) {
@@ -4415,7 +5302,7 @@ export class AutoPostService {
     if (!history.has(signature)) {
       return { caption, signature };
     }
-    const variants = userId && this.isBwinScopeUser(userId) ? this.bwinFallbackCaptionVariants : this.fallbackCaptionVariants;
+    const variants = this.getCaptionVarietyVariants(userId);
     for (const variant of variants) {
       const candidate = this.appendCaptionSuffix(caption, variant, platform);
       const candidateSignature = this.buildCaptionSignature(platform, candidate);
@@ -4462,6 +5349,29 @@ export class AutoPostService {
 
   private allowThirdPartyHighlightVideoRepublish() {
     return (process.env.ALLOW_THIRD_PARTY_HIGHLIGHT_VIDEO_REPUBLISH ?? 'false').toLowerCase() === 'true';
+  }
+
+  private areBwinShortVideosDisabled() {
+    return true;
+  }
+
+  private getCaptionVarietyVariants(userId?: string) {
+    const profile = userId ? this.getClientFallbackProfile(userId) : null;
+    if (profile?.key === 'staysphere') {
+      return ['Send your dates to check availability.', 'DM your guest count and preferred area.', 'Ask for current stay options.'];
+    }
+    if (profile?.key === 'gamers44life') {
+      return ['Drop your current game in the comments.', 'DM your setup or highlight idea.', 'What platform are you playing on?'];
+    }
+    if (profile?.key === 'carmarketplace') {
+      return ['Send your budget and preferred model.', 'DM your viewing area and car type.', 'Ask for clean car options today.'];
+    }
+    return userId && this.isBwinScopeUser(userId) ? this.bwinFallbackCaptionVariants : this.fallbackCaptionVariants;
+  }
+
+  private isDefaultDottFallbackImage(url?: string) {
+    const value = String(url ?? '').toLowerCase();
+    return value.includes('/public/fallback-images/') || value.includes('dottmediaapk.onrender.com/public/fallback-images/');
   }
 
   private getOwnedBwinHighlightVideoUrl() {
@@ -4690,7 +5600,19 @@ export class AutoPostService {
     return candidates[0];
   }
 
-  private selectNextVideo(job: AutoPostJob, platform: VideoPlatform, fallbackVideos: string[] = []) {
+  private async selectNextVideo(
+    job: AutoPostJob,
+    platform: VideoPlatform,
+    fallbackVideos: string[] = [],
+    userId?: string,
+    recentVideos: Set<string> = new Set(),
+  ) {
+    if (platform === 'instagram_reels' && userId && job.reelsSourceMode !== 'static') {
+      const dynamicVideoUrl = await this.pickDynamicClientReelVideo(userId, recentVideos);
+      if (dynamicVideoUrl) {
+        return { videoUrl: dynamicVideoUrl, nextCursor: undefined };
+      }
+    }
     const list =
       platform === 'youtube'
         ? (job.youtubeVideoUrls ?? []).map(url => url.trim()).filter(Boolean)
@@ -4715,20 +5637,162 @@ export class AutoPostService {
           : Number.isFinite(job.reelsVideoCursor)
             ? (job.reelsVideoCursor as number)
             : 0;
-    if (!list.length) {
+    const freshList = list.filter(url => !recentVideos.has(url));
+    if (!freshList.length && list.length) {
+      return { videoUrl: undefined, nextCursor: cursor };
+    }
+    if (!freshList.length) {
       if (single) {
+        if (recentVideos.has(single)) return { videoUrl: undefined, nextCursor: undefined };
         return { videoUrl: single, nextCursor: undefined };
       }
-      if (!fallbackVideos.length) {
+      const freshFallbackVideos = fallbackVideos.filter(url => !recentVideos.has(url));
+      if (!freshFallbackVideos.length) {
         return { videoUrl: undefined, nextCursor: undefined };
       }
-      const index = ((cursor % fallbackVideos.length) + fallbackVideos.length) % fallbackVideos.length;
-      const nextCursor = (index + 1) % fallbackVideos.length;
-      return { videoUrl: fallbackVideos[index], nextCursor };
+      const index = ((cursor % freshFallbackVideos.length) + freshFallbackVideos.length) % freshFallbackVideos.length;
+      const nextCursor = (index + 1) % freshFallbackVideos.length;
+      return { videoUrl: freshFallbackVideos[index], nextCursor };
     }
-    const index = ((cursor % list.length) + list.length) % list.length;
-    const nextCursor = (index + 1) % list.length;
-    return { videoUrl: list[index], nextCursor };
+    const index = ((cursor % freshList.length) + freshList.length) % freshList.length;
+    const nextCursor = (index + 1) % freshList.length;
+    return { videoUrl: freshList[index], nextCursor };
+  }
+
+  private getClientReelSourceProfile(userId: string): ReelSourceProfile | null {
+    const profiles: Record<string, ReelSourceProfile> = {
+      acmVetCcOiTHeGk5D7eDYieamDF3: {
+        key: 'carmarketplace',
+        pages: [
+          'https://mixkit.co/free-stock-video/car/',
+          'https://mixkit.co/free-stock-video/car-interior/',
+          'https://mixkit.co/free-stock-video/automotive/',
+          'https://mixkit.co/free-stock-video/sports-car/',
+          'https://mixkit.co/free-stock-video/dashboard/',
+          'https://mixkit.co/free-stock-video/auto/',
+          'https://mixkit.co/free-stock-video/car-wash/',
+        ],
+      },
+      D1iNgjLKNRaQhH35M0NmGfw1LVD2: {
+        key: 'staysphere',
+        pages: [
+          'https://mixkit.co/free-stock-video/hotel-room/',
+          'https://mixkit.co/free-stock-video/bedroom/',
+          'https://mixkit.co/free-stock-video/hotel/',
+          'https://mixkit.co/free-stock-video/apartment/',
+          'https://mixkit.co/free-stock-video/vacation/',
+        ],
+      },
+      vzdH1DnfFLVjlY8bBgC26WACmmw2: {
+        key: 'gamers44life',
+        pages: [
+          'https://mixkit.co/free-stock-video/video-game/',
+          'https://mixkit.co/free-stock-video/gaming/',
+          'https://mixkit.co/free-stock-video/game/',
+          'https://mixkit.co/free-stock-video/games/',
+          'https://mixkit.co/free-stock-video/computer/',
+        ],
+      },
+    };
+    return profiles[userId] ?? null;
+  }
+
+  private async pickDynamicClientReelVideo(userId: string, recentVideos: Set<string>) {
+    const profile = this.getClientReelSourceProfile(userId);
+    if (!profile) return null;
+    const candidates = await this.fetchMixkitReelCandidates(profile);
+    return candidates.find(url => !recentVideos.has(url)) ?? null;
+  }
+
+  private async fetchMixkitReelCandidates(profile: ReelSourceProfile) {
+    const discovered = new Set<string>();
+    const shuffledPages = this.shuffled(profile.pages);
+    for (const page of shuffledPages) {
+      for (const url of await this.fetchMixkitPageVideos(page)) {
+        discovered.add(url);
+      }
+      if (discovered.size >= 80) break;
+    }
+    return this.shuffled([...discovered]);
+  }
+
+  private async fetchMixkitPageVideos(pageUrl: string) {
+    try {
+      const videos = new Set<string>();
+      const itemUrls = new Set<string>();
+      const pageVariants = [pageUrl, ...[2, 3, 4, 5].map(page => `${pageUrl.replace(/\/?$/, '/') }?page=${page}`)];
+      for (const url of pageVariants) {
+        const response = await axios.get(url, {
+          timeout: 30000,
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          },
+        });
+        this.extractMixkitMp4Urls(String(response.data)).forEach(video => videos.add(video));
+        const $ = cheerio.load(response.data);
+        $('a[href]').each((_, element) => {
+          const href = String($(element).attr('href') ?? '').trim();
+          if (!href.includes('/free-stock-video/')) return;
+          if (href.includes('/discover/') || href.includes('#breadcrumb') || href.includes('#itemList') || href.includes('#videoGallery')) return;
+          const absolute = href.startsWith('http') ? href : `https://mixkit.co${href}`;
+          itemUrls.add(absolute.split('#')[0].replace(/\/?$/, '/'));
+        });
+        if (videos.size >= 120 || itemUrls.size >= 80) break;
+      }
+      for (const itemUrl of this.shuffled([...itemUrls]).slice(0, 18)) {
+        for (const video of await this.fetchMixkitItemVideos(itemUrl)) {
+          videos.add(video);
+        }
+      }
+      return [...videos];
+    } catch (error) {
+      console.warn('[autopost] Mixkit reel source lookup failed', {
+        pageUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
+  private extractMixkitMp4Urls(html: string) {
+    const matches = String(html).match(/https:\/\/[^"']+\.mp4/g) ?? [];
+    const seenContent = new Set<string>();
+    const normalized = matches
+      .map(url => url.trim())
+      .filter(url => /assets\.mixkit\.co\/(?:videos|active_storage\/video_items)\//.test(url))
+      .sort((a, b) => {
+        const rank = (url: string) => (/-1080\.mp4$/.test(url) ? 0 : /-720\.mp4$/.test(url) ? 1 : 2);
+        return rank(a) - rank(b);
+      })
+      .filter(url => {
+        const key = url
+          .replace(/-1080\.mp4$/, '')
+          .replace(/-720\.mp4$/, '')
+          .replace(/-360\.mp4$/, '');
+        if (seenContent.has(key)) return false;
+        seenContent.add(key);
+        return true;
+      });
+    return [...new Set(normalized)];
+  }
+
+  private async fetchMixkitItemVideos(itemUrl: string) {
+    try {
+      const response = await axios.get(itemUrl, {
+        timeout: 30000,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+      if (/Restricted License|Personal Use only/i.test(String(response.data))) return [];
+      return this.extractMixkitMp4Urls(String(response.data));
+    } catch {
+      return [];
+    }
   }
 
   private selectNextGenericVideo(job: AutoPostJob, fallbackVideos: string[] = []) {

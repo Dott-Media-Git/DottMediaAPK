@@ -10,7 +10,13 @@
     "build": "tsc && node scripts/fix-esm-extensions.mjs",
     "worker": "tsx src/workers/automationWorker.ts",
     "test": "tsx src/tests/runTests.ts",
-    "seed": "tsx scripts/seedAdmin.ts"
+    "seed": "tsx scripts/seedAdmin.ts",
+    "connect-client-socials": "tsx scripts/connectClientSocials.ts",
+    "post-client-starter-samples": "tsx scripts/postClientStarterSamples.ts",
+    "schedule-client-two-hour-campaign": "tsx scripts/scheduleClientTwoHourCampaign.ts",
+    "ensure-client-social-automation": "tsx scripts/ensureClientSocialAutomation.ts",
+    "process-client-comments-once": "tsx scripts/processClientCommentsOnce.ts",
+    "post-stored-reel-backups-once": "tsx scripts/postStoredReelBackupsOnce.ts"
   },
   "keywords": [],
   "author": "",
