@@ -1175,11 +1175,18 @@ export class AutoPostService {
           trendNextRun: outcome.nextRun,
         });
       }
-      if (processed === 0) {
-        const fallbackResult = await this.runDueJobsFromFallback(now);
-        if ((fallbackResult.processed ?? 0) > 0) {
-          return fallbackResult;
+      const fallbackResult = await this.runDueJobsFromFallback(now);
+      if ((fallbackResult.processed ?? 0) > 0) {
+        for (const fallbackRow of (fallbackResult.results ?? [])) {
+          const existing = results.get(fallbackRow.userId) ?? {
+            userId: fallbackRow.userId,
+            posted: 0,
+            failed: 0,
+            nextRun: null,
+          };
+          results.set(fallbackRow.userId, { ...existing, ...fallbackRow });
         }
+        processed += fallbackResult.processed ?? 0;
       }
       return { processed, results: Array.from(results.values()) };
     } catch (error) {
