@@ -33,6 +33,11 @@ import type { TrendCandidate, TrendItem } from '../types/footballTrends.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
 import { buildCarmarketVehicleCaption, pickBeforwardVehicle } from './beforwardVehicleService.js';
+import {
+  buildStaysphereListingCaption,
+  pickStaysphereListing,
+  staysphereListingHistoryKey,
+} from './staysphereListingService.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from './bwinContentGuard.js';
 import {
@@ -3972,6 +3977,8 @@ export class AutoPostService {
     let usedClientSourceImageUrl: string | null = null;
     let carmarketVehicleCaption: string | null = null;
     let usedBeforwardStockKey: string | null = null;
+    let staysphereListingCaption: string | null = null;
+    let usedStaysphereListingKey: string | null = null;
 
     if (clientPhotoProfile?.key === 'carmarketplace' && !isStoryRun && needsImages) {
       try {
@@ -3992,7 +3999,27 @@ export class AutoPostService {
       }
     }
 
-    if (clientPhotoProfile && !carmarketVehicleCaption) {
+    if (clientPhotoProfile?.key === 'staysphere' && needsImages) {
+      try {
+        const recentListingKeys = new Set(
+          [...recentImages, ...recentCaptions]
+            .map(value => String(value).match(/staysphere-listing:[^\s]+/i)?.[0]?.toLowerCase())
+            .filter((value): value is string => Boolean(value)),
+        );
+        const listing = await pickStaysphereListing({ recentListingKeys });
+        const listingImages = listing.images.slice(0, isStoryRun ? 1 : 10);
+        imageUrls = listingImages;
+        staysphereListingCaption = buildStaysphereListingCaption(listing);
+        usedStaysphereListingKey = staysphereListingHistoryKey(listing);
+      } catch (error) {
+        console.warn('[autopost] Staysphere Uganda listing lookup failed; using client photo fallback', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (clientPhotoProfile && !carmarketVehicleCaption && !staysphereListingCaption) {
       const sourcedPhoto = await this.pickClientPhotoImageUrl(clientPhotoProfile, isStoryRun ? 'story' : 'feed', recentSet);
       if (sourcedPhoto) {
         usedClientSourceImageUrl = sourcedPhoto;
@@ -4057,13 +4084,15 @@ export class AutoPostService {
       const rawCaption =
         carmarketVehicleCaption && (platform === 'facebook' || platform === 'instagram')
           ? carmarketVehicleCaption
+          : staysphereListingCaption && (platform === 'facebook' || platform === 'instagram')
+            ? staysphereListingCaption
           : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
       const shortsCaption =
         platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
       const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
       const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
       const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
-      const { caption, signature } = carmarketVehicleCaption
+      const { caption, signature } = carmarketVehicleCaption || staysphereListingCaption
         ? { caption: brandedCaption, signature: this.buildCaptionSignature(platform, brandedCaption) }
         : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
       const isVideoPlatform = videoPlatforms.has(platform as VideoPlatform);
@@ -4209,7 +4238,9 @@ export class AutoPostService {
     const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
     const nextRecentImages = this.mergeRecentImages(
       recentImages,
-      [...imageUrls, usedClientSourceImageUrl, usedBeforwardStockKey].filter((url): url is string => Boolean(url)),
+      [...imageUrls, usedClientSourceImageUrl, usedBeforwardStockKey, usedStaysphereListingKey].filter(
+        (url): url is string => Boolean(url),
+      ),
     );
     const postedVideoUrls = historyEntries
       .filter(entry => entry.status === 'posted')
@@ -4218,7 +4249,9 @@ export class AutoPostService {
     const nextRecentVideos = this.mergeRecentVideos(recentVideos, postedVideoUrls);
     const nextRecentCaptions = this.mergeRecentCaptions(
       recentCaptions,
-      [...usedCaptions, usedBeforwardStockKey].filter((value): value is string => Boolean(value)),
+      [...usedCaptions, usedBeforwardStockKey, usedStaysphereListingKey].filter(
+        (value): value is string => Boolean(value),
+      ),
     );
 
     if (usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number') {

@@ -30,6 +30,8 @@ import { resolveBrandIdForClient } from './brandKitService.js';
 import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage } from './tableImageService.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
+import { buildCarmarketVehicleCaption, pickBeforwardVehicle } from './beforwardVehicleService.js';
+import { buildStaysphereListingCaption, pickStaysphereListing, staysphereListingHistoryKey, } from './staysphereListingService.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from './bwinContentGuard.js';
 import { getBwinAccountClosureMessage, getBwinAccountClosureState, isBwinAccountClosureActive, } from './bwinAccountClosureService.js';
@@ -42,6 +44,23 @@ const TOP_FIVE_LEAGUES = [
 ];
 const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
+const CLIENT_META_FALLBACKS = {
+    acmVetCcOiTHeGk5D7eDYieamDF3: {
+        pageId: '1033657279841186',
+        instagramAccountId: '17841414110816982',
+        instagramUsername: 'carmarketplace999',
+    },
+    D1iNgjLKNRaQhH35M0NmGfw1LVD2: {
+        pageId: '1191303874068642',
+        instagramAccountId: '17841448080672466',
+        instagramUsername: 'staysphere93',
+    },
+    vzdH1DnfFLVjlY8bBgC26WACmmw2: {
+        pageId: '1121885391014110',
+        instagramAccountId: '17841412643148539',
+        instagramUsername: 'gamers44life',
+    },
+};
 const platformPublishers = {
     instagram: publishToInstagram,
     instagram_reels: publishToInstagramReel,
@@ -179,8 +198,36 @@ export class AutoPostService {
         });
     }
     async getRuntimeFallbackAccounts(userId) {
-        if (!this.isBwinScopeUser(userId))
-            return {};
+        if (!this.isBwinScopeUser(userId)) {
+            const clientFallback = CLIENT_META_FALLBACKS[userId];
+            const token = (process.env.CLIENT_META_USER_TOKEN ?? process.env.FACEBOOK_PAGE_TOKEN ?? process.env.META_GRAPH_TOKEN ?? '').trim();
+            if (!clientFallback || !token)
+                return {};
+            try {
+                const resolved = await resolveFacebookPageId(token, clientFallback.pageId);
+                const pageToken = resolved?.pageToken?.trim() || token;
+                const pageId = resolved?.pageId?.trim() || clientFallback.pageId;
+                return {
+                    facebook: {
+                        accessToken: pageToken,
+                        pageId,
+                        ...(resolved?.pageName ? { pageName: resolved.pageName } : {}),
+                    },
+                    instagram: {
+                        accessToken: pageToken,
+                        accountId: clientFallback.instagramAccountId,
+                        username: clientFallback.instagramUsername,
+                    },
+                };
+            }
+            catch (error) {
+                console.warn('[autopost] client runtime credential fallback failed', {
+                    userId,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                return {};
+            }
+        }
         const fallback = {
             ...(this.getEmergencyTwitterCredentials() ?? {}),
             ...(this.getEmergencyInstagramCredentials() ?? {}),
@@ -265,7 +312,6 @@ export class AutoPostService {
             dueStandard: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false && job.nextRun && job.nextRun.toMillis() <= now.toMillis()),
             dueReels: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false && job.reelsNextRun && job.reelsNextRun.toMillis() <= now.toMillis()),
             dueStories: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false &&
-                job.storyTrendEnabled === true &&
                 job.storyNextRun &&
                 job.storyNextRun.toMillis() <= now.toMillis()),
             dueTrends: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false &&
@@ -330,7 +376,15 @@ export class AutoPostService {
         for (const [userId, job] of dueStories) {
             if (!(await this.claimDueRun(userId, job, 'story_next_run', now)))
                 continue;
-            const outcome = await this.executeTrendStories(userId, job);
+            const outcome = job.storyTrendEnabled === true
+                ? await this.executeTrendStories(userId, job)
+                : await this.executeJob(userId, job, {
+                    platforms: this.getStoryPlatforms(job),
+                    intervalHours: job.storyIntervalHours ?? this.defaultStoryIntervalHours,
+                    nextRunField: 'storyNextRun',
+                    lastRunField: 'storyLastRunAt',
+                    resultField: 'storyLastResult',
+                });
             processed += 1;
             const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
             results.set(userId, {
@@ -767,8 +821,9 @@ export class AutoPostService {
                     await Promise.all(selfHealWrites);
                 }
             }
-            if (standardSnap.empty && reelsSnap.empty && storiesSnap.empty && trendSnap.empty)
-                return { processed: 0 };
+            if (standardSnap.empty && reelsSnap.empty && storiesSnap.empty && trendSnap.empty) {
+                return this.runDueJobsFromFallback(now);
+            }
             let processed = 0;
             const results = new Map();
             for (const doc of standardSnap.docs) {
@@ -776,6 +831,8 @@ export class AutoPostService {
                 if (data.active === false)
                     continue;
                 this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
+                if (!(await this.claimDueRun(doc.id, data, 'next_run', now)))
+                    continue;
                 const outcome = await this.executeJob(doc.id, data);
                 processed += 1;
                 results.set(doc.id, {
@@ -790,6 +847,8 @@ export class AutoPostService {
                 if (data.active === false)
                     continue;
                 this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
+                if (!(await this.claimDueRun(doc.id, data, 'reels_next_run', now)))
+                    continue;
                 const outcome = await this.executeJob(doc.id, data, {
                     platforms: ['instagram_reels'],
                     intervalHours: data.reelsIntervalHours ?? this.defaultReelsIntervalHours,
@@ -812,6 +871,8 @@ export class AutoPostService {
                 if (data.active === false)
                     continue;
                 this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
+                if (!(await this.claimDueRun(doc.id, data, 'story_next_run', now)))
+                    continue;
                 const outcome = data.storyTrendEnabled === true
                     ? await this.executeTrendStories(doc.id, data)
                     : await this.executeJob(doc.id, data, {
@@ -835,6 +896,8 @@ export class AutoPostService {
                 if (data.active === false || data.trendEnabled !== true)
                     continue;
                 this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
+                if (!(await this.claimDueRun(doc.id, data, 'trend_next_run', now)))
+                    continue;
                 const outcome = await this.executeTrendPosts(doc.id, data);
                 processed += 1;
                 const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
@@ -844,6 +907,19 @@ export class AutoPostService {
                     trendFailed: outcome.failed.length,
                     trendNextRun: outcome.nextRun,
                 });
+            }
+            const fallbackResult = await this.runDueJobsFromFallback(now);
+            if ((fallbackResult.processed ?? 0) > 0) {
+                for (const fallbackRow of (fallbackResult.results ?? [])) {
+                    const existing = results.get(fallbackRow.userId) ?? {
+                        userId: fallbackRow.userId,
+                        posted: 0,
+                        failed: 0,
+                        nextRun: null,
+                    };
+                    results.set(fallbackRow.userId, { ...existing, ...fallbackRow });
+                }
+                processed += fallbackResult.processed ?? 0;
             }
             return { processed, results: Array.from(results.values()) };
         }
@@ -3437,7 +3513,46 @@ export class AutoPostService {
         const usedCaptions = [];
         const historyEntries = [];
         let usedClientSourceImageUrl = null;
-        if (clientPhotoProfile) {
+        let carmarketVehicleCaption = null;
+        let usedBeforwardStockKey = null;
+        let staysphereListingCaption = null;
+        let usedStaysphereListingKey = null;
+        if (clientPhotoProfile?.key === 'carmarketplace' && !isStoryRun && needsImages) {
+            try {
+                const recentStockNos = new Set([...recentImages, ...recentCaptions]
+                    .map(value => String(value).match(/\b[A-Z]{2}\d{6}\b/i)?.[0]?.toUpperCase())
+                    .filter((value) => Boolean(value)));
+                const vehicle = await pickBeforwardVehicle({ recentStockNos });
+                imageUrls = vehicle.images.slice(0, 10);
+                carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
+                usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
+            }
+            catch (error) {
+                console.warn('[autopost] BE FORWARD vehicle lookup failed; using client photo fallback', {
+                    userId,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+        if (clientPhotoProfile?.key === 'staysphere' && needsImages) {
+            try {
+                const recentListingKeys = new Set([...recentImages, ...recentCaptions]
+                    .map(value => String(value).match(/staysphere-listing:[^\s]+/i)?.[0]?.toLowerCase())
+                    .filter((value) => Boolean(value)));
+                const listing = await pickStaysphereListing({ recentListingKeys });
+                const listingImages = listing.images.slice(0, isStoryRun ? 1 : 10);
+                imageUrls = listingImages;
+                staysphereListingCaption = buildStaysphereListingCaption(listing);
+                usedStaysphereListingKey = staysphereListingHistoryKey(listing);
+            }
+            catch (error) {
+                console.warn('[autopost] Staysphere Uganda listing lookup failed; using client photo fallback', {
+                    userId,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+        if (clientPhotoProfile && !carmarketVehicleCaption && !staysphereListingCaption) {
             const sourcedPhoto = await this.pickClientPhotoImageUrl(clientPhotoProfile, isStoryRun ? 'story' : 'feed', recentSet);
             if (sourcedPhoto) {
                 usedClientSourceImageUrl = sourcedPhoto;
@@ -3488,12 +3603,18 @@ export class AutoPostService {
         }
         for (const platform of platforms) {
             const publisher = platformPublishers[platform] ?? publishToTwitter;
-            const rawCaption = this.captionForPlatform(platform, finalGenerated, fallbackCopy);
+            const rawCaption = carmarketVehicleCaption && (platform === 'facebook' || platform === 'instagram')
+                ? carmarketVehicleCaption
+                : staysphereListingCaption && (platform === 'facebook' || platform === 'instagram')
+                    ? staysphereListingCaption
+                    : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
             const shortsCaption = platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
             const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
             const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
             const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
-            const { caption, signature } = this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
+            const { caption, signature } = carmarketVehicleCaption || staysphereListingCaption
+                ? { caption: brandedCaption, signature: this.buildCaptionSignature(platform, brandedCaption) }
+                : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
             const isVideoPlatform = videoPlatforms.has(platform);
             const supportsVideo = isVideoPlatform || optionalVideoPlatforms.has(platform);
             let videoUrl;
@@ -3620,13 +3741,13 @@ export class AutoPostService {
             }
         }
         const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
-        const nextRecentImages = this.mergeRecentImages(recentImages, [...imageUrls, usedClientSourceImageUrl].filter((url) => Boolean(url)));
+        const nextRecentImages = this.mergeRecentImages(recentImages, [...imageUrls, usedClientSourceImageUrl, usedBeforwardStockKey, usedStaysphereListingKey].filter((url) => Boolean(url)));
         const postedVideoUrls = historyEntries
             .filter(entry => entry.status === 'posted')
             .map(entry => entry.videoUrl?.trim())
             .filter((url) => Boolean(url));
         const nextRecentVideos = this.mergeRecentVideos(recentVideos, postedVideoUrls);
-        const nextRecentCaptions = this.mergeRecentCaptions(recentCaptions, usedCaptions);
+        const nextRecentCaptions = this.mergeRecentCaptions(recentCaptions, [...usedCaptions, usedBeforwardStockKey, usedStaysphereListingKey].filter((value) => Boolean(value)));
         if (usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number') {
             cursorUpdates.videoCursor = genericVideoSelection.nextCursor;
         }
@@ -3770,12 +3891,27 @@ export class AutoPostService {
         try {
             const userDoc = await firestore.collection('users').doc(userId).get();
             userData = userDoc.data();
+            if (userData?.socialAccounts) {
+                void supabaseFallbackService.upsertSocialAccounts(userId, {
+                    email: userData.email ?? null,
+                    socialAccounts: userData.socialAccounts,
+                }).catch(error => console.warn('[autopost] supabase social account mirror failed', error));
+            }
         }
         catch (error) {
             console.warn('[autopost] user credential lookup failed; using runtime fallbacks', {
                 userId,
                 error: error instanceof Error ? error.message : String(error),
             });
+            try {
+                const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+                if (fallback) {
+                    userData = fallback;
+                }
+            }
+            catch (fallbackError) {
+                console.warn('[autopost] supabase social account lookup failed', fallbackError);
+            }
         }
         const allowDefaults = canUsePrimarySocialDefaults(userData, userId);
         const defaults = this.defaultSocialAccounts(allowDefaults);
