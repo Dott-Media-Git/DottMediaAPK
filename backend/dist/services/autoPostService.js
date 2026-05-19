@@ -62,6 +62,8 @@ const CLIENT_META_FALLBACKS = {
         instagramUsername: 'gamers44life',
     },
 };
+const NICHE_CLIENT_INSTAGRAM_FEED_INTERVAL_HOURS = 3;
+const NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS = 4;
 const platformPublishers = {
     instagram: publishToInstagram,
     instagram_reels: publishToInstagramReel,
@@ -359,7 +361,7 @@ export class AutoPostService {
                 continue;
             const outcome = await this.executeJob(userId, job, {
                 platforms: ['instagram_reels'],
-                intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
+                intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
                 nextRunField: 'reelsNextRun',
                 lastRunField: 'reelsLastRunAt',
                 resultField: 'reelsLastResult',
@@ -720,7 +722,7 @@ export class AutoPostService {
                     continue;
                 const outcome = await this.executeJob(userId, job, {
                     platforms: ['instagram_reels'],
-                    intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
+                    intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
                     nextRunField: 'reelsNextRun',
                     lastRunField: 'reelsLastRunAt',
                     resultField: 'reelsLastResult',
@@ -793,7 +795,7 @@ export class AutoPostService {
                         data.reelsLastResult);
                     if (!hasReelsConfig)
                         return null;
-                    const reelsIntervalHours = data.reelsIntervalHours ?? this.defaultReelsIntervalHours;
+                    const reelsIntervalHours = this.getReelsIntervalHours(doc.id, data.reelsIntervalHours);
                     return autopostCollection.doc(doc.id).set({
                         reelsIntervalHours,
                         reelsNextRun: now,
@@ -852,7 +854,7 @@ export class AutoPostService {
                     continue;
                 const outcome = await this.executeJob(doc.id, data, {
                     platforms: ['instagram_reels'],
-                    intervalHours: data.reelsIntervalHours ?? this.defaultReelsIntervalHours,
+                    intervalHours: this.getReelsIntervalHours(doc.id, data.reelsIntervalHours),
                     nextRunField: 'reelsNextRun',
                     lastRunField: 'reelsLastRunAt',
                     resultField: 'reelsLastResult',
@@ -953,9 +955,9 @@ export class AutoPostService {
                 return job.nextRun;
         }
     }
-    getClaimNextRunDate(job, field, now) {
+    getClaimNextRunDate(userId, job, field, now) {
         const hours = field === 'reels_next_run'
-            ? job.reelsIntervalHours ?? this.defaultReelsIntervalHours
+            ? this.getReelsIntervalHours(userId, job.reelsIntervalHours)
             : field === 'story_next_run'
                 ? job.storyIntervalHours ?? this.defaultStoryIntervalHours
                 : field === 'trend_next_run'
@@ -965,13 +967,50 @@ export class AutoPostService {
                         : this.defaultIntervalHours;
         return new Date(now.getTime() + Math.max(hours, 0.05) * 60 * 60 * 1000);
     }
+    isNicheClientAccount(userId) {
+        return Object.prototype.hasOwnProperty.call(CLIENT_META_FALLBACKS, userId);
+    }
+    getReelsIntervalHours(userId, configured) {
+        if (this.isNicheClientAccount(userId)) {
+            return NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS;
+        }
+        return configured && configured > 0 ? configured : this.defaultReelsIntervalHours;
+    }
+    getInstagramAttemptField(platform) {
+        if (platform === 'instagram')
+            return 'instagramFeedLastAttemptAt';
+        if (platform === 'instagram_story')
+            return 'instagramStoryLastAttemptAt';
+        return null;
+    }
+    timestampToMillis(value) {
+        if (!value)
+            return null;
+        if (typeof value.toMillis === 'function')
+            return value.toMillis();
+        const maybeDate = value;
+        if (typeof maybeDate.getTime === 'function')
+            return maybeDate.getTime();
+        return null;
+    }
+    shouldSkipNicheInstagramAttempt(userId, job, platform, now = Date.now()) {
+        if (!this.isNicheClientAccount(userId))
+            return false;
+        const attemptField = this.getInstagramAttemptField(platform);
+        if (!attemptField)
+            return false;
+        const lastAttempt = this.timestampToMillis(job[attemptField]);
+        if (!lastAttempt)
+            return false;
+        return now - lastAttempt < NICHE_CLIENT_INSTAGRAM_FEED_INTERVAL_HOURS * 60 * 60 * 1000;
+    }
     async claimDueRun(userId, job, field, now) {
         if (!supabaseFallbackService.isConfigured())
             return true;
         const expectedRun = this.getClaimedRunValue(job, field);
         if (!expectedRun)
             return false;
-        const nextRun = this.getClaimNextRunDate(job, field, now.toDate());
+        const nextRun = this.getClaimNextRunDate(userId, job, field, now.toDate());
         try {
             return await supabaseFallbackService.claimAutopostRun(userId, field, expectedRun, nextRun);
         }
@@ -992,7 +1031,7 @@ export class AutoPostService {
                 const reels = await this.executeJob(userId, job, {
                     ...(options.generatedContent ? { generatedContent: options.generatedContent } : {}),
                     platforms: ['instagram_reels'],
-                    intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
+                    intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
                     nextRunField: 'reelsNextRun',
                     lastRunField: 'reelsLastRunAt',
                     resultField: 'reelsLastResult',
@@ -1033,7 +1072,7 @@ export class AutoPostService {
             const reels = await this.executeJob(userId, job, {
                 ...(options.generatedContent ? { generatedContent: options.generatedContent } : {}),
                 platforms: ['instagram_reels'],
-                intervalHours: job.reelsIntervalHours ?? this.defaultReelsIntervalHours,
+                intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
                 nextRunField: 'reelsNextRun',
                 lastRunField: 'reelsLastRunAt',
                 resultField: 'reelsLastResult',
@@ -3381,7 +3420,11 @@ export class AutoPostService {
         const isReelsRun = (options.nextRunField ?? 'nextRun') === 'reelsNextRun';
         const isStoryRun = (options.nextRunField ?? 'nextRun') === 'storyNextRun';
         const effectiveIntervalHours = Math.max(intervalHours, isReelsRun ? 0.25 : 0.05);
-        const platforms = options.platforms ?? job.platforms ?? [];
+        const requestedPlatforms = options.platforms ?? job.platforms ?? [];
+        const platforms = requestedPlatforms.filter(platform => !this.shouldSkipNicheInstagramAttempt(userId, job, platform));
+        const instagramAttemptFields = new Set(platforms
+            .map(platform => this.getInstagramAttemptField(platform))
+            .filter((field) => Boolean(field)));
         const nextRunField = options.nextRunField ?? 'nextRun';
         const lastRunField = options.lastRunField ?? 'lastRunAt';
         const resultField = options.resultField ?? 'lastResult';
@@ -3791,8 +3834,14 @@ export class AutoPostService {
             ...cursorUpdates,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
+        for (const field of instagramAttemptFields) {
+            updatePayload[field] = admin.firestore.FieldValue.serverTimestamp();
+        }
         if (!isReelsRun && !isStoryRun) {
             updatePayload.intervalHours = effectiveIntervalHours;
+        }
+        else if (isReelsRun) {
+            updatePayload.reelsIntervalHours = effectiveIntervalHours;
         }
         else if (isStoryRun) {
             updatePayload.storyIntervalHours = effectiveIntervalHours;
@@ -3818,8 +3867,14 @@ export class AutoPostService {
             tiktokVideoCursor: typeof cursorUpdates.tiktokVideoCursor === 'number' ? cursorUpdates.tiktokVideoCursor : job.tiktokVideoCursor,
             reelsVideoCursor: typeof cursorUpdates.reelsVideoCursor === 'number' ? cursorUpdates.reelsVideoCursor : job.reelsVideoCursor,
         };
+        for (const field of instagramAttemptFields) {
+            nextRecord[field] = admin.firestore.Timestamp.now();
+        }
         if (!isReelsRun && !isStoryRun) {
             nextRecord.intervalHours = effectiveIntervalHours;
+        }
+        else if (isReelsRun) {
+            nextRecord.reelsIntervalHours = effectiveIntervalHours;
         }
         else if (isStoryRun) {
             nextRecord.storyIntervalHours = effectiveIntervalHours;
