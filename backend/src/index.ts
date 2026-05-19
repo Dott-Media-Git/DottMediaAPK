@@ -43,6 +43,7 @@ import { NotificationDispatcher } from './packages/services/notificationDispatch
 import stripeRoutes from './routes/stripeRoutes';
 import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
 import { autoPostService } from './services/autoPostService';
+import { firestore } from './db/firestore';
 import { ensureGeneratedMediaRoot } from './services/generatedMediaService';
 import { ensureSupabaseFallbackSchema } from './services/supabaseSchemaService';
 import { backfillSupabaseFallback } from './services/supabaseBackfillService';
@@ -56,6 +57,8 @@ const initializeAutomation = async () => {
       import('./jobs/autoPostJob.js'),
       import('./jobs/socialQueueJob.js'),
       import('./jobs/instagramCommentPollJob.js'),
+      import('./jobs/facebookCommentPollJob.js'),
+      import('./jobs/matchdayResultsJob.js'),
       import('./workers/youtubeWorker.js'),
     ]);
   } catch (error) {
@@ -240,6 +243,99 @@ app.post('/api/autopost/runDue', async (req, res, next) => {
 
     const result = await autoPostService.runDueJobs();
     res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
+  try {
+    const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
+    const providedToken =
+      req.header('x-autopost-token') ??
+      req.header('x-cron-token') ??
+      (req.query.token as string | undefined) ??
+      req.body?.token;
+    if (triggerToken && providedToken !== triggerToken) {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+
+    const accounts = [
+      { label: 'Bwin', uid: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', bwin: true },
+      { label: 'Carmarketug', uid: 'acmVetCcOiTHeGk5D7eDYieamDF3', reels: true },
+      { label: 'Staysphere', uid: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2', reels: true },
+      { label: 'Gamers44life', uid: 'vzdH1DnfFLVjlY8bBgC26WACmmw2', reels: true },
+    ];
+    const service = autoPostService as any;
+    const summarize = (outcome: any) => ({
+      posted: outcome?.posted ?? 0,
+      failed: Array.isArray(outcome?.failed)
+        ? outcome.failed.map((failure: any) => ({
+            platform: failure.platform,
+            status: failure.status,
+            error: failure.error,
+          }))
+        : [],
+      nextRun: outcome?.nextRun ?? null,
+    });
+
+    const results = [];
+    for (const account of accounts) {
+      const snap = await firestore.collection('autopostJobs').doc(account.uid).get();
+      if (!snap.exists) {
+        results.push({ account: account.label, error: 'autopost_job_missing' });
+        continue;
+      }
+      const job = snap.data() ?? {};
+      const result: Record<string, unknown> = { account: account.label };
+      if (account.bwin) {
+        const newsJob = {
+          ...job,
+          trendContentType: 'news',
+          trendContentTypes: ['news'],
+          trendPlatforms: ['facebook', 'instagram'],
+          storyPlatforms: ['facebook_story', 'instagram_story'],
+        };
+        result.feed = summarize(await service.executeTrendPosts(account.uid, newsJob));
+        result.stories = summarize(await service.executeTrendStories(account.uid, newsJob));
+      } else {
+        result.feed = summarize(
+          await service.executeJob(account.uid, job, {
+            platforms: ['facebook', 'instagram'],
+            intervalHours: job.intervalHours ?? 1,
+            nextRunField: 'nextRun',
+            lastRunField: 'lastRunAt',
+            resultField: 'lastResult',
+          }),
+        );
+        result.stories = summarize(
+          await service.executeJob(account.uid, job, {
+            platforms: Array.isArray(job.storyPlatforms) && job.storyPlatforms.length
+              ? job.storyPlatforms
+              : ['facebook_story', 'instagram_story'],
+            intervalHours: job.storyIntervalHours ?? 1,
+            nextRunField: 'storyNextRun',
+            lastRunField: 'storyLastRunAt',
+            resultField: 'storyLastResult',
+          }),
+        );
+        if (account.reels) {
+          result.reels = summarize(
+            await service.executeJob(account.uid, job, {
+              platforms: ['instagram_reels'],
+              intervalHours: job.reelsIntervalHours ?? 2,
+              nextRunField: 'reelsNextRun',
+              lastRunField: 'reelsLastRunAt',
+              resultField: 'reelsLastResult',
+              useGenericVideoFallback: false,
+            }),
+          );
+        }
+      }
+      results.push(result);
+    }
+
+    res.json({ ok: true, results });
   } catch (error) {
     next(error);
   }
