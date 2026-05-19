@@ -426,10 +426,12 @@ export async function renderStaysphereCoverImage(listing, sourceImageUrl = listi
         .jpeg({ quality: 92, mozjpeg: true, chromaSubsampling: '4:4:4' })
         .toBuffer();
     const { headline, subline } = buildStaysphereCoverText(listing);
-    const headlineLines = wrapWords(headline, format === 'story' ? 17 : 18, 3);
-    const headlineSize = format === 'story' ? 96 : 74;
-    const headlineY = format === 'story' ? height - 520 : height - 328;
-    const sublineY = headlineY + headlineLines.length * (headlineSize + 12) + 54;
+    const headlineLines = wrapWords(headline, format === 'story' ? 20 : 22, 2);
+    const headlineSize = format === 'story' ? 72 : 52;
+    const headlineY = format === 'story' ? height - 372 : height - 226;
+    const sublineY = headlineY + headlineLines.length * (headlineSize + 8) + 32;
+    const panelHeight = format === 'story' ? 300 : 190;
+    const panelTop = headlineY - (format === 'story' ? 96 : 72);
     const svg = `
     <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -440,14 +442,13 @@ export async function renderStaysphereCoverImage(listing, sourceImageUrl = listi
         </linearGradient>
       </defs>
       <rect width="${width}" height="${height}" fill="url(#shade)"/>
-      <rect x="56" y="${headlineY - 118}" width="${width - 112}" height="${format === 'story' ? 480 : 318}" rx="42" fill="#07140f" opacity="0.70"/>
-      <rect x="80" y="${headlineY - 88}" width="252" height="54" rx="27" fill="#34d399"/>
-      <text x="106" y="${headlineY - 52}" fill="#062016" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="900">STAY SPOTLIGHT</text>
+      <rect x="64" y="${panelTop}" width="${width - 128}" height="${panelHeight}" rx="30" fill="#07140f" opacity="0.54"/>
+      <rect x="86" y="${panelTop + 24}" width="178" height="38" rx="19" fill="#34d399"/>
+      <text x="108" y="${panelTop + 50}" fill="#062016" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="900">STAY PICK</text>
       ${headlineLines
         .map((line, index) => `<text x="82" y="${headlineY + index * (headlineSize + 12)}" fill="#ffffff" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="${headlineSize}" font-weight="900">${escapeSvg(line)}</text>`)
         .join('\n')}
-      <text x="84" y="${sublineY}" fill="#d8fff0" font-family="Arial, Helvetica, sans-serif" font-size="${format === 'story' ? 42 : 32}" font-weight="700">${escapeSvg(subline)}</text>
-      <text x="84" y="${sublineY + (format === 'story' ? 58 : 46)}" fill="#ffffff" opacity="0.76" font-family="Arial, Helvetica, sans-serif" font-size="${format === 'story' ? 34 : 25}">Swipe for actual room and property photos</text>
+      <text x="84" y="${sublineY}" fill="#d8fff0" font-family="Arial, Helvetica, sans-serif" font-size="${format === 'story' ? 30 : 23}" font-weight="700">${escapeSvg(subline)}</text>
     </svg>
   `;
     const buffer = await sharp(base)

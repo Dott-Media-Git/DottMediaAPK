@@ -76,32 +76,59 @@ async function publishWithRetry(accountId, accessToken, creationId) {
     }
     throw lastError ?? new Error('Threads publish failed');
 }
+async function createThreadsContainer(accountId, accessToken, payload) {
+    const createResp = await axios.post(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${accountId}/threads`, null, {
+        params: {
+            ...payload,
+            access_token: accessToken,
+        },
+    });
+    const creationId = createResp.data?.id;
+    if (!creationId) {
+        throw new Error('Failed to create Threads media container');
+    }
+    return creationId;
+}
 export async function publishToThreads(input) {
     const { credentials } = input;
     if (!credentials?.threads) {
         throw new Error('Missing Threads credentials');
     }
     const { accessToken, accountId } = credentials.threads;
-    const imageUrl = input.imageUrls?.[0];
-    const mediaType = input.videoUrl ? 'VIDEO' : imageUrl ? 'IMAGE' : 'TEXT';
+    const imageUrls = (input.imageUrls ?? []).filter(Boolean).slice(0, 10);
+    const imageUrl = imageUrls[0];
+    const mediaType = input.videoUrl ? 'VIDEO' : imageUrls.length > 1 ? 'CAROUSEL' : imageUrl ? 'IMAGE' : 'TEXT';
     try {
-        const createPayload = {
-            media_type: mediaType,
-            text: input.caption || '',
-            access_token: accessToken,
-        };
-        if (mediaType === 'IMAGE' && imageUrl) {
-            createPayload.image_url = imageUrl;
+        let creationId;
+        if (mediaType === 'CAROUSEL') {
+            const childIds = [];
+            for (const url of imageUrls) {
+                const childId = await createThreadsContainer(accountId, accessToken, {
+                    media_type: 'IMAGE',
+                    image_url: url,
+                    is_carousel_item: true,
+                });
+                await waitForMediaReady(childId, accessToken);
+                childIds.push(childId);
+            }
+            creationId = await createThreadsContainer(accountId, accessToken, {
+                media_type: 'CAROUSEL',
+                text: input.caption || '',
+                children: childIds.join(','),
+            });
         }
-        if (mediaType === 'VIDEO' && input.videoUrl) {
-            createPayload.video_url = input.videoUrl;
-        }
-        const createResp = await axios.post(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${accountId}/threads`, null, {
-            params: createPayload,
-        });
-        const creationId = createResp.data?.id;
-        if (!creationId) {
-            throw new Error('Failed to create Threads media container');
+        else {
+            const createPayload = {
+                media_type: mediaType,
+                text: input.caption || '',
+            };
+            if (mediaType === 'IMAGE' && imageUrl) {
+                createPayload.image_url = imageUrl;
+            }
+            if (mediaType === 'VIDEO' && input.videoUrl) {
+                createPayload.video_url = input.videoUrl;
+            }
+            creationId = await createThreadsContainer(accountId, accessToken, createPayload);
         }
         await waitForMediaReady(creationId, accessToken);
         const publishedId = await publishWithRetry(accountId, accessToken, creationId);
