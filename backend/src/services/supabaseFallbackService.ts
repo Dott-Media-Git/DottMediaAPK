@@ -587,6 +587,7 @@ class SupabaseFallbackService {
       params: {
         select: 'user_id',
         user_id: `eq.${userId}`,
+        [field]: `lte.${expectedIso}`,
       },
       prefer: 'return=representation',
       body: {
