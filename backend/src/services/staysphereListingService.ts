@@ -118,6 +118,23 @@ const normalizeImage = (url: string, baseUrl: string) => {
   return normalized;
 };
 
+const normalizeListingUrl = (value: string, baseUrl: string) => {
+  try {
+    const url = new URL(normalizeUrl(value, baseUrl));
+    url.hash = '';
+    url.search = '';
+    if (!/^\/properties\/[^/]+\/?$/i.test(url.pathname)) return '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+};
+
+const isStayListingText = (value: string) =>
+  /(furnished|short.?term|short stay|rental|rentals|apartment|apartments|villa|villas|hotel|guest house|lodge|stay)/i.test(
+    value,
+  ) && !/(granite|acre|acres|plot|plots|land for sale|for sale|coffee plantation|factory|warehouse)/i.test(value);
+
 const extractImages = (html: string, $: CheerioAPI, pageUrl: string) =>
   unique(
     [
@@ -160,6 +177,16 @@ export async function fetchAderokListing(url: string): Promise<StaysphereListing
   const price = cleanText(estate?.price?.[0]?.price);
   const location = cleanText(estate?.address) || valuesFromAttribute(estate, 'area').concat(valuesFromAttribute(estate, 'location')).join(', ');
   const amenities = valuesFromAttribute(estate, 'features').slice(0, 8);
+  const relevanceText = [
+    title,
+    cleanText(estate?.excerpt),
+    valuesFromAttribute(estate, 'property-type').join(' '),
+    valuesFromAttribute(estate, 'offer-type').join(' '),
+    cleanText($('meta[property="og:description"]').attr('content')),
+  ].join(' ');
+  if (!isStayListingText(relevanceText)) {
+    throw new Error('Aderok listing is not a stay/rental listing');
+  }
   const galleryImages = ((estate?.gallery as any[]) ?? [])
     .map(item => normalizeImage(String(item?.image ?? ''), pageUrl))
     .filter(Boolean);
@@ -273,13 +300,15 @@ async function discoverAderokUrls() {
     try {
       const html = await fetchHtml(searchUrl);
       urls.push(
-        ...Array.from(html.matchAll(/https:\/\/aderokestates\.com\/properties\/[^"'\s<>]+\/?/gi)).map(match => match[0]),
+        ...Array.from(html.matchAll(/https:\/\/aderokestates\.com\/properties\/[^"'\s<>#?]+\/?/gi)).map(match =>
+          match[0],
+        ),
       );
     } catch {
       // Use the seed list when discovery fails.
     }
   }
-  return unique(urls).slice(0, 40);
+  return unique(urls.map(url => normalizeListingUrl(url, 'https://aderokestates.com/')).filter(Boolean)).slice(0, 40);
 }
 
 async function discoverSimbaUrls() {

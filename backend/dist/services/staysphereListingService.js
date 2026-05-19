@@ -92,6 +92,20 @@ const normalizeImage = (url, baseUrl) => {
         .replace(/\?&/g, '?');
     return normalized;
 };
+const normalizeListingUrl = (value, baseUrl) => {
+    try {
+        const url = new URL(normalizeUrl(value, baseUrl));
+        url.hash = '';
+        url.search = '';
+        if (!/^\/properties\/[^/]+\/?$/i.test(url.pathname))
+            return '';
+        return url.toString();
+    }
+    catch {
+        return '';
+    }
+};
+const isStayListingText = (value) => /(furnished|short.?term|short stay|rental|rentals|apartment|apartments|villa|villas|hotel|guest house|lodge|stay)/i.test(value) && !/(granite|acre|acres|plot|plots|land for sale|for sale|coffee plantation|factory|warehouse)/i.test(value);
 const extractImages = (html, $, pageUrl) => unique([
     ...Array.from(html.matchAll(/https?:\\?\/\\?\/[^"'\s<>]+?\.(?:jpe?g|png|webp)(?:\?[^"'\s<>]*)?/gi)).map(match => match[0]),
     ...Array.from(html.matchAll(/(?:data-src|src|href|content)=["']([^"']+\.(?:jpe?g|png|webp)(?:\?[^"']*)?)["']/gi)).map(match => match[1]),
@@ -125,6 +139,16 @@ export async function fetchAderokListing(url) {
     const price = cleanText(estate?.price?.[0]?.price);
     const location = cleanText(estate?.address) || valuesFromAttribute(estate, 'area').concat(valuesFromAttribute(estate, 'location')).join(', ');
     const amenities = valuesFromAttribute(estate, 'features').slice(0, 8);
+    const relevanceText = [
+        title,
+        cleanText(estate?.excerpt),
+        valuesFromAttribute(estate, 'property-type').join(' '),
+        valuesFromAttribute(estate, 'offer-type').join(' '),
+        cleanText($('meta[property="og:description"]').attr('content')),
+    ].join(' ');
+    if (!isStayListingText(relevanceText)) {
+        throw new Error('Aderok listing is not a stay/rental listing');
+    }
     const galleryImages = (estate?.gallery ?? [])
         .map(item => normalizeImage(String(item?.image ?? ''), pageUrl))
         .filter(Boolean);
@@ -223,13 +247,13 @@ async function discoverAderokUrls() {
     for (const searchUrl of ADEROK_SEARCH_URLS) {
         try {
             const html = await fetchHtml(searchUrl);
-            urls.push(...Array.from(html.matchAll(/https:\/\/aderokestates\.com\/properties\/[^"'\s<>]+\/?/gi)).map(match => match[0]));
+            urls.push(...Array.from(html.matchAll(/https:\/\/aderokestates\.com\/properties\/[^"'\s<>#?]+\/?/gi)).map(match => match[0]));
         }
         catch {
             // Use the seed list when discovery fails.
         }
     }
-    return unique(urls).slice(0, 40);
+    return unique(urls.map(url => normalizeListingUrl(url, 'https://aderokestates.com/')).filter(Boolean)).slice(0, 40);
 }
 async function discoverSimbaUrls() {
     const urls = [...SIMBA_SEED_URLS];
