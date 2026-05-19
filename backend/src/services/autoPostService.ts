@@ -36,6 +36,7 @@ import { buildCarmarketVehicleCaption, pickBeforwardVehicle } from './beforwardV
 import {
   buildStaysphereListingCaption,
   pickStaysphereListing,
+  renderStaysphereCoverImage,
   staysphereListingHistoryKey,
 } from './staysphereListingService.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
@@ -4008,7 +4009,18 @@ export class AutoPostService {
         );
         const listing = await pickStaysphereListing({ recentListingKeys });
         const listingImages = listing.images.slice(0, isStoryRun ? 1 : 10);
-        imageUrls = listingImages;
+        const coverImageUrl = await renderStaysphereCoverImage(
+          listing,
+          listingImages[0],
+          isStoryRun ? 'story' : 'feed',
+        ).catch(error => {
+          console.warn('[autopost] Staysphere cover image render failed; using raw listing cover', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        });
+        imageUrls = coverImageUrl ? [coverImageUrl, ...listingImages.slice(1)] : listingImages;
         staysphereListingCaption = buildStaysphereListingCaption(listing);
         usedStaysphereListingKey = staysphereListingHistoryKey(listing);
       } catch (error) {

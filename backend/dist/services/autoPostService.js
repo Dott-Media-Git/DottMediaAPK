@@ -31,7 +31,7 @@ import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage }
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
 import { buildCarmarketVehicleCaption, pickBeforwardVehicle } from './beforwardVehicleService.js';
-import { buildStaysphereListingCaption, pickStaysphereListing, staysphereListingHistoryKey, } from './staysphereListingService.js';
+import { buildStaysphereListingCaption, pickStaysphereListing, renderStaysphereCoverImage, staysphereListingHistoryKey, } from './staysphereListingService.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from './bwinContentGuard.js';
 import { getBwinAccountClosureMessage, getBwinAccountClosureState, isBwinAccountClosureActive, } from './bwinAccountClosureService.js';
@@ -3541,7 +3541,14 @@ export class AutoPostService {
                     .filter((value) => Boolean(value)));
                 const listing = await pickStaysphereListing({ recentListingKeys });
                 const listingImages = listing.images.slice(0, isStoryRun ? 1 : 10);
-                imageUrls = listingImages;
+                const coverImageUrl = await renderStaysphereCoverImage(listing, listingImages[0], isStoryRun ? 'story' : 'feed').catch(error => {
+                    console.warn('[autopost] Staysphere cover image render failed; using raw listing cover', {
+                        userId,
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                    return null;
+                });
+                imageUrls = coverImageUrl ? [coverImageUrl, ...listingImages.slice(1)] : listingImages;
                 staysphereListingCaption = buildStaysphereListingCaption(listing);
                 usedStaysphereListingKey = staysphereListingHistoryKey(listing);
             }

@@ -1,7 +1,10 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import type { CheerioAPI } from 'cheerio';
+import crypto from 'crypto';
 import https from 'https';
+import sharp from 'sharp';
+import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 
 export type StaysphereListing = {
   source: 'Aderok Estates' | 'Simba Properties' | 'Jiji Uganda';
@@ -84,6 +87,39 @@ const unique = (items: string[]) => {
   });
 };
 
+const escapeSvg = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
+const titleCase = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/\b([a-z])/g, match => match.toUpperCase())
+    .replace(/\bAirbnb\b/i, 'Airbnb')
+    .replace(/\bBhk\b/g, 'BHK');
+
+const wrapWords = (value: string, maxChars: number, maxLines: number) => {
+  const words = value.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+      if (lines.length >= maxLines) break;
+    } else {
+      current = next;
+    }
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  return lines;
+};
+
 const listingKey = (url: string) => `staysphere-listing:${url.replace(/\/+$/, '').toLowerCase()}`;
 
 async function fetchHtml(url: string) {
@@ -97,6 +133,21 @@ async function fetchHtml(url: string) {
     timeout: 30000,
   });
   return String(response.data ?? '');
+}
+
+async function fetchImageBuffer(url: string) {
+  const response = await axios.get(url, {
+    responseType: 'arraybuffer',
+    headers: { 'User-Agent': USER_AGENT, Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' },
+    httpsAgent,
+    timeout: 30000,
+    maxContentLength: 20 * 1024 * 1024,
+  });
+  const contentType = String(response.headers['content-type'] ?? '');
+  if (!contentType.startsWith('image/')) {
+    throw new Error(`Staysphere cover source is not an image: ${contentType || 'unknown'}`);
+  }
+  return Buffer.from(response.data);
 }
 
 const imageScore = (url: string) => {
@@ -390,4 +441,92 @@ export function buildStaysphereListingCaption(listing: StaysphereListing) {
 
 export function staysphereListingHistoryKey(listing: Pick<StaysphereListing, 'url'>) {
   return listingKey(listing.url);
+}
+
+export function buildStaysphereCoverText(listing: StaysphereListing) {
+  const area =
+    listing.title.match(/\b(?:in|at)\s+([A-Za-z][A-Za-z\s-]{2,32})$/i)?.[1]?.trim() ||
+    listing.location?.split(',')[0]?.trim() ||
+    '';
+  const title = titleCase(
+    listing.title
+      .replace(/\s+[-|].*$/g, '')
+      .replace(/\b(Cozy|Beautiful|Modern|Fully Furnished)\b\s*/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+  );
+  const headline = title || (area ? `Stay In ${titleCase(area)}` : 'Fresh Stay Spot');
+  const subline = area ? `Comfortable short stay in ${titleCase(area)}` : 'Comfortable short stay ready for your dates';
+  return { headline, subline };
+}
+
+async function uploadStaysphereCover(buffer: Buffer) {
+  const supabaseUrl = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
+  const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
+  const bucket = process.env.CLIENT_CAMPAIGN_BUCKET?.trim() || 'dott-campaign';
+  if (supabaseUrl && serviceRoleKey) {
+    const objectPath = `client-autopost/staysphere/covers/${new Date().toISOString().slice(0, 10)}/${Date.now()}-${crypto.randomUUID()}.jpg`;
+    await axios.post(`${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`, buffer, {
+      headers: {
+        Authorization: `Bearer ${serviceRoleKey}`,
+        apikey: serviceRoleKey,
+        'Content-Type': 'image/jpeg',
+        'x-upsert': 'true',
+      },
+      maxBodyLength: Infinity,
+      timeout: 30000,
+    });
+    return `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+  }
+  return saveGeneratedImageBuffer(buffer, 'jpg');
+}
+
+export async function renderStaysphereCoverImage(
+  listing: StaysphereListing,
+  sourceImageUrl = listing.images[0],
+  format: 'feed' | 'story' = 'feed',
+) {
+  if (!sourceImageUrl) return null;
+  const width = 1080;
+  const height = format === 'story' ? 1920 : 1080;
+  const source = await fetchImageBuffer(sourceImageUrl);
+  const base = await sharp(source)
+    .rotate()
+    .resize(width, height, { fit: 'cover', position: 'attention' })
+    .sharpen()
+    .jpeg({ quality: 92, mozjpeg: true, chromaSubsampling: '4:4:4' })
+    .toBuffer();
+  const { headline, subline } = buildStaysphereCoverText(listing);
+  const headlineLines = wrapWords(headline, format === 'story' ? 17 : 18, 3);
+  const headlineSize = format === 'story' ? 96 : 74;
+  const headlineY = format === 'story' ? height - 520 : height - 328;
+  const sublineY = headlineY + headlineLines.length * (headlineSize + 12) + 54;
+  const svg = `
+    <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="shade" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#06130f" stop-opacity="0"/>
+          <stop offset="0.46" stop-color="#06130f" stop-opacity="0.10"/>
+          <stop offset="1" stop-color="#06130f" stop-opacity="0.92"/>
+        </linearGradient>
+      </defs>
+      <rect width="${width}" height="${height}" fill="url(#shade)"/>
+      <rect x="56" y="${headlineY - 118}" width="${width - 112}" height="${format === 'story' ? 480 : 318}" rx="42" fill="#07140f" opacity="0.70"/>
+      <rect x="80" y="${headlineY - 88}" width="252" height="54" rx="27" fill="#34d399"/>
+      <text x="106" y="${headlineY - 52}" fill="#062016" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="900">STAY SPOTLIGHT</text>
+      ${headlineLines
+        .map(
+          (line, index) =>
+            `<text x="82" y="${headlineY + index * (headlineSize + 12)}" fill="#ffffff" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="${headlineSize}" font-weight="900">${escapeSvg(line)}</text>`,
+        )
+        .join('\n')}
+      <text x="84" y="${sublineY}" fill="#d8fff0" font-family="Arial, Helvetica, sans-serif" font-size="${format === 'story' ? 42 : 32}" font-weight="700">${escapeSvg(subline)}</text>
+      <text x="84" y="${sublineY + (format === 'story' ? 58 : 46)}" fill="#ffffff" opacity="0.76" font-family="Arial, Helvetica, sans-serif" font-size="${format === 'story' ? 34 : 25}">Swipe for actual room and property photos</text>
+    </svg>
+  `;
+  const buffer = await sharp(base)
+    .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+    .jpeg({ quality: 93, mozjpeg: true, chromaSubsampling: '4:4:4' })
+    .toBuffer();
+  return uploadStaysphereCover(buffer);
 }
