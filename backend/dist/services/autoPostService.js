@@ -62,7 +62,7 @@ const CLIENT_META_FALLBACKS = {
         instagramUsername: 'gamers44life',
     },
 };
-const NICHE_CLIENT_INSTAGRAM_FEED_INTERVAL_HOURS = 3;
+const NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS = 3;
 const NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS = 4;
 const platformPublishers = {
     instagram: publishToInstagram,
@@ -383,7 +383,7 @@ export class AutoPostService {
                 ? await this.executeTrendStories(userId, job)
                 : await this.executeJob(userId, job, {
                     platforms: this.getStoryPlatforms(job),
-                    intervalHours: job.storyIntervalHours ?? this.defaultStoryIntervalHours,
+                    intervalHours: this.getStoryIntervalHours(userId, job.storyIntervalHours),
                     nextRunField: 'storyNextRun',
                     lastRunField: 'storyLastRunAt',
                     resultField: 'storyLastResult',
@@ -744,7 +744,7 @@ export class AutoPostService {
                     ? await this.executeTrendStories(userId, job)
                     : await this.executeJob(userId, job, {
                         platforms: this.getStoryPlatforms(job),
-                        intervalHours: job.storyIntervalHours ?? this.defaultStoryIntervalHours,
+                        intervalHours: this.getStoryIntervalHours(userId, job.storyIntervalHours),
                         nextRunField: 'storyNextRun',
                         lastRunField: 'storyLastRunAt',
                         resultField: 'storyLastResult',
@@ -812,7 +812,7 @@ export class AutoPostService {
                     const data = doc.data();
                     if (data.active === false || data.storyTrendEnabled !== true)
                         return null;
-                    const intervalHours = data.storyIntervalHours ?? this.defaultStoryIntervalHours;
+                    const intervalHours = this.getStoryIntervalHours(doc.id, data.storyIntervalHours);
                     return autopostCollection.doc(doc.id).set({
                         storyIntervalHours: intervalHours,
                         storyNextRun: now,
@@ -880,7 +880,7 @@ export class AutoPostService {
                     ? await this.executeTrendStories(doc.id, data)
                     : await this.executeJob(doc.id, data, {
                         platforms: this.getStoryPlatforms(data),
-                        intervalHours: data.storyIntervalHours ?? this.defaultStoryIntervalHours,
+                        intervalHours: this.getStoryIntervalHours(doc.id, data.storyIntervalHours),
                         nextRunField: 'storyNextRun',
                         lastRunField: 'storyLastRunAt',
                         resultField: 'storyLastResult',
@@ -959,12 +959,10 @@ export class AutoPostService {
         const hours = field === 'reels_next_run'
             ? this.getReelsIntervalHours(userId, job.reelsIntervalHours)
             : field === 'story_next_run'
-                ? job.storyIntervalHours ?? this.defaultStoryIntervalHours
+                ? this.getStoryIntervalHours(userId, job.storyIntervalHours)
                 : field === 'trend_next_run'
                     ? job.trendIntervalHours ?? 4
-                    : job.intervalHours && job.intervalHours > 0
-                        ? job.intervalHours
-                        : this.defaultIntervalHours;
+                    : this.getFeedIntervalHours(userId, job.intervalHours);
         return new Date(now.getTime() + Math.max(hours, 0.05) * 60 * 60 * 1000);
     }
     isNicheClientAccount(userId) {
@@ -975,6 +973,18 @@ export class AutoPostService {
             return NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS;
         }
         return configured && configured > 0 ? configured : this.defaultReelsIntervalHours;
+    }
+    getFeedIntervalHours(userId, configured) {
+        if (this.isNicheClientAccount(userId)) {
+            return NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS;
+        }
+        return configured && configured > 0 ? configured : this.defaultIntervalHours;
+    }
+    getStoryIntervalHours(userId, configured) {
+        if (this.isNicheClientAccount(userId)) {
+            return NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS;
+        }
+        return configured && configured > 0 ? configured : this.defaultStoryIntervalHours;
     }
     getInstagramAttemptField(platform) {
         if (platform === 'instagram')
@@ -1002,7 +1012,7 @@ export class AutoPostService {
         const lastAttempt = this.timestampToMillis(job[attemptField]);
         if (!lastAttempt)
             return false;
-        return now - lastAttempt < NICHE_CLIENT_INSTAGRAM_FEED_INTERVAL_HOURS * 60 * 60 * 1000;
+        return now - lastAttempt < NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS * 60 * 60 * 1000;
     }
     async claimDueRun(userId, job, field, now) {
         if (!supabaseFallbackService.isConfigured())
@@ -1049,7 +1059,7 @@ export class AutoPostService {
                     ? await this.executeTrendStories(userId, job)
                     : await this.executeJob(userId, job, {
                         platforms: this.getStoryPlatforms(job),
-                        intervalHours: job.storyIntervalHours ?? this.defaultStoryIntervalHours,
+                        intervalHours: this.getStoryIntervalHours(userId, job.storyIntervalHours),
                         nextRunField: 'storyNextRun',
                         lastRunField: 'storyLastRunAt',
                         resultField: 'storyLastResult',
@@ -1090,7 +1100,7 @@ export class AutoPostService {
                 ? await this.executeTrendStories(userId, job)
                 : await this.executeJob(userId, job, {
                     platforms: this.getStoryPlatforms(job),
-                    intervalHours: job.storyIntervalHours ?? this.defaultStoryIntervalHours,
+                    intervalHours: this.getStoryIntervalHours(userId, job.storyIntervalHours),
                     nextRunField: 'storyNextRun',
                     lastRunField: 'storyLastRunAt',
                     resultField: 'storyLastResult',
@@ -3415,10 +3425,19 @@ export class AutoPostService {
                 nextRun: null,
             };
         }
-        const intervalHours = options.intervalHours ??
-            (job.intervalHours && job.intervalHours > 0 ? job.intervalHours : this.defaultIntervalHours);
         const isReelsRun = (options.nextRunField ?? 'nextRun') === 'reelsNextRun';
         const isStoryRun = (options.nextRunField ?? 'nextRun') === 'storyNextRun';
+        const configuredIntervalHours = options.intervalHours ??
+            (isReelsRun
+                ? job.reelsIntervalHours
+                : isStoryRun
+                    ? job.storyIntervalHours
+                    : job.intervalHours);
+        const intervalHours = isReelsRun
+            ? this.getReelsIntervalHours(userId, configuredIntervalHours)
+            : isStoryRun
+                ? this.getStoryIntervalHours(userId, configuredIntervalHours)
+                : this.getFeedIntervalHours(userId, configuredIntervalHours);
         const effectiveIntervalHours = Math.max(intervalHours, isReelsRun ? 0.25 : 0.05);
         const requestedPlatforms = options.platforms ?? job.platforms ?? [];
         const platforms = requestedPlatforms.filter(platform => !this.shouldSkipNicheInstagramAttempt(userId, job, platform));
