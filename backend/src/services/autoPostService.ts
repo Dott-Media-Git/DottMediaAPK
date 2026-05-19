@@ -1083,7 +1083,9 @@ export class AutoPostService {
           await Promise.all(selfHealWrites);
         }
       }
-      if (standardSnap.empty && reelsSnap.empty && storiesSnap.empty && trendSnap.empty) return { processed: 0 };
+      if (standardSnap.empty && reelsSnap.empty && storiesSnap.empty && trendSnap.empty) {
+        return this.runDueJobsFromFallback(now);
+      }
       let processed = 0;
       const results = new Map<
         string,
@@ -1172,6 +1174,12 @@ export class AutoPostService {
           trendFailed: outcome.failed.length,
           trendNextRun: outcome.nextRun,
         });
+      }
+      if (processed === 0) {
+        const fallbackResult = await this.runDueJobsFromFallback(now);
+        if ((fallbackResult.processed ?? 0) > 0) {
+          return fallbackResult;
+        }
       }
       return { processed, results: Array.from(results.values()) };
     } catch (error) {
