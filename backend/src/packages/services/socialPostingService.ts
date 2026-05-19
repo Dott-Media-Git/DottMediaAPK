@@ -182,7 +182,7 @@ export class SocialPostingService {
   }
 
   private isLimitExempt(post: ScheduledPost) {
-    return post.source === 'matchday_table';
+    return post.source === 'matchday_table' || post.source === 'client_two_hour_campaign';
   }
 
   async runQueue(limit = 25) {
@@ -273,6 +273,7 @@ export class SocialPostingService {
       }
       const bwinValidation = validateBwinSportsContent({
         userId: post.userId,
+        platform: post.platform,
         caption: post.caption,
         hashtags: post.hashtags,
         videoTitle: post.videoTitle,
@@ -326,11 +327,25 @@ export class SocialPostingService {
         try {
           const userDoc = await firestore.collection('users').doc(post.userId).get();
           userData = userDoc.data() as { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
+          if (userData?.socialAccounts) {
+            void supabaseFallbackService.upsertSocialAccounts(post.userId, {
+              email: userData.email ?? null,
+              socialAccounts: userData.socialAccounts as Record<string, unknown>,
+            }).catch(error => console.warn('[social-posting] supabase social account mirror failed', error));
+          }
         } catch (error) {
           console.warn('[social-posting] user lookup failed; using runtime fallback credentials', {
             userId: post.userId,
             error: error instanceof Error ? error.message : String(error),
           });
+          try {
+            const fallback = await supabaseFallbackService.getSocialAccounts(post.userId);
+            if (fallback) {
+              userData = fallback as { email?: string | null; socialAccounts?: SocialAccounts };
+            }
+          } catch (fallbackError) {
+            console.warn('[social-posting] supabase social account lookup failed', fallbackError);
+          }
         }
         const allowDefaults = canUsePrimarySocialDefaults(userData, post.userId);
         const socialAccounts = this.mergeWithDefaults(

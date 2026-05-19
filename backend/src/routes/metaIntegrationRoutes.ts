@@ -8,6 +8,7 @@ import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
 import { firestore } from '../db/firestore';
 import { autoPostService } from '../services/autoPostService';
+import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const router = Router();
 
@@ -463,6 +464,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
     }
 
     await userRef.set({ socialAccounts: currentAccounts }, { merge: true });
+    await supabaseFallbackService.upsertSocialAccounts(state.userId, { socialAccounts: currentAccounts });
 
     await mergeAutopostPlatforms(
       state.userId,
@@ -536,6 +538,7 @@ router.get('/integrations/threads/callback', async (req, res) => {
     };
 
     await userRef.set({ socialAccounts: currentAccounts }, { merge: true });
+    await supabaseFallbackService.upsertSocialAccounts(state.userId, { socialAccounts: currentAccounts });
     await mergeAutopostPlatforms(state.userId, ['threads']);
 
     res

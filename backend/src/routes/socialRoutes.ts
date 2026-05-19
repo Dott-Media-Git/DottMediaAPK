@@ -10,6 +10,7 @@ import { socialSchedulingService } from '../packages/services/socialSchedulingSe
 import { socialPostingService } from '../packages/services/socialPostingService';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService';
 import { autoPostService } from '../services/autoPostService';
+import { supabaseFallbackService } from '../services/supabaseFallbackService';
 import { firestore } from '../db/firestore';
 import { config } from '../config';
 import { getTikTokIntegration, getYouTubeIntegration } from '../services/socialIntegrationService';
@@ -612,6 +613,7 @@ router.get('/social/threads/callback', async (req, res) => {
     };
 
     await userRef.set({ socialAccounts: currentAccounts }, { merge: true });
+    await supabaseFallbackService.upsertSocialAccounts(state.userId, { socialAccounts: currentAccounts });
     await mergeAutopostPlatforms(state.userId, ['threads']);
 
     res
@@ -849,6 +851,7 @@ router.post('/social/credentials', requireFirebase, async (req, res, next) => {
       { socialAccounts: payload.credentials },
       { merge: true }
     );
+    await supabaseFallbackService.upsertSocialAccounts(payload.userId, { socialAccounts: payload.credentials });
 
     res.json({ success: true });
   } catch (error) {

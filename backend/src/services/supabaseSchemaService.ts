@@ -19,6 +19,13 @@ create index if not exists dott_autopost_jobs_reels_next_run_idx on public.dott_
 create index if not exists dott_autopost_jobs_story_next_run_idx on public.dott_autopost_jobs (story_next_run);
 create index if not exists dott_autopost_jobs_trend_next_run_idx on public.dott_autopost_jobs (trend_next_run);
 
+create table if not exists public.dott_social_accounts (
+  user_id text primary key,
+  email text null,
+  accounts jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
 create table if not exists public.dott_scheduled_posts (
   id text primary key,
   user_id text not null,

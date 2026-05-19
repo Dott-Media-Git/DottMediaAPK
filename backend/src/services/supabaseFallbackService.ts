@@ -531,6 +531,32 @@ class SupabaseFallbackService {
     });
   }
 
+  async upsertSocialAccounts(userId: string, payload: { email?: string | null; socialAccounts?: Record<string, unknown> }) {
+    if (!this.isConfigured() || !userId) return;
+    await this.request('POST', 'dott_social_accounts', {
+      params: { on_conflict: 'user_id' },
+      prefer: 'resolution=merge-duplicates,return=minimal',
+      body: [
+        {
+          user_id: userId,
+          email: payload.email ?? null,
+          accounts: sanitizeJson(payload.socialAccounts ?? {}) ?? {},
+          updated_at: NOW(),
+        },
+      ],
+    });
+  }
+
+  async getSocialAccounts(userId: string) {
+    if (!this.isConfigured() || !userId) return null;
+    const row = await this.getSingleRow<any>('dott_social_accounts', { user_id: `eq.${userId}` });
+    if (!row) return null;
+    return {
+      email: row.email ?? null,
+      socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
+    };
+  }
+
   async getAutopostJob(userId: string) {
     if (!this.isConfigured() || !userId) return null;
     const row = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });

@@ -6,12 +6,14 @@ const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
 const socialDailyCollection = firestore.collection('analytics').doc('socialDaily').collection('user');
 const analyticsCollection = firestore.collection('analytics');
+const usersCollection = firestore.collection('users');
 
 const MAX_AUTPOST_JOBS = Math.max(Number(process.env.SUPABASE_BACKFILL_AUTPOST_LIMIT ?? 200), 1);
 const MAX_SCHEDULED_POSTS = Math.max(Number(process.env.SUPABASE_BACKFILL_SCHEDULED_LIMIT ?? 3000), 1);
 const MAX_SOCIAL_LIMITS = Math.max(Number(process.env.SUPABASE_BACKFILL_SOCIAL_LIMITS ?? 3000), 1);
 const MAX_SOCIAL_DAILY = Math.max(Number(process.env.SUPABASE_BACKFILL_SOCIAL_DAILY ?? 3000), 1);
 const MAX_ANALYTICS_DAILY = Math.max(Number(process.env.SUPABASE_BACKFILL_ANALYTICS_DAILY ?? 120), 1);
+const MAX_SOCIAL_ACCOUNTS = Math.max(Number(process.env.SUPABASE_BACKFILL_SOCIAL_ACCOUNTS ?? 500), 1);
 
 let backfillPromise: Promise<boolean> | null = null;
 
@@ -86,6 +88,25 @@ async function backfillAutopostJobs() {
     });
   }
   return snap.size;
+}
+
+async function backfillSocialAccounts() {
+  const snap = await usersCollection.limit(MAX_SOCIAL_ACCOUNTS).get();
+  let count = 0;
+  for (const doc of snap.docs) {
+    const data = doc.data() as Record<string, unknown>;
+    const socialAccounts =
+      data.socialAccounts && typeof data.socialAccounts === 'object'
+        ? (data.socialAccounts as Record<string, unknown>)
+        : {};
+    if (!Object.keys(socialAccounts).length) continue;
+    await supabaseFallbackService.upsertSocialAccounts(doc.id, {
+      email: typeof data.email === 'string' ? data.email : null,
+      socialAccounts,
+    });
+    count += 1;
+  }
+  return count;
 }
 
 async function backfillScheduledPosts() {
@@ -223,8 +244,9 @@ export const backfillSupabaseFallback = async () => {
     }
 
     try {
-      const [autopostJobs, scheduledPosts, socialLimits, socialDaily, analytics] = await Promise.all([
+      const [autopostJobs, socialAccounts, scheduledPosts, socialLimits, socialDaily, analytics] = await Promise.all([
         backfillAutopostJobs(),
+        backfillSocialAccounts(),
         backfillScheduledPosts(),
         backfillSocialLimits(),
         backfillSocialDaily(),
@@ -233,6 +255,7 @@ export const backfillSupabaseFallback = async () => {
 
       console.info('[supabase-backfill] completed', {
         autopostJobs,
+        socialAccounts,
         scheduledPosts,
         socialLimits,
         socialDaily,
