@@ -73,6 +73,8 @@ async function fetchHtml(url) {
 }
 const imageScore = (url) => {
     const lowered = url.toLowerCase();
+    if (lowered.includes('","') || lowered.includes('has_price') || lowered.includes('/properties/'))
+        return 0;
     if (/logo|icon|avatar|profile|placeholder|sprite|captcha|cropped-simba|aderok-logo/.test(lowered))
         return 0;
     if (!/\.(jpe?g|png|webp)(\?|$)/i.test(url))
@@ -82,7 +84,12 @@ const imageScore = (url) => {
     return 1;
 };
 const normalizeImage = (url, baseUrl) => {
-    const normalized = normalizeUrl(url, baseUrl).replace(/-\d+x\d+(?=\.(?:jpe?g|png|webp))/i, '');
+    const normalized = normalizeUrl(url, baseUrl)
+        .replace(/-\d+x\d+(?=\.(?:jpe?g|png|webp))/i, '')
+        .replace(/([?&](?:resize|fit)=\d+%2C\d+)(?=&|$)/i, '')
+        .replace(/[?&]w=\d+(?=&|$)/i, '')
+        .replace(/(\.(?:jpe?g|png|webp))&/i, '$1?')
+        .replace(/\?&/g, '?');
     return normalized;
 };
 const extractImages = (html, $, pageUrl) => unique([

@@ -101,6 +101,7 @@ async function fetchHtml(url: string) {
 
 const imageScore = (url: string) => {
   const lowered = url.toLowerCase();
+  if (lowered.includes('","') || lowered.includes('has_price') || lowered.includes('/properties/')) return 0;
   if (/logo|icon|avatar|profile|placeholder|sprite|captcha|cropped-simba|aderok-logo/.test(lowered)) return 0;
   if (!/\.(jpe?g|png|webp)(\?|$)/i.test(url)) return 0;
   if (/wp-content\/uploads|jiji\.ng|pictures\.jiji/.test(lowered)) return 2;
@@ -108,7 +109,12 @@ const imageScore = (url: string) => {
 };
 
 const normalizeImage = (url: string, baseUrl: string) => {
-  const normalized = normalizeUrl(url, baseUrl).replace(/-\d+x\d+(?=\.(?:jpe?g|png|webp))/i, '');
+  const normalized = normalizeUrl(url, baseUrl)
+    .replace(/-\d+x\d+(?=\.(?:jpe?g|png|webp))/i, '')
+    .replace(/([?&](?:resize|fit)=\d+%2C\d+)(?=&|$)/i, '')
+    .replace(/[?&]w=\d+(?=&|$)/i, '')
+    .replace(/(\.(?:jpe?g|png|webp))&/i, '$1?')
+    .replace(/\?&/g, '?');
   return normalized;
 };
 
