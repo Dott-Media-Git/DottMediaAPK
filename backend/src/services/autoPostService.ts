@@ -32,6 +32,7 @@ import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage }
 import type { TrendCandidate, TrendItem } from '../types/footballTrends.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
+import { buildCarmarketVehicleCaption, pickBeforwardVehicle } from './beforwardVehicleService.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from './bwinContentGuard.js';
 import {
@@ -3965,8 +3966,29 @@ export class AutoPostService {
     const usedCaptions: string[] = [];
     const historyEntries: HistoryEntry[] = [];
     let usedClientSourceImageUrl: string | null = null;
+    let carmarketVehicleCaption: string | null = null;
+    let usedBeforwardStockKey: string | null = null;
 
-    if (clientPhotoProfile) {
+    if (clientPhotoProfile?.key === 'carmarketplace' && !isStoryRun && needsImages) {
+      try {
+        const recentStockNos = new Set(
+          [...recentImages, ...recentCaptions]
+            .map(value => String(value).match(/\b[A-Z]{2}\d{6}\b/i)?.[0]?.toUpperCase())
+            .filter((value): value is string => Boolean(value)),
+        );
+        const vehicle = await pickBeforwardVehicle({ recentStockNos });
+        imageUrls = vehicle.images.slice(0, 10);
+        carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
+        usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
+      } catch (error) {
+        console.warn('[autopost] BE FORWARD vehicle lookup failed; using client photo fallback', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (clientPhotoProfile && !carmarketVehicleCaption) {
       const sourcedPhoto = await this.pickClientPhotoImageUrl(clientPhotoProfile, isStoryRun ? 'story' : 'feed', recentSet);
       if (sourcedPhoto) {
         usedClientSourceImageUrl = sourcedPhoto;
@@ -4028,7 +4050,10 @@ export class AutoPostService {
 
     for (const platform of platforms) {
       const publisher = platformPublishers[platform] ?? publishToTwitter;
-      const rawCaption = this.captionForPlatform(platform, finalGenerated, fallbackCopy);
+      const rawCaption =
+        carmarketVehicleCaption && (platform === 'facebook' || platform === 'instagram')
+          ? carmarketVehicleCaption
+          : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
       const shortsCaption =
         platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
       const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
@@ -4178,14 +4203,17 @@ export class AutoPostService {
     const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
     const nextRecentImages = this.mergeRecentImages(
       recentImages,
-      [...imageUrls, usedClientSourceImageUrl].filter((url): url is string => Boolean(url)),
+      [...imageUrls, usedClientSourceImageUrl, usedBeforwardStockKey].filter((url): url is string => Boolean(url)),
     );
     const postedVideoUrls = historyEntries
       .filter(entry => entry.status === 'posted')
       .map(entry => entry.videoUrl?.trim())
       .filter((url): url is string => Boolean(url));
     const nextRecentVideos = this.mergeRecentVideos(recentVideos, postedVideoUrls);
-    const nextRecentCaptions = this.mergeRecentCaptions(recentCaptions, usedCaptions);
+    const nextRecentCaptions = this.mergeRecentCaptions(
+      recentCaptions,
+      [...usedCaptions, usedBeforwardStockKey].filter((value): value is string => Boolean(value)),
+    );
 
     if (usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number') {
       cursorUpdates.videoCursor = genericVideoSelection.nextCursor;

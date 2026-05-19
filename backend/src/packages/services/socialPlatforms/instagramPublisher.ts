@@ -79,14 +79,42 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
   }
 
   try {
-    // Step 1: Create Media Container
-    const createMediaResponse = await axios.post(`${baseUrl}/media`, {
-      image_url: input.imageUrls[0],
-      caption: input.caption,
-      access_token: accessToken,
-    });
+    let creationId: string | undefined;
+    if (input.imageUrls.length > 1) {
+      const childContainers: string[] = [];
+      for (const imageUrl of input.imageUrls.slice(0, 10)) {
+        const childResponse = await axios.post(`${baseUrl}/media`, {
+          image_url: imageUrl,
+          is_carousel_item: true,
+          access_token: accessToken,
+        });
+        const childId = childResponse.data?.id;
+        if (!childId) {
+          throw new Error('Failed to create Instagram carousel item');
+        }
+        const childReady = await waitForMediaReady(childId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
+        if (!childReady) {
+          throw new Error('Instagram carousel item not ready for publishing');
+        }
+        childContainers.push(childId);
+      }
+      const carouselResponse = await axios.post(`${baseUrl}/media`, {
+        media_type: 'CAROUSEL',
+        children: childContainers.join(','),
+        caption: input.caption,
+        access_token: accessToken,
+      });
+      creationId = carouselResponse.data?.id;
+    } else {
+      // Step 1: Create Media Container
+      const createMediaResponse = await axios.post(`${baseUrl}/media`, {
+        image_url: input.imageUrls[0],
+        caption: input.caption,
+        access_token: accessToken,
+      });
+      creationId = createMediaResponse.data.id;
+    }
 
-    const creationId = createMediaResponse.data.id;
     if (!creationId) {
       throw new Error('Failed to create Instagram media container');
     }

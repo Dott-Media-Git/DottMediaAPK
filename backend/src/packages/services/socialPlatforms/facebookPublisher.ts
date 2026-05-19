@@ -42,6 +42,28 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
         description: input.caption,
         access_token: accessToken,
       });
+    } else if (input.imageUrls && input.imageUrls.length > 1) {
+      const photoUploads = await Promise.all(
+        input.imageUrls.slice(0, 10).map(url =>
+          axios.post(`${baseUrl}/photos`, {
+            url,
+            published: false,
+            access_token: accessToken,
+          }),
+        ),
+      );
+      const attached_media = photoUploads
+        .map(upload => upload.data?.id)
+        .filter(Boolean)
+        .map(id => ({ media_fbid: id }));
+      if (!attached_media.length) {
+        throw new Error('No Facebook photo IDs returned for multi-photo post');
+      }
+      response = await axios.post(`${baseUrl}/feed`, {
+        message: input.caption,
+        attached_media,
+        access_token: accessToken,
+      });
     } else if (input.imageUrls && input.imageUrls.length > 0) {
       // Post photo
       response = await axios.post(`${baseUrl}/photos`, {
@@ -86,9 +108,29 @@ export async function publishToFacebookStory(input: PublishInput): Promise<{ rem
   }
 
   try {
+    if (!input.videoUrl) {
+      const photoResponse = await axios.post(`${baseUrl}/photos`, {
+        url: mediaUrl,
+        published: false,
+        access_token: accessToken,
+      });
+      const photoId = photoResponse.data?.id;
+      if (!photoId) {
+        throw new Error('No photo ID returned from Facebook Story upload');
+      }
+      const storyResponse = await axios.post(`${baseUrl}/photo_stories`, {
+        photo_id: photoId,
+        access_token: accessToken,
+      });
+      if (storyResponse.data?.success || storyResponse.data?.post_id) {
+        return { remoteId: storyResponse.data?.post_id ?? photoId };
+      }
+      throw new Error('No ID returned from Facebook Story publish');
+    }
+
     const payload = {
       access_token: accessToken,
-      ...(input.videoUrl ? { file_url: mediaUrl } : { image_url: mediaUrl }),
+      file_url: mediaUrl,
     };
     const response = await axios.post(`${baseUrl}/stories`, payload);
     if (response.data && response.data.id) {
