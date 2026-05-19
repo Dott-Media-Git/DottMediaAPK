@@ -39,6 +39,12 @@ import {
   renderStaysphereCoverImage,
   staysphereListingHistoryKey,
 } from './staysphereListingService.js';
+import {
+  buildGamersSteamCaption,
+  gamersSteamHistoryKey,
+  pickGamersSteamScreenshots,
+  pickGamersSteamVideo,
+} from './gamersContentService.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from './bwinContentGuard.js';
 import {
@@ -3980,6 +3986,8 @@ export class AutoPostService {
     let usedBeforwardStockKey: string | null = null;
     let staysphereListingCaption: string | null = null;
     let usedStaysphereListingKey: string | null = null;
+    let gamersSteamCaption: string | null = null;
+    let usedGamersSteamKey: string | null = null;
 
     if (clientPhotoProfile?.key === 'carmarketplace' && !isStoryRun && needsImages) {
       try {
@@ -4031,7 +4039,26 @@ export class AutoPostService {
       }
     }
 
-    if (clientPhotoProfile && !carmarketVehicleCaption && !staysphereListingCaption) {
+    if (clientPhotoProfile?.key === 'gamers44life' && !isStoryRun && needsImages) {
+      try {
+        const recentSteamKeys = new Set(
+          [...recentImages, ...recentCaptions]
+            .map(value => String(value).match(/steam-game:\d+/i)?.[0]?.toLowerCase())
+            .filter((value): value is string => Boolean(value)),
+        );
+        const steamPost = await pickGamersSteamScreenshots({ recentKeys: recentSteamKeys });
+        imageUrls = steamPost.images.slice(0, 6);
+        gamersSteamCaption = buildGamersSteamCaption(steamPost);
+        usedGamersSteamKey = gamersSteamHistoryKey(steamPost);
+      } catch (error) {
+        console.warn('[autopost] Gamers Steam screenshot lookup failed; using client photo fallback', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (clientPhotoProfile && !carmarketVehicleCaption && !staysphereListingCaption && !gamersSteamCaption) {
       const sourcedPhoto = await this.pickClientPhotoImageUrl(clientPhotoProfile, isStoryRun ? 'story' : 'feed', recentSet);
       if (sourcedPhoto) {
         usedClientSourceImageUrl = sourcedPhoto;
@@ -4098,13 +4125,15 @@ export class AutoPostService {
           ? carmarketVehicleCaption
           : staysphereListingCaption && (platform === 'facebook' || platform === 'instagram')
             ? staysphereListingCaption
+            : gamersSteamCaption && (platform === 'facebook' || platform === 'instagram')
+              ? gamersSteamCaption
           : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
       const shortsCaption =
         platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
       const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
       const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
       const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
-      const { caption, signature } = carmarketVehicleCaption || staysphereListingCaption
+      const { caption, signature } = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption
         ? { caption: brandedCaption, signature: this.buildCaptionSignature(platform, brandedCaption) }
         : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
       const isVideoPlatform = videoPlatforms.has(platform as VideoPlatform);
@@ -4250,7 +4279,7 @@ export class AutoPostService {
     const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
     const nextRecentImages = this.mergeRecentImages(
       recentImages,
-      [...imageUrls, usedClientSourceImageUrl, usedBeforwardStockKey, usedStaysphereListingKey].filter(
+      [...imageUrls, usedClientSourceImageUrl, usedBeforwardStockKey, usedStaysphereListingKey, usedGamersSteamKey].filter(
         (url): url is string => Boolean(url),
       ),
     );
@@ -4261,7 +4290,7 @@ export class AutoPostService {
     const nextRecentVideos = this.mergeRecentVideos(recentVideos, postedVideoUrls);
     const nextRecentCaptions = this.mergeRecentCaptions(
       recentCaptions,
-      [...usedCaptions, usedBeforwardStockKey, usedStaysphereListingKey].filter(
+      [...usedCaptions, usedBeforwardStockKey, usedStaysphereListingKey, usedGamersSteamKey].filter(
         (value): value is string => Boolean(value),
       ),
     );
@@ -5857,6 +5886,12 @@ export class AutoPostService {
   }
 
   private async pickDynamicClientReelVideo(userId: string, recentVideos: Set<string>) {
+    if (this.getClientFallbackProfile(userId)?.key === 'gamers44life') {
+      const steamVideo = await pickGamersSteamVideo({ recentVideos });
+      if (steamVideo?.videoUrl) {
+        return steamVideo.videoUrl;
+      }
+    }
     const profile = this.getClientReelSourceProfile(userId);
     if (!profile) return null;
     const candidates = await this.fetchMixkitReelCandidates(profile);

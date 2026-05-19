@@ -32,6 +32,7 @@ import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
 import { buildCarmarketVehicleCaption, pickBeforwardVehicle } from './beforwardVehicleService.js';
 import { buildStaysphereListingCaption, pickStaysphereListing, renderStaysphereCoverImage, staysphereListingHistoryKey, } from './staysphereListingService.js';
+import { buildGamersSteamCaption, gamersSteamHistoryKey, pickGamersSteamScreenshots, pickGamersSteamVideo, } from './gamersContentService.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from './bwinContentGuard.js';
 import { getBwinAccountClosureMessage, getBwinAccountClosureState, isBwinAccountClosureActive, } from './bwinAccountClosureService.js';
@@ -3517,6 +3518,8 @@ export class AutoPostService {
         let usedBeforwardStockKey = null;
         let staysphereListingCaption = null;
         let usedStaysphereListingKey = null;
+        let gamersSteamCaption = null;
+        let usedGamersSteamKey = null;
         if (clientPhotoProfile?.key === 'carmarketplace' && !isStoryRun && needsImages) {
             try {
                 const recentStockNos = new Set([...recentImages, ...recentCaptions]
@@ -3559,7 +3562,24 @@ export class AutoPostService {
                 });
             }
         }
-        if (clientPhotoProfile && !carmarketVehicleCaption && !staysphereListingCaption) {
+        if (clientPhotoProfile?.key === 'gamers44life' && !isStoryRun && needsImages) {
+            try {
+                const recentSteamKeys = new Set([...recentImages, ...recentCaptions]
+                    .map(value => String(value).match(/steam-game:\d+/i)?.[0]?.toLowerCase())
+                    .filter((value) => Boolean(value)));
+                const steamPost = await pickGamersSteamScreenshots({ recentKeys: recentSteamKeys });
+                imageUrls = steamPost.images.slice(0, 6);
+                gamersSteamCaption = buildGamersSteamCaption(steamPost);
+                usedGamersSteamKey = gamersSteamHistoryKey(steamPost);
+            }
+            catch (error) {
+                console.warn('[autopost] Gamers Steam screenshot lookup failed; using client photo fallback', {
+                    userId,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+        if (clientPhotoProfile && !carmarketVehicleCaption && !staysphereListingCaption && !gamersSteamCaption) {
             const sourcedPhoto = await this.pickClientPhotoImageUrl(clientPhotoProfile, isStoryRun ? 'story' : 'feed', recentSet);
             if (sourcedPhoto) {
                 usedClientSourceImageUrl = sourcedPhoto;
@@ -3614,12 +3634,14 @@ export class AutoPostService {
                 ? carmarketVehicleCaption
                 : staysphereListingCaption && (platform === 'facebook' || platform === 'instagram')
                     ? staysphereListingCaption
-                    : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
+                    : gamersSteamCaption && (platform === 'facebook' || platform === 'instagram')
+                        ? gamersSteamCaption
+                        : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
             const shortsCaption = platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
             const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
             const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
             const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
-            const { caption, signature } = carmarketVehicleCaption || staysphereListingCaption
+            const { caption, signature } = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption
                 ? { caption: brandedCaption, signature: this.buildCaptionSignature(platform, brandedCaption) }
                 : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
             const isVideoPlatform = videoPlatforms.has(platform);
@@ -3748,13 +3770,13 @@ export class AutoPostService {
             }
         }
         const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
-        const nextRecentImages = this.mergeRecentImages(recentImages, [...imageUrls, usedClientSourceImageUrl, usedBeforwardStockKey, usedStaysphereListingKey].filter((url) => Boolean(url)));
+        const nextRecentImages = this.mergeRecentImages(recentImages, [...imageUrls, usedClientSourceImageUrl, usedBeforwardStockKey, usedStaysphereListingKey, usedGamersSteamKey].filter((url) => Boolean(url)));
         const postedVideoUrls = historyEntries
             .filter(entry => entry.status === 'posted')
             .map(entry => entry.videoUrl?.trim())
             .filter((url) => Boolean(url));
         const nextRecentVideos = this.mergeRecentVideos(recentVideos, postedVideoUrls);
-        const nextRecentCaptions = this.mergeRecentCaptions(recentCaptions, [...usedCaptions, usedBeforwardStockKey, usedStaysphereListingKey].filter((value) => Boolean(value)));
+        const nextRecentCaptions = this.mergeRecentCaptions(recentCaptions, [...usedCaptions, usedBeforwardStockKey, usedStaysphereListingKey, usedGamersSteamKey].filter((value) => Boolean(value)));
         if (usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number') {
             cursorUpdates.videoCursor = genericVideoSelection.nextCursor;
         }
@@ -5223,6 +5245,12 @@ export class AutoPostService {
         return profiles[userId] ?? null;
     }
     async pickDynamicClientReelVideo(userId, recentVideos) {
+        if (this.getClientFallbackProfile(userId)?.key === 'gamers44life') {
+            const steamVideo = await pickGamersSteamVideo({ recentVideos });
+            if (steamVideo?.videoUrl) {
+                return steamVideo.videoUrl;
+            }
+        }
         const profile = this.getClientReelSourceProfile(userId);
         if (!profile)
             return null;
