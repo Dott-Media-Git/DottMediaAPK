@@ -14,6 +14,7 @@ export type BwinAccountClosureState = {
 
 const BWIN_USER_ID = (process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53').trim();
 const DEFAULT_SHUTDOWN_AT = (process.env.BWIN_ACCOUNT_CLOSURE_AT || '2026-05-08T08:00:00+03:00').trim();
+const DEFAULT_CLOSURE_ENABLED = /^true$/i.test(String(process.env.BWIN_ACCOUNT_CLOSURE_ENABLED ?? '').trim());
 const DEFAULT_MESSAGE =
   'All Bwin social posting, reels, stories, and automated replies will pause at Friday, May 8, 2026 8:00 AM Africa/Kampala unless reopened.';
 const CACHE_TTL_MS = Math.max(Number(process.env.BWIN_ACCOUNT_CLOSURE_CACHE_MS ?? 60000), 5000);
@@ -28,7 +29,7 @@ const parseDate = (value?: string | null) => {
 const toIso = (value?: string | null) => parseDate(value).toISOString();
 
 const buildState = (raw?: Partial<BwinAccountClosureState> | null, now = new Date()): BwinAccountClosureState => {
-  const enabled = raw?.enabled !== false;
+  const enabled = typeof raw?.enabled === 'boolean' ? raw.enabled : DEFAULT_CLOSURE_ENABLED;
   const visibleToClient = raw?.visibleToClient !== false;
   const shutdownAt = toIso(raw?.shutdownAt);
   const scheduledAt = raw?.scheduledAt ? toIso(raw.scheduledAt) : now.toISOString();

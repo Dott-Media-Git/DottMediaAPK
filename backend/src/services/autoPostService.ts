@@ -481,7 +481,6 @@ export class AutoPostService {
       dueStories: Array.from(this.memoryStore.entries()).filter(
         ([, job]) =>
           job.active !== false &&
-          job.storyTrendEnabled === true &&
           job.storyNextRun &&
           job.storyNextRun.toMillis() <= now.toMillis(),
       ),
@@ -564,7 +563,15 @@ export class AutoPostService {
     }
     for (const [userId, job] of dueStories) {
       if (!(await this.claimDueRun(userId, job, 'story_next_run', now))) continue;
-      const outcome = await this.executeTrendStories(userId, job);
+      const outcome = job.storyTrendEnabled === true
+        ? await this.executeTrendStories(userId, job)
+        : await this.executeJob(userId, job, {
+            platforms: this.getStoryPlatforms(job),
+            intervalHours: job.storyIntervalHours ?? this.defaultStoryIntervalHours,
+            nextRunField: 'storyNextRun',
+            lastRunField: 'storyLastRunAt',
+            resultField: 'storyLastResult',
+          });
       processed += 1;
       const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
       results.set(userId, {
