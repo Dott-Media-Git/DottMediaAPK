@@ -1110,6 +1110,7 @@ export class AutoPostService {
         const data = doc.data() as AutoPostJob;
         if (data.active === false) continue;
         this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
+        if (!(await this.claimDueRun(doc.id, data, 'next_run', now))) continue;
         const outcome = await this.executeJob(doc.id, data);
         processed += 1;
         results.set(doc.id, {
@@ -1123,6 +1124,7 @@ export class AutoPostService {
         const data = doc.data() as AutoPostJob;
         if (data.active === false) continue;
         this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
+        if (!(await this.claimDueRun(doc.id, data, 'reels_next_run', now))) continue;
         const outcome = await this.executeJob(doc.id, data, {
           platforms: ['instagram_reels'],
           intervalHours: data.reelsIntervalHours ?? this.defaultReelsIntervalHours,
@@ -1144,6 +1146,7 @@ export class AutoPostService {
         const data = doc.data() as AutoPostJob;
         if (data.active === false) continue;
         this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
+        if (!(await this.claimDueRun(doc.id, data, 'story_next_run', now))) continue;
         const outcome = data.storyTrendEnabled === true
           ? await this.executeTrendStories(doc.id, data)
           : await this.executeJob(doc.id, data, {
@@ -1166,6 +1169,7 @@ export class AutoPostService {
         const data = doc.data() as AutoPostJob;
         if (data.active === false || data.trendEnabled !== true) continue;
         this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
+        if (!(await this.claimDueRun(doc.id, data, 'trend_next_run', now))) continue;
         const outcome = await this.executeTrendPosts(doc.id, data);
         processed += 1;
         const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
@@ -4059,7 +4063,9 @@ export class AutoPostService {
       const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
       const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
       const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
-      const { caption, signature } = this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
+      const { caption, signature } = carmarketVehicleCaption
+        ? { caption: brandedCaption, signature: this.buildCaptionSignature(platform, brandedCaption) }
+        : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
       const isVideoPlatform = videoPlatforms.has(platform as VideoPlatform);
       const supportsVideo = isVideoPlatform || optionalVideoPlatforms.has(platform);
       let videoUrl: string | undefined;
