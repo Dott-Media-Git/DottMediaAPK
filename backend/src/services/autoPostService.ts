@@ -143,6 +143,12 @@ type HistoryEntry = {
   videoUrl?: string;
   videoTitle?: string;
 };
+type ScheduledPostContentHistory = {
+  imageUrls: string[];
+  videoUrls: string[];
+  captions: string[];
+  contentKeys: string[];
+};
 type VideoPlatform = 'youtube' | 'tiktok' | 'instagram_reels';
 type ReelSourceProfile = { key: string; pages: string[] };
 type FootballTrendContentType = 'news' | 'video' | 'result' | 'prediction' | 'table' | 'top_scorer';
@@ -3967,7 +3973,11 @@ export class AutoPostService {
       ? this.buildBwinVisualPrompt(basePrompt)
       : this.buildVisualPrompt(this.applyNeonPreference(basePrompt));
     const businessType = job.businessType ?? (isBwinUser ? 'Sports betting brand' : 'AI CRM + automation agency');
-    const recentImages = this.getRecentImageHistory(job);
+    const scheduledHistory = await this.getScheduledPostContentHistory(userId);
+    const recentImages = this.mergeRecentImages(this.getRecentImageHistory(job), [
+      ...scheduledHistory.imageUrls,
+      ...scheduledHistory.contentKeys,
+    ]);
     const recentSet = new Set(recentImages);
     const fallbackVideoPool = this.getFallbackVideoPool();
     const genericVideoSelection = useGenericVideoFallback
@@ -4039,14 +4049,17 @@ export class AutoPostService {
         ? this.resolveApprovedImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages, userId)
         : this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages, userId)
       : [];
-    const recentVideos = this.getRecentVideoHistory(job);
+    const recentVideos = this.mergeRecentVideos(this.getRecentVideoHistory(job), scheduledHistory.videoUrls);
     const recentVideoSet = new Set(recentVideos);
     const cursorUpdates: Partial<
       Pick<AutoPostJob, 'videoCursor' | 'youtubeVideoCursor' | 'tiktokVideoCursor' | 'reelsVideoCursor'>
     > = {};
     let usedGenericVideo = false;
     const fallbackCopy = this.buildFallbackCopy(job, userId);
-    const recentCaptions = this.getRecentCaptionHistory(job);
+    const recentCaptions = this.mergeRecentCaptions(this.getRecentCaptionHistory(job), [
+      ...scheduledHistory.captions,
+      ...scheduledHistory.contentKeys,
+    ]);
     const captionHistory = new Set(recentCaptions);
     const usedCaptions: string[] = [];
     const historyEntries: HistoryEntry[] = [];
@@ -4871,6 +4884,99 @@ export class AutoPostService {
   private getRecentCaptionHistory(job: AutoPostJob): string[] {
     if (!Array.isArray(job.recentCaptions)) return [];
     return job.recentCaptions.filter(Boolean);
+  }
+
+  private async getScheduledPostContentHistory(userId: string): Promise<ScheduledPostContentHistory> {
+    const empty: ScheduledPostContentHistory = { imageUrls: [], videoUrls: [], captions: [], contentKeys: [] };
+    const maxHistory = Math.max(Number(process.env.AUTOPOST_SCHEDULED_HISTORY_SCAN ?? 240), 40);
+    const collect = (docs: admin.firestore.QueryDocumentSnapshot[]): ScheduledPostContentHistory => {
+      const imageUrls: string[] = [];
+      const videoUrls: string[] = [];
+      const captions: string[] = [];
+      const contentKeys: string[] = [];
+
+      for (const doc of docs) {
+        const data = doc.data() as Record<string, unknown>;
+        const platform = String(data.platform || '').trim();
+        const caption = String(data.caption || '').trim();
+        if (caption) {
+          captions.push(caption);
+          if (platform) captions.push(this.buildCaptionSignature(platform, caption));
+          contentKeys.push(...this.extractContentKeys(caption));
+        }
+        const images = Array.isArray(data.imageUrls) ? data.imageUrls : [];
+        for (const value of images) {
+          const url = String(value || '').trim();
+          if (!url) continue;
+          imageUrls.push(url);
+          contentKeys.push(...this.extractContentKeys(url));
+        }
+        const videoUrl = String(data.videoUrl || '').trim();
+        if (videoUrl) videoUrls.push(videoUrl);
+      }
+
+      return {
+        imageUrls: this.uniqueHistoryValues(imageUrls),
+        videoUrls: this.uniqueHistoryValues(videoUrls),
+        captions: this.uniqueHistoryValues(captions),
+        contentKeys: this.uniqueHistoryValues(contentKeys),
+      };
+    };
+
+    try {
+      const snapshot = await scheduledPostsCollection
+        .where('userId', '==', userId)
+        .orderBy('createdAt', 'desc')
+        .limit(maxHistory)
+        .get();
+      return collect(snapshot.docs);
+    } catch (error) {
+      console.warn('[autopost] scheduled post history lookup with ordering failed; retrying without order', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    try {
+      const snapshot = await scheduledPostsCollection.where('userId', '==', userId).limit(maxHistory).get();
+      return collect(snapshot.docs);
+    } catch (error) {
+      console.warn('[autopost] scheduled post history lookup failed', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return empty;
+    }
+  }
+
+  private extractContentKeys(value: string) {
+    const keys: string[] = [];
+    for (const match of value.matchAll(/\b[A-Z]{2}\d{6}\b/gi)) {
+      keys.push(`beforward-stock:${match[0].toUpperCase()}`);
+    }
+    for (const match of value.matchAll(/https?:\/\/[^\s)]+/gi)) {
+      const normalized = match[0].replace(/[.,;]+$/g, '').replace(/\/+$/, '');
+      if (/store\.steampowered\.com\/app\/(\d+)/i.test(normalized)) {
+        const appId = normalized.match(/store\.steampowered\.com\/app\/(\d+)/i)?.[1];
+        if (appId) keys.push(`steam-game:${appId}`);
+      }
+      if (/aderokestates\.com\/properties\/|simbaproperties\.co\.ug\/properties\/|jiji\.ug\//i.test(normalized)) {
+        keys.push(`staysphere-listing:${normalized.toLowerCase()}`);
+      }
+    }
+    return keys;
+  }
+
+  private uniqueHistoryValues(values: string[]) {
+    const seen = new Set<string>();
+    const unique: string[] = [];
+    for (const value of values) {
+      const normalized = value.trim();
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      unique.push(normalized);
+    }
+    return unique;
   }
 
   private selectFreshImages(images: string[], recent: Set<string>) {
