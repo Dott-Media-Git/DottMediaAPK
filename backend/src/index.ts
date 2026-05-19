@@ -57,8 +57,6 @@ const initializeAutomation = async () => {
       import('./jobs/autoPostJob.js'),
       import('./jobs/socialQueueJob.js'),
       import('./jobs/instagramCommentPollJob.js'),
-      import('./jobs/facebookCommentPollJob.js'),
-      import('./jobs/matchdayResultsJob.js'),
       import('./workers/youtubeWorker.js'),
     ]);
   } catch (error) {
