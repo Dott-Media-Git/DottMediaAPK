@@ -3692,20 +3692,26 @@ export class AutoPostService {
         }
         for (const platform of platforms) {
             const publisher = platformPublishers[platform] ?? publishToTwitter;
-            const rawCaption = carmarketVehicleCaption && (platform === 'facebook' || platform === 'instagram')
+            const isFeedCaptionPlatform = platform === 'facebook' || platform === 'instagram' || platform === 'threads';
+            const rawCaption = carmarketVehicleCaption && isFeedCaptionPlatform
                 ? carmarketVehicleCaption
-                : staysphereListingCaption && (platform === 'facebook' || platform === 'instagram')
+                : staysphereListingCaption && isFeedCaptionPlatform
                     ? staysphereListingCaption
-                    : gamersSteamCaption && (platform === 'facebook' || platform === 'instagram')
+                    : gamersSteamCaption && isFeedCaptionPlatform
                         ? gamersSteamCaption
                         : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
             const shortsCaption = platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
             const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
             const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
             const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
-            const { caption, signature } = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption
-                ? { caption: brandedCaption, signature: this.buildCaptionSignature(platform, brandedCaption) }
+            const threadSafeCaption = this.limitThreadsCaption(platform, brandedCaption);
+            const captionSelection = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption
+                ? { caption: threadSafeCaption, signature: this.buildCaptionSignature(platform, threadSafeCaption) }
                 : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
+            const caption = this.limitThreadsCaption(platform, captionSelection.caption);
+            const signature = caption === captionSelection.caption
+                ? captionSelection.signature
+                : this.buildCaptionSignature(platform, caption);
             const isVideoPlatform = videoPlatforms.has(platform);
             const supportsVideo = isVideoPlatform || optionalVideoPlatforms.has(platform);
             let videoUrl;
@@ -4130,7 +4136,22 @@ export class AutoPostService {
         if (platform === 'twitter' || platform === 'x') {
             return [caption, hashtags].filter(Boolean).join(' ');
         }
-        return [caption, hashtags].filter(Boolean).join('\n\n');
+        return this.limitThreadsCaption(platform, [caption, hashtags].filter(Boolean).join('\n\n'));
+    }
+    limitThreadsCaption(platform, caption) {
+        if (platform !== 'threads' || caption.length <= 500)
+            return caption;
+        const hashtags = caption.match(/#[A-Za-z0-9_]+/g) ?? [];
+        const suffix = hashtags.length ? `\n\n${hashtags.slice(0, 4).join(' ')}` : '';
+        const maxBodyLength = Math.max(1, 500 - suffix.length - 3);
+        const body = caption
+            .replace(/#[A-Za-z0-9_]+/g, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim()
+            .slice(0, maxBodyLength)
+            .replace(/\s+\S*$/, '')
+            .trim();
+        return `${body}...${suffix}`;
     }
     buildFallbackCopy(job, userId) {
         const isBwinUser = userId ? this.isBwinScopeUser(userId) : false;
