@@ -583,11 +583,12 @@ class SupabaseFallbackService {
     const expectedIso = toIsoString(expectedRun);
     const nextIso = toIsoString(nextRun);
     if (!expectedIso || !nextIso) return false;
+    const expectedUpperBound = new Date(new Date(expectedIso).getTime() + 1000).toISOString();
     const rows = await this.request<any[]>('PATCH', 'dott_autopost_jobs', {
       params: {
         select: 'user_id',
         user_id: `eq.${userId}`,
-        [field]: `lte.${expectedIso}`,
+        [field]: `lte.${expectedUpperBound}`,
       },
       prefer: 'return=representation',
       body: {
