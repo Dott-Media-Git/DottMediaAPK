@@ -549,8 +549,22 @@ class SupabaseFallbackService {
 
   async getSocialAccounts(userId: string) {
     if (!this.isConfigured() || !userId) return null;
-    const row = await this.getSingleRow<any>('dott_social_accounts', { user_id: `eq.${userId}` });
-    if (!row) return null;
+    let row: any = null;
+    try {
+      row = await this.getSingleRow<any>('dott_social_accounts', { user_id: `eq.${userId}` });
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status !== 404) throw error;
+      console.warn('[supabase-fallback] dott_social_accounts missing; reading social accounts from autopost data', {
+        userId,
+      });
+    }
+    if (!row) {
+      const autopostRow = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
+      const data = autopostRow?.data && typeof autopostRow.data === 'object' ? autopostRow.data : {};
+      const socialAccounts = data.socialAccounts && typeof data.socialAccounts === 'object' ? data.socialAccounts : null;
+      return socialAccounts ? { email: data.email ?? null, socialAccounts } : null;
+    }
     return {
       email: row.email ?? null,
       socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},

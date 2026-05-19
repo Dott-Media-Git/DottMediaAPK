@@ -324,6 +324,23 @@ class SupabaseFallbackService {
             body: [next],
         });
     }
+    async upsertSocialLimits(records) {
+        if (!this.isConfigured() || !records.length)
+            return;
+        const body = records.map(record => ({
+            key: record.key,
+            user_id: record.userId,
+            date: record.date,
+            posted_count: toNumber(record.postedCount),
+            scheduled_count: toNumber(record.scheduledCount),
+            updated_at: NOW(),
+        }));
+        await this.request('POST', 'dott_social_limits', {
+            params: { on_conflict: 'key' },
+            prefer: 'resolution=merge-duplicates,return=minimal',
+            body,
+        });
+    }
     async addSocialLog(payload) {
         if (!this.isConfigured())
             return;
@@ -367,6 +384,26 @@ class SupabaseFallbackService {
             body: [next],
         });
     }
+    async upsertSocialDailyRows(rows) {
+        if (!this.isConfigured() || !rows.length)
+            return;
+        const body = rows.map(row => ({
+            id: `${row.userId}_${row.date}`,
+            user_id: row.userId,
+            date: row.date,
+            posts_attempted: toNumber(row.postsAttempted),
+            posts_posted: toNumber(row.postsPosted),
+            posts_failed: toNumber(row.postsFailed),
+            posts_skipped: toNumber(row.postsSkipped),
+            per_platform: sanitizeJson(row.perPlatform ?? {}) ?? {},
+            updated_at: NOW(),
+        }));
+        await this.request('POST', 'dott_social_daily', {
+            params: { on_conflict: 'id' },
+            prefer: 'resolution=merge-duplicates,return=minimal',
+            body,
+        });
+    }
     async getSocialDailySummary(userId, limit = 14) {
         if (!this.isConfigured() || !userId)
             return [];
@@ -388,6 +425,29 @@ class SupabaseFallbackService {
             perPlatform: row.per_platform ?? {},
         })));
     }
+    async getSocialLogsByUser(userId, limit = 250) {
+        if (!this.isConfigured() || !userId)
+            return [];
+        const rows = await this.request('GET', 'dott_social_logs', {
+            params: {
+                select: '*',
+                user_id: `eq.${userId}`,
+                order: 'posted_at.desc',
+                limit,
+            },
+        });
+        return Array.isArray(rows)
+            ? rows.map(row => ({
+                userId: row.user_id,
+                platform: row.platform,
+                scheduledPostId: row.scheduled_post_id,
+                status: row.status,
+                responseId: row.response_id ?? null,
+                error: row.error ?? null,
+                postedAt: toTimestampStub(row.posted_at),
+            }))
+            : [];
+    }
     async upsertAutopostJob(userId, job) {
         if (!this.isConfigured() || !userId)
             return;
@@ -408,6 +468,48 @@ class SupabaseFallbackService {
             ],
         });
     }
+    async upsertSocialAccounts(userId, payload) {
+        if (!this.isConfigured() || !userId)
+            return;
+        await this.request('POST', 'dott_social_accounts', {
+            params: { on_conflict: 'user_id' },
+            prefer: 'resolution=merge-duplicates,return=minimal',
+            body: [
+                {
+                    user_id: userId,
+                    email: payload.email ?? null,
+                    accounts: sanitizeJson(payload.socialAccounts ?? {}) ?? {},
+                    updated_at: NOW(),
+                },
+            ],
+        });
+    }
+    async getSocialAccounts(userId) {
+        if (!this.isConfigured() || !userId)
+            return null;
+        let row = null;
+        try {
+            row = await this.getSingleRow('dott_social_accounts', { user_id: `eq.${userId}` });
+        }
+        catch (error) {
+            const status = error?.response?.status;
+            if (status !== 404)
+                throw error;
+            console.warn('[supabase-fallback] dott_social_accounts missing; reading social accounts from autopost data', {
+                userId,
+            });
+        }
+        if (!row) {
+            const autopostRow = await this.getSingleRow('dott_autopost_jobs', { user_id: `eq.${userId}` });
+            const data = autopostRow?.data && typeof autopostRow.data === 'object' ? autopostRow.data : {};
+            const socialAccounts = data.socialAccounts && typeof data.socialAccounts === 'object' ? data.socialAccounts : null;
+            return socialAccounts ? { email: data.email ?? null, socialAccounts } : null;
+        }
+        return {
+            email: row.email ?? null,
+            socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
+        };
+    }
     async getAutopostJob(userId) {
         if (!this.isConfigured() || !userId)
             return null;
@@ -425,12 +527,35 @@ class SupabaseFallbackService {
             trendNextRun: toTimestamp(row.trend_next_run) ?? toTimestamp(data.trendNextRun),
         };
     }
+    async claimAutopostRun(userId, field, expectedRun, nextRun) {
+        if (!this.isConfigured() || !userId)
+            return false;
+        const expectedIso = toIsoString(expectedRun);
+        const nextIso = toIsoString(nextRun);
+        if (!expectedIso || !nextIso)
+            return false;
+        const expectedUpperBound = new Date(new Date(expectedIso).getTime() + 1000).toISOString();
+        const rows = await this.request('PATCH', 'dott_autopost_jobs', {
+            params: {
+                select: 'user_id',
+                user_id: `eq.${userId}`,
+                [field]: `lte.${expectedUpperBound}`,
+            },
+            prefer: 'return=representation',
+            body: {
+                [field]: nextIso,
+                updated_at: NOW(),
+            },
+        });
+        return Array.isArray(rows) && rows.length > 0;
+    }
     async getDueAutopostJobs(field, before) {
         if (!this.isConfigured())
             return [];
         const rows = await this.request('GET', 'dott_autopost_jobs', {
             params: {
                 select: '*',
+                active: 'eq.true',
                 [field]: `lte.${before.toISOString()}`,
                 order: `${field}.asc`,
                 limit: 200,
@@ -447,6 +572,7 @@ class SupabaseFallbackService {
         const rows = await this.request('GET', 'dott_autopost_jobs', {
             params: {
                 select: '*',
+                active: 'eq.true',
                 [field]: 'is.null',
                 limit: 200,
             },
@@ -479,6 +605,22 @@ class SupabaseFallbackService {
             ],
         });
     }
+    async upsertMetricSummaries(rows) {
+        if (!this.isConfigured() || !rows.length)
+            return;
+        const body = rows.map(row => ({
+            scope_key: row.scopeKey,
+            user_id: row.userId ?? null,
+            metric: row.metric,
+            counters: sanitizeJson(row.counters) ?? {},
+            updated_at: NOW(),
+        }));
+        await this.request('POST', 'dott_metric_summaries', {
+            params: { on_conflict: 'scope_key,metric' },
+            prefer: 'resolution=merge-duplicates,return=minimal',
+            body,
+        });
+    }
     async incrementMetricDaily(metric, counters, scope, date) {
         if (!this.isConfigured())
             return;
@@ -503,6 +645,27 @@ class SupabaseFallbackService {
                     updated_at: NOW(),
                 },
             ],
+        });
+    }
+    async upsertMetricDailyRows(rows) {
+        if (!this.isConfigured() || !rows.length)
+            return;
+        const body = rows
+            .filter(row => row.date)
+            .map(row => ({
+            scope_key: row.scopeKey,
+            user_id: row.userId ?? null,
+            metric: row.metric,
+            date: row.date,
+            counters: sanitizeJson(row.counters) ?? {},
+            updated_at: NOW(),
+        }));
+        if (!body.length)
+            return;
+        await this.request('POST', 'dott_metric_daily', {
+            params: { on_conflict: 'scope_key,metric,date' },
+            prefer: 'resolution=merge-duplicates,return=minimal',
+            body,
         });
     }
     async getMetricSummary(metric, scope) {
