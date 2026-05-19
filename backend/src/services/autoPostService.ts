@@ -186,6 +186,23 @@ const TOP_FIVE_LEAGUES: LeagueDefinition[] = [
 
 const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
+const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId: string; instagramUsername: string }> = {
+  acmVetCcOiTHeGk5D7eDYieamDF3: {
+    pageId: '1033657279841186',
+    instagramAccountId: '17841414110816982',
+    instagramUsername: 'carmarketplace999',
+  },
+  D1iNgjLKNRaQhH35M0NmGfw1LVD2: {
+    pageId: '1191303874068642',
+    instagramAccountId: '17841448080672466',
+    instagramUsername: 'staysphere93',
+  },
+  vzdH1DnfFLVjlY8bBgC26WACmmw2: {
+    pageId: '1121885391014110',
+    instagramAccountId: '17841412643148539',
+    instagramUsername: 'gamers44life',
+  },
+};
 
 const platformPublishers: Record<
   string,
@@ -344,7 +361,34 @@ export class AutoPostService {
   }
 
   private async getRuntimeFallbackAccounts(userId: string): Promise<SocialAccounts> {
-    if (!this.isBwinScopeUser(userId)) return {};
+    if (!this.isBwinScopeUser(userId)) {
+      const clientFallback = CLIENT_META_FALLBACKS[userId];
+      const token = (process.env.CLIENT_META_USER_TOKEN ?? process.env.FACEBOOK_PAGE_TOKEN ?? process.env.META_GRAPH_TOKEN ?? '').trim();
+      if (!clientFallback || !token) return {};
+      try {
+        const resolved = await resolveFacebookPageId(token, clientFallback.pageId);
+        const pageToken = resolved?.pageToken?.trim() || token;
+        const pageId = resolved?.pageId?.trim() || clientFallback.pageId;
+        return {
+          facebook: {
+            accessToken: pageToken,
+            pageId,
+            ...(resolved?.pageName ? { pageName: resolved.pageName } : {}),
+          },
+          instagram: {
+            accessToken: pageToken,
+            accountId: clientFallback.instagramAccountId,
+            username: clientFallback.instagramUsername,
+          },
+        };
+      } catch (error) {
+        console.warn('[autopost] client runtime credential fallback failed', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return {};
+      }
+    }
 
     const fallback: SocialAccounts = {
       ...(this.getEmergencyTwitterCredentials() ?? {}),
