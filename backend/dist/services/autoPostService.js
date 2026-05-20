@@ -5430,11 +5430,14 @@ export class AutoPostService {
         return candidates[0];
     }
     async selectNextVideo(job, platform, fallbackVideos = [], userId, recentVideos = new Set()) {
-        if (platform === 'instagram_reels' && userId && job.reelsSourceMode !== 'static') {
+        const nicheProfile = userId ? this.getClientFallbackProfile(userId) : null;
+        const isNicheReel = platform === 'instagram_reels' && Boolean(nicheProfile);
+        if (isNicheReel) {
             const dynamicVideoUrl = await this.pickDynamicClientReelVideo(userId, recentVideos);
             if (dynamicVideoUrl) {
                 return { videoUrl: dynamicVideoUrl, nextCursor: undefined };
             }
+            return { videoUrl: undefined, nextCursor: undefined };
         }
         const list = platform === 'youtube'
             ? (job.youtubeVideoUrls ?? []).map(url => url.trim()).filter(Boolean)
@@ -5479,43 +5482,6 @@ export class AutoPostService {
         const nextCursor = (index + 1) % freshList.length;
         return { videoUrl: freshList[index], nextCursor };
     }
-    getClientReelSourceProfile(userId) {
-        const profiles = {
-            acmVetCcOiTHeGk5D7eDYieamDF3: {
-                key: 'carmarketplace',
-                pages: [
-                    'https://mixkit.co/free-stock-video/car/',
-                    'https://mixkit.co/free-stock-video/car-interior/',
-                    'https://mixkit.co/free-stock-video/automotive/',
-                    'https://mixkit.co/free-stock-video/sports-car/',
-                    'https://mixkit.co/free-stock-video/dashboard/',
-                    'https://mixkit.co/free-stock-video/auto/',
-                    'https://mixkit.co/free-stock-video/car-wash/',
-                ],
-            },
-            D1iNgjLKNRaQhH35M0NmGfw1LVD2: {
-                key: 'staysphere',
-                pages: [
-                    'https://mixkit.co/free-stock-video/hotel-room/',
-                    'https://mixkit.co/free-stock-video/bedroom/',
-                    'https://mixkit.co/free-stock-video/hotel/',
-                    'https://mixkit.co/free-stock-video/apartment/',
-                    'https://mixkit.co/free-stock-video/vacation/',
-                ],
-            },
-            vzdH1DnfFLVjlY8bBgC26WACmmw2: {
-                key: 'gamers44life',
-                pages: [
-                    'https://mixkit.co/free-stock-video/video-game/',
-                    'https://mixkit.co/free-stock-video/gaming/',
-                    'https://mixkit.co/free-stock-video/game/',
-                    'https://mixkit.co/free-stock-video/games/',
-                    'https://mixkit.co/free-stock-video/computer/',
-                ],
-            },
-        };
-        return profiles[userId] ?? null;
-    }
     async pickDynamicClientReelVideo(userId, recentVideos) {
         if (this.getClientFallbackProfile(userId)?.key === 'gamers44life') {
             const steamVideo = await pickGamersSteamVideo({ recentVideos });
@@ -5524,104 +5490,7 @@ export class AutoPostService {
             }
             return null;
         }
-        const profile = this.getClientReelSourceProfile(userId);
-        if (!profile)
-            return null;
-        const candidates = await this.fetchMixkitReelCandidates(profile);
-        return candidates.find(url => !recentVideos.has(url)) ?? null;
-    }
-    async fetchMixkitReelCandidates(profile) {
-        const discovered = new Set();
-        const shuffledPages = this.shuffled(profile.pages);
-        for (const page of shuffledPages) {
-            for (const url of await this.fetchMixkitPageVideos(page)) {
-                discovered.add(url);
-            }
-            if (discovered.size >= 80)
-                break;
-        }
-        return this.shuffled([...discovered]);
-    }
-    async fetchMixkitPageVideos(pageUrl) {
-        try {
-            const videos = new Set();
-            const itemUrls = new Set();
-            const pageVariants = [pageUrl, ...[2, 3, 4, 5].map(page => `${pageUrl.replace(/\/?$/, '/')}?page=${page}`)];
-            for (const url of pageVariants) {
-                const response = await axios.get(url, {
-                    timeout: 30000,
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
-                        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    },
-                });
-                this.extractMixkitMp4Urls(String(response.data)).forEach(video => videos.add(video));
-                const $ = cheerio.load(response.data);
-                $('a[href]').each((_, element) => {
-                    const href = String($(element).attr('href') ?? '').trim();
-                    if (!href.includes('/free-stock-video/'))
-                        return;
-                    if (href.includes('/discover/') || href.includes('#breadcrumb') || href.includes('#itemList') || href.includes('#videoGallery'))
-                        return;
-                    const absolute = href.startsWith('http') ? href : `https://mixkit.co${href}`;
-                    itemUrls.add(absolute.split('#')[0].replace(/\/?$/, '/'));
-                });
-                if (videos.size >= 120 || itemUrls.size >= 80)
-                    break;
-            }
-            for (const itemUrl of this.shuffled([...itemUrls]).slice(0, 18)) {
-                for (const video of await this.fetchMixkitItemVideos(itemUrl)) {
-                    videos.add(video);
-                }
-            }
-            return [...videos];
-        }
-        catch (error) {
-            console.warn('[autopost] Mixkit reel source lookup failed', {
-                pageUrl,
-                error: error instanceof Error ? error.message : String(error),
-            });
-            return [];
-        }
-    }
-    extractMixkitMp4Urls(html) {
-        const matches = String(html).match(/https:\/\/[^"']+\.mp4/g) ?? [];
-        const seenContent = new Set();
-        const normalized = matches
-            .map(url => url.trim())
-            .filter(url => /assets\.mixkit\.co\/(?:videos|active_storage\/video_items)\//.test(url))
-            .sort((a, b) => {
-            const rank = (url) => (/-1080\.mp4$/.test(url) ? 0 : /-720\.mp4$/.test(url) ? 1 : 2);
-            return rank(a) - rank(b);
-        })
-            .filter(url => {
-            const key = url
-                .replace(/-1080\.mp4$/, '')
-                .replace(/-720\.mp4$/, '')
-                .replace(/-360\.mp4$/, '');
-            if (seenContent.has(key))
-                return false;
-            seenContent.add(key);
-            return true;
-        });
-        return [...new Set(normalized)];
-    }
-    async fetchMixkitItemVideos(itemUrl) {
-        try {
-            const response = await axios.get(itemUrl, {
-                timeout: 30000,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
-                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                },
-            });
-            if (/Restricted License|Personal Use only/i.test(String(response.data)))
-                return [];
-            return this.extractMixkitMp4Urls(String(response.data));
-        }
-        catch {
-            return [];
-        }
+        return null;
     }
     selectNextGenericVideo(job, fallbackVideos = []) {
         const list = (job.videoUrls ?? []).map(url => url.trim()).filter(Boolean);
