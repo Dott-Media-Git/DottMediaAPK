@@ -4353,9 +4353,15 @@ export class AutoPostService {
       }
 
       try {
+        const publishImageUrls =
+          videoUrl
+            ? []
+            : clientPhotoProfile?.key === 'staysphere' && platform === 'facebook'
+              ? imageUrls.slice(0, 1)
+              : imageUrls;
         const response = await publisher({
           caption,
-          imageUrls: videoUrl ? [] : imageUrls,
+          imageUrls: publishImageUrls,
           videoUrl,
           videoTitle,
           privacyStatus,
