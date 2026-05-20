@@ -32,7 +32,11 @@ import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage }
 import type { TrendCandidate, TrendItem } from '../types/footballTrends.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
-import { buildCarmarketVehicleCaption, pickBeforwardVehicle } from './beforwardVehicleService.js';
+import {
+  buildCarmarketVehicleCaption,
+  pickCarmarketVehicle,
+  renderCarmarketCoverImage,
+} from './beforwardVehicleService.js';
 import {
   buildStaysphereListingCaption,
   pickStaysphereListing,
@@ -4076,11 +4080,23 @@ export class AutoPostService {
       try {
         const recentStockNos = new Set(
           [...recentImages, ...recentCaptions]
-            .map(value => String(value).match(/\b[A-Z]{2}\d{6}\b/i)?.[0]?.toUpperCase())
+            .map(value => {
+              const stockKey = String(value).match(/beforward-stock:([^\s,]+)/i)?.[1]?.toUpperCase();
+              if (stockKey) return stockKey;
+              return String(value).match(/\b[A-Z]{2}\d{6}\b/i)?.[0]?.toUpperCase();
+            })
             .filter((value): value is string => Boolean(value)),
         );
-        const vehicle = await pickBeforwardVehicle({ recentStockNos });
-        imageUrls = vehicle.images.slice(0, 10);
+        const vehicle = await pickCarmarketVehicle({ recentStockNos });
+        const vehicleImages = vehicle.images.slice(0, 10);
+        const coverImageUrl = await renderCarmarketCoverImage(vehicle).catch(error => {
+          console.warn('[autopost] Carmarket cover image render failed; using raw vehicle images', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        });
+        imageUrls = coverImageUrl ? [coverImageUrl, ...vehicleImages.slice(1)] : vehicleImages;
         carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
         usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
       } catch (error) {
@@ -5018,6 +5034,9 @@ export class AutoPostService {
 
   private extractContentKeys(value: string) {
     const keys: string[] = [];
+    for (const match of value.matchAll(/beforward-stock:([^\s,]+)/gi)) {
+      keys.push(`beforward-stock:${match[1].toUpperCase()}`);
+    }
     for (const match of value.matchAll(/\b[A-Z]{2}\d{6}\b/gi)) {
       keys.push(`beforward-stock:${match[0].toUpperCase()}`);
     }
