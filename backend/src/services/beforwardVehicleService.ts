@@ -48,6 +48,8 @@ const escapeSvg = (value: string) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 async function fetchHtml(url: string) {
   const response = await axios.get(url, {
     headers: { 'User-Agent': USER_AGENT },
@@ -103,6 +105,47 @@ async function uploadCarmarketImage(buffer: Buffer, folder = 'covers') {
   return saveGeneratedImageBuffer(buffer, 'jpg');
 }
 
+const extractCarbarnEmbeddedImages = (html: string, title: string) => {
+  const escapedTitle = escapeRegExp(title).replace(/\s+/g, '\\s+');
+  const block = html.match(
+    new RegExp(`\\\\\"title\\\\\":\\\\\"${escapedTitle}\\\\\"[\\s\\S]{0,14000}?\\\\\"exteriorPhoto\\\\\":\\[(.*?)\\]`, 'i'),
+  )?.[1];
+  if (!block) return [];
+  return unique(
+    Array.from(block.matchAll(/\\\"(https?:[^\\\"]+?\.(?:jpg|jpeg|png|webp))\\\"/gi)).map(match =>
+      match[1].replace(/\\\//g, '/'),
+    ),
+  );
+};
+
+const parseCarbarnEmbeddedVehicles = (html: string): BeforwardVehicle[] => {
+  const vehicles: BeforwardVehicle[] = [];
+  const vehiclePattern =
+    /\\"title\\":\\"([^\\"]+)\\"[\s\S]{0,1600}?\\"slug\\":\\"([^\\"]+)\\"[\s\S]{0,1600}?\\"stockNo\\":\\"([^\\"]+)\\"[\s\S]{0,10000}?\\"exteriorPhoto\\":\[(.*?)\][\s\S]{0,8000}?\\"UG\\":\{(.*?)\}/gi;
+  for (const match of html.matchAll(vehiclePattern)) {
+    const [, rawTitle, rawSlug, rawStockNo, photoBlock, priceBlock] = match;
+    const images = unique(
+      Array.from(photoBlock.matchAll(/\\"(https?:[^\\"]+?\.(?:jpg|jpeg|png|webp))\\"/gi)).map(imageMatch =>
+        imageMatch[1].replace(/\\\//g, '/'),
+      ),
+    );
+    if (!images.length) continue;
+    const priceUgx = Number(priceBlock.match(/\\"salePrice\\":(\d+)/i)?.[1]);
+    const priceUsd = priceBlock.match(/\\"salePriceInUSD\\":(\d+)/i)?.[1];
+    vehicles.push({
+      title: rawTitle.replace(/\\"/g, '"').trim(),
+      stockNo: `CARBARN-${rawStockNo.trim()}`,
+      priceUsd: priceUsd || undefined,
+      priceUgx: Number.isFinite(priceUgx) ? priceUgx : undefined,
+      source: 'Carbarn Uganda',
+      url: `https://www.carbarn.ug/vehicles/${rawSlug.trim()}`,
+      images: images.slice(0, 10),
+      summary: {},
+    });
+  }
+  return vehicles;
+};
+
 export async function fetchBeforwardVehicle(url: string): Promise<BeforwardVehicle> {
   const vehicleUrl = normalizeUrl(url);
   const html = await fetchHtml(vehicleUrl);
@@ -152,6 +195,10 @@ export async function fetchBeforwardVehicle(url: string): Promise<BeforwardVehic
 
 async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}): Promise<BeforwardVehicle> {
   const html = await fetchHtml('https://www.carbarn.ug/cars');
+  for (const vehicle of parseCarbarnEmbeddedVehicles(html)) {
+    if (vehicle.stockNo && options.recentStockNos?.has(vehicle.stockNo)) continue;
+    if (vehicle.images.length > 1) return vehicle;
+  }
   const $ = cheerio.load(html);
   const scripts = $('script[type="application/ld+json"]')
     .toArray()
@@ -169,6 +216,7 @@ async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}
         if (stockNo && options.recentStockNos?.has(`CARBARN-${stockNo}`)) continue;
         const image = normalizeUrl(String(item?.image ?? '').trim());
         if (!url || !image) continue;
+        const embeddedImages = extractCarbarnEmbeddedImages(html, String(item?.name ?? '').trim());
         const priceUgx = Number(item?.offers?.price);
         return {
           title: String(item?.name ?? 'Carbarn vehicle').trim(),
@@ -177,7 +225,7 @@ async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}
           priceUgx: Number.isFinite(priceUgx) ? priceUgx : undefined,
           source: 'Carbarn Uganda',
           url,
-          images: [image],
+          images: embeddedImages.length ? embeddedImages.slice(0, 10) : [image],
           summary: {
             fuel: String(item?.vehicleEngine?.fuelType ?? item?.vehicleConfiguration ?? '').trim(),
             mileage: String(item?.mileageFromOdometer?.value ?? '').trim(),
@@ -257,8 +305,8 @@ export async function renderCarmarketCoverImage(vehicle: BeforwardVehicle) {
         </linearGradient>
       </defs>
       <rect width="${width}" height="${height}" fill="url(#shade)"/>
-      <rect x="58" y="58" width="268" height="54" rx="27" fill="#05070a" opacity="0.74"/>
-      <text x="86" y="94" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="900">Carmarketug</text>
+      <rect x="58" y="58" width="318" height="54" rx="27" fill="#05070a" opacity="0.74"/>
+      <text x="86" y="94" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="900">CarMarketPlace</text>
       ${
         priceText
           ? `<rect x="58" y="792" width="420" height="104" rx="34" fill="#facc15"/>
