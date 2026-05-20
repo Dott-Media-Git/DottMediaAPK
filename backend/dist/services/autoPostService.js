@@ -2070,29 +2070,36 @@ export class AutoPostService {
         const headlineLines = this.wrapCardText(headline || 'Latest football update', 21, 4);
         const sublineLines = this.wrapCardText(subline || 'Fixtures, results, odds, and football highlights', 34, 3);
         const headlineSvg = headlineLines
-            .map((line, index) => `<text x="110" y="${410 + index * 122}" font-family="Arial, Helvetica, sans-serif" font-size="102" font-weight="800" fill="#111111">${this.escapeSvgText(line)}</text>`)
+            .map((line, index) => `<text x="110" y="${410 + index * 122}" font-family="Arial, Helvetica, sans-serif" font-size="102" font-weight="800" fill="#f8fafc">${this.escapeSvgText(line)}</text>`)
             .join('');
         const sublineSvg = sublineLines
-            .map((line, index) => `<text x="110" y="${980 + index * 62}" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="500" fill="#111111">${this.escapeSvgText(line)}</text>`)
+            .map((line, index) => `<text x="110" y="${980 + index * 62}" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="500" fill="#cbd5e1">${this.escapeSvgText(line)}</text>`)
             .join('');
         const svg = `
       <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#22c55e"/>
-            <stop offset="100%" stop-color="#0f766e"/>
+            <stop offset="0%" stop-color="#101827"/>
+            <stop offset="55%" stop-color="#172554"/>
+            <stop offset="100%" stop-color="#020617"/>
           </linearGradient>
+          <radialGradient id="stadiumGlow" cx="72%" cy="22%" r="58%">
+            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.34"/>
+            <stop offset="45%" stop-color="#facc15" stop-opacity="0.12"/>
+            <stop offset="100%" stop-color="#020617" stop-opacity="0"/>
+          </radialGradient>
         </defs>
         <rect width="${width}" height="${height}" fill="url(#bg)"/>
-        <rect x="0" y="0" width="${width}" height="200" fill="#111111"/>
-        <rect x="0" y="${height - 210}" width="${width}" height="210" fill="#111111"/>
-        <rect x="92" y="286" width="${width - 184}" height="8" fill="#111111" opacity="0.16"/>
-        <rect x="92" y="1120" width="${width - 184}" height="8" fill="#111111" opacity="0.16"/>
-        <text x="110" y="142" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="800" fill="#22c55e">FOOTBALL UPDATE</text>
-        <text x="110" y="256" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="700" fill="#111111">FOOTBALL UPDATE</text>
+        <rect width="${width}" height="${height}" fill="url(#stadiumGlow)"/>
+        <rect x="0" y="0" width="${width}" height="200" fill="#020617" opacity="0.88"/>
+        <rect x="0" y="${height - 210}" width="${width}" height="210" fill="#020617" opacity="0.90"/>
+        <rect x="92" y="286" width="${width - 184}" height="8" fill="#facc15" opacity="0.68"/>
+        <rect x="92" y="1120" width="${width - 184}" height="8" fill="#38bdf8" opacity="0.45"/>
+        <text x="110" y="142" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="800" fill="#facc15">FOOTBALL UPDATE</text>
+        <text x="110" y="256" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="700" fill="#e5e7eb">FOOTBALL UPDATE</text>
         ${headlineSvg}
         ${sublineSvg}
-        <text x="110" y="${height - 116}" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" fill="#22c55e">PLAY RESPONSIBLY</text>
+        <text x="110" y="${height - 116}" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" fill="#facc15">PLAY RESPONSIBLY</text>
       </svg>
     `;
         try {
@@ -2369,7 +2376,7 @@ export class AutoPostService {
                 cta: 'More football updates in bio',
                 updatedAt: new Date().toISOString(),
             });
-            return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+            return this.publishBwinNewsImageBuffer(buffer);
         }
         catch (error) {
             console.warn('[autopost] table image generation failed', error);
@@ -2390,7 +2397,7 @@ export class AutoPostService {
                 cta: 'More football updates in bio',
                 updatedAt: new Date().toISOString(),
             });
-            return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+            return this.publishBwinNewsImageBuffer(buffer);
         }
         catch (error) {
             console.warn('[autopost] top scorers image generation failed', error);
@@ -2408,7 +2415,7 @@ export class AutoPostService {
                 cta: 'More football updates in bio',
                 updatedAt: new Date().toISOString(),
             });
-            return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+            return this.publishBwinNewsImageBuffer(buffer);
         }
         catch (error) {
             console.warn('[autopost] predictions image generation failed', error);
