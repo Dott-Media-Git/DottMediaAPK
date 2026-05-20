@@ -61,6 +61,24 @@ const unique = (items) => {
         return true;
     });
 };
+const uniqueListings = (items) => {
+    const seen = new Set();
+    return items.filter(item => {
+        const key = listingKey(item.url);
+        if (seen.has(key))
+            return false;
+        seen.add(key);
+        return true;
+    });
+};
+const pickLeastRecentlyUsedListing = (items, recentKeysOrdered) => {
+    const recentIndex = new Map(recentKeysOrdered.map((key, index) => [key.toLowerCase(), index]));
+    return [...items].sort((a, b) => {
+        const aIndex = recentIndex.get(listingKey(a.url)) ?? Number.POSITIVE_INFINITY;
+        const bIndex = recentIndex.get(listingKey(b.url)) ?? Number.POSITIVE_INFINITY;
+        return bIndex - aIndex;
+    })[0];
+};
 const escapeSvg = (value) => value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -318,38 +336,47 @@ async function discoverSimbaUrls() {
 }
 export async function pickStaysphereListing(options = {}) {
     const recent = options.recentListingKeys ?? new Set();
-    const candidates = [];
-    for (const url of await discoverAderokUrls()) {
-        if (recent.has(listingKey(url)))
-            continue;
-        try {
-            candidates.push(await fetchAderokListing(url));
+    const recentOrdered = options.recentListingKeysOrdered ?? [];
+    const collectCandidates = async (skipRecent) => {
+        const candidates = [];
+        for (const url of await discoverAderokUrls()) {
+            if (skipRecent && recent.has(listingKey(url)))
+                continue;
+            try {
+                candidates.push(await fetchAderokListing(url));
+            }
+            catch {
+                // Try the next source listing.
+            }
+            if (candidates.length >= 4)
+                break;
         }
-        catch {
-            // Try the next source listing.
+        for (const url of await discoverSimbaUrls()) {
+            if (skipRecent && recent.has(listingKey(url)))
+                continue;
+            try {
+                candidates.push(await fetchSimbaListing(url));
+            }
+            catch {
+                // Try the next source listing.
+            }
+            if (candidates.length >= 8)
+                break;
         }
-        if (candidates.length >= 4)
-            break;
-    }
-    for (const url of await discoverSimbaUrls()) {
-        if (recent.has(listingKey(url)))
-            continue;
-        try {
-            candidates.push(await fetchSimbaListing(url));
+        if (candidates.length < 3) {
+            const jijiListings = await fetchJijiListings();
+            candidates.push(...(skipRecent ? jijiListings.filter(listing => !recent.has(listingKey(listing.url))) : jijiListings));
         }
-        catch {
-            // Try the next source listing.
-        }
-        if (candidates.length >= 8)
-            break;
-    }
-    if (candidates.length < 3) {
-        candidates.push(...(await fetchJijiListings()));
-    }
+        return uniqueListings(candidates);
+    };
+    const candidates = await collectCandidates(true);
     const fresh = candidates.find(listing => !recent.has(listingKey(listing.url)));
-    if (!fresh)
-        throw new Error('No fresh Staysphere Uganda listing found');
-    return fresh;
+    if (fresh)
+        return fresh;
+    const reusableCandidates = await collectCandidates(false);
+    if (!reusableCandidates.length)
+        throw new Error('No Staysphere Uganda listing source available');
+    return pickLeastRecentlyUsedListing(reusableCandidates, recentOrdered);
 }
 export function buildStaysphereListingCaption(listing) {
     const details = [

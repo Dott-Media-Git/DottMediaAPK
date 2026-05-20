@@ -4092,12 +4092,13 @@ export class AutoPostService {
 
     if (clientPhotoProfile?.key === 'staysphere' && needsImages) {
       try {
-        const recentListingKeys = new Set(
-          [...recentImages, ...recentCaptions]
-            .map(value => String(value).match(/staysphere-listing:[^\s]+/i)?.[0]?.toLowerCase())
-            .filter((value): value is string => Boolean(value)),
-        );
-        const listing = await pickStaysphereListing({ recentListingKeys });
+        const recentListingKeysOrdered = [...recentImages, ...recentCaptions]
+          .map(value => String(value).match(/staysphere-listing:[^\s]+/i)?.[0]?.toLowerCase())
+          .filter((value): value is string => Boolean(value));
+        const listing = await pickStaysphereListing({
+          recentListingKeys: new Set(recentListingKeysOrdered),
+          recentListingKeysOrdered,
+        });
         const listingImages = listing.images.slice(0, isStoryRun ? 1 : 10);
         const coverImageUrl = await renderStaysphereCoverImage(
           listing,
@@ -4114,7 +4115,7 @@ export class AutoPostService {
         staysphereListingCaption = buildStaysphereListingCaption(listing);
         usedStaysphereListingKey = staysphereListingHistoryKey(listing);
       } catch (error) {
-        console.warn('[autopost] Staysphere Uganda listing lookup failed; using client photo fallback', {
+        console.warn('[autopost] Staysphere Uganda listing lookup failed; source-only post will fail instead of using unrelated fallback', {
           userId,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -4140,7 +4141,13 @@ export class AutoPostService {
       }
     }
 
-    if (clientPhotoProfile && !carmarketVehicleCaption && !staysphereListingCaption && !gamersSteamCaption) {
+    if (
+      clientPhotoProfile &&
+      clientPhotoProfile.key !== 'staysphere' &&
+      !carmarketVehicleCaption &&
+      !staysphereListingCaption &&
+      !gamersSteamCaption
+    ) {
       const sourcedPhoto = await this.pickClientPhotoImageUrl(clientPhotoProfile, isStoryRun ? 'story' : 'feed', recentSet);
       if (sourcedPhoto) {
         usedClientSourceImageUrl = sourcedPhoto;
@@ -4159,6 +4166,42 @@ export class AutoPostService {
 
     if (isBwinUser && needsImages) {
       imageUrls = await this.ensureBwinSafeImageUrls(imageUrls, finalGenerated, basePrompt);
+    }
+
+    if (needsImages && imageUrls.length === 0 && clientPhotoProfile?.key === 'staysphere') {
+      const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
+      const failed = platforms.map(platform => ({
+        platform,
+        status: 'failed' as const,
+        error: 'staysphere_listing_source_unavailable',
+      }));
+      try {
+        await autopostCollection.doc(userId).set(
+          {
+            [lastRunField]: admin.firestore.FieldValue.serverTimestamp(),
+            [resultField]: failed,
+            [nextRunField]: admin.firestore.Timestamp.fromDate(nextRunDate),
+            active: job.active !== false,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      } catch (error) {
+        console.warn('[autopost] firestore Staysphere source failure update failed', error);
+      }
+      await this.recordHistory(userId, [], []);
+      await this.mirrorAutopostJob(userId, {
+        ...job,
+        [lastRunField]: admin.firestore.Timestamp.now(),
+        [resultField]: failed,
+        [nextRunField]: admin.firestore.Timestamp.fromDate(nextRunDate),
+        active: job.active !== false,
+      });
+      return {
+        posted: 0,
+        failed,
+        nextRun: nextRunDate.toISOString(),
+      };
     }
 
     if (needsImages && imageUrls.length === 0) {
