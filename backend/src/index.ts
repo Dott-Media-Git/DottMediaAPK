@@ -248,6 +248,52 @@ app.post('/api/autopost/runDue', async (req, res, next) => {
   }
 });
 
+app.post('/api/autopost/runBwinNewsNow', async (req, res, next) => {
+  try {
+    const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
+    const providedToken =
+      req.header('x-autopost-token') ??
+      req.header('x-cron-token') ??
+      (req.query.token as string | undefined) ??
+      req.body?.token;
+    if (triggerToken && providedToken !== triggerToken) {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+
+    const uid = '1zvY9nNyXMcfxdPQEyx0bIdK7r53';
+    const snap = await firestore.collection('autopostJobs').doc(uid).get();
+    const job = snap.exists ? (snap.data() ?? {}) : await (autoPostService as any).loadAutopostJob(uid);
+    const requestedPlatforms = Array.isArray(req.body?.platforms) ? req.body.platforms : null;
+    const trendPlatforms = requestedPlatforms?.length
+      ? requestedPlatforms.filter((platform: unknown) => typeof platform === 'string' && platform.trim())
+      : ['facebook', 'instagram', 'threads'];
+    const outcome = await (autoPostService as any).executeTrendPosts(uid, {
+      ...job,
+      trendEnabled: true,
+      trendContentType: 'news',
+      trendContentTypes: ['news'],
+      trendContentCycle: ['news'],
+      trendStructuredScheduleEnabled: false,
+      trendPlatforms,
+    });
+
+    res.json({
+      ok: true,
+      posted: outcome?.posted ?? 0,
+      failed: Array.isArray(outcome?.failed)
+        ? outcome.failed.map((failure: any) => ({
+            platform: failure.platform,
+            status: failure.status,
+            error: failure.error,
+          }))
+        : [],
+      nextRun: outcome?.nextRun ?? null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
   try {
     const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
