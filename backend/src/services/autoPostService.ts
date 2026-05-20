@@ -6090,7 +6090,7 @@ export class AutoPostService {
     const nicheProfile = userId ? this.getClientFallbackProfile(userId) : null;
     const isNicheReel = platform === 'instagram_reels' && Boolean(nicheProfile);
     if (isNicheReel) {
-      const dynamicVideoUrl = await this.pickDynamicClientReelVideo(userId, recentVideos);
+      const dynamicVideoUrl = await this.pickDynamicClientReelVideo(userId!, recentVideos);
       if (dynamicVideoUrl) {
         return { videoUrl: dynamicVideoUrl, nextCursor: undefined };
       }
