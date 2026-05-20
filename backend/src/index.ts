@@ -261,21 +261,41 @@ app.post('/api/autopost/runBwinNewsNow', async (req, res, next) => {
     }
 
     const uid = '1zvY9nNyXMcfxdPQEyx0bIdK7r53';
-    const snap = await firestore.collection('autopostJobs').doc(uid).get();
-    const job = snap.exists ? (snap.data() ?? {}) : await (autoPostService as any).loadAutopostJob(uid);
+    let job: Record<string, unknown> | null = null;
+    try {
+      const snap = await firestore.collection('autopostJobs').doc(uid).get();
+      job = snap.exists ? (snap.data() ?? {}) : null;
+    } catch (error) {
+      console.warn('[autopost] manual Bwin news job lookup failed; using fallback store', error);
+    }
+    if (!job) {
+      job = (await (autoPostService as any).loadAutopostJob(uid)) ?? {};
+    }
     const requestedPlatforms = Array.isArray(req.body?.platforms) ? req.body.platforms : null;
     const trendPlatforms = requestedPlatforms?.length
       ? requestedPlatforms.filter((platform: unknown) => typeof platform === 'string' && platform.trim())
       : ['facebook', 'instagram', 'threads'];
-    const outcome = await (autoPostService as any).executeTrendPosts(uid, {
-      ...job,
-      trendEnabled: true,
-      trendContentType: 'news',
-      trendContentTypes: ['news'],
-      trendContentCycle: ['news'],
-      trendStructuredScheduleEnabled: false,
-      trendPlatforms,
-    });
+    let outcome: any;
+    try {
+      outcome = await (autoPostService as any).executeTrendPosts(uid, {
+        ...job,
+        trendEnabled: true,
+        trendContentType: 'news',
+        trendContentTypes: ['news'],
+        trendContentCycle: ['news'],
+        trendStructuredScheduleEnabled: false,
+        trendPlatforms,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('[autopost] manual Bwin news trigger failed', error);
+      return res.json({
+        ok: false,
+        posted: 0,
+        failed: [{ platform: 'bwin_news', status: 'failed', error: message }],
+        nextRun: null,
+      });
+    }
 
     res.json({
       ok: true,
