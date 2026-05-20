@@ -1274,7 +1274,7 @@ export class AutoPostService {
 
   private getReelsIntervalHours(userId: string, configured?: number) {
     if (this.isNicheClientAccount(userId)) {
-      return NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS;
+      return configured && configured > 0 ? configured : NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS;
     }
     return configured && configured > 0 ? configured : this.defaultReelsIntervalHours;
   }
