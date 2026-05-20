@@ -534,6 +534,8 @@ export async function renderStaysphereCoverImage(
   const sublineY = headlineY + headlineLines.length * (headlineSize + 8) + 32;
   const panelHeight = format === 'story' ? 300 : 190;
   const panelTop = headlineY - (format === 'story' ? 96 : 72);
+  const badgeX = 64;
+  const badgeY = format === 'story' ? 96 : 64;
   const svg = `
     <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -544,9 +546,10 @@ export async function renderStaysphereCoverImage(
         </linearGradient>
       </defs>
       <rect width="${width}" height="${height}" fill="url(#shade)"/>
+      <rect x="${badgeX}" y="${badgeY}" width="236" height="48" rx="24" fill="#07140f" opacity="0.68"/>
+      <rect x="${badgeX + 8}" y="${badgeY + 8}" width="220" height="32" rx="16" fill="#34d399"/>
+      <text x="${badgeX + 28}" y="${badgeY + 31}" fill="#062016" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="900">Stay-sphere</text>
       <rect x="64" y="${panelTop}" width="${width - 128}" height="${panelHeight}" rx="30" fill="#07140f" opacity="0.54"/>
-      <rect x="86" y="${panelTop + 24}" width="178" height="38" rx="19" fill="#34d399"/>
-      <text x="108" y="${panelTop + 50}" fill="#062016" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="900">STAY PICK</text>
       ${headlineLines
         .map(
           (line, index) =>
