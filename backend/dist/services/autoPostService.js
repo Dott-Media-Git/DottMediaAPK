@@ -5445,6 +5445,7 @@ export class AutoPostService {
             if (steamVideo?.videoUrl) {
                 return steamVideo.videoUrl;
             }
+            return null;
         }
         const profile = this.getClientReelSourceProfile(userId);
         if (!profile)
