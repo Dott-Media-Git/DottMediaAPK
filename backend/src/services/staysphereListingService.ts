@@ -491,12 +491,13 @@ export function buildStaysphereCoverText(listing: StaysphereListing) {
   return { headline, subline };
 }
 
-async function uploadStaysphereCover(buffer: Buffer) {
+async function uploadStaysphereImage(buffer: Buffer, folder = 'covers') {
   const supabaseUrl = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
   const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
   const bucket = process.env.CLIENT_CAMPAIGN_BUCKET?.trim() || 'dott-campaign';
   if (supabaseUrl && serviceRoleKey) {
-    const objectPath = `client-autopost/staysphere/covers/${new Date().toISOString().slice(0, 10)}/${Date.now()}-${crypto.randomUUID()}.jpg`;
+    const safeFolder = folder.replace(/[^a-z0-9_-]/gi, '') || 'covers';
+    const objectPath = `client-autopost/staysphere/${safeFolder}/${new Date().toISOString().slice(0, 10)}/${Date.now()}-${crypto.randomUUID()}.jpg`;
     await axios.post(`${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`, buffer, {
       headers: {
         Authorization: `Bearer ${serviceRoleKey}`,
@@ -510,6 +511,17 @@ async function uploadStaysphereCover(buffer: Buffer) {
     return `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
   }
   return saveGeneratedImageBuffer(buffer, 'jpg');
+}
+
+export async function prepareStaysphereListingImage(sourceImageUrl: string) {
+  const source = await fetchImageBuffer(sourceImageUrl);
+  const buffer = await sharp(source)
+    .rotate()
+    .resize(1080, 1080, { fit: 'cover', position: 'attention' })
+    .sharpen()
+    .jpeg({ quality: 92, mozjpeg: true, chromaSubsampling: '4:4:4' })
+    .toBuffer();
+  return uploadStaysphereImage(buffer, 'photos');
 }
 
 export async function renderStaysphereCoverImage(
@@ -563,5 +575,5 @@ export async function renderStaysphereCoverImage(
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
     .jpeg({ quality: 93, mozjpeg: true, chromaSubsampling: '4:4:4' })
     .toBuffer();
-  return uploadStaysphereCover(buffer);
+  return uploadStaysphereImage(buffer, 'covers');
 }

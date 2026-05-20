@@ -36,6 +36,7 @@ import { buildCarmarketVehicleCaption, pickBeforwardVehicle } from './beforwardV
 import {
   buildStaysphereListingCaption,
   pickStaysphereListing,
+  prepareStaysphereListingImage,
   renderStaysphereCoverImage,
   staysphereListingHistoryKey,
 } from './staysphereListingService.js';
@@ -4111,7 +4112,24 @@ export class AutoPostService {
           });
           return null;
         });
-        imageUrls = coverImageUrl ? [coverImageUrl, ...listingImages.slice(1)] : listingImages;
+        const preparedListingImages = await Promise.all(
+          listingImages.slice(coverImageUrl ? 1 : 0).map(async imageUrl => {
+            try {
+              return await prepareStaysphereListingImage(imageUrl);
+            } catch (error) {
+              console.warn('[autopost] Staysphere listing image preparation failed; skipping raw source URL', {
+                userId,
+                imageUrl,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return null;
+            }
+          }),
+        );
+        imageUrls = [
+          ...(coverImageUrl ? [coverImageUrl] : []),
+          ...preparedListingImages.filter((value): value is string => Boolean(value)),
+        ];
         staysphereListingCaption = buildStaysphereListingCaption(listing);
         usedStaysphereListingKey = staysphereListingHistoryKey(listing);
       } catch (error) {
