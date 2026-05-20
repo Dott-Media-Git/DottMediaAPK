@@ -4100,7 +4100,7 @@ export class AutoPostService {
           recentListingKeys: new Set(recentListingKeysOrdered),
           recentListingKeysOrdered,
         });
-        const listingImages = listing.images.slice(0, isStoryRun ? 1 : 10);
+        const listingImages = listing.images.slice(0, isStoryRun ? 1 : 5);
         const coverImageUrl = await renderStaysphereCoverImage(
           listing,
           listingImages[0],

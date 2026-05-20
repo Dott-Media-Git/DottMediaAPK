@@ -3615,7 +3615,7 @@ export class AutoPostService {
                     recentListingKeys: new Set(recentListingKeysOrdered),
                     recentListingKeysOrdered,
                 });
-                const listingImages = listing.images.slice(0, isStoryRun ? 1 : 10);
+                const listingImages = listing.images.slice(0, isStoryRun ? 1 : 5);
                 const coverImageUrl = await renderStaysphereCoverImage(listing, listingImages[0], isStoryRun ? 'story' : 'feed').catch(error => {
                     console.warn('[autopost] Staysphere cover image render failed; using raw listing cover', {
                         userId,
