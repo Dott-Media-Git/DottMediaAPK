@@ -3963,6 +3963,51 @@ export class AutoPostService {
       });
       return { posted: 0, failed: [], nextRun: nextRunDate.toISOString() };
     }
+    if (this.isBwinScopeUser(userId) && !isReelsRun && !isStoryRun) {
+      const feedPlatforms = platforms.filter(platform =>
+        ['facebook', 'instagram', 'threads', 'x', 'twitter'].includes(platform),
+      );
+      if (!feedPlatforms.length) {
+        return { posted: 0, failed: [], nextRun: null };
+      }
+      const trendOutcome = await this.executeTrendPosts(userId, {
+        ...job,
+        trendEnabled: true,
+        trendPlatforms: feedPlatforms,
+        trendStructuredScheduleEnabled: false,
+        trendContentCycle: ['news'],
+      });
+      const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
+      const updatedTrendSnap = await autopostCollection.doc(userId).get();
+      const updatedTrendResult = updatedTrendSnap.data()?.trendLastResult;
+      const result = Array.isArray(updatedTrendResult) ? (updatedTrendResult as PostResult[]) : trendOutcome.failed;
+      try {
+        await autopostCollection.doc(userId).set(
+          {
+            [lastRunField]: admin.firestore.FieldValue.serverTimestamp(),
+            [resultField]: result,
+            [nextRunField]: admin.firestore.Timestamp.fromDate(nextRunDate),
+            active: job.active !== false,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      } catch (error) {
+        console.warn('[autopost] firestore Bwin news-only feed update failed', error);
+      }
+      await this.mirrorAutopostJob(userId, {
+        ...job,
+        [lastRunField]: admin.firestore.Timestamp.now(),
+        [resultField]: result,
+        [nextRunField]: admin.firestore.Timestamp.fromDate(nextRunDate),
+        active: job.active !== false,
+      });
+      return {
+        posted: trendOutcome.posted,
+        failed: trendOutcome.failed,
+        nextRun: nextRunDate.toISOString(),
+      };
+    }
     const videoPlatforms = new Set<VideoPlatform>(['youtube', 'tiktok', 'instagram_reels']);
     const optionalVideoPlatforms = new Set([
       'facebook',
