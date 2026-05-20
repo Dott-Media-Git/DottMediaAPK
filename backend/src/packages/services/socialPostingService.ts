@@ -42,6 +42,11 @@ const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId
 };
 
 const MAX_PER_DAY = 5;
+const DEPRECATED_CLIENT_CAMPAIGN_USER_IDS = new Set([
+  'acmVetCcOiTHeGk5D7eDYieamDF3',
+  'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
+  'vzdH1DnfFLVjlY8bBgC26WACmmw2',
+]);
 
 type ScheduledPost = {
   id: string;
@@ -226,7 +231,30 @@ export class SocialPostingService {
   }
 
   private isLimitExempt(post: ScheduledPost) {
-    return post.source === 'matchday_table' || post.source === 'client_two_hour_campaign';
+    return post.source === 'matchday_table';
+  }
+
+  private isDeprecatedClientCampaignPost(post: ScheduledPost) {
+    return post.source === 'client_two_hour_campaign' && DEPRECATED_CLIENT_CAMPAIGN_USER_IDS.has(post.userId);
+  }
+
+  private async skipDeprecatedClientCampaignPost(post: ScheduledPost) {
+    const message = 'Deprecated generated client campaign skipped; source-driven autopost is active.';
+    try {
+      await scheduledPostsCollection.doc(post.id).update({
+        status: 'skipped_deprecated',
+        errorMessage: message,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (error) {
+      console.warn('[social-posting] firestore deprecated campaign update failed', error);
+    }
+    await supabaseFallbackService.updateScheduledPost(post.id, {
+      status: 'skipped_deprecated',
+      errorMessage: message,
+      updatedAt: new Date(),
+    });
+    await this.log(post, 'skipped_deprecated', undefined, message);
   }
 
   async runQueue(limit = 25) {
@@ -294,6 +322,10 @@ export class SocialPostingService {
     for (const post of posts) {
       const key = `${post.userId}_${post.targetDate}`;
       const currentCount = counts.get(key) ?? 0;
+      if (this.isDeprecatedClientCampaignPost(post)) {
+        await this.skipDeprecatedClientCampaignPost(post);
+        continue;
+      }
       const closureState = await getBwinAccountClosureState(post.userId);
       if (closureState?.enabled && (await isBwinAccountClosureActive(post.userId))) {
         const message = getBwinAccountClosureMessage(closureState);
