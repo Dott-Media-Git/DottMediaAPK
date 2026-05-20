@@ -2105,7 +2105,7 @@ export class AutoPostService {
         try {
             const pipeline = sharp(Buffer.from(svg)).png();
             const output = await pipeline.png({ compressionLevel: 1, palette: false }).toBuffer();
-            const publicUrl = await saveGeneratedImageBuffer(output, 'png');
+            const publicUrl = await this.publishBwinNewsImageBuffer(output);
             return publicUrl ? [publicUrl] : [];
         }
         catch (error) {
@@ -3213,6 +3213,9 @@ export class AutoPostService {
                 imageUrls = await this.generateFootballCardImage(`Create a high-resolution football breaking-news poster image for "${trendTopic || 'Latest football update'}". Clean typography space, dynamic stadium atmosphere, premium sports editorial quality.`, new Set(this.getRecentImageHistory(job)));
             }
             imageUrls = await this.finalizeNewsImages(imageUrls, newsOverlayHeadline || trendTopic);
+            if (!imageUrls.length) {
+                imageUrls = await this.generateBwinSportsFallbackImage(newsOverlayHeadline || trendTopic || caption || 'Latest football update', 'Latest football news from trusted sources');
+            }
         }
         // Football trend videos must come from approved source feeds/highlight tweets only.
         const genericVideoSelection = this.selectNextGenericVideo(job, []);
