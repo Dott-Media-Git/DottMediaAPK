@@ -5,8 +5,6 @@ import * as cheerio from 'cheerio';
 import fs from 'fs';
 import path from 'path';
 import * as crypto from 'crypto';
-import os from 'os';
-import { spawn } from 'child_process';
 import { TwitterApi } from 'twitter-api-v2';
 import { firestore } from '../db/firestore.js';
 import { config } from '../config.js';
@@ -575,9 +573,9 @@ export class AutoPostService {
       processed += 1;
       results.set(userId, {
         userId,
-        posted: outcome.posted,
-        failed: outcome.failed.length,
-        nextRun: outcome.nextRun,
+        posted: outcome.posted ?? 0,
+        failed: outcome.failed?.length ?? 0,
+        nextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
       });
     }
     for (const [userId, job] of dueReels) {
@@ -594,9 +592,9 @@ export class AutoPostService {
       const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
       results.set(userId, {
         ...existing,
-        reelsPosted: outcome.posted,
-        reelsFailed: outcome.failed.length,
-        reelsNextRun: outcome.nextRun,
+        reelsPosted: outcome.posted ?? 0,
+        reelsFailed: outcome.failed?.length ?? 0,
+        reelsNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
       });
     }
     for (const [userId, job] of dueStories) {
@@ -614,9 +612,9 @@ export class AutoPostService {
       const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
       results.set(userId, {
         ...existing,
-        storyPosted: outcome.posted,
-        storyFailed: outcome.failed.length,
-        storyNextRun: outcome.nextRun,
+        storyPosted: outcome.posted ?? 0,
+        storyFailed: outcome.failed?.length ?? 0,
+        storyNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
       });
     }
     for (const [userId, job] of dueTrends) {
@@ -630,9 +628,9 @@ export class AutoPostService {
       const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
       results.set(userId, {
         ...existing,
-        trendPosted: outcome.posted,
-        trendFailed: outcome.failed.length,
-        trendNextRun: outcome.nextRun,
+        trendPosted: outcome.posted ?? 0,
+        trendFailed: outcome.failed?.length ?? 0,
+        trendNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
       });
     }
 
@@ -1059,9 +1057,9 @@ export class AutoPostService {
         processed += 1;
         results.set(userId, {
           userId,
-          posted: outcome.posted,
-          failed: outcome.failed.length,
-          nextRun: outcome.nextRun,
+          posted: outcome.posted ?? 0,
+          failed: outcome.failed?.length ?? 0,
+          nextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
         });
       }
       for (const [userId, job] of dueReels) {
@@ -1078,9 +1076,9 @@ export class AutoPostService {
         const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
         results.set(userId, {
           ...existing,
-          reelsPosted: outcome.posted,
-          reelsFailed: outcome.failed.length,
-          reelsNextRun: outcome.nextRun,
+          reelsPosted: outcome.posted ?? 0,
+          reelsFailed: outcome.failed?.length ?? 0,
+          reelsNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
         });
       }
       for (const [userId, job] of dueStories) {
@@ -1098,9 +1096,9 @@ export class AutoPostService {
         const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
         results.set(userId, {
           ...existing,
-          storyPosted: outcome.posted,
-          storyFailed: outcome.failed.length,
-          storyNextRun: outcome.nextRun,
+          storyPosted: outcome.posted ?? 0,
+          storyFailed: outcome.failed?.length ?? 0,
+          storyNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
         });
       }
       for (const [userId, job] of dueTrends) {
@@ -1114,9 +1112,9 @@ export class AutoPostService {
         const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
         results.set(userId, {
           ...existing,
-          trendPosted: outcome.posted,
-          trendFailed: outcome.failed.length,
-          trendNextRun: outcome.nextRun,
+          trendPosted: outcome.posted ?? 0,
+          trendFailed: outcome.failed?.length ?? 0,
+          trendNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
         });
       }
       return { processed, results: Array.from(results.values()) };
@@ -1209,9 +1207,9 @@ export class AutoPostService {
         processed += 1;
         results.set(doc.id, {
           userId: doc.id,
-          posted: outcome.posted,
-          failed: outcome.failed.length,
-          nextRun: outcome.nextRun,
+          posted: outcome.posted ?? 0,
+          failed: outcome.failed?.length ?? 0,
+          nextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
         });
       }
       for (const doc of reelsSnap.docs) {
@@ -1231,9 +1229,9 @@ export class AutoPostService {
         const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
         results.set(doc.id, {
           ...existing,
-          reelsPosted: outcome.posted,
-          reelsFailed: outcome.failed.length,
-          reelsNextRun: outcome.nextRun,
+          reelsPosted: outcome.posted ?? 0,
+          reelsFailed: outcome.failed?.length ?? 0,
+          reelsNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
         });
       }
       for (const doc of storiesSnap.docs) {
@@ -1254,9 +1252,9 @@ export class AutoPostService {
         const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
         results.set(doc.id, {
           ...existing,
-          storyPosted: outcome.posted,
-          storyFailed: outcome.failed.length,
-          storyNextRun: outcome.nextRun,
+          storyPosted: outcome.posted ?? 0,
+          storyFailed: outcome.failed?.length ?? 0,
+          storyNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
         });
       }
       for (const doc of trendSnap.docs) {
@@ -1273,9 +1271,9 @@ export class AutoPostService {
         const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
         results.set(doc.id, {
           ...existing,
-          trendPosted: outcome.posted,
-          trendFailed: outcome.failed.length,
-          trendNextRun: outcome.nextRun,
+          trendPosted: outcome.posted ?? 0,
+          trendFailed: outcome.failed?.length ?? 0,
+          trendNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
         });
       }
       const fallbackResult = await this.runDueJobsFromFallback(now, new Set(results.keys()));
@@ -2364,11 +2362,14 @@ export class AutoPostService {
     if (!normalizedHeadline) return source;
     const width = 1800;
     const height = 1800;
-    const lines = this.wrapCardText(normalizedHeadline, 22, 4);
+    const lines = this.wrapCardText(normalizedHeadline, 20, 3);
+    const accentY = 1246;
+    const textY = 1360;
+    const lineGap = 112;
     const headlineSvg = lines
       .map(
         (line, index) =>
-          `<text x="96" y="${1280 + index * 104}" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="88" font-weight="900" fill="#ffffff">${this.escapeSvgText(line.toUpperCase())}</text>`,
+          `<text x="96" y="${textY + index * lineGap}" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="92" font-weight="900" fill="#ffffff">${this.escapeSvgText(line.toUpperCase())}</text>`,
       )
       .join('\n');
     const svg = `
@@ -2376,12 +2377,12 @@ export class AutoPostService {
         <defs>
           <linearGradient id="shade" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stop-color="#020617" stop-opacity="0"/>
-            <stop offset="0.48" stop-color="#020617" stop-opacity="0.18"/>
+            <stop offset="0.48" stop-color="#020617" stop-opacity="0.24"/>
             <stop offset="1" stop-color="#020617" stop-opacity="0.92"/>
           </linearGradient>
         </defs>
         <rect width="${width}" height="${height}" fill="url(#shade)"/>
-        <rect x="96" y="1168" width="180" height="12" rx="6" fill="#38bdf8"/>
+        <rect x="96" y="${accentY}" width="180" height="14" rx="7" fill="#35B653"/>
         ${headlineSvg}
       </svg>
     `;
@@ -2417,43 +2418,6 @@ export class AutoPostService {
     return saveGeneratedImageBuffer(buffer, 'jpg');
   }
 
-  private async renderBwinNewsPosterBuffer(sourceUrl: string, headline: string) {
-    if (!/^https?:\/\//i.test(sourceUrl) || !headline.trim()) return null;
-    const scriptCandidates = [
-      path.resolve(process.cwd(), 'scripts', 'render_football_analytics_news_poster.py'),
-      path.resolve(process.cwd(), 'backend', 'scripts', 'render_football_analytics_news_poster.py'),
-    ];
-    const scriptPath = scriptCandidates.find(candidate => fs.existsSync(candidate));
-    if (!scriptPath) return null;
-    const outputPath = path.join(os.tmpdir(), `bwin-news-${crypto.randomUUID()}.jpg`);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn('python', [scriptPath, '--out', outputPath, '--title', headline, '--image-url', sourceUrl], {
-          cwd: path.dirname(path.dirname(scriptPath)),
-          stdio: ['ignore', 'ignore', 'pipe'],
-        });
-        let stderr = '';
-        child.stderr.on('data', chunk => {
-          stderr += chunk.toString();
-        });
-        child.on('error', reject);
-        child.on('close', code => {
-          if (code === 0) {
-            resolve();
-            return;
-          }
-          reject(new Error(stderr.trim() || `renderer exited with code ${code}`));
-        });
-      });
-      return await fs.promises.readFile(outputPath);
-    } catch (error) {
-      console.warn('[autopost] bwin news poster renderer failed; using overlay fallback', error);
-      return null;
-    } finally {
-      await fs.promises.unlink(outputPath).catch(() => undefined);
-    }
-  }
-
   private async finalizeNewsImages(imageUrls: string[], headline = '') {
     const finalized: string[] = [];
     for (const url of imageUrls) {
@@ -2473,14 +2437,6 @@ export class AutoPostService {
         continue;
       }
       try {
-        const renderedPoster = await this.renderBwinNewsPosterBuffer(url, headline);
-        if (renderedPoster) {
-          const publicUrl = await this.publishBwinNewsImageBuffer(renderedPoster);
-          if (publicUrl) {
-            finalized.push(publicUrl);
-            continue;
-          }
-        }
         const source = await this.loadImageBuffer(url);
         if (!source) continue;
         const base = await sharp(source)
@@ -3840,17 +3796,28 @@ export class AutoPostService {
     if (scope === 'football' && this.isBwinScopeUser(userId) && selectedContentType === 'news' && imageUrls.length) {
       imageUrls = await this.improveNewsImageQuality(imageUrls, platforms);
       if (!imageUrls.length) {
-        imageUrls = await this.generateFootballCardImage(
-          `Create a high-resolution football breaking-news poster image for "${trendTopic || 'Latest football update'}". Clean typography space, dynamic stadium atmosphere, premium sports editorial quality.`,
-          new Set<string>(this.getRecentImageHistory(job)),
-        );
+        console.warn('[autopost] Bwin news skipped source image fallback because no source-aligned image passed quality checks', {
+          trendTopic,
+        });
       }
       imageUrls = await this.finalizeNewsImages(imageUrls, newsOverlayHeadline || trendTopic);
       if (!imageUrls.length) {
-        imageUrls = await this.generateBwinSportsFallbackImage(
-          newsOverlayHeadline || trendTopic || caption || 'Latest football update',
-          'Latest football news from trusted sources',
-        );
+        results.push({ platform: 'bwin_news_guard', status: 'failed', error: 'missing_full_bleed_news_image' });
+        historyEntries.push({
+          platform: 'bwin_news_guard',
+          status: 'failed',
+          caption,
+          errorMessage: 'missing_full_bleed_news_image',
+        });
+        console.warn('[autopost] Bwin news publish skipped because full-bleed source image could not be finalized', {
+          trendTopic,
+        });
+        return {
+          ...job,
+          trendLastRunAt: admin.firestore.Timestamp.now(),
+          trendNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+          trendLastResult: results,
+        };
       }
     }
 
