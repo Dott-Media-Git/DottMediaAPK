@@ -484,7 +484,7 @@ export class AutoPostService {
         };
     }
     async runBwinEmergencyPost(now) {
-        const enabled = process.env.BWIN_X_EMERGENCY_ENABLED !== 'false';
+        const enabled = process.env.BWIN_X_EMERGENCY_ENABLED === 'true';
         if (!enabled) {
             return { attempted: false, posted: false, reason: 'disabled' };
         }
@@ -589,6 +589,53 @@ export class AutoPostService {
             if (!imageUrls.length) {
                 return { attempted: true, posted: false, reason: 'source_image_finalization_failed', selectedTitle };
             }
+            const cooldownPostId = `emergency:bwin:cooldown:${Math.floor(now.getTime() / (intervalMinutes * 60 * 1000))}`;
+            if (emergencyOwnerId && selectedScheduledPostId) {
+                try {
+                    const latestRecentKeys = new Set(await supabaseFallbackService.getRecentScheduledPostIds(emergencyOwnerId, 800));
+                    if (latestRecentKeys.has(selectedScheduledPostId) || latestRecentKeys.has(cooldownPostId)) {
+                        return {
+                            attempted: true,
+                            posted: false,
+                            reason: 'already_claimed_or_in_cooldown',
+                            selectedTitle,
+                        };
+                    }
+                    await Promise.all([
+                        supabaseFallbackService.addSocialLog({
+                            userId: emergencyOwnerId,
+                            platform: 'bwin_emergency_lock',
+                            scheduledPostId: selectedScheduledPostId,
+                            status: 'claimed',
+                            extraPayload: {
+                                selectedTitle,
+                                selectedLink,
+                                imageUrls,
+                            },
+                        }),
+                        supabaseFallbackService.addSocialLog({
+                            userId: emergencyOwnerId,
+                            platform: 'bwin_emergency_lock',
+                            scheduledPostId: cooldownPostId,
+                            status: 'claimed',
+                            extraPayload: {
+                                selectedTitle,
+                                selectedLink,
+                                imageUrls,
+                            },
+                        }),
+                    ]);
+                }
+                catch (error) {
+                    console.warn('[autopost] emergency claim lookup failed', error);
+                    return {
+                        attempted: true,
+                        posted: false,
+                        reason: 'emergency_claim_failed',
+                        selectedTitle,
+                    };
+                }
+            }
             const results = [];
             if (xCredentials) {
                 try {
@@ -606,10 +653,13 @@ export class AutoPostService {
             }
             if (facebookCredentials) {
                 try {
+                    if (!imageUrls.length) {
+                        throw new Error('missing_facebook_image');
+                    }
                     const facebookCaption = this.applyBwinBetTracking(baseCaption, emergencyOwnerId, 'facebook');
                     const response = await publishToFacebook({
                         caption: facebookCaption,
-                        imageUrls,
+                        imageUrls: imageUrls.slice(0, 1),
                         credentials: facebookCredentials,
                     });
                     results.push({ platform: 'facebook', status: 'posted', remoteId: response.remoteId ?? null });
@@ -657,6 +707,11 @@ export class AutoPostService {
                         scheduledPostId: selectedScheduledPostId,
                         status: result.status,
                         responseId: result.remoteId ?? undefined,
+                        extraPayload: {
+                            selectedTitle,
+                            selectedLink,
+                            imageUrls,
+                        },
                     }))).catch(error => console.warn('[autopost] emergency recent-key log failed', error));
                 }
             }
