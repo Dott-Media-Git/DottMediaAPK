@@ -310,14 +310,22 @@ export class AutoPostService {
         }
         return null;
     }
-    async runDueJobsFromFallback(now) {
+    async runDueJobsFromFallback(now, excludedUserIds = new Set()) {
         const buildDueSets = () => ({
-            dueStandard: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false && job.nextRun && job.nextRun.toMillis() <= now.toMillis()),
-            dueReels: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false && job.reelsNextRun && job.reelsNextRun.toMillis() <= now.toMillis()),
-            dueStories: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false &&
+            dueStandard: Array.from(this.memoryStore.entries()).filter(([userId, job]) => !excludedUserIds.has(userId) &&
+                job.active !== false &&
+                job.nextRun &&
+                job.nextRun.toMillis() <= now.toMillis()),
+            dueReels: Array.from(this.memoryStore.entries()).filter(([userId, job]) => !excludedUserIds.has(userId) &&
+                job.active !== false &&
+                job.reelsNextRun &&
+                job.reelsNextRun.toMillis() <= now.toMillis()),
+            dueStories: Array.from(this.memoryStore.entries()).filter(([userId, job]) => !excludedUserIds.has(userId) &&
+                job.active !== false &&
                 job.storyNextRun &&
                 job.storyNextRun.toMillis() <= now.toMillis()),
-            dueTrends: Array.from(this.memoryStore.entries()).filter(([, job]) => job.active !== false &&
+            dueTrends: Array.from(this.memoryStore.entries()).filter(([userId, job]) => !excludedUserIds.has(userId) &&
+                job.active !== false &&
                 job.trendEnabled === true &&
                 job.trendNextRun &&
                 job.trendNextRun.toMillis() <= now.toMillis()),
@@ -398,6 +406,10 @@ export class AutoPostService {
             });
         }
         for (const [userId, job] of dueTrends) {
+            const feedAlreadyProcessed = Boolean(results.get(userId)?.nextRun);
+            if (this.isBwinScopeUser(userId) && feedAlreadyProcessed) {
+                continue;
+            }
             if (!(await this.claimDueRun(userId, job, 'trend_next_run', now)))
                 continue;
             const outcome = await this.executeTrendPosts(userId, job);
@@ -759,6 +771,10 @@ export class AutoPostService {
                 });
             }
             for (const [userId, job] of dueTrends) {
+                const feedAlreadyProcessed = Boolean(results.get(userId)?.nextRun);
+                if (this.isBwinScopeUser(userId) && feedAlreadyProcessed) {
+                    continue;
+                }
                 if (!(await this.claimDueRun(userId, job, 'trend_next_run', now)))
                     continue;
                 const outcome = await this.executeTrendPosts(userId, job);
@@ -899,6 +915,10 @@ export class AutoPostService {
                 if (data.active === false || data.trendEnabled !== true)
                     continue;
                 this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
+                const feedAlreadyProcessed = Boolean(results.get(doc.id)?.nextRun);
+                if (this.isBwinScopeUser(doc.id) && feedAlreadyProcessed) {
+                    continue;
+                }
                 if (!(await this.claimDueRun(doc.id, data, 'trend_next_run', now)))
                     continue;
                 const outcome = await this.executeTrendPosts(doc.id, data);
@@ -911,7 +931,7 @@ export class AutoPostService {
                     trendNextRun: outcome.nextRun,
                 });
             }
-            const fallbackResult = await this.runDueJobsFromFallback(now);
+            const fallbackResult = await this.runDueJobsFromFallback(now, new Set(results.keys()));
             if ((fallbackResult.processed ?? 0) > 0) {
                 for (const fallbackRow of (fallbackResult.results ?? [])) {
                     const existing = results.get(fallbackRow.userId) ?? {
