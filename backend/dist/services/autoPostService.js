@@ -1089,7 +1089,15 @@ export class AutoPostService {
             return false;
         const nextRun = this.getClaimNextRunDate(userId, job, field, now.toDate());
         try {
-            return await supabaseFallbackService.claimAutopostRun(userId, field, expectedRun, nextRun);
+            const claimed = await supabaseFallbackService.claimAutopostRun(userId, field, expectedRun, nextRun);
+            if (!claimed) {
+                console.warn('[autopost] supabase due-run claim was stale; continuing with Firestore due job', {
+                    userId,
+                    field,
+                });
+                return true;
+            }
+            return true;
         }
         catch (error) {
             console.warn('[autopost] failed to claim due run in supabase fallback', {
@@ -1097,7 +1105,7 @@ export class AutoPostService {
                 field,
                 error: error instanceof Error ? error.message : String(error),
             });
-            return false;
+            return true;
         }
     }
     async runForUser(userId, options = {}) {
