@@ -769,18 +769,25 @@ export class AutoPostService {
       }
 
       const emergencyOwnerId = (process.env.BWIN_TRACK_OWNER_ID ?? process.env.BWIN_SCOPE_ID ?? '').trim();
-      const baseCaption = [
-        selectedTitle,
-        selectedLink ? selectedLink : '',
-        'More football updates in bio.',
-      ]
-        .filter(Boolean)
-        .join('\n');
+      const storyText = selectedLink ? await this.fetchArticleStoryText(selectedLink, '') : '';
+      const baseCaption = this.buildBwinNewsCaption(selectedTitle, storyText, selectedLink);
       let imageUrls = selectedImage ? [selectedImage] : [];
       if (!imageUrls.length) {
         imageUrls = await this.generateFootballCardImage(
           `${selectedTitle}\n\nFootball update card with clean sports editorial styling.`,
           new Set<string>(),
+        );
+      }
+      if (imageUrls.length) {
+        const sourceImages = await this.improveNewsImageQuality(imageUrls, ['facebook', 'instagram']);
+        imageUrls = sourceImages.length
+          ? await this.finalizeNewsImages(sourceImages, selectedTitle)
+          : await this.finalizeNewsImages(imageUrls, selectedTitle);
+      }
+      if (!imageUrls.length) {
+        imageUrls = await this.generateBwinSportsFallbackImage(
+          selectedTitle,
+          'Latest football news from trusted sources',
         );
       }
 
@@ -2001,17 +2008,31 @@ export class AutoPostService {
       });
       const html = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
       const $ = cheerio.load(html);
-      const ogImage =
+      const imageCandidates = [
         $('meta[property="og:image"]').attr('content')?.trim() ||
-        $('meta[property="og:image:secure_url"]').attr('content')?.trim() ||
-        $('meta[name="twitter:image"]').attr('content')?.trim() ||
-        $('link[rel="image_src"]').attr('href')?.trim();
-      if (!ogImage) return null;
-      try {
-        return new URL(ogImage, articleUrl).toString();
-      } catch {
-        return ogImage;
+          $('meta[property="og:image:secure_url"]').attr('content')?.trim() ||
+          $('meta[name="twitter:image"]').attr('content')?.trim() ||
+          $('link[rel="image_src"]').attr('href')?.trim(),
+        ...$('article img, main img, figure img, picture img, [data-testid="lede-image"] img')
+          .toArray()
+          .flatMap(node => {
+            const src = $(node).attr('src')?.trim();
+            const dataSrc = $(node).attr('data-src')?.trim();
+            const srcset = String($(node).attr('srcset') || '')
+              .split(',')
+              .map(part => part.trim().split(/\s+/)[0])
+              .filter(Boolean);
+            return [src, dataSrc, ...srcset];
+          }),
+      ].filter(Boolean) as string[];
+      for (const candidate of imageCandidates) {
+        try {
+          return new URL(candidate, articleUrl).toString();
+        } catch {
+          if (/^https?:\/\//i.test(candidate)) return candidate;
+        }
       }
+      return null;
     } catch (error) {
       console.warn('[autopost] failed to fetch article OG image', { articleUrl, error });
       return null;
@@ -2141,10 +2162,87 @@ export class AutoPostService {
     }
   }
 
-  private buildBwinFullStoryCaption(topic: string, items: TrendItem[], hashtags: string) {
+  private cleanArticleText(value: string) {
+    return String(value || '')
+      .replace(/Continue reading\.?/gi, '')
+      .replace(/Advertisement/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private isUsefulArticleParagraph(value: string) {
+    const text = this.cleanArticleText(value);
+    if (text.length < 45) return false;
+    if (/^(advertisement|related topics|listen to|sign up|follow us|copyright)/i.test(text)) return false;
+    if (/cookies|privacy policy|newsletter/i.test(text)) return false;
+    return true;
+  }
+
+  private async fetchArticleStoryText(articleUrl?: string, fallback = '') {
+    const fallbackText = this.cleanArticleText(fallback);
+    if (!articleUrl) return fallbackText;
+    try {
+      const response = await axios.get(articleUrl, {
+        timeout: 12000,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml',
+        },
+      });
+      const html = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+      const $ = cheerio.load(html);
+      const metaText = [
+        $('meta[property="og:description"]').attr('content'),
+        $('meta[name="description"]').attr('content'),
+        $('meta[name="twitter:description"]').attr('content'),
+      ]
+        .map(value => this.cleanArticleText(value || ''))
+        .filter(Boolean);
+      const selectors = [
+        'article p',
+        'main p',
+        '[data-testid="article-body"] p',
+        '[data-component="text-block"] p',
+        '.article-body p',
+        '.story-body p',
+      ];
+      const paragraphs = selectors
+        .flatMap(selector => $(selector).toArray().map(node => this.cleanArticleText($(node).text())))
+        .filter(paragraph => this.isUsefulArticleParagraph(paragraph));
+      const unique: string[] = [];
+      const seen = new Set<string>();
+      for (const paragraph of [...paragraphs, ...metaText, fallbackText]) {
+        const cleaned = this.cleanArticleText(paragraph);
+        const key = cleaned.toLowerCase();
+        if (!this.isUsefulArticleParagraph(cleaned) || seen.has(key)) continue;
+        seen.add(key);
+        unique.push(cleaned);
+        if (unique.length >= 3) break;
+      }
+      return unique.join('\n\n') || fallbackText;
+    } catch (error) {
+      console.warn('[autopost] article story extraction failed', { articleUrl, error });
+      return fallbackText;
+    }
+  }
+
+  private buildBwinNewsCaption(headline: string, storyText: string, link?: string, hashtags?: string) {
+    const lines = [
+      String(headline || 'Football update').replace(/\s+/g, ' ').trim(),
+      this.formatBwinStoryParagraphs(storyText, 1100),
+      link ? `Read more: ${link}` : '',
+      'More football updates in bio.',
+      hashtags || '',
+    ].filter(Boolean);
+    return lines.join('\n\n').trim();
+  }
+
+  private async buildBwinFullStoryCaption(topic: string, items: TrendItem[], hashtags: string) {
     const primary = items[0];
     const headline = String(primary?.title || topic || 'Football update').replace(/\s+/g, ' ').trim();
-    const summary = this.formatBwinStoryParagraphs(primary?.summary || '');
+    const storyText = await this.fetchArticleStoryText(primary?.link, primary?.summary || '');
+    const summary = this.formatBwinStoryParagraphs(storyText);
     const related = items
       .slice(1, 3)
       .map(item => String(item.title || '').replace(/\s+/g, ' ').trim())
@@ -3213,7 +3311,7 @@ export class AutoPostService {
             .filter(Boolean)
             .map(tag => (tag.startsWith('#') ? tag : `#${tag.replace(/^#+/, '')}`))
             .join(' ');
-          const fullStoryCaption = this.buildBwinFullStoryCaption(top.topic, items, tags);
+          const fullStoryCaption = await this.buildBwinFullStoryCaption(top.topic, items, tags);
           newsOverlayHeadline = gen.content.poster?.headline?.trim() || top.topic || items[0]?.title || '';
 
           const baseCaptionByPlatform = (platform: string) => {
@@ -3622,17 +3720,10 @@ export class AutoPostService {
         const effectiveNewsKeys = currentNewsFresh ? currentNewsKeys : freshNews?.keys ?? [];
         const effectiveNewsKey = effectiveNewsKeys[0];
         if (effectiveNewsCandidate && (!caption || !currentNewsFresh || staleStructuredCaption)) {
-          const source = effectiveNewsItem?.sourceLabel || effectiveNewsCandidate.sources?.[0] || 'Football source';
           const headline = effectiveNewsItem?.title || effectiveNewsCandidate.topic;
           trendTopic = effectiveNewsCandidate.topic || trendTopic;
-          caption = [
-            headline,
-            `Source: ${source}`,
-            `Update time: ${this.formatTrendClock(scheduleTimezone)} EAT`,
-            'More football updates in bio.',
-          ]
-            .filter(Boolean)
-            .join('\n');
+          const storyText = await this.fetchArticleStoryText(effectiveNewsItem?.link, effectiveNewsItem?.summary || '');
+          caption = this.buildBwinNewsCaption(headline, storyText, effectiveNewsItem?.link);
           setUnifiedCaption();
           const resolvedImage = await this.resolveBestNewsImageUrl(
             effectiveNewsItem?.imageUrl?.trim(),
