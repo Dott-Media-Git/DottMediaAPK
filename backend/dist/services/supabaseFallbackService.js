@@ -354,11 +354,52 @@ class SupabaseFallbackService {
                     status: payload.status,
                     response_id: payload.responseId ?? null,
                     error: payload.error ?? null,
-                    posted_at: NOW(),
-                    payload: sanitizeJson(payload) ?? {},
+                    posted_at: toIsoString(payload.postedAt) ?? NOW(),
+                    payload: sanitizeJson(payload.extraPayload ? { ...payload, ...payload.extraPayload } : payload) ?? {},
                 },
             ],
         });
+    }
+    async addInboundMessage(record) {
+        if (!this.isConfigured() || !record.id)
+            return;
+        const row = {
+            id: record.id,
+            channel: record.channel,
+            sender_id: record.senderId,
+            recipient_id: record.recipientId ?? null,
+            message: record.message ?? null,
+            message_type: record.messageType ?? null,
+            profile_name: record.profileName ?? null,
+            status: record.status ?? 'received',
+            reply: record.reply ?? null,
+            error: record.error ?? null,
+            received_at: toIsoString(record.receivedAt) ?? NOW(),
+            updated_at: NOW(),
+            payload: sanitizeJson(record.payload ?? {}) ?? {},
+        };
+        try {
+            await this.request('POST', 'dott_inbound_messages', {
+                params: { on_conflict: 'id' },
+                prefer: 'resolution=merge-duplicates,return=minimal',
+                body: [row],
+            });
+        }
+        catch (error) {
+            const status = error?.response?.status;
+            if (status !== 404)
+                throw error;
+            await this.addSocialLog({
+                userId: record.senderId,
+                platform: `${record.channel}_inbound`,
+                scheduledPostId: record.id,
+                status: record.status ?? 'received',
+                responseId: null,
+                error: record.error ?? undefined,
+                postedAt: record.receivedAt,
+                extraPayload: row,
+            });
+        }
     }
     async incrementSocialDaily(payload) {
         if (!this.isConfigured())

@@ -26,12 +26,14 @@ export class WhatsAppController {
         ) ?? [];
       const profileName =
         payload.entry?.[0]?.changes?.[0]?.value?.contacts?.[0]?.profile?.name;
+      const phoneNumberId =
+        payload.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
 
       if (!messages.length) {
         return res.status(200).json({ status: 'noop' });
       }
 
-      const result = await this.service.handleMessages(messages, profileName);
+      const result = await this.service.handleMessages(messages, profileName, phoneNumberId);
       res.json({ processed: result.length });
     } catch (error) {
       next(error);

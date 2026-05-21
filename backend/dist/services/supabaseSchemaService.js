@@ -1,7 +1,5 @@
 import { Client } from 'pg';
-
 const SUPABASE_DATABASE_URL = (process.env.SUPABASE_DATABASE_URL ?? '').trim();
-
 const SUPABASE_SCHEMA_SQL = `
 create table if not exists public.dott_autopost_jobs (
   user_id text primary key,
@@ -141,49 +139,39 @@ create table if not exists public.dott_metric_daily (
 create index if not exists dott_metric_daily_scope_metric_date_idx
   on public.dott_metric_daily (scope_key, metric, date desc);
 `;
-
-let initializationPromise: Promise<boolean> | null = null;
-
-const sanitizeConnectionStringForLogs = (value: string) =>
-  value.replace(/:\/\/([^:]+):[^@]+@/, '://$1:***@');
-
-const attemptSchemaInit = async (connectionString: string) => {
-  const client = new Client({
-    connectionString,
-    ssl: { rejectUnauthorized: false },
-    connectionTimeoutMillis: 15000,
-  });
-
-  try {
-    await client.connect();
-    await client.query(SUPABASE_SCHEMA_SQL);
-    console.info('[supabase-fallback] schema verified');
-    return true;
-  } finally {
-    await client.end().catch(() => undefined);
-  }
-};
-
-export const ensureSupabaseFallbackSchema = async () => {
-  if (initializationPromise) return initializationPromise;
-
-  initializationPromise = (async () => {
-    if (!SUPABASE_DATABASE_URL) {
-      console.info('[supabase-fallback] SUPABASE_DATABASE_URL missing; skipping schema init');
-      return false;
-    }
-
+let initializationPromise = null;
+const sanitizeConnectionStringForLogs = (value) => value.replace(/:\/\/([^:]+):[^@]+@/, '://$1:***@');
+const attemptSchemaInit = async (connectionString) => {
+    const client = new Client({
+        connectionString,
+        ssl: { rejectUnauthorized: false },
+        connectionTimeoutMillis: 15000,
+    });
     try {
-      return await attemptSchemaInit(SUPABASE_DATABASE_URL);
-    } catch (error) {
-      console.warn(
-        '[supabase-fallback] schema init failed',
-        sanitizeConnectionStringForLogs(SUPABASE_DATABASE_URL),
-        error instanceof Error ? error.message : error,
-      );
-      return false;
+        await client.connect();
+        await client.query(SUPABASE_SCHEMA_SQL);
+        console.info('[supabase-fallback] schema verified');
+        return true;
     }
-  })();
-
-  return initializationPromise;
+    finally {
+        await client.end().catch(() => undefined);
+    }
+};
+export const ensureSupabaseFallbackSchema = async () => {
+    if (initializationPromise)
+        return initializationPromise;
+    initializationPromise = (async () => {
+        if (!SUPABASE_DATABASE_URL) {
+            console.info('[supabase-fallback] SUPABASE_DATABASE_URL missing; skipping schema init');
+            return false;
+        }
+        try {
+            return await attemptSchemaInit(SUPABASE_DATABASE_URL);
+        }
+        catch (error) {
+            console.warn('[supabase-fallback] schema init failed', sanitizeConnectionStringForLogs(SUPABASE_DATABASE_URL), error instanceof Error ? error.message : error);
+            return false;
+        }
+    })();
+    return initializationPromise;
 };
