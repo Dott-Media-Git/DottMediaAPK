@@ -106,7 +106,7 @@ export const config = {
         redirectUri: process.env.YOUTUBE_REDIRECT_URI ?? process.env.GOOGLE_OAUTH_REDIRECT_URI ?? '',
     },
     whatsapp: {
-        token: process.env.WHATSAPP_TOKEN ?? '',
+        token: process.env.WHATSAPP_TOKEN ?? process.env.META_GRAPH_TOKEN ?? '',
         verifyToken: process.env.VERIFY_TOKEN ?? metaVerifyToken ?? '',
         phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? '',
     },
