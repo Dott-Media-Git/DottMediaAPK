@@ -4,6 +4,7 @@ const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPT
 const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_MS ?? 2000), 1000);
 const PUBLISH_RETRIES = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRIES ?? 2), 1);
 const PUBLISH_RETRY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRY_DELAY_MS ?? 3000), 1000);
+const CAROUSEL_MAX_IMAGES = Math.min(Math.max(Number(process.env.INSTAGRAM_CAROUSEL_MAX_IMAGES ?? 5), 2), 10);
 function formatInstagramError(error, fallback) {
     const apiError = error?.response?.data?.error;
     if (!apiError) {
@@ -42,13 +43,42 @@ export async function publishToInstagram(input) {
         throw new Error('Instagram requires an image');
     }
     try {
-        // Step 1: Create Media Container
-        const createMediaResponse = await axios.post(`${baseUrl}/media`, {
-            image_url: input.imageUrls[0],
-            caption: input.caption,
-            access_token: accessToken,
-        });
-        const creationId = createMediaResponse.data.id;
+        let creationId;
+        if (input.imageUrls.length > 1) {
+            const childContainers = [];
+            for (const imageUrl of input.imageUrls.slice(0, CAROUSEL_MAX_IMAGES)) {
+                const childResponse = await axios.post(`${baseUrl}/media`, {
+                    image_url: imageUrl,
+                    is_carousel_item: true,
+                    access_token: accessToken,
+                });
+                const childId = childResponse.data?.id;
+                if (!childId) {
+                    throw new Error('Failed to create Instagram carousel item');
+                }
+                const childReady = await waitForMediaReady(childId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
+                if (!childReady) {
+                    throw new Error('Instagram carousel item not ready for publishing');
+                }
+                childContainers.push(childId);
+            }
+            const carouselResponse = await axios.post(`${baseUrl}/media`, {
+                media_type: 'CAROUSEL',
+                children: childContainers.join(','),
+                caption: input.caption,
+                access_token: accessToken,
+            });
+            creationId = carouselResponse.data?.id;
+        }
+        else {
+            // Step 1: Create Media Container
+            const createMediaResponse = await axios.post(`${baseUrl}/media`, {
+                image_url: input.imageUrls[0],
+                caption: input.caption,
+                access_token: accessToken,
+            });
+            creationId = createMediaResponse.data.id;
+        }
         if (!creationId) {
             throw new Error('Failed to create Instagram media container');
         }

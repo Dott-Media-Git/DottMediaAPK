@@ -9,6 +9,20 @@ type PublishInput = {
 };
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v18.0';
+const FACEBOOK_ALBUM_MAX_IMAGES = Math.min(
+  Math.max(Number(process.env.FACEBOOK_ALBUM_MAX_IMAGES ?? 6), 2),
+  10,
+);
+
+const isPayloadSizeError = (error: any) => {
+  const message = String(error?.response?.data?.error?.message || error?.message || '').toLowerCase();
+  return (
+    message.includes('reduce the amount of data') ||
+    message.includes('too much data') ||
+    message.includes('request entity') ||
+    message.includes('attached_media')
+  );
+};
 
 const resolveFacebookAnalyticsId = async (objectId: string, accessToken: string) => {
   try {
@@ -33,6 +47,12 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
 
   const { accessToken, pageId } = credentials.facebook;
   const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${pageId}`;
+  const publishSinglePhoto = () =>
+    axios.post(`${baseUrl}/photos`, {
+      url: input.imageUrls[0],
+      message: input.caption,
+      access_token: accessToken,
+    });
 
   try {
     let response;
@@ -43,34 +63,36 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
         access_token: accessToken,
       });
     } else if (input.imageUrls && input.imageUrls.length > 1) {
-      const photoUploads = await Promise.all(
-        input.imageUrls.slice(0, 10).map(url =>
-          axios.post(`${baseUrl}/photos`, {
-            url,
-            published: false,
-            access_token: accessToken,
-          }),
-        ),
-      );
-      const attached_media = photoUploads
-        .map(upload => upload.data?.id)
-        .filter(Boolean)
-        .map(id => ({ media_fbid: id }));
-      if (!attached_media.length) {
-        throw new Error('No Facebook photo IDs returned for multi-photo post');
+      try {
+        const photoUploads = await Promise.all(
+          input.imageUrls.slice(0, FACEBOOK_ALBUM_MAX_IMAGES).map(url =>
+            axios.post(`${baseUrl}/photos`, {
+              url,
+              published: false,
+              access_token: accessToken,
+            }),
+          ),
+        );
+        const attached_media = photoUploads
+          .map(upload => upload.data?.id)
+          .filter(Boolean)
+          .map(id => ({ media_fbid: id }));
+        if (!attached_media.length) {
+          throw new Error('No Facebook photo IDs returned for multi-photo post');
+        }
+        response = await axios.post(`${baseUrl}/feed`, {
+          message: input.caption,
+          attached_media,
+          access_token: accessToken,
+        });
+      } catch (error) {
+        if (!isPayloadSizeError(error)) throw error;
+        console.warn('Facebook multi-photo publish too large; retrying with single cover image');
+        response = await publishSinglePhoto();
       }
-      response = await axios.post(`${baseUrl}/feed`, {
-        message: input.caption,
-        attached_media,
-        access_token: accessToken,
-      });
     } else if (input.imageUrls && input.imageUrls.length > 0) {
       // Post photo
-      response = await axios.post(`${baseUrl}/photos`, {
-        url: input.imageUrls[0],
-        message: input.caption,
-        access_token: accessToken,
-      });
+      response = await publishSinglePhoto();
     } else {
       // Post text only
       response = await axios.post(`${baseUrl}/feed`, {

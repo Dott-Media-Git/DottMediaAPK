@@ -530,6 +530,22 @@ class SupabaseFallbackService {
 
   async upsertAutopostJob(userId: string, job: Record<string, unknown>) {
     if (!this.isConfigured() || !userId) return;
+    const data = (sanitizeJson(job) ?? {}) as Record<string, unknown>;
+    if (!data.socialAccounts) {
+      try {
+        const existing = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
+        const existingData = existing?.data && typeof existing.data === 'object' ? existing.data : {};
+        if (existingData.socialAccounts && typeof existingData.socialAccounts === 'object') {
+          data.socialAccounts = existingData.socialAccounts;
+        }
+        if (data.email === undefined && existingData.email !== undefined) {
+          data.email = existingData.email;
+        }
+      } catch (error) {
+        const status = (error as { response?: { status?: number } })?.response?.status;
+        if (status !== 404) throw error;
+      }
+    }
     await this.request('POST', 'dott_autopost_jobs', {
       params: { on_conflict: 'user_id' },
       prefer: 'resolution=merge-duplicates,return=minimal',
@@ -541,7 +557,7 @@ class SupabaseFallbackService {
           reels_next_run: toIsoString(job.reelsNextRun),
           story_next_run: toIsoString(job.storyNextRun),
           trend_next_run: toIsoString(job.trendNextRun),
-          data: sanitizeJson(job) ?? {},
+          data,
           updated_at: NOW(),
         },
       ],
@@ -550,14 +566,47 @@ class SupabaseFallbackService {
 
   async upsertSocialAccounts(userId: string, payload: { email?: string | null; socialAccounts?: Record<string, unknown> }) {
     if (!this.isConfigured() || !userId) return;
-    await this.request('POST', 'dott_social_accounts', {
+    try {
+      await this.request('POST', 'dott_social_accounts', {
+        params: { on_conflict: 'user_id' },
+        prefer: 'resolution=merge-duplicates,return=minimal',
+        body: [
+          {
+            user_id: userId,
+            email: payload.email ?? null,
+            accounts: sanitizeJson(payload.socialAccounts ?? {}) ?? {},
+            updated_at: NOW(),
+          },
+        ],
+      });
+      return;
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status !== 404) throw error;
+      console.warn('[supabase-fallback] dott_social_accounts missing; storing social accounts in autopost data', {
+        userId,
+      });
+    }
+
+    const existing = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
+    const existingData = existing?.data && typeof existing.data === 'object' ? existing.data : {};
+    const data = {
+      ...existingData,
+      email: payload.email ?? existingData.email ?? null,
+      socialAccounts: sanitizeJson(payload.socialAccounts ?? {}) ?? {},
+    };
+    await this.request('POST', 'dott_autopost_jobs', {
       params: { on_conflict: 'user_id' },
       prefer: 'resolution=merge-duplicates,return=minimal',
       body: [
         {
           user_id: userId,
-          email: payload.email ?? null,
-          accounts: sanitizeJson(payload.socialAccounts ?? {}) ?? {},
+          active: existing?.active ?? true,
+          next_run: existing?.next_run ?? toIsoString(existingData.nextRun),
+          reels_next_run: existing?.reels_next_run ?? toIsoString(existingData.reelsNextRun),
+          story_next_run: existing?.story_next_run ?? toIsoString(existingData.storyNextRun),
+          trend_next_run: existing?.trend_next_run ?? toIsoString(existingData.trendNextRun),
+          data,
           updated_at: NOW(),
         },
       ],
