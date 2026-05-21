@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { InboundHandler } from '../packages/services/inboundHandler.js';
+import { supabaseFallbackService } from '../services/supabaseFallbackService.js';
 const router = Router();
 const inboundHandler = new InboundHandler();
 router.post('/webhook/:channel', async (req, res, next) => {
@@ -9,8 +10,20 @@ router.post('/webhook/:channel', async (req, res, next) => {
         if (!payload) {
             return res.status(400).json({ message: 'Unsupported channel or malformed payload' });
         }
-        const response = await inboundHandler.handle(payload);
-        res.json({ ok: true, ...response });
+        await recordInboundToSupabase(payload, 'received').catch(error => console.warn('[inbound-webhook] supabase inbound record failed', error));
+        try {
+            const response = await inboundHandler.handle(payload);
+            await recordInboundToSupabase(payload, 'processed', response.reply).catch(error => console.warn('[inbound-webhook] supabase processed record failed', error));
+            res.json({ ok: true, ...response });
+        }
+        catch (error) {
+            if (payload.channel === 'whatsapp') {
+                const message = error instanceof Error ? error.message : String(error);
+                await recordInboundToSupabase(payload, 'handler_failed', undefined, message).catch(recordError => console.warn('[inbound-webhook] supabase handler failure record failed', recordError));
+                return res.status(200).json({ ok: true, stored: true, error: 'handler_failed' });
+            }
+            throw error;
+        }
     }
     catch (error) {
         next(error);
@@ -31,7 +44,11 @@ function normalizeInbound(channel, body, ownerIdOverride) {
                 ownerId,
                 text: message.text.body,
                 name: contact?.profile?.name,
-                metadata: { messageId: message.id },
+                metadata: {
+                    messageId: message.id,
+                    phoneNumberId: body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id,
+                    displayPhoneNumber: body?.entry?.[0]?.changes?.[0]?.value?.metadata?.display_phone_number,
+                },
                 phone: message.from,
             };
         }
@@ -95,4 +112,30 @@ function normalizeOwnerId(...candidates) {
         }
     }
     return undefined;
+}
+function inboundMessageId(payload) {
+    const metaId = typeof payload.metadata?.messageId === 'string' ? payload.metadata.messageId : '';
+    return metaId || `${payload.channel}-${payload.userId}-${Date.now()}`;
+}
+async function recordInboundToSupabase(payload, status, reply, error) {
+    await supabaseFallbackService.addInboundMessage({
+        id: inboundMessageId(payload),
+        channel: payload.channel,
+        senderId: payload.userId,
+        recipientId: typeof payload.metadata?.phoneNumberId === 'string' ? payload.metadata.phoneNumberId : null,
+        message: payload.text,
+        messageType: 'text',
+        profileName: payload.name,
+        status,
+        reply,
+        error,
+        receivedAt: new Date(),
+        payload: {
+            ownerId: payload.ownerId,
+            phone: payload.phone,
+            email: payload.email,
+            profileUrl: payload.profileUrl,
+            metadata: payload.metadata,
+        },
+    });
 }
