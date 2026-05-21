@@ -87,29 +87,40 @@ const screenshotHistoryKey = (appId: number) => `steam-game:${appId}`;
 
 export async function pickGamersSteamScreenshots(options: { recentKeys?: Set<string> } = {}) {
   const recent = options.recentKeys ?? new Set<string>();
-  for (const app of shuffled(STEAM_APPS)) {
-    if (recent.has(screenshotHistoryKey(app.appId))) continue;
-    try {
-      const data = await fetchSteamApp(app.appId);
-      const images = unique(
-        (data.screenshots ?? [])
-          .map(screenshot => screenshot.path_full || screenshot.path_thumbnail || '')
-          .filter(Boolean)
-          .map(url => decodeHtml(url)),
-      ).filter(url => !recent.has(url));
-      if (images.length < 2) continue;
-      return {
-        game: data.name?.trim() || app.name,
-        appId: app.appId,
-        url: `https://store.steampowered.com/app/${app.appId}/`,
-        images: images.slice(0, 6),
-        description: data.short_description?.replace(/<[^>]+>/g, '').trim(),
-      } satisfies GamersSteamPost;
-    } catch {
-      // Try the next game.
+  const pickFromApps = async (apps: Array<{ appId: number; name: string }>, allowRecentImages: boolean) => {
+    for (const app of shuffled(apps)) {
+      try {
+        const data = await fetchSteamApp(app.appId);
+        const sourceImages = unique(
+          (data.screenshots ?? [])
+            .map(screenshot => screenshot.path_full || screenshot.path_thumbnail || '')
+            .filter(Boolean)
+            .map(url => decodeHtml(url)),
+        );
+        const images = allowRecentImages ? sourceImages : sourceImages.filter(url => !recent.has(url));
+        if (images.length < 2) continue;
+        return {
+          game: data.name?.trim() || app.name,
+          appId: app.appId,
+          url: `https://store.steampowered.com/app/${app.appId}/`,
+          images: images.slice(0, 6),
+          description: data.short_description?.replace(/<[^>]+>/g, '').trim(),
+        } satisfies GamersSteamPost;
+      } catch {
+        // Try the next game.
+      }
     }
-  }
-  throw new Error('No fresh Steam gameplay screenshots found');
+    return null;
+  };
+
+  const freshApps = STEAM_APPS.filter(app => !recent.has(screenshotHistoryKey(app.appId)));
+  const freshPost = await pickFromApps(freshApps, false);
+  if (freshPost) return freshPost;
+
+  const recycledPost = await pickFromApps(STEAM_APPS, true);
+  if (recycledPost) return recycledPost;
+
+  throw new Error('No Steam gameplay screenshots found');
 }
 
 function extractSteamMp4Urls(html: string) {
