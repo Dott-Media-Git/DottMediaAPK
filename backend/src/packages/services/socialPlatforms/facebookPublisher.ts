@@ -10,7 +10,7 @@ type PublishInput = {
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v18.0';
 const FACEBOOK_ALBUM_MAX_IMAGES = Math.min(
-  Math.max(Number(process.env.FACEBOOK_ALBUM_MAX_IMAGES ?? 6), 2),
+  Math.max(Number(process.env.FACEBOOK_ALBUM_MAX_IMAGES ?? 1), 1),
   10,
 );
 
@@ -62,7 +62,7 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
         description: input.caption,
         access_token: accessToken,
       });
-    } else if (input.imageUrls && input.imageUrls.length > 1) {
+    } else if (input.imageUrls && input.imageUrls.length > 1 && FACEBOOK_ALBUM_MAX_IMAGES > 1) {
       try {
         const photoUploads = await Promise.all(
           input.imageUrls.slice(0, FACEBOOK_ALBUM_MAX_IMAGES).map(url =>
