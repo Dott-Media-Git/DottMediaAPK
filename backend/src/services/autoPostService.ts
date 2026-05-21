@@ -739,7 +739,8 @@ export class AutoPostService {
         maxCandidates: 10,
         maxAgeHours,
       });
-      if (!candidates.length) {
+      const newsCandidates = this.filterBwinNewsCandidates(candidates);
+      if (!newsCandidates.length) {
         return { attempted: true, posted: false, reason: 'no_trends' };
       }
 
@@ -747,37 +748,66 @@ export class AutoPostService {
       let selectedLink = '';
       let selectedImage = '';
       let selectedKey = '';
+      let selectedScheduledPostId = '';
+      const emergencyOwnerId = (process.env.BWIN_TRACK_OWNER_ID ?? process.env.BWIN_SCOPE_ID ?? '').trim();
+      const persistentRecentKeys = emergencyOwnerId
+        ? new Set(await supabaseFallbackService.getRecentScheduledPostIds(emergencyOwnerId, 400))
+        : new Set<string>();
+      if (emergencyOwnerId) {
+        try {
+          const recentPosts = await supabaseFallbackService.getPostsByUser(emergencyOwnerId, 400);
+          for (const post of recentPosts) {
+            const caption = String(post.caption || '');
+            const headline = caption.split(/\r?\n/).map(line => line.trim()).find(Boolean) || '';
+            const normalizedHeadline = this.normalizeNewsText(headline);
+            if (normalizedHeadline) {
+              persistentRecentKeys.add(`emergency:bwin:${this.buildTrendContentKey('news', normalizedHeadline)}`);
+            }
+            const urls = Array.from(caption.matchAll(/https?:\/\/\S+/g)).map(match =>
+              match[0].replace(/[),.;]+$/, ''),
+            );
+            for (const url of urls) {
+              const normalizedLink = this.normalizeNewsLink(url);
+              if (normalizedLink) {
+                persistentRecentKeys.add(`emergency:bwin:${this.buildTrendContentKey('news', normalizedLink)}`);
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('[autopost] emergency recent post lookup failed', error);
+        }
+      }
 
-      for (const candidate of candidates) {
+      for (const candidate of newsCandidates) {
         const item = (candidate.items ?? []).find(entry => Boolean(entry.title?.trim())) ?? candidate.items?.[0];
+        if (this.isBlockedBwinNewsItem(item)) continue;
         const title = (item?.title?.trim() || candidate.topic || '').trim();
         if (!title) continue;
         const link = item?.link?.trim() || '';
         const key = `${title}|${link}`.toLowerCase();
+        const candidateKeys = this.buildNewsCandidateKeys(candidate, item);
+        const scheduledPostIds = candidateKeys.map(candidateKey => `emergency:bwin:${candidateKey}`);
         if (key && key === this.emergencyXLastKey) continue;
+        if (scheduledPostIds.some(postId => persistentRecentKeys.has(postId))) continue;
+        const sourceImage =
+          (await this.resolveBestNewsImageUrl(item?.imageUrl?.trim(), item?.link?.trim())) ??
+          '';
+        if (!sourceImage) continue;
         selectedTitle = title;
         selectedLink = link;
         selectedKey = key;
-        selectedImage =
-          (await this.resolveBestNewsImageUrl(item?.imageUrl?.trim(), item?.link?.trim())) ??
-          '';
+        selectedImage = sourceImage;
+        selectedScheduledPostId = scheduledPostIds[0] || `emergency:bwin:${this.buildTrendContentKey('news', key)}`;
         break;
       }
 
       if (!selectedTitle) {
-        return { attempted: true, posted: false, reason: 'duplicate_only' };
+        return { attempted: true, posted: false, reason: 'no_fresh_source_image_candidate' };
       }
 
-      const emergencyOwnerId = (process.env.BWIN_TRACK_OWNER_ID ?? process.env.BWIN_SCOPE_ID ?? '').trim();
       const storyText = selectedLink ? await this.fetchArticleStoryText(selectedLink, '') : '';
       const baseCaption = this.buildBwinNewsCaption(selectedTitle, storyText, selectedLink);
       let imageUrls = selectedImage ? [selectedImage] : [];
-      if (!imageUrls.length) {
-        imageUrls = await this.generateFootballCardImage(
-          `${selectedTitle}\n\nFootball update card with clean sports editorial styling.`,
-          new Set<string>(),
-        );
-      }
       if (imageUrls.length) {
         const sourceImages = await this.improveNewsImageQuality(imageUrls, ['facebook', 'instagram']);
         imageUrls = sourceImages.length
@@ -785,10 +815,7 @@ export class AutoPostService {
           : await this.finalizeNewsImages(imageUrls, selectedTitle);
       }
       if (!imageUrls.length) {
-        imageUrls = await this.generateBwinSportsFallbackImage(
-          selectedTitle,
-          'Latest football news from trusted sources',
-        );
+        return { attempted: true, posted: false, reason: 'source_image_finalization_failed', selectedTitle };
       }
 
       const results: Array<{ platform: string; status: 'posted' | 'failed'; remoteId?: string | null; error?: string }> = [];
@@ -853,6 +880,21 @@ export class AutoPostService {
       if (posted) {
         this.emergencyXLastRunAt = now.getTime();
         if (selectedKey) this.emergencyXLastKey = selectedKey;
+        if (emergencyOwnerId && selectedScheduledPostId) {
+          await Promise.all(
+            results
+              .filter(result => result.status === 'posted')
+              .map(result =>
+                supabaseFallbackService.addSocialLog({
+                  userId: emergencyOwnerId,
+                  platform: result.platform,
+                  scheduledPostId: selectedScheduledPostId,
+                  status: result.status,
+                  responseId: result.remoteId ?? undefined,
+                }),
+              ),
+          ).catch(error => console.warn('[autopost] emergency recent-key log failed', error));
+        }
       }
 
       if (emergencyOwnerId && results.length) {
@@ -1901,6 +1943,35 @@ export class AutoPostService {
     return rawKeys.filter((value, index, arr) => Boolean(value) && arr.indexOf(value) === index);
   }
 
+  private isBlockedBwinNewsItem(item?: TrendItem | null) {
+    const link = String(item?.link || '').toLowerCase();
+    const title = this.normalizeNewsText(item?.title || '');
+    if (!link || !title) return true;
+    if (
+      link.includes('bbc.co.uk/sounds') ||
+      link.includes('bbc.com/sounds') ||
+      link.includes('/iplayer') ||
+      link.includes('/live/') ||
+      link.includes('/audio/') ||
+      link.includes('/podcast')
+    ) {
+      return true;
+    }
+    if (/\b(?:podcast|listen|watch|live stream|radio|football daily|sportscene)\b/i.test(title)) {
+      return true;
+    }
+    return false;
+  }
+
+  private filterBwinNewsCandidates(candidates: TrendCandidate[]) {
+    return candidates
+      .map(candidate => {
+        const items = (candidate.items ?? []).filter(item => !this.isBlockedBwinNewsItem(item));
+        return items.length ? { ...candidate, items, topic: items[0]?.title || candidate.topic } : null;
+      })
+      .filter(Boolean) as TrendCandidate[];
+  }
+
   private hasRecentTrendKeys(keys: string[], recentSet: Set<string>) {
     return keys.some(key => recentSet.has(key));
   }
@@ -1912,6 +1983,7 @@ export class AutoPostService {
   private pickFreshNewsCandidate(candidates: TrendCandidate[], recentSet: Set<string>) {
     for (const candidate of candidates) {
       const item = candidate.items?.[0];
+      if (this.isBlockedBwinNewsItem(item)) continue;
       const keys = this.buildNewsCandidateKeys(candidate, item);
       if (keys.length && !this.hasRecentTrendKeys(keys, recentSet)) {
         return { candidate, item, key: keys[0], keys };
@@ -2933,8 +3005,11 @@ export class AutoPostService {
         maxCandidates: job.storyMaxCandidates ?? 8,
         maxAgeHours: job.storyMaxAgeHours ?? 72,
       });
+      const newsCandidates = this.filterBwinNewsCandidates(candidates);
       const picked =
-        this.pickFreshNewsCandidate(candidates, new Set(this.getTrendRecentKeys(job)))?.candidate ?? candidates[0] ?? null;
+        this.pickFreshNewsCandidate(newsCandidates, new Set(this.getTrendRecentKeys(job)))?.candidate ??
+        newsCandidates[0] ??
+        null;
       const topItem = picked?.items?.[0];
       const topic = topItem?.title?.trim() || picked?.topic?.trim() || 'Latest football update';
       const summary = this.summarizeStory(topItem?.summary || picked?.sampleTitles?.[0] || topic, 260);
@@ -3252,13 +3327,13 @@ export class AutoPostService {
           maxCandidates: job.trendMaxCandidates ?? 6,
           maxAgeHours: job.trendMaxAgeHours ?? 48,
         });
-        footballCandidates = candidates;
+        footballCandidates = this.filterBwinNewsCandidates(candidates);
         const top =
           selectedContentType === 'video'
-            ? candidates.find(candidate =>
+            ? footballCandidates.find(candidate =>
                 (candidate.items ?? []).some(item => Boolean(item.videoUrl?.trim())),
-              ) ?? candidates[0]
-            : this.pickFreshNewsCandidate(candidates, trendRecentSet)?.candidate ?? candidates[0];
+              ) ?? footballCandidates[0]
+            : this.pickFreshNewsCandidate(footballCandidates, trendRecentSet)?.candidate ?? footballCandidates[0];
         baselineCandidate = top ?? null;
         if (!top) {
           caption = this.buildFootballFallbackCaption(undefined, 'news', scheduleTimezone);

@@ -511,6 +511,23 @@ class SupabaseFallbackService {
       : [];
   }
 
+  async getRecentScheduledPostIds(userId: string, limit = 250) {
+    if (!this.isConfigured() || !userId) return [] as string[];
+    const rows = await this.request<any[]>('GET', 'dott_social_logs', {
+      params: {
+        select: 'scheduled_post_id',
+        user_id: `eq.${userId}`,
+        order: 'posted_at.desc',
+        limit,
+      },
+    });
+    return Array.isArray(rows)
+      ? rows
+          .map(row => String(row.scheduled_post_id ?? '').toLowerCase().trim())
+          .filter(Boolean)
+      : [];
+  }
+
   async upsertAutopostJob(userId: string, job: Record<string, unknown>) {
     if (!this.isConfigured() || !userId) return;
     await this.request('POST', 'dott_autopost_jobs', {
