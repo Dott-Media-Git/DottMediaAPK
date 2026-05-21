@@ -2228,9 +2228,13 @@ export class AutoPostService {
   }
 
   private buildBwinNewsCaption(headline: string, storyText: string, link?: string, hashtags?: string) {
+    const normalizedHeadline = String(headline || 'Football update').replace(/\s+/g, ' ').trim();
+    const fallbackStory = normalizedHeadline
+      ? `This football update is developing around ${normalizedHeadline.toLowerCase()}. We are tracking the source report, the key reactions, and what it could mean next as more details come in.`
+      : '';
     const lines = [
-      String(headline || 'Football update').replace(/\s+/g, ' ').trim(),
-      this.formatBwinStoryParagraphs(storyText, 1100),
+      normalizedHeadline,
+      this.formatBwinStoryParagraphs(storyText || fallbackStory, 1100),
       link ? `Read more: ${link}` : '',
       'More football updates in bio.',
       hashtags || '',
