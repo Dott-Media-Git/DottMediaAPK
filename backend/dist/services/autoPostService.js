@@ -1174,11 +1174,19 @@ export class AutoPostService {
         try {
             const claimed = await supabaseFallbackService.claimAutopostRun(userId, field, expectedRun, nextRun);
             if (!claimed) {
-                console.warn('[autopost] supabase due-run claim was stale; continuing with Firestore due job', {
+                const fallbackJob = await supabaseFallbackService.getAutopostJob(userId).catch(() => null);
+                if (!fallbackJob) {
+                    await supabaseFallbackService.upsertAutopostJob(userId, job);
+                    const retriedClaim = await supabaseFallbackService.claimAutopostRun(userId, field, expectedRun, nextRun);
+                    if (retriedClaim) {
+                        return true;
+                    }
+                }
+                console.warn('[autopost] supabase due-run claim was stale; skipping Firestore due job', {
                     userId,
                     field,
                 });
-                return true;
+                return false;
             }
             return true;
         }
