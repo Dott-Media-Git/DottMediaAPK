@@ -3473,16 +3473,34 @@ export class AutoPostService {
                     caption,
                     errorMessage: 'missing_full_bleed_news_image',
                 });
-                console.warn('[autopost] Bwin news publish skipped because full-bleed source image could not be finalized', {
-                    trendTopic,
-                });
-                return {
-                    ...job,
-                    trendLastRunAt: admin.firestore.Timestamp.now(),
-                    trendNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+            console.warn('[autopost] Bwin news publish skipped because full-bleed source image could not be finalized', {
+                trendTopic,
+            });
+            const guardedNextRecord = {
+                ...job,
+                trendLastRunAt: admin.firestore.Timestamp.now(),
+                trendNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
+                trendLastResult: results,
+            };
+            try {
+                await autopostCollection.doc(userId).set({
+                    trendLastRunAt: guardedNextRecord.trendLastRunAt,
+                    trendNextRun: guardedNextRecord.trendNextRun,
                     trendLastResult: results,
-                };
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
             }
+            catch (error) {
+                console.warn('[autopost] firestore Bwin image guard update failed', error);
+            }
+            await this.mirrorAutopostJob(userId, guardedNextRecord);
+            await this.recordHistory(userId, historyEntries, imageUrls);
+            return {
+                posted: 0,
+                failed: results.filter(result => result.status === 'failed'),
+                nextRun: nextRunDate.toISOString(),
+            };
+        }
         }
         // Football trend videos must come from approved source feeds/highlight tweets only.
         const genericVideoSelection = this.selectNextGenericVideo(job, []);

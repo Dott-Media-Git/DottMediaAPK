@@ -3930,11 +3930,31 @@ export class AutoPostService {
         console.warn('[autopost] Bwin news publish skipped because full-bleed source image could not be finalized', {
           trendTopic,
         });
-        return {
+        const guardedNextRecord: Partial<AutoPostJob> = {
           ...job,
           trendLastRunAt: admin.firestore.Timestamp.now(),
           trendNextRun: admin.firestore.Timestamp.fromDate(nextRunDate),
           trendLastResult: results,
+        };
+        try {
+          await autopostCollection.doc(userId).set(
+            {
+              trendLastRunAt: guardedNextRecord.trendLastRunAt,
+              trendNextRun: guardedNextRecord.trendNextRun,
+              trendLastResult: results,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        } catch (error) {
+          console.warn('[autopost] firestore Bwin image guard update failed', error);
+        }
+        await this.mirrorAutopostJob(userId, guardedNextRecord as AutoPostJob);
+        await this.recordHistory(userId, historyEntries, imageUrls);
+        return {
+          posted: 0,
+          failed: results.filter(result => result.status === 'failed'),
+          nextRun: nextRunDate.toISOString(),
         };
       }
     }
