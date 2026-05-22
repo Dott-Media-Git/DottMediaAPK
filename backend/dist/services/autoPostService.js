@@ -3464,7 +3464,14 @@ export class AutoPostService {
                     trendTopic,
                 });
             }
+            const sourceAlignedImages = [...imageUrls];
             imageUrls = imageUrls.length ? await this.finalizeNewsImages(imageUrls, newsOverlayHeadline || trendTopic) : [];
+            if (!imageUrls.length && sourceAlignedImages.length) {
+                console.warn('[autopost] Bwin news finalization failed; using source-aligned image without overlay', {
+                    trendTopic,
+                });
+                imageUrls = sourceAlignedImages.slice(0, 1);
+            }
             if (!imageUrls.length) {
                 results.push({ platform: 'bwin_news_guard', status: 'failed', error: 'missing_full_bleed_news_image' });
                 historyEntries.push({
