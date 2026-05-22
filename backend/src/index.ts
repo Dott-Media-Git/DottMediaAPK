@@ -342,12 +342,11 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
 
     const results = [];
     for (const account of accounts) {
-      const snap = await firestore.collection('autopostJobs').doc(account.uid).get();
-      if (!snap.exists) {
+      const job = await service.loadAutopostJob(account.uid);
+      if (!job) {
         results.push({ account: account.label, error: 'autopost_job_missing' });
         continue;
       }
-      const job = snap.data() ?? {};
       const result: Record<string, unknown> = { account: account.label };
       if (account.bwin) {
         const newsJob = {
