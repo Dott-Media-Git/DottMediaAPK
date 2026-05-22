@@ -81,7 +81,12 @@ else {
 void ensureSupabaseFallbackSchema().then(ready => {
     if (!ready)
         return;
-    void backfillSupabaseFallback();
+    if (process.env.SUPABASE_BACKFILL_ON_STARTUP === 'true') {
+        void backfillSupabaseFallback();
+    }
+    else {
+        console.info('[supabase-backfill] startup backfill disabled; set SUPABASE_BACKFILL_ON_STARTUP=true to run it.');
+    }
 });
 const app = express();
 const startedAt = new Date().toISOString();
