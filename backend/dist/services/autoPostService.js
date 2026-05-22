@@ -62,6 +62,19 @@ const CLIENT_META_FALLBACKS = {
 };
 const NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS = 3;
 const NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS = 4;
+const logSafeError = (error) => {
+    if (error instanceof Error)
+        return error.message;
+    if (typeof error === 'string')
+        return error;
+    const candidate = error;
+    const apiMessage = candidate?.response?.data?.error?.message;
+    if (typeof apiMessage === 'string')
+        return apiMessage;
+    if (typeof candidate?.message === 'string')
+        return candidate.message;
+    return String(error ?? 'unknown_error');
+};
 const platformPublishers = {
     instagram: publishToInstagram,
     instagram_reels: publishToInstagramReel,
@@ -289,7 +302,7 @@ export class AutoPostService {
             await supabaseFallbackService.upsertAutopostJob(userId, job);
         }
         catch (error) {
-            console.warn('[autopost] supabase job mirror failed', error);
+            console.warn('[autopost] supabase job mirror failed', logSafeError(error));
         }
     }
     async loadAutopostJob(userId) {
@@ -317,7 +330,7 @@ export class AutoPostService {
             }
         }
         catch (error) {
-            console.warn('[autopost] supabase job fetch failed', error);
+            console.warn('[autopost] supabase job fetch failed', logSafeError(error));
         }
         return null;
     }
@@ -357,7 +370,7 @@ export class AutoPostService {
                 });
             }
             catch (error) {
-                console.warn('[autopost] supabase due-job fetch failed', error);
+                console.warn('[autopost] supabase due-job fetch failed', logSafeError(error));
             }
             ({ dueStandard, dueReels, dueStories, dueTrends } = buildDueSets());
         }
@@ -4363,7 +4376,7 @@ export class AutoPostService {
             await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
         }
         catch (error) {
-            console.warn('[autopost] failed to mirror history to supabase', error);
+            console.warn('[autopost] failed to mirror history to supabase', logSafeError(error));
         }
     }
     async resolveCredentials(userId) {
@@ -4375,7 +4388,7 @@ export class AutoPostService {
                 void supabaseFallbackService.upsertSocialAccounts(userId, {
                     email: userData.email ?? null,
                     socialAccounts: userData.socialAccounts,
-                }).catch(error => console.warn('[autopost] supabase social account mirror failed', error));
+                }).catch(error => console.warn('[autopost] supabase social account mirror failed', logSafeError(error)));
             }
         }
         catch (error) {
@@ -4390,7 +4403,7 @@ export class AutoPostService {
                 }
             }
             catch (fallbackError) {
-                console.warn('[autopost] supabase social account lookup failed', fallbackError);
+                console.warn('[autopost] supabase social account lookup failed', logSafeError(fallbackError));
             }
         }
         const allowDefaults = canUsePrimarySocialDefaults(userData, userId);

@@ -4,6 +4,7 @@ import admin from 'firebase-admin';
 import { config } from '../config';
 import { firestore } from '../db/firestore';
 import { generateReply, likeFacebookComment, replyToFacebookComment } from '../services/autoReplyService';
+import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const enabled = process.env.FB_COMMENT_POLL_ENABLED !== 'false';
@@ -178,9 +179,21 @@ const loadClientTargets = async (): Promise<PollTarget[]> => {
           ?.socialAccounts?.facebook;
         if (facebook?.pageId && facebook.accessToken) {
           targets.push({ userId, pageId: facebook.pageId, accessToken: facebook.accessToken });
+          return;
         }
       } catch (error) {
-        console.warn('[fb-comment-poll] failed to load target', userId, (error as Error).message);
+        console.warn('[fb-comment-poll] Firestore target lookup failed', userId, (error as Error).message);
+      }
+
+      try {
+        const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+        const facebook = (fallback?.socialAccounts as { facebook?: { pageId?: string; accessToken?: string } } | undefined)
+          ?.facebook;
+        if (facebook?.pageId && facebook.accessToken) {
+          targets.push({ userId, pageId: facebook.pageId, accessToken: facebook.accessToken });
+        }
+      } catch (error) {
+        console.warn('[fb-comment-poll] Supabase target lookup failed', userId, (error as Error).message);
       }
     }),
   );
