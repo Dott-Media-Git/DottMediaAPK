@@ -3898,14 +3898,27 @@ export class AutoPostService {
     }
 
     // Keep Bwin football news imagery source-aligned, but always apply the Bwin corner mark before publish.
-    if (scope === 'football' && this.isBwinScopeUser(userId) && selectedContentType === 'news' && imageUrls.length) {
-      imageUrls = await this.improveNewsImageQuality(imageUrls, platforms);
+    if (scope === 'football' && this.isBwinScopeUser(userId) && selectedContentType === 'news') {
+      if (!imageUrls.length) {
+        const backupImages: string[] = [];
+        for (const candidate of footballCandidates.slice(0, 8)) {
+          for (const item of (candidate.items ?? []).slice(0, 3)) {
+            const resolved = await this.resolveBestNewsImageUrl(item.imageUrl?.trim(), item.link?.trim());
+            if (resolved) backupImages.push(resolved);
+            if (backupImages.length >= 3) break;
+          }
+          if (backupImages.length >= 3) break;
+        }
+        imageUrls = Array.from(new Set(backupImages)).slice(0, 3);
+      }
+
+      imageUrls = imageUrls.length ? await this.improveNewsImageQuality(imageUrls, platforms) : [];
       if (!imageUrls.length) {
         console.warn('[autopost] Bwin news skipped source image fallback because no source-aligned image passed quality checks', {
           trendTopic,
         });
       }
-      imageUrls = await this.finalizeNewsImages(imageUrls, newsOverlayHeadline || trendTopic);
+      imageUrls = imageUrls.length ? await this.finalizeNewsImages(imageUrls, newsOverlayHeadline || trendTopic) : [];
       if (!imageUrls.length) {
         results.push({ platform: 'bwin_news_guard', status: 'failed', error: 'missing_full_bleed_news_image' });
         historyEntries.push({
