@@ -23,6 +23,8 @@ type StoryPublishInput = {
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPTS ?? 15), 3);
 const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_MS ?? 2000), 1000);
+const REELS_READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_REELS_READY_ATTEMPTS ?? 60), READY_ATTEMPTS);
+const REELS_READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_REELS_READY_DELAY_MS ?? 5000), READY_DELAY_MS);
 const PUBLISH_RETRIES = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRIES ?? 2), 1);
 const PUBLISH_RETRY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRY_DELAY_MS ?? 3000), 1000);
 const CAROUSEL_MAX_IMAGES = Math.min(Math.max(Number(process.env.INSTAGRAM_CAROUSEL_MAX_IMAGES ?? 5), 2), 10);
@@ -170,7 +172,7 @@ export async function publishToInstagramReel(input: ReelPublishInput): Promise<{
       throw new Error('Failed to create Instagram Reels container');
     }
 
-    const isReady = await waitForMediaReady(creationId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
+    const isReady = await waitForMediaReady(creationId, accessToken, REELS_READY_ATTEMPTS, REELS_READY_DELAY_MS);
     if (!isReady) {
       throw new Error('Reels container not ready for publishing');
     }

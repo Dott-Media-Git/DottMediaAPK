@@ -30,7 +30,7 @@ import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
 import { buildCarmarketVehicleCaption, pickCarmarketVehicle, renderCarmarketCoverImage, } from './beforwardVehicleService.js';
 import { buildStaysphereListingCaption, pickStaysphereListing, prepareStaysphereListingImage, renderStaysphereCoverImage, staysphereListingHistoryKey, } from './staysphereListingService.js';
-import { buildGamersSteamCaption, gamersSteamHistoryKey, pickGamersSteamScreenshots, pickGamersSteamVideo, } from './gamersContentService.js';
+import { buildGamersSteamCaption, buildGamersSteamVideoCaption, gamersSteamHistoryKey, pickGamersSteamScreenshots, pickGamersSteamVideo, } from './gamersContentService.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from './bwinContentGuard.js';
 import { getBwinAccountClosureMessage, getBwinAccountClosureState, isBwinAccountClosureActive, } from './bwinAccountClosureService.js';
@@ -3857,6 +3857,7 @@ export class AutoPostService {
         const clientPhotoProfile = needsImages ? clientFallbackProfile : null;
         const requireAiImages = needsImages ? (isBwinUser || clientPhotoProfile ? false : this.requireAiImages(job)) : false;
         const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
+        const fallbackCopy = this.buildFallbackCopy(job, userId);
         let generated = options.generatedContent
             ? {
                 ...options.generatedContent,
@@ -3872,6 +3873,16 @@ export class AutoPostService {
                 caption_x: '',
                 hashtags_instagram: '',
                 hashtags_generic: '',
+            };
+        }
+        if (!generated && !needsImages) {
+            generated = {
+                images: [],
+                caption_instagram: fallbackCopy.caption,
+                caption_linkedin: fallbackCopy.caption,
+                caption_x: fallbackCopy.caption,
+                hashtags_instagram: fallbackCopy.hashtags,
+                hashtags_generic: fallbackCopy.hashtags,
             };
         }
         if (!generated) {
@@ -3917,7 +3928,6 @@ export class AutoPostService {
         const recentVideoSet = new Set(recentVideos);
         const cursorUpdates = {};
         let usedGenericVideo = false;
-        const fallbackCopy = this.buildFallbackCopy(job, userId);
         const recentCaptions = this.mergeRecentCaptions(this.getRecentCaptionHistory(job), [
             ...scheduledHistory.captions,
             ...scheduledHistory.contentKeys,
@@ -4124,11 +4134,11 @@ export class AutoPostService {
             const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
             const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
             const threadSafeCaption = this.limitThreadsCaption(platform, brandedCaption);
-            const captionSelection = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption
+            let captionSelection = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption
                 ? { caption: threadSafeCaption, signature: this.buildCaptionSignature(platform, threadSafeCaption) }
                 : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
-            const caption = this.limitThreadsCaption(platform, captionSelection.caption);
-            const signature = caption === captionSelection.caption
+            let caption = this.limitThreadsCaption(platform, captionSelection.caption);
+            let signature = caption === captionSelection.caption
                 ? captionSelection.signature
                 : this.buildCaptionSignature(platform, caption);
             const isVideoPlatform = videoPlatforms.has(platform);
@@ -4141,6 +4151,10 @@ export class AutoPostService {
                 const platformSelection = await this.selectNextVideo(job, platform, fallbackVideoPool, userId, recentVideoSet);
                 if (platformSelection.videoUrl) {
                     videoUrl = platformSelection.videoUrl;
+                    if (platformSelection.caption) {
+                        caption = this.limitThreadsCaption(platform, platformSelection.caption);
+                        signature = this.buildCaptionSignature(platform, caption);
+                    }
                     if (platform === 'youtube' && typeof platformSelection.nextCursor === 'number') {
                         cursorUpdates.youtubeVideoCursor = platformSelection.nextCursor;
                     }
@@ -5776,9 +5790,9 @@ export class AutoPostService {
         const nicheProfile = userId ? this.getClientFallbackProfile(userId) : null;
         const isNicheReel = platform === 'instagram_reels' && Boolean(nicheProfile);
         if (isNicheReel) {
-            const dynamicVideoUrl = await this.pickDynamicClientReelVideo(userId, recentVideos);
-            if (dynamicVideoUrl) {
-                return { videoUrl: dynamicVideoUrl, nextCursor: undefined };
+            const dynamicVideo = await this.pickDynamicClientReelVideo(userId, recentVideos);
+            if (dynamicVideo?.videoUrl) {
+                return { ...dynamicVideo, nextCursor: undefined };
             }
             return { videoUrl: undefined, nextCursor: undefined };
         }
@@ -5829,7 +5843,10 @@ export class AutoPostService {
         if (this.getClientFallbackProfile(userId)?.key === 'gamers44life') {
             const steamVideo = await pickGamersSteamVideo({ recentVideos });
             if (steamVideo?.videoUrl) {
-                return steamVideo.videoUrl;
+                return {
+                    videoUrl: steamVideo.videoUrl,
+                    caption: buildGamersSteamVideoCaption(steamVideo),
+                };
             }
             return null;
         }
