@@ -268,6 +268,18 @@ export class AutoPostService {
         const message = String(candidate.message ?? '').toLowerCase();
         return details.includes('quota exceeded') || message.includes('quota exceeded') || message.includes('resource_exhausted');
     }
+    withTimeout(promise, timeoutMs, label) {
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error(`${label}_timeout`)), timeoutMs);
+            promise.then(value => {
+                clearTimeout(timer);
+                resolve(value);
+            }, error => {
+                clearTimeout(timer);
+                reject(error);
+            });
+        });
+    }
     cacheJob(userId, job) {
         this.memoryStore.set(userId, job);
     }
@@ -285,7 +297,8 @@ export class AutoPostService {
         if (cached)
             return cached;
         try {
-            const snap = await autopostCollection.doc(userId).get();
+            const firestoreTimeoutMs = Math.max(Number(process.env.AUTOPOST_FIRESTORE_TIMEOUT_MS ?? 15000), 3000);
+            const snap = await this.withTimeout(autopostCollection.doc(userId).get(), firestoreTimeoutMs, 'firestore_autopost_job_fetch');
             if (snap.exists) {
                 const job = snap.data();
                 this.cacheJob(userId, job);
@@ -893,14 +906,15 @@ export class AutoPostService {
         }
         try {
             // Query only by nextRun to avoid composite index requirement, then filter active in memory.
-            const [standardSnap, reelsSnap, storiesSnap, trendSnap, missingReelsSnap, missingStoriesSnap] = await Promise.all([
+            const firestoreTimeoutMs = Math.max(Number(process.env.AUTOPOST_FIRESTORE_TIMEOUT_MS ?? 15000), 3000);
+            const [standardSnap, reelsSnap, storiesSnap, trendSnap, missingReelsSnap, missingStoriesSnap] = await this.withTimeout(Promise.all([
                 autopostCollection.where('nextRun', '<=', now).get(),
                 autopostCollection.where('reelsNextRun', '<=', now).get(),
                 autopostCollection.where('storyNextRun', '<=', now).get(),
                 autopostCollection.where('trendNextRun', '<=', now).get(),
                 autopostCollection.where('reelsNextRun', '==', null).get(),
                 autopostCollection.where('storyNextRun', '==', null).get(),
-            ]);
+            ]), firestoreTimeoutMs, 'firestore_due_jobs_query');
             if (!missingReelsSnap.empty) {
                 const selfHealWrites = missingReelsSnap.docs.map(doc => {
                     const data = doc.data();
@@ -1049,12 +1063,13 @@ export class AutoPostService {
             return { processed, results: Array.from(results.values()) };
         }
         catch (error) {
-            if (this.isFirestoreQuotaError(error)) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (this.isFirestoreQuotaError(error) || /firestore_.*_timeout/i.test(message)) {
                 const fallbackResult = await this.runDueJobsFromFallback(now);
                 if ((fallbackResult.processed ?? 0) > 0) {
                     return fallbackResult;
                 }
-                console.warn('[autopost] Firestore quota exceeded; running emergency Bwin social posting path.');
+                console.warn('[autopost] Firestore unavailable; running emergency Bwin social posting path.', message);
                 const emergency = await this.runBwinEmergencyPost(new Date());
                 return {
                     processed: emergency.posted ? (Array.isArray(emergency.results) ? (emergency.results?.length ?? 1) : 1) : 0,

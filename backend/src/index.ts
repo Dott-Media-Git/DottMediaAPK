@@ -265,16 +265,7 @@ app.post('/api/autopost/runBwinNewsNow', async (req, res, next) => {
     }
 
     const uid = '1zvY9nNyXMcfxdPQEyx0bIdK7r53';
-    let job: Record<string, unknown> | null = null;
-    try {
-      const snap = await firestore.collection('autopostJobs').doc(uid).get();
-      job = snap.exists ? (snap.data() ?? {}) : null;
-    } catch (error) {
-      console.warn('[autopost] manual Bwin news job lookup failed; using fallback store', error);
-    }
-    if (!job) {
-      job = (await (autoPostService as any).loadAutopostJob(uid)) ?? {};
-    }
+    const job = ((await (autoPostService as any).loadAutopostJob(uid)) ?? {}) as Record<string, unknown>;
     const requestedPlatforms = Array.isArray(req.body?.platforms) ? req.body.platforms : null;
     const trendPlatforms = requestedPlatforms?.length
       ? requestedPlatforms.filter((platform: unknown) => typeof platform === 'string' && platform.trim())

@@ -238,17 +238,7 @@ app.post('/api/autopost/runBwinNewsNow', async (req, res, next) => {
             return res.status(401).json({ message: 'Invalid token' });
         }
         const uid = '1zvY9nNyXMcfxdPQEyx0bIdK7r53';
-        let job = null;
-        try {
-            const snap = await firestore.collection('autopostJobs').doc(uid).get();
-            job = snap.exists ? (snap.data() ?? {}) : null;
-        }
-        catch (error) {
-            console.warn('[autopost] manual Bwin news job lookup failed; using fallback store', error);
-        }
-        if (!job) {
-            job = (await autoPostService.loadAutopostJob(uid)) ?? {};
-        }
+        const job = (await autoPostService.loadAutopostJob(uid)) ?? {};
         const requestedPlatforms = Array.isArray(req.body?.platforms) ? req.body.platforms : null;
         const trendPlatforms = requestedPlatforms?.length
             ? requestedPlatforms.filter((platform) => typeof platform === 'string' && platform.trim())
