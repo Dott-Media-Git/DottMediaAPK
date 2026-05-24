@@ -48,6 +48,17 @@ const escapeSvg = (value: string) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
+const decodeHtmlText = (value: string) =>
+  value
+    .replace(/&#8211;/g, '-')
+    .replace(/&#038;/g, '&')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 async function fetchHtml(url: string) {
@@ -247,6 +258,64 @@ async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}
   throw new Error('No usable Carbarn vehicle listing found');
 }
 
+async function fetchMileleVehicle(url: string): Promise<BeforwardVehicle> {
+  const vehicleUrl = normalizeUrl(url);
+  const html = await fetchHtml(vehicleUrl);
+  const $ = cheerio.load(html);
+  const title = decodeHtmlText(
+    $('.stm-listing-single-price-title h1').first().text() ||
+      $('h1').first().text() ||
+      $('title').text().replace(/\s*-\s*Milele Motors.*$/i, '') ||
+      'Milele vehicle',
+  );
+  const images = unique(
+    [
+      ...Array.from(html.matchAll(/data-src-img=["']([^"']+?\.(?:jpg|jpeg|png|webp)(?:\?[^"']*)?)["']/gi)).map(
+        match => match[1],
+      ),
+      ...Array.from(html.matchAll(/https?:\/\/milele\.com\/wp-content\/uploads\/[^"'\s<>]+?\.(?:jpg|jpeg|png|webp)/gi)).map(
+        match => match[0],
+      ),
+    ].map(url => normalizeUrl(url)),
+  ).slice(0, 10);
+  if (images.length < 2) throw new Error('No Milele vehicle gallery images found');
+  const slug = vehicleUrl.replace(/\/+$/, '').split('/').pop() || crypto.randomUUID();
+  const priceText = /PRICE\s+AS\s+REQUEST/i.test(html) ? undefined : $('body').text().match(/\$\s*[\d,]+/)?.[0];
+  return {
+    title,
+    stockNo: `MILELE-${slug.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 42)}`,
+    priceUsd: priceText?.replace(/[^\d.]/g, ''),
+    priceUgx: estimateUgxFromUsd(priceText),
+    source: 'Milele',
+    url: vehicleUrl,
+    images,
+    summary: {},
+  };
+}
+
+async function pickMileleVehicle(options: { recentStockNos?: Set<string> } = {}): Promise<BeforwardVehicle> {
+  const html = await fetchHtml('https://milele.com/inventory/');
+  const links = unique(
+    Array.from(html.matchAll(/https:\/\/milele\.com\/listings\/[^"'\s<>]+?\//gi)).map(match => match[0]),
+  );
+  const preferred = [
+    ...links.filter(link => /\/rhd-/i.test(link)),
+    ...links.filter(link => !/\/rhd-/i.test(link) && /toyota|lexus|nissan|mercedes|mitsubishi|suzuki/i.test(link)),
+    ...links,
+  ];
+  for (const link of unique(preferred)) {
+    const stockKey = `MILELE-${link.replace(/\/+$/, '').split('/').pop()?.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 42)}`;
+    if (stockKey && options.recentStockNos?.has(stockKey)) continue;
+    try {
+      const vehicle = await fetchMileleVehicle(link);
+      if (vehicle.images.length > 1) return vehicle;
+    } catch {
+      // Try the next Milele listing.
+    }
+  }
+  throw new Error('No usable Milele vehicle listing found');
+}
+
 export async function pickBeforwardVehicle(options: {
   searchUrl?: string;
   recentStockNos?: Set<string>;
@@ -272,13 +341,21 @@ export async function pickBeforwardVehicle(options: {
 }
 
 export async function pickCarmarketVehicle(options: { recentStockNos?: Set<string> } = {}) {
-  const sources = [pickCarbarnVehicle, pickBeforwardVehicle];
+  const allSources = [
+    { key: 'carbarn', pick: pickCarbarnVehicle },
+    { key: 'milele', pick: pickMileleVehicle },
+    { key: 'beforward', pick: pickBeforwardVehicle },
+  ];
+  const priority = (process.env.CARMARKET_SOURCE_PRIORITY ?? '').trim().toLowerCase();
+  const sources = priority
+    ? [...allSources.filter(source => source.key === priority), ...allSources.filter(source => source.key !== priority)]
+    : allSources;
   const start = Math.floor(Math.random() * sources.length);
   const errors: string[] = [];
   for (let index = 0; index < sources.length; index += 1) {
-    const source = sources[(start + index) % sources.length];
+    const source = priority ? sources[index] : sources[(start + index) % sources.length];
     try {
-      return await source(options);
+      return await source.pick(options);
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }
