@@ -88,19 +88,25 @@ async function uploadCarmarketImage(buffer: Buffer, folder = 'covers') {
   const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
   const bucket = process.env.CLIENT_CAMPAIGN_BUCKET?.trim() || 'dott-campaign';
   if (supabaseUrl && serviceRoleKey) {
-    const safeFolder = folder.replace(/[^a-z0-9_-]/gi, '') || 'covers';
-    const objectPath = `client-autopost/carmarket/${safeFolder}/${new Date().toISOString().slice(0, 10)}/${Date.now()}-${crypto.randomUUID()}.jpg`;
-    await axios.post(`${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`, buffer, {
-      headers: {
-        Authorization: `Bearer ${serviceRoleKey}`,
-        apikey: serviceRoleKey,
-        'Content-Type': 'image/jpeg',
-        'x-upsert': 'true',
-      },
-      maxBodyLength: Infinity,
-      timeout: 30000,
-    });
-    return `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+    try {
+      const safeFolder = folder.replace(/[^a-z0-9_-]/gi, '') || 'covers';
+      const objectPath = `client-autopost/carmarket/${safeFolder}/${new Date().toISOString().slice(0, 10)}/${Date.now()}-${crypto.randomUUID()}.jpg`;
+      await axios.post(`${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`, buffer, {
+        headers: {
+          Authorization: `Bearer ${serviceRoleKey}`,
+          apikey: serviceRoleKey,
+          'Content-Type': 'image/jpeg',
+          'x-upsert': 'true',
+        },
+        maxBodyLength: Infinity,
+        timeout: 30000,
+      });
+      return `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+    } catch (error) {
+      console.warn('[carmarket] Supabase cover upload failed; using generated media fallback', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   return saveGeneratedImageBuffer(buffer, 'jpg');
 }

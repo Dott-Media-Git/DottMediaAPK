@@ -3963,13 +3963,16 @@ export class AutoPostService {
                 const vehicle = await pickCarmarketVehicle({ recentStockNos });
                 const vehicleImages = vehicle.images.slice(0, 10);
                 const coverImageUrl = await renderCarmarketCoverImage(vehicle).catch(error => {
-                    console.warn('[autopost] Carmarket cover image render failed; using raw vehicle images', {
+                    console.warn('[autopost] Carmarket cover image render failed; skipping vehicle listing to avoid raw cover', {
                         userId,
                         error: error instanceof Error ? error.message : String(error),
                     });
                     return null;
                 });
-                imageUrls = coverImageUrl ? [coverImageUrl, ...vehicleImages.slice(1)] : vehicleImages;
+                if (!coverImageUrl) {
+                    throw new Error('carmarket_cover_render_failed');
+                }
+                imageUrls = [coverImageUrl, ...vehicleImages.slice(1)];
                 carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
                 usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
             }
