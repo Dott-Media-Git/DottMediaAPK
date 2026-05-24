@@ -407,6 +407,17 @@ export async function renderCarmarketCoverImage(vehicle: BeforwardVehicle) {
   return uploadCarmarketImage(buffer, 'covers');
 }
 
+export async function prepareCarmarketVehicleImage(imageUrl: string) {
+  const source = await fetchImageBuffer(imageUrl);
+  const buffer = await sharp(source)
+    .rotate()
+    .resize(1080, 1080, { fit: 'cover', position: 'attention' })
+    .sharpen()
+    .jpeg({ quality: 92, mozjpeg: true, chromaSubsampling: '4:4:4' })
+    .toBuffer();
+  return uploadCarmarketImage(buffer, 'listing');
+}
+
 export function buildCarmarketVehicleCaption(vehicle: BeforwardVehicle) {
   const priceUsd = vehicle.priceUsd ? `FOB price on listing: $${vehicle.priceUsd}` : '';
   const lines = [

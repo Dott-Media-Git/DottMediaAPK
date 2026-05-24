@@ -28,7 +28,7 @@ import { resolveBrandIdForClient } from './brandKitService.js';
 import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage } from './tableImageService.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
-import { buildCarmarketVehicleCaption, pickCarmarketVehicle, renderCarmarketCoverImage, } from './beforwardVehicleService.js';
+import { buildCarmarketVehicleCaption, pickCarmarketVehicle, prepareCarmarketVehicleImage, renderCarmarketCoverImage, } from './beforwardVehicleService.js';
 import { buildStaysphereListingCaption, pickStaysphereListing, prepareStaysphereListingImage, renderStaysphereCoverImage, staysphereListingHistoryKey, } from './staysphereListingService.js';
 import { buildGamersSteamCaption, buildGamersSteamVideoCaption, gamersSteamHistoryKey, pickGamersSteamScreenshots, pickGamersSteamVideo, } from './gamersContentService.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
@@ -3972,7 +3972,20 @@ export class AutoPostService {
                 if (!coverImageUrl) {
                     throw new Error('carmarket_cover_render_failed');
                 }
-                imageUrls = [coverImageUrl, ...vehicleImages.slice(1)];
+                const preparedVehicleImages = await Promise.all(vehicleImages.slice(1, 5).map(async (imageUrl) => {
+                    try {
+                        return await prepareCarmarketVehicleImage(imageUrl);
+                    }
+                    catch (error) {
+                        console.warn('[autopost] Carmarket listing image preparation failed; skipping raw source URL', {
+                            userId,
+                            imageUrl,
+                            error: error instanceof Error ? error.message : String(error),
+                        });
+                        return null;
+                    }
+                }));
+                imageUrls = [coverImageUrl, ...preparedVehicleImages.filter((url) => Boolean(url))];
                 carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
                 usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
             }

@@ -33,6 +33,7 @@ import { resolveFacebookPageId } from './socialAccountResolver.js';
 import {
   buildCarmarketVehicleCaption,
   pickCarmarketVehicle,
+  prepareCarmarketVehicleImage,
   renderCarmarketCoverImage,
 } from './beforwardVehicleService.js';
 import {
@@ -4480,7 +4481,21 @@ export class AutoPostService {
         if (!coverImageUrl) {
           throw new Error('carmarket_cover_render_failed');
         }
-        imageUrls = [coverImageUrl, ...vehicleImages.slice(1)];
+        const preparedVehicleImages = await Promise.all(
+          vehicleImages.slice(1, 5).map(async imageUrl => {
+            try {
+              return await prepareCarmarketVehicleImage(imageUrl);
+            } catch (error) {
+              console.warn('[autopost] Carmarket listing image preparation failed; skipping raw source URL', {
+                userId,
+                imageUrl,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return null;
+            }
+          }),
+        );
+        imageUrls = [coverImageUrl, ...preparedVehicleImages.filter((url): url is string => Boolean(url))];
         carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
         usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
       } catch (error) {
