@@ -60,6 +60,28 @@ const CLIENT_META_FALLBACKS = {
         instagramUsername: 'gamers44life',
     },
 };
+const CLIENT_ENV_PREFIXES = {
+    acmVetCcOiTHeGk5D7eDYieamDF3: 'CARMARKETPLACE',
+    D1iNgjLKNRaQhH35M0NmGfw1LVD2: 'STAYSPHERE',
+    vzdH1DnfFLVjlY8bBgC26WACmmw2: 'GAMERS44LIFE',
+};
+const PINNED_CLIENT_RUNTIME_PROMPTS = {
+    acmVetCcOiTHeGk5D7eDYieamDF3: {
+        prompt: 'Create a marketplace post for a real car listing suitable for Uganda buyers. Use practical, direct language and avoid generic Dott Media copy.',
+        businessType: 'Uganda car marketplace',
+        fallbackHashtags: '#CarMarketPlace #UgandaCars #CarsForSaleUganda #KampalaCars',
+    },
+    D1iNgjLKNRaQhH35M0NmGfw1LVD2: {
+        prompt: 'Create a short-stay property post for StaySphere using real accommodation language for Uganda travelers. Mention the area, comfort, booking angle, and keep it warm but concise.',
+        businessType: 'Uganda stays, rentals, hotels, and Airbnbs',
+        fallbackHashtags: '#StaySphere93 #UgandaStaycation #KampalaStays #ShortStayUganda #AirbnbUganda',
+    },
+    vzdH1DnfFLVjlY8bBgC26WACmmw2: {
+        prompt: 'Create a gaming post using real gameplay language and clear gamer-first wording. Avoid unrelated brand or Dott Media copy.',
+        businessType: 'gaming media and gameplay highlights',
+        fallbackHashtags: '#Gamers44life #Gaming #Gameplay #GamingCommunity',
+    },
+};
 const NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS = 3;
 const NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS = 4;
 const logSafeError = (error) => {
@@ -213,15 +235,17 @@ export class AutoPostService {
     }
     async getRuntimeFallbackAccounts(userId) {
         if (!this.isBwinScopeUser(userId)) {
+            const envAccounts = this.getPinnedClientEnvAccounts(userId);
             const clientFallback = CLIENT_META_FALLBACKS[userId];
             const token = (process.env.CLIENT_META_USER_TOKEN ?? process.env.FACEBOOK_PAGE_TOKEN ?? process.env.META_GRAPH_TOKEN ?? '').trim();
             if (!clientFallback || !token)
-                return {};
+                return envAccounts;
             try {
                 const resolved = await resolveFacebookPageId(token, clientFallback.pageId);
                 const pageToken = resolved?.pageToken?.trim() || token;
                 const pageId = resolved?.pageId?.trim() || clientFallback.pageId;
                 return {
+                    ...envAccounts,
                     facebook: {
                         accessToken: pageToken,
                         pageId,
@@ -239,7 +263,7 @@ export class AutoPostService {
                     userId,
                     error: error instanceof Error ? error.message : String(error),
                 });
-                return {};
+                return envAccounts;
             }
         }
         const fallback = {
@@ -266,6 +290,80 @@ export class AutoPostService {
             fallback.facebook = { accessToken, pageId };
         }
         return fallback;
+    }
+    getPinnedClientEnvAccounts(userId) {
+        const prefix = CLIENT_ENV_PREFIXES[userId];
+        const fallback = CLIENT_META_FALLBACKS[userId];
+        if (!prefix || !fallback)
+            return {};
+        const value = (name) => (process.env[`${prefix}_${name}`] ?? '').trim();
+        const facebookToken = value('FACEBOOK_PAGE_TOKEN') || value('FACEBOOK_ACCESS_TOKEN');
+        const instagramToken = value('INSTAGRAM_ACCESS_TOKEN') || facebookToken;
+        const threadsToken = value('THREADS_ACCESS_TOKEN');
+        const accounts = {};
+        if (facebookToken) {
+            accounts.facebook = {
+                accessToken: facebookToken,
+                pageId: value('FACEBOOK_PAGE_ID') || fallback.pageId,
+            };
+        }
+        if (instagramToken) {
+            accounts.instagram = {
+                accessToken: instagramToken,
+                accountId: value('INSTAGRAM_ACCOUNT_ID') || fallback.instagramAccountId,
+                username: value('INSTAGRAM_USERNAME') || fallback.instagramUsername,
+            };
+        }
+        const threadsAccountId = value('THREADS_ACCOUNT_ID') || value('THREADS_PROFILE_ID');
+        if (threadsToken && threadsAccountId) {
+            accounts.threads = {
+                accessToken: threadsToken,
+                accountId: threadsAccountId,
+                username: value('THREADS_USERNAME') || fallback.instagramUsername,
+            };
+        }
+        return accounts;
+    }
+    buildPinnedClientRuntimeJob(userId) {
+        if (process.env.AUTOPOST_PINNED_CLIENT_RUNTIME_JOBS === 'false')
+            return null;
+        const profile = PINNED_CLIENT_RUNTIME_PROMPTS[userId];
+        if (!profile)
+            return null;
+        const now = admin.firestore.Timestamp.now();
+        return {
+            userId,
+            active: true,
+            platforms: ['facebook', 'instagram', 'threads'],
+            storyPlatforms: ['facebook_story', 'instagram_story'],
+            prompt: profile.prompt,
+            businessType: profile.businessType,
+            fallbackHashtags: profile.fallbackHashtags,
+            requireAiImages: false,
+            intervalHours: NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS,
+            nextRun: now,
+            storyIntervalHours: NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS,
+            storyNextRun: now,
+            reelsIntervalHours: NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS,
+            reelsNextRun: userId === 'vzdH1DnfFLVjlY8bBgC26WACmmw2' ? now : undefined,
+        };
+    }
+    seedPinnedClientRuntimeJobs(now) {
+        if (process.env.AUTOPOST_PINNED_CLIENT_RUNTIME_JOBS === 'false')
+            return;
+        for (const userId of Object.keys(PINNED_CLIENT_RUNTIME_PROMPTS)) {
+            if (this.memoryStore.has(userId))
+                continue;
+            const job = this.buildPinnedClientRuntimeJob(userId);
+            if (!job)
+                continue;
+            this.cacheJob(userId, {
+                ...job,
+                nextRun: now,
+                storyNextRun: now,
+                reelsNextRun: job.reelsNextRun ? now : undefined,
+            });
+        }
     }
     async safeGetUserTrendConfig(userId) {
         return getUserTrendConfig(userId);
@@ -332,9 +430,16 @@ export class AutoPostService {
         catch (error) {
             console.warn('[autopost] supabase job fetch failed', logSafeError(error));
         }
+        const runtimeJob = this.buildPinnedClientRuntimeJob(userId);
+        if (runtimeJob) {
+            console.warn('[autopost] using pinned client runtime job because configured stores are unavailable', { userId });
+            this.cacheJob(userId, runtimeJob);
+            return runtimeJob;
+        }
         return null;
     }
     async runDueJobsFromFallback(now, excludedUserIds = new Set()) {
+        this.seedPinnedClientRuntimeJobs(now);
         const buildDueSets = () => ({
             dueStandard: Array.from(this.memoryStore.entries()).filter(([userId, job]) => !excludedUserIds.has(userId) &&
                 job.active !== false &&
