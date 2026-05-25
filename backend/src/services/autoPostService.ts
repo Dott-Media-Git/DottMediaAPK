@@ -4452,6 +4452,30 @@ export class AutoPostService {
         nextRun: nextRunDate.toISOString(),
       };
     }
+    const credentials = await this.resolveCredentials(userId);
+    const missingCredentialFailures = platforms
+      .filter(platform => !this.hasCredentialsForPlatform(platform, credentials))
+      .map(platform => ({
+        platform,
+        status: 'failed' as const,
+        error: `missing_${platform}_credentials`,
+      }));
+    const publishPlatforms = platforms.filter(platform => this.hasCredentialsForPlatform(platform, credentials));
+    if (!publishPlatforms.length) {
+      const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
+      this.cacheJob(userId, {
+        ...job,
+        active: job.active !== false,
+        [lastRunField]: admin.firestore.Timestamp.now(),
+        [resultField]: missingCredentialFailures,
+        [nextRunField]: admin.firestore.Timestamp.fromDate(nextRunDate),
+      });
+      return {
+        posted: 0,
+        failed: missingCredentialFailures,
+        nextRun: nextRunDate.toISOString(),
+      };
+    }
     const videoPlatforms = new Set<VideoPlatform>(['youtube', 'tiktok', 'instagram_reels']);
     const optionalVideoPlatforms = new Set([
       'facebook',
@@ -4484,7 +4508,7 @@ export class AutoPostService {
       ? this.selectNextGenericVideo(job, fallbackVideoPool)
       : { videoUrl: undefined, nextCursor: undefined };
     const hasGenericVideo = Boolean(genericVideoSelection.videoUrl);
-    const needsImages = platforms.some(platform => {
+    const needsImages = publishPlatforms.some(platform => {
       if (videoPlatforms.has(platform as VideoPlatform)) return false;
       if (optionalVideoPlatforms.has(platform) && hasGenericVideo) return false;
       return true;
@@ -4552,30 +4576,6 @@ export class AutoPostService {
       }
     }
 
-    const credentials = await this.resolveCredentials(userId);
-    const missingCredentialFailures = platforms
-      .filter(platform => !this.hasCredentialsForPlatform(platform, credentials))
-      .map(platform => ({
-        platform,
-        status: 'failed' as const,
-        error: `missing_${platform}_credentials`,
-      }));
-    const publishPlatforms = platforms.filter(platform => this.hasCredentialsForPlatform(platform, credentials));
-    if (!publishPlatforms.length) {
-      const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
-      await this.mirrorAutopostJob(userId, {
-        ...job,
-        active: job.active !== false,
-        [lastRunField]: admin.firestore.Timestamp.now(),
-        [resultField]: missingCredentialFailures,
-        [nextRunField]: admin.firestore.Timestamp.fromDate(nextRunDate),
-      });
-      return {
-        posted: 0,
-        failed: missingCredentialFailures,
-        nextRun: nextRunDate.toISOString(),
-      };
-    }
     const results: PostResult[] = [...missingCredentialFailures];
     const finalGenerated = generated;
     let imageUrls = needsImages
