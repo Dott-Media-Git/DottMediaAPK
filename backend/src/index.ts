@@ -342,12 +342,22 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
       return res.status(401).json({ message: 'Invalid token' });
     }
 
-    const accounts = [
+    const allAccounts = [
       { label: 'Bwin', uid: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', bwin: true },
       { label: 'Carmarketug', uid: 'acmVetCcOiTHeGk5D7eDYieamDF3', reels: true },
       { label: 'Staysphere', uid: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2', reels: true },
       { label: 'Gamers44life', uid: 'vzdH1DnfFLVjlY8bBgC26WACmmw2', reels: true },
     ];
+    const requestedAccounts = Array.isArray(req.body?.accounts)
+      ? new Set(
+          req.body.accounts
+            .map((value: unknown) => String(value ?? '').trim().toLowerCase())
+            .filter(Boolean),
+        )
+      : null;
+    const accounts = requestedAccounts
+      ? allAccounts.filter(account => requestedAccounts.has(account.label.toLowerCase()) || requestedAccounts.has(account.uid))
+      : allAccounts;
     const service = autoPostService as any;
     const summarize = (outcome: any) => ({
       posted: outcome?.posted ?? 0,
@@ -361,62 +371,72 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
       nextRun: outcome?.nextRun ?? null,
     });
 
-    const results = [];
-    for (const account of accounts) {
-      const job = await service.loadAutopostJob(account.uid);
-      if (!job) {
-        results.push({ account: account.label, error: 'autopost_job_missing' });
-        continue;
-      }
-      const result: Record<string, unknown> = { account: account.label };
-      if (account.bwin) {
-        const newsJob = {
-          ...job,
-          trendContentType: 'news',
-          trendContentTypes: ['news'],
-          trendPlatforms: ['facebook', 'instagram'],
-          storyPlatforms: ['facebook_story', 'instagram_story'],
-        };
-        result.feed = summarize(await service.executeTrendPosts(account.uid, newsJob));
-        result.stories = summarize(await service.executeTrendStories(account.uid, newsJob));
-      } else {
-        result.feed = summarize(
-          await service.executeJob(account.uid, job, {
-            platforms: ['facebook', 'instagram'],
-            intervalHours: job.intervalHours ?? 1,
-            nextRunField: 'nextRun',
-            lastRunField: 'lastRunAt',
-            resultField: 'lastResult',
-          }),
-        );
-        result.stories = summarize(
-          await service.executeJob(account.uid, job, {
-            platforms: Array.isArray(job.storyPlatforms) && job.storyPlatforms.length
-              ? job.storyPlatforms
-              : ['facebook_story', 'instagram_story'],
-            intervalHours: job.storyIntervalHours ?? 1,
-            nextRunField: 'storyNextRun',
-            lastRunField: 'storyLastRunAt',
-            resultField: 'storyLastResult',
-          }),
-        );
-        if (account.reels) {
-          result.reels = summarize(
+    const runFreshSet = async () => {
+      const results = [];
+      for (const account of accounts) {
+        const job = await service.loadAutopostJob(account.uid);
+        if (!job) {
+          results.push({ account: account.label, error: 'autopost_job_missing' });
+          continue;
+        }
+        const result: Record<string, unknown> = { account: account.label };
+        if (account.bwin) {
+          const newsJob = {
+            ...job,
+            trendContentType: 'news',
+            trendContentTypes: ['news'],
+            trendPlatforms: ['facebook', 'instagram'],
+            storyPlatforms: ['facebook_story', 'instagram_story'],
+          };
+          result.feed = summarize(await service.executeTrendPosts(account.uid, newsJob));
+          result.stories = summarize(await service.executeTrendStories(account.uid, newsJob));
+        } else {
+          result.feed = summarize(
             await service.executeJob(account.uid, job, {
-              platforms: ['instagram_reels'],
-              intervalHours: job.reelsIntervalHours ?? 2,
-              nextRunField: 'reelsNextRun',
-              lastRunField: 'reelsLastRunAt',
-              resultField: 'reelsLastResult',
-              useGenericVideoFallback: false,
+              platforms: ['facebook', 'instagram'],
+              intervalHours: job.intervalHours ?? 1,
+              nextRunField: 'nextRun',
+              lastRunField: 'lastRunAt',
+              resultField: 'lastResult',
             }),
           );
+          result.stories = summarize(
+            await service.executeJob(account.uid, job, {
+              platforms: Array.isArray(job.storyPlatforms) && job.storyPlatforms.length
+                ? job.storyPlatforms
+                : ['facebook_story', 'instagram_story'],
+              intervalHours: job.storyIntervalHours ?? 1,
+              nextRunField: 'storyNextRun',
+              lastRunField: 'storyLastRunAt',
+              resultField: 'storyLastResult',
+            }),
+          );
+          if (account.reels) {
+            result.reels = summarize(
+              await service.executeJob(account.uid, job, {
+                platforms: ['instagram_reels'],
+                intervalHours: job.reelsIntervalHours ?? 2,
+                nextRunField: 'reelsNextRun',
+                lastRunField: 'reelsLastRunAt',
+                resultField: 'reelsLastResult',
+                useGenericVideoFallback: false,
+              }),
+            );
+          }
         }
+        results.push(result);
       }
-      results.push(result);
+      return results;
+    };
+
+    if (req.body?.background === true) {
+      void runFreshSet()
+        .then(results => console.info('[autopost] runFreshSocialSet background complete', { results }))
+        .catch(error => console.error('[autopost] runFreshSocialSet background failed', error));
+      return res.status(202).json({ ok: true, accepted: true, accounts: accounts.map(account => account.label) });
     }
 
-    res.json({ ok: true, results });
+    res.json({ ok: true, results: await runFreshSet() });
   } catch (error) {
     next(error);
   }

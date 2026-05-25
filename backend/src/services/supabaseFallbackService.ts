@@ -182,6 +182,8 @@ const sortDescByDate = <T extends { date?: string }>(rows: T[]) =>
 
 class SupabaseFallbackService {
   private unavailableWarned = false;
+  private circuitOpenUntil = 0;
+  private consecutiveFailures = 0;
 
   isConfigured() {
     return Boolean(REST_BASE && SUPABASE_SERVICE_ROLE_KEY);
@@ -191,6 +193,51 @@ class SupabaseFallbackService {
     if (this.unavailableWarned || this.isConfigured()) return;
     this.unavailableWarned = true;
     console.warn('[supabase-fallback] SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY missing; fallback inactive');
+  }
+
+  private isCircuitOpen() {
+    return Date.now() < this.circuitOpenUntil;
+  }
+
+  private markRequestSuccess() {
+    this.consecutiveFailures = 0;
+    this.circuitOpenUntil = 0;
+  }
+
+  private sanitizeRequestError(error: unknown, method: Method, table: string) {
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+    const code = axios.isAxiosError(error)
+      ? ((error.response?.data as { error_code?: string | number } | undefined)?.error_code ?? error.code)
+      : undefined;
+    const cloudflareName = axios.isAxiosError(error)
+      ? (error.response?.data as { error_name?: string } | undefined)?.error_name
+      : undefined;
+    const message = [
+      'supabase_request_failed',
+      String(method).toUpperCase(),
+      table,
+      status ? `status=${status}` : null,
+      code ? `code=${code}` : null,
+      cloudflareName ? `reason=${cloudflareName}` : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    return new Error(message);
+  }
+
+  private shouldOpenCircuit(error: unknown) {
+    if (!axios.isAxiosError(error)) return false;
+    const status = error.response?.status ?? 0;
+    const cloudflareCode = (error.response?.data as { error_code?: number } | undefined)?.error_code;
+    return (
+      status === 522 ||
+      status === 523 ||
+      status === 524 ||
+      status >= 500 ||
+      cloudflareCode === 522 ||
+      error.code === 'ECONNABORTED' ||
+      error.code === 'ETIMEDOUT'
+    );
   }
 
   private async request<T = any>(
@@ -230,8 +277,29 @@ class SupabaseFallbackService {
       timeout: 30000,
     };
 
-    const response = await axios.request<T>(config);
-    return response.data;
+    if (this.isCircuitOpen()) {
+      throw new Error(`supabase_circuit_open retry_after_ms=${this.circuitOpenUntil - Date.now()}`);
+    }
+
+    try {
+      const response = await axios.request<T>(config);
+      this.markRequestSuccess();
+      return response.data;
+    } catch (error) {
+      this.consecutiveFailures += 1;
+      const sanitized = this.sanitizeRequestError(error, method, table);
+      if (this.shouldOpenCircuit(error) || this.consecutiveFailures >= 3) {
+        const backoffMs = Math.min(120000, 30000 * this.consecutiveFailures);
+        this.circuitOpenUntil = Date.now() + backoffMs;
+        console.warn('[supabase-fallback] REST circuit opened', {
+          table,
+          method: String(method).toUpperCase(),
+          backoffMs,
+          error: sanitized.message,
+        });
+      }
+      throw sanitized;
+    }
   }
 
   private async getSingleRow<T = any>(table: string, params: Record<string, QueryValue>) {

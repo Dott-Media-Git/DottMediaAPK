@@ -113,6 +113,8 @@ const sortDescByDate = (rows) => [...rows].sort((a, b) => `${b.date ?? ''}`.loca
 class SupabaseFallbackService {
     constructor() {
         this.unavailableWarned = false;
+        this.circuitOpenUntil = 0;
+        this.consecutiveFailures = 0;
     }
     isConfigured() {
         return Boolean(REST_BASE && SUPABASE_SERVICE_ROLE_KEY);
@@ -122,6 +124,46 @@ class SupabaseFallbackService {
             return;
         this.unavailableWarned = true;
         console.warn('[supabase-fallback] SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY missing; fallback inactive');
+    }
+    isCircuitOpen() {
+        return Date.now() < this.circuitOpenUntil;
+    }
+    markRequestSuccess() {
+        this.consecutiveFailures = 0;
+        this.circuitOpenUntil = 0;
+    }
+    sanitizeRequestError(error, method, table) {
+        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        const code = axios.isAxiosError(error)
+            ? (error.response?.data?.error_code ?? error.code)
+            : undefined;
+        const cloudflareName = axios.isAxiosError(error)
+            ? error.response?.data?.error_name
+            : undefined;
+        const message = [
+            'supabase_request_failed',
+            String(method).toUpperCase(),
+            table,
+            status ? `status=${status}` : null,
+            code ? `code=${code}` : null,
+            cloudflareName ? `reason=${cloudflareName}` : null,
+        ]
+            .filter(Boolean)
+            .join(' ');
+        return new Error(message);
+    }
+    shouldOpenCircuit(error) {
+        if (!axios.isAxiosError(error))
+            return false;
+        const status = error.response?.status ?? 0;
+        const cloudflareCode = error.response?.data?.error_code;
+        return (status === 522 ||
+            status === 523 ||
+            status === 524 ||
+            status >= 500 ||
+            cloudflareCode === 522 ||
+            error.code === 'ECONNABORTED' ||
+            error.code === 'ETIMEDOUT');
     }
     async request(method, table, options = {}) {
         if (!this.isConfigured()) {
@@ -150,8 +192,29 @@ class SupabaseFallbackService {
             data: options.body,
             timeout: 30000,
         };
-        const response = await axios.request(config);
-        return response.data;
+        if (this.isCircuitOpen()) {
+            throw new Error(`supabase_circuit_open retry_after_ms=${this.circuitOpenUntil - Date.now()}`);
+        }
+        try {
+            const response = await axios.request(config);
+            this.markRequestSuccess();
+            return response.data;
+        }
+        catch (error) {
+            this.consecutiveFailures += 1;
+            const sanitized = this.sanitizeRequestError(error, method, table);
+            if (this.shouldOpenCircuit(error) || this.consecutiveFailures >= 3) {
+                const backoffMs = Math.min(120000, 30000 * this.consecutiveFailures);
+                this.circuitOpenUntil = Date.now() + backoffMs;
+                console.warn('[supabase-fallback] REST circuit opened', {
+                    table,
+                    method: String(method).toUpperCase(),
+                    backoffMs,
+                    error: sanitized.message,
+                });
+            }
+            throw sanitized;
+        }
     }
     async getSingleRow(table, params) {
         const rows = await this.request('GET', table, {
