@@ -5200,7 +5200,7 @@ export class AutoPostService {
         console.warn('[autopost] supabase social account lookup failed', logSafeError(fallbackError));
       }
     }
-    const allowDefaults = canUsePrimarySocialDefaults(userData, userId);
+    const allowDefaults = !this.isNicheClientAccount(userId) && canUsePrimarySocialDefaults(userData, userId);
     const defaults = this.defaultSocialAccounts(allowDefaults);
     const userAccounts = (userData?.socialAccounts as SocialAccounts | undefined) ?? {};
     const runtimeFallbackAccounts = await this.getRuntimeFallbackAccounts(userId);
