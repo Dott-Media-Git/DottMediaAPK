@@ -243,7 +243,9 @@ export function scheduleFacebookCommentPollJob() {
   });
   console.info(`[fb-comment-poll] job scheduled (${scheduleExpression}).`);
 
-  void pollFacebookCommentsOnce();
+  if (process.env.META_COMMENT_POLL_ON_STARTUP === 'true') {
+    void pollFacebookCommentsOnce();
+  }
 }
 
 scheduleFacebookCommentPollJob();

@@ -28,8 +28,9 @@ export function scheduleAutoPostJob() {
   console.info(`[autopost] job scheduled (${scheduleExpression}).`);
   console.info(`[autopost] poll interval set (${pollMinutes}m).`);
 
-  // Kick off one run immediately so posts happen on startup.
-  void runDueJobs('startup');
+  if (process.env.AUTOPOST_RUN_ON_STARTUP === 'true') {
+    void runDueJobs('startup');
+  }
 
   setInterval(() => {
     void runDueJobs('poll');

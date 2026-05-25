@@ -29,7 +29,9 @@ export function scheduleSocialQueueJob() {
     });
     console.info(`[social-queue] job scheduled (${scheduleExpression}).`);
     console.info(`[social-queue] poll interval set (${pollMinutes}m).`);
-    void runQueue('startup');
+    if (process.env.SOCIAL_QUEUE_RUN_ON_STARTUP === 'true') {
+        void runQueue('startup');
+    }
     setInterval(() => {
         void runQueue('poll');
     }, pollMinutes * 60 * 1000);

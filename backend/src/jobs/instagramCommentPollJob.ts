@@ -242,7 +242,9 @@ export function scheduleInstagramCommentPollJob() {
   });
   console.info(`[ig-comment-poll] job scheduled (${scheduleExpression}).`);
 
-  void pollInstagramCommentsOnce();
+  if (process.env.META_COMMENT_POLL_ON_STARTUP === 'true') {
+    void pollInstagramCommentsOnce();
+  }
 }
 
 scheduleInstagramCommentPollJob();

@@ -257,7 +257,9 @@ export function scheduleThreadsCommentPollJob() {
   });
   console.info(`[threads-comment-poll] job scheduled (${scheduleExpression}).`);
 
-  void pollThreadsCommentsOnce();
+  if (process.env.META_COMMENT_POLL_ON_STARTUP === 'true') {
+    void pollThreadsCommentsOnce();
+  }
 }
 
 scheduleThreadsCommentPollJob();

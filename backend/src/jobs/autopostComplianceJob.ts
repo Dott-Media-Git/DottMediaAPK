@@ -24,7 +24,9 @@ export function scheduleAutopostComplianceJob() {
   };
 
   console.info(`[autopost-compliance] poll interval set (${pollMinutes}m).`);
-  void runCheck('startup');
+  if (process.env.AUTOPOST_COMPLIANCE_RUN_ON_STARTUP === 'true') {
+    void runCheck('startup');
+  }
   setInterval(() => {
     void runCheck('poll');
   }, pollMinutes * 60 * 1000);
