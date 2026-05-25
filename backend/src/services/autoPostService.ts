@@ -427,7 +427,7 @@ export class AutoPostService {
     if (!this.isBwinScopeUser(userId)) {
       const envAccounts = this.getPinnedClientEnvAccounts(userId);
       const clientFallback = CLIENT_META_FALLBACKS[userId];
-      const token = (process.env.CLIENT_META_USER_TOKEN ?? process.env.FACEBOOK_PAGE_TOKEN ?? process.env.META_GRAPH_TOKEN ?? '').trim();
+      const token = (process.env.CLIENT_META_USER_TOKEN ?? '').trim();
       if (!clientFallback || !token) return envAccounts;
       try {
         const resolved = await resolveFacebookPageId(token, clientFallback.pageId);
