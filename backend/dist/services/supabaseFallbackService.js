@@ -1,12 +1,14 @@
 import admin from 'firebase-admin';
 import axios from 'axios';
 import { Pool } from 'pg';
+import dns from 'dns';
 import { resolveAnalyticsScopeKey } from './analyticsScope.js';
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
 const SUPABASE_DATABASE_URL = (process.env.SUPABASE_DATABASE_URL ?? '').trim();
 const REST_BASE = SUPABASE_URL ? `${SUPABASE_URL}/rest/v1` : '';
 const NOW = () => new Date().toISOString();
+dns.setDefaultResultOrder('ipv4first');
 const pgPool = SUPABASE_DATABASE_URL
     ? new Pool({
         connectionString: SUPABASE_DATABASE_URL,

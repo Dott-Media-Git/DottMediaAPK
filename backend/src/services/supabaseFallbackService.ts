@@ -1,6 +1,7 @@
 import admin from 'firebase-admin';
 import axios, { type AxiosRequestConfig, type Method } from 'axios';
 import { Pool } from 'pg';
+import dns from 'dns';
 import { resolveAnalyticsScopeKey, type AnalyticsScope } from './analyticsScope';
 
 type QueryValue = string | number | boolean | null | undefined;
@@ -82,6 +83,7 @@ const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').
 const SUPABASE_DATABASE_URL = (process.env.SUPABASE_DATABASE_URL ?? '').trim();
 const REST_BASE = SUPABASE_URL ? `${SUPABASE_URL}/rest/v1` : '';
 const NOW = () => new Date().toISOString();
+dns.setDefaultResultOrder('ipv4first');
 const pgPool = SUPABASE_DATABASE_URL
   ? new Pool({
       connectionString: SUPABASE_DATABASE_URL,
