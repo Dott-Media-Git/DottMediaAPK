@@ -709,6 +709,31 @@ class SupabaseFallbackService {
     };
   }
 
+  async getActiveAutopostJobs(limit = 500) {
+    if (!this.isConfigured()) return [] as Array<Record<string, unknown>>;
+    const rows = await this.request<any[]>('GET', 'dott_autopost_jobs', {
+      params: {
+        select: '*',
+        active: 'eq.true',
+        order: 'updated_at.desc',
+        limit,
+      },
+    });
+    if (!Array.isArray(rows)) return [];
+    return rows.map(row => {
+      const data = typeof row.data === 'object' && row.data ? { ...(row.data as Record<string, unknown>) } : {};
+      return {
+        ...data,
+        userId: row.user_id,
+        active: row.active ?? data.active ?? true,
+        nextRun: toTimestamp(row.next_run) ?? toTimestamp(data.nextRun),
+        reelsNextRun: toTimestamp(row.reels_next_run) ?? toTimestamp(data.reelsNextRun),
+        storyNextRun: toTimestamp(row.story_next_run) ?? toTimestamp(data.storyNextRun),
+        trendNextRun: toTimestamp(row.trend_next_run) ?? toTimestamp(data.trendNextRun),
+      };
+    });
+  }
+
   async claimAutopostRun(
     userId: string,
     field: 'next_run' | 'reels_next_run' | 'story_next_run' | 'trend_next_run',

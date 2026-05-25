@@ -19,6 +19,7 @@ type MonitoredAccount = {
   label: string;
   userId: string;
   channels: ChannelConfig[];
+  pinned?: boolean;
 };
 
 type ComplianceIssue = {
@@ -34,7 +35,7 @@ type ComplianceIssue = {
   action: string;
 };
 
-const accounts: MonitoredAccount[] = [
+const pinnedAccounts: MonitoredAccount[] = [
   {
     label: 'Bwin',
     userId: '1zvY9nNyXMcfxdPQEyx0bIdK7r53',
@@ -142,6 +143,67 @@ const numberValue = (value: unknown, fallback: number) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const hasValue = (job: Record<string, unknown>, fields: string[]) =>
+  fields.some(field => job[field] !== undefined && job[field] !== null);
+
+const genericChannelsForJob = (job: Record<string, unknown>): ChannelConfig[] => {
+  const channels: ChannelConfig[] = [];
+  if (hasValue(job, ['platforms', 'nextRun', 'intervalHours', 'lastRunAt', 'lastResult'])) {
+    channels.push({
+      name: 'feed',
+      intervalField: 'intervalHours',
+      nextRunField: 'nextRun',
+      lastRunField: 'lastRunAt',
+      resultField: 'lastResult',
+      fallbackIntervalHours: 3,
+    });
+  }
+  if (hasValue(job, ['storyPlatforms', 'storyNextRun', 'storyIntervalHours', 'storyLastRunAt', 'storyLastResult', 'storyTrendEnabled'])) {
+    channels.push({
+      name: 'stories',
+      intervalField: 'storyIntervalHours',
+      nextRunField: 'storyNextRun',
+      lastRunField: 'storyLastRunAt',
+      resultField: 'storyLastResult',
+      fallbackIntervalHours: 3,
+    });
+  }
+  if (hasValue(job, ['reelsNextRun', 'reelsIntervalHours', 'reelsLastRunAt', 'reelsLastResult', 'reelsVideoUrl', 'reelsVideoUrls'])) {
+    channels.push({
+      name: 'reels',
+      intervalField: 'reelsIntervalHours',
+      nextRunField: 'reelsNextRun',
+      lastRunField: 'reelsLastRunAt',
+      resultField: 'reelsLastResult',
+      fallbackIntervalHours: 4,
+    });
+  }
+  if (job.trendEnabled === true || hasValue(job, ['trendNextRun', 'trendIntervalHours', 'trendLastRunAt', 'trendLastResult'])) {
+    channels.push({
+      name: 'news',
+      intervalField: 'trendIntervalHours',
+      nextRunField: 'trendNextRun',
+      lastRunField: 'trendLastRunAt',
+      resultField: 'trendLastResult',
+      fallbackIntervalHours: 1,
+    });
+  }
+  return channels.length ? channels : [{
+    name: 'feed',
+    intervalField: 'intervalHours',
+    nextRunField: 'nextRun',
+    lastRunField: 'lastRunAt',
+    resultField: 'lastResult',
+    fallbackIntervalHours: 3,
+  }];
+};
+
+const accountLabelForJob = (userId: string, job: Record<string, unknown>) => {
+  const candidates = [job.businessName, job.company, job.companyName, job.name, job.displayName, job.email];
+  const label = candidates.find(value => typeof value === 'string' && value.trim());
+  return typeof label === 'string' ? label.trim() : userId;
+};
+
 const loadJob = async (userId: string) => {
   const errors: string[] = [];
   try {
@@ -150,7 +212,7 @@ const loadJob = async (userId: string) => {
       timeoutMs('AUTOPOST_COMPLIANCE_FIRESTORE_TIMEOUT_MS', 15000),
       'firestore_job_fetch',
     );
-    if (snap.exists) return snap.data() as Record<string, unknown>;
+    if (snap.exists) return { job: snap.data() as Record<string, unknown>, errors };
   } catch (error) {
     errors.push(`firestore:${error instanceof Error ? error.message : String(error)}`);
     console.warn('[autopost-compliance] Firestore job fetch failed; checking Supabase fallback.', {
@@ -174,6 +236,83 @@ const loadJob = async (userId: string) => {
     return { job: null, errors };
   }
   return { job: null, errors };
+};
+
+const discoverFirestoreJobs = async () => {
+  const limit = Math.max(Number(process.env.AUTOPOST_COMPLIANCE_DISCOVERY_LIMIT ?? 500), 10);
+  const snap = await withTimeout(
+    autopostCollection.where('active', '==', true).limit(limit).get(),
+    timeoutMs('AUTOPOST_COMPLIANCE_FIRESTORE_TIMEOUT_MS', 15000),
+    'firestore_job_discovery',
+  );
+  return snap.docs.map(doc => ({
+    userId: doc.id,
+    job: doc.data() as Record<string, unknown>,
+  }));
+};
+
+const discoverSupabaseJobs = async () => {
+  const limit = Math.max(Number(process.env.AUTOPOST_COMPLIANCE_DISCOVERY_LIMIT ?? 500), 10);
+  const jobs = await withTimeout(
+    supabaseFallbackService.getActiveAutopostJobs(limit),
+    timeoutMs('AUTOPOST_COMPLIANCE_SUPABASE_TIMEOUT_MS', 15000),
+    'supabase_job_discovery',
+  );
+  return jobs
+    .map(job => ({ userId: String(job.userId ?? ''), job }))
+    .filter(row => row.userId);
+};
+
+const discoverAccounts = async () => {
+  const discoveredJobs = new Map<string, Record<string, unknown>>();
+  const discoveryErrors: string[] = [];
+  try {
+    for (const row of await discoverFirestoreJobs()) {
+      discoveredJobs.set(row.userId, row.job);
+    }
+  } catch (error) {
+    discoveryErrors.push(`firestore:${error instanceof Error ? error.message : String(error)}`);
+    console.warn('[autopost-compliance] Firestore discovery failed; checking Supabase fallback.', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  try {
+    for (const row of await discoverSupabaseJobs()) {
+      if (!discoveredJobs.has(row.userId)) {
+        discoveredJobs.set(row.userId, row.job);
+      }
+    }
+  } catch (error) {
+    discoveryErrors.push(`supabase:${error instanceof Error ? error.message : String(error)}`);
+    console.warn('[autopost-compliance] Supabase discovery failed.', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const byUserId = new Map<string, MonitoredAccount>();
+  for (const account of pinnedAccounts) {
+    byUserId.set(account.userId, { ...account, pinned: true });
+  }
+  for (const [userId, job] of discoveredJobs.entries()) {
+    const pinned = byUserId.get(userId);
+    if (pinned) {
+      byUserId.set(userId, {
+        ...pinned,
+        label: pinned.label || accountLabelForJob(userId, job),
+      });
+      continue;
+    }
+    byUserId.set(userId, {
+      label: accountLabelForJob(userId, job),
+      userId,
+      channels: genericChannelsForJob(job),
+    });
+  }
+  return {
+    accounts: Array.from(byUserId.values()),
+    jobs: discoveredJobs,
+    discoveryErrors,
+  };
 };
 
 const updateJob = async (userId: string, job: Record<string, unknown>, patch: Record<string, unknown>) => {
@@ -242,7 +381,7 @@ const triggerDueRunner = (label: string) => {
 };
 
 export const autopostComplianceService = {
-  accounts,
+  accounts: pinnedAccounts,
 
   async checkAndRepair(label = 'manual') {
     const now = Date.now();
@@ -251,9 +390,12 @@ export const autopostComplianceService = {
     const staleMultiplier = Math.max(Number(process.env.AUTOPOST_COMPLIANCE_STALE_MULTIPLIER ?? 1.5), 1.1);
     const issues: ComplianceIssue[] = [];
     let remediated = 0;
+    const discovery = await discoverAccounts();
 
-    for (const account of accounts) {
-      const { job, errors } = await loadJob(account.userId);
+    for (const account of discovery.accounts) {
+      const preloadedJob = discovery.jobs.get(account.userId) ?? null;
+      const loaded = preloadedJob ? { job: preloadedJob, errors: [] as string[] } : await loadJob(account.userId);
+      const { job, errors } = loaded;
       if (!job) {
         const storeUnavailable = errors.length > 0;
         issues.push({
@@ -274,8 +416,9 @@ export const autopostComplianceService = {
       }
       if (job.active === false) continue;
 
+      const channels = account.pinned ? account.channels : genericChannelsForJob(job);
       const patch: Record<string, unknown> = {};
-      for (const channel of account.channels) {
+      for (const channel of channels) {
         const intervalHours = numberValue(job[channel.intervalField], channel.fallbackIntervalHours);
         const intervalMs = intervalHours * 60 * 60 * 1000;
         const nextRunMs = toMillis(job[channel.nextRunField]);
@@ -427,7 +570,9 @@ export const autopostComplianceService = {
 
     return {
       ok: issues.length === 0,
-      checked: accounts.length,
+      checked: discovery.accounts.length,
+      discovered: discovery.accounts.length - pinnedAccounts.length,
+      discoveryErrors: discovery.discoveryErrors,
       issueCount: issues.length,
       remediated,
       emailed,
