@@ -4663,6 +4663,9 @@ export class AutoPostService {
                 });
             }
         }
+        if (this.isNicheClientAccount(userId)) {
+            return merged;
+        }
         try {
             const youtubeIntegration = await getYouTubeIntegrationSecrets(userId);
             if (youtubeIntegration) {
