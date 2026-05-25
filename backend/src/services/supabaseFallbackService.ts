@@ -1,5 +1,6 @@
 import admin from 'firebase-admin';
 import axios, { type AxiosRequestConfig, type Method } from 'axios';
+import { Pool } from 'pg';
 import { resolveAnalyticsScopeKey, type AnalyticsScope } from './analyticsScope';
 
 type QueryValue = string | number | boolean | null | undefined;
@@ -78,8 +79,18 @@ type MetricCounterTree = Record<string, unknown>;
 
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
+const SUPABASE_DATABASE_URL = (process.env.SUPABASE_DATABASE_URL ?? '').trim();
 const REST_BASE = SUPABASE_URL ? `${SUPABASE_URL}/rest/v1` : '';
 const NOW = () => new Date().toISOString();
+const pgPool = SUPABASE_DATABASE_URL
+  ? new Pool({
+      connectionString: SUPABASE_DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      max: 3,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    })
+  : null;
 
 const toScopeKey = (scope?: AnalyticsScope) => resolveAnalyticsScopeKey(scope || {}) || 'global';
 
@@ -193,6 +204,16 @@ class SupabaseFallbackService {
     if (this.unavailableWarned || this.isConfigured()) return;
     this.unavailableWarned = true;
     console.warn('[supabase-fallback] SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY missing; fallback inactive');
+  }
+
+  private hasDatabaseFallback() {
+    return Boolean(pgPool);
+  }
+
+  private async databaseQuery<T = any>(sql: string, values: unknown[] = []) {
+    if (!pgPool) throw new Error('supabase_database_not_configured');
+    const result = await pgPool.query<T>(sql, values);
+    return result.rows;
   }
 
   private isCircuitOpen() {
@@ -670,42 +691,79 @@ class SupabaseFallbackService {
         if (status !== 404) throw error;
       }
     }
-    await this.request('POST', 'dott_autopost_jobs', {
-      params: { on_conflict: 'user_id' },
-      prefer: 'resolution=merge-duplicates,return=minimal',
-      body: [
-        {
-          user_id: userId,
-          active: job.active !== false,
-          next_run: toIsoString(job.nextRun),
-          reels_next_run: toIsoString(job.reelsNextRun),
-          story_next_run: toIsoString(job.storyNextRun),
-          trend_next_run: toIsoString(job.trendNextRun),
-          data,
-          updated_at: NOW(),
-        },
-      ],
-    });
+    const row = {
+      user_id: userId,
+      active: job.active !== false,
+      next_run: toIsoString(job.nextRun),
+      reels_next_run: toIsoString(job.reelsNextRun),
+      story_next_run: toIsoString(job.storyNextRun),
+      trend_next_run: toIsoString(job.trendNextRun),
+      data,
+      updated_at: NOW(),
+    };
+    try {
+      await this.request('POST', 'dott_autopost_jobs', {
+        params: { on_conflict: 'user_id' },
+        prefer: 'resolution=merge-duplicates,return=minimal',
+        body: [row],
+      });
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      await this.databaseQuery(
+        `insert into public.dott_autopost_jobs
+          (user_id, active, next_run, reels_next_run, story_next_run, trend_next_run, data, updated_at)
+         values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+         on conflict (user_id) do update set
+          active = excluded.active,
+          next_run = excluded.next_run,
+          reels_next_run = excluded.reels_next_run,
+          story_next_run = excluded.story_next_run,
+          trend_next_run = excluded.trend_next_run,
+          data = excluded.data,
+          updated_at = excluded.updated_at`,
+        [
+          row.user_id,
+          row.active,
+          row.next_run,
+          row.reels_next_run,
+          row.story_next_run,
+          row.trend_next_run,
+          JSON.stringify(row.data),
+          row.updated_at,
+        ],
+      );
+    }
   }
 
   async upsertSocialAccounts(userId: string, payload: { email?: string | null; socialAccounts?: Record<string, unknown> }) {
     if (!this.isConfigured() || !userId) return;
+    const row = {
+      user_id: userId,
+      email: payload.email ?? null,
+      accounts: sanitizeJson(payload.socialAccounts ?? {}) ?? {},
+      updated_at: NOW(),
+    };
     try {
       await this.request('POST', 'dott_social_accounts', {
         params: { on_conflict: 'user_id' },
         prefer: 'resolution=merge-duplicates,return=minimal',
-        body: [
-          {
-            user_id: userId,
-            email: payload.email ?? null,
-            accounts: sanitizeJson(payload.socialAccounts ?? {}) ?? {},
-            updated_at: NOW(),
-          },
-        ],
+        body: [row],
       });
       return;
     } catch (error) {
       const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status !== 404 && this.hasDatabaseFallback()) {
+        await this.databaseQuery(
+          `insert into public.dott_social_accounts (user_id, email, accounts, updated_at)
+           values ($1, $2, $3::jsonb, $4)
+           on conflict (user_id) do update set
+            email = excluded.email,
+            accounts = excluded.accounts,
+            updated_at = excluded.updated_at`,
+          [row.user_id, row.email, JSON.stringify(row.accounts), row.updated_at],
+        );
+        return;
+      }
       if (status !== 404) throw error;
       console.warn('[supabase-fallback] dott_social_accounts missing; storing social accounts in autopost data', {
         userId,
@@ -744,6 +802,9 @@ class SupabaseFallbackService {
       row = await this.getSingleRow<any>('dott_social_accounts', { user_id: `eq.${userId}` });
     } catch (error) {
       const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status !== 404 && this.hasDatabaseFallback()) {
+        return this.getSocialAccountsFromDatabase(userId);
+      }
       if (status !== 404) throw error;
       console.warn('[supabase-fallback] dott_social_accounts missing; reading social accounts from autopost data', {
         userId,
@@ -761,9 +822,34 @@ class SupabaseFallbackService {
     };
   }
 
+  private async getSocialAccountsFromDatabase(userId: string) {
+    const rows = await this.databaseQuery<any>(
+      'select email, accounts from public.dott_social_accounts where user_id = $1 limit 1',
+      [userId],
+    );
+    const row = rows[0];
+    if (row) {
+      return {
+        email: row.email ?? null,
+        socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
+      };
+    }
+    const fallback = await this.databaseQuery<any>('select data from public.dott_autopost_jobs where user_id = $1 limit 1', [userId]);
+    const data = fallback[0]?.data && typeof fallback[0].data === 'object' ? fallback[0].data : {};
+    const socialAccounts = data.socialAccounts && typeof data.socialAccounts === 'object' ? data.socialAccounts : null;
+    return socialAccounts ? { email: data.email ?? null, socialAccounts } : null;
+  }
+
   async getAutopostJob(userId: string) {
     if (!this.isConfigured() || !userId) return null;
-    const row = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
+    let row: any = null;
+    try {
+      row = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      const rows = await this.databaseQuery<any>('select * from public.dott_autopost_jobs where user_id = $1 limit 1', [userId]);
+      row = rows[0] ?? null;
+    }
     if (!row) return null;
     const data = typeof row.data === 'object' && row.data ? { ...(row.data as Record<string, unknown>) } : {};
     return {
@@ -813,18 +899,30 @@ class SupabaseFallbackService {
     const nextIso = toIsoString(nextRun);
     if (!expectedIso || !nextIso) return false;
     const expectedUpperBound = new Date(new Date(expectedIso).getTime() + 1000).toISOString();
-    const rows = await this.request<any[]>('PATCH', 'dott_autopost_jobs', {
-      params: {
-        select: 'user_id',
-        user_id: `eq.${userId}`,
-        [field]: `lte.${expectedUpperBound}`,
-      },
-      prefer: 'return=representation',
-      body: {
-        [field]: nextIso,
-        updated_at: NOW(),
-      },
-    });
+    let rows: any[];
+    try {
+      rows = await this.request<any[]>('PATCH', 'dott_autopost_jobs', {
+        params: {
+          select: 'user_id',
+          user_id: `eq.${userId}`,
+          [field]: `lte.${expectedUpperBound}`,
+        },
+        prefer: 'return=representation',
+        body: {
+          [field]: nextIso,
+          updated_at: NOW(),
+        },
+      });
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      rows = await this.databaseQuery(
+        `update public.dott_autopost_jobs
+         set ${field} = $1, updated_at = $2
+         where user_id = $3 and ${field} <= $4
+         returning user_id`,
+        [nextIso, NOW(), userId, expectedUpperBound],
+      );
+    }
     return Array.isArray(rows) && rows.length > 0;
   }
 
