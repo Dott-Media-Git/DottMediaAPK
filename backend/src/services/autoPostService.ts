@@ -892,12 +892,14 @@ export class AutoPostService {
           ]);
         } catch (error) {
           console.warn('[autopost] emergency claim lookup failed', error);
-          return {
-            attempted: true,
-            posted: false,
-            reason: 'emergency_claim_failed',
-            selectedTitle,
-          };
+          if (selectedKey && selectedKey === this.emergencyXLastKey) {
+            return {
+              attempted: true,
+              posted: false,
+              reason: 'already_claimed_in_memory',
+              selectedTitle,
+            };
+          }
         }
       }
 
