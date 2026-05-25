@@ -38,6 +38,9 @@ export async function sendMonthlyPerformanceReportEmail(to, company, report) {
     });
 }
 export async function sendOperationalAlertEmail(to, subject, body) {
+    if (!config.smtp.host || !config.smtp.from || !config.smtp.user || !config.smtp.pass) {
+        throw new Error('smtp_not_configured');
+    }
     await transporter.sendMail({
         from: config.smtp.from,
         to,

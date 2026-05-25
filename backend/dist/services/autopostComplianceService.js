@@ -106,27 +106,32 @@ const numberValue = (value, fallback) => {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 const loadJob = async (userId) => {
+    const errors = [];
     try {
         const snap = await withTimeout(autopostCollection.doc(userId).get(), timeoutMs('AUTOPOST_COMPLIANCE_FIRESTORE_TIMEOUT_MS', 15000), 'firestore_job_fetch');
         if (snap.exists)
-            return snap.data();
+            return { job: snap.data(), errors };
     }
     catch (error) {
+        errors.push(`firestore:${error instanceof Error ? error.message : String(error)}`);
         console.warn('[autopost-compliance] Firestore job fetch failed; checking Supabase fallback.', {
             userId,
             error: error instanceof Error ? error.message : String(error),
         });
     }
     try {
-        return (await withTimeout(supabaseFallbackService.getAutopostJob(userId), timeoutMs('AUTOPOST_COMPLIANCE_SUPABASE_TIMEOUT_MS', 15000), 'supabase_job_fetch'));
+        const job = (await withTimeout(supabaseFallbackService.getAutopostJob(userId), timeoutMs('AUTOPOST_COMPLIANCE_SUPABASE_TIMEOUT_MS', 15000), 'supabase_job_fetch'));
+        return { job, errors };
     }
     catch (error) {
+        errors.push(`supabase:${error instanceof Error ? error.message : String(error)}`);
         console.warn('[autopost-compliance] Supabase job fetch failed.', {
             userId,
             error: error instanceof Error ? error.message : String(error),
         });
-        return null;
+        return { job: null, errors };
     }
+    return { job: null, errors };
 };
 const updateJob = async (userId, job, patch) => {
     const nextJob = { ...job, ...patch, active: job.active !== false };
@@ -186,19 +191,22 @@ export const autopostComplianceService = {
         const issues = [];
         let remediated = 0;
         for (const account of accounts) {
-            const job = await loadJob(account.userId);
+            const { job, errors } = await loadJob(account.userId);
             if (!job) {
+                const storeUnavailable = errors.length > 0;
                 issues.push({
                     account: account.label,
                     userId: account.userId,
                     channel: 'feed',
                     severity: 'critical',
-                    reason: 'autopost job is missing',
+                    reason: storeUnavailable
+                        ? `autopost job store unavailable (${errors.map(error => error.split(':')[0]).join(', ')})`
+                        : 'autopost job is missing',
                     intervalHours: 0,
                     lastRunAt: null,
                     nextRun: null,
                     minutesLate: 0,
-                    action: 'alert only',
+                    action: storeUnavailable ? 'alert and trigger due runner when stores recover' : 'alert only',
                 });
                 continue;
             }

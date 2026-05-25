@@ -42,6 +42,9 @@ export async function sendMonthlyPerformanceReportEmail(to: string, company: str
 }
 
 export async function sendOperationalAlertEmail(to: string | string[], subject: string, body: string) {
+  if (!config.smtp.host || !config.smtp.from || !config.smtp.user || !config.smtp.pass) {
+    throw new Error('smtp_not_configured');
+  }
   await transporter.sendMail({
     from: config.smtp.from,
     to,
