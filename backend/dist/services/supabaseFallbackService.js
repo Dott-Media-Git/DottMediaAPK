@@ -128,6 +128,8 @@ class SupabaseFallbackService {
         this.unavailableWarned = false;
         this.circuitOpenUntil = 0;
         this.consecutiveFailures = 0;
+        this.databaseCircuitOpenUntil = 0;
+        this.consecutiveDatabaseFailures = 0;
     }
     isConfigured() {
         return Boolean(REST_BASE && SUPABASE_SERVICE_ROLE_KEY);
@@ -144,8 +146,34 @@ class SupabaseFallbackService {
     async databaseQuery(sql, values = []) {
         if (!pgPool)
             throw new Error('supabase_database_not_configured');
-        const result = await pgPool.query(sql, values);
-        return result.rows;
+        if (Date.now() < this.databaseCircuitOpenUntil) {
+            throw new Error(`supabase_database_circuit_open retry_after_ms=${this.databaseCircuitOpenUntil - Date.now()}`);
+        }
+        try {
+            const result = await pgPool.query(sql, values);
+            this.consecutiveDatabaseFailures = 0;
+            this.databaseCircuitOpenUntil = 0;
+            return result.rows;
+        }
+        catch (error) {
+            this.consecutiveDatabaseFailures += 1;
+            const message = error instanceof Error ? error.message : String(error);
+            const code = error?.code;
+            const networkFailure = code === 'ENETUNREACH' ||
+                code === 'ETIMEDOUT' ||
+                code === 'ECONNREFUSED' ||
+                code === 'ECONNRESET' ||
+                /ENETUNREACH|timeout|terminated/i.test(message);
+            if (networkFailure || this.consecutiveDatabaseFailures >= 3) {
+                const backoffMs = Math.min(300000, 60000 * this.consecutiveDatabaseFailures);
+                this.databaseCircuitOpenUntil = Date.now() + backoffMs;
+                console.warn('[supabase-fallback] database circuit opened', {
+                    backoffMs,
+                    error: code ? `${code}: ${message}` : message,
+                });
+            }
+            throw error;
+        }
     }
     isCircuitOpen() {
         return Date.now() < this.circuitOpenUntil;

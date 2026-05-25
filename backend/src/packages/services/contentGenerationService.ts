@@ -62,10 +62,18 @@ export class ContentGenerationService {
   }
 
   private async generateImages(params: GenerationParams, imageCount: number): Promise<string[]> {
+    if (process.env.OPENAI_IMAGE_GENERATION_ENABLED === 'false') {
+      this.lastImageError = 'OpenAI image generation disabled';
+      return [];
+    }
     const modelCandidates = (process.env.OPENAI_IMAGE_MODEL_PRIORITY ?? 'gpt-image-1.5,gpt-image-1,dall-e-3')
       .split(',')
       .map(value => value.trim())
       .filter(Boolean);
+    if (!modelCandidates.length) {
+      this.lastImageError = 'No OpenAI image models configured';
+      return [];
+    }
     const count = 1;
     this.lastImageError = null;
     const prompt = `${params.prompt}. Stylize for ${params.businessType} social media campaign.`;

@@ -197,6 +197,8 @@ class SupabaseFallbackService {
   private unavailableWarned = false;
   private circuitOpenUntil = 0;
   private consecutiveFailures = 0;
+  private databaseCircuitOpenUntil = 0;
+  private consecutiveDatabaseFailures = 0;
 
   isConfigured() {
     return Boolean(REST_BASE && SUPABASE_SERVICE_ROLE_KEY);
@@ -214,8 +216,34 @@ class SupabaseFallbackService {
 
   private async databaseQuery<T = any>(sql: string, values: unknown[] = []) {
     if (!pgPool) throw new Error('supabase_database_not_configured');
-    const result = await pgPool.query<T>(sql, values);
-    return result.rows;
+    if (Date.now() < this.databaseCircuitOpenUntil) {
+      throw new Error(`supabase_database_circuit_open retry_after_ms=${this.databaseCircuitOpenUntil - Date.now()}`);
+    }
+    try {
+      const result = await pgPool.query<T>(sql, values);
+      this.consecutiveDatabaseFailures = 0;
+      this.databaseCircuitOpenUntil = 0;
+      return result.rows;
+    } catch (error) {
+      this.consecutiveDatabaseFailures += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      const code = (error as { code?: string })?.code;
+      const networkFailure =
+        code === 'ENETUNREACH' ||
+        code === 'ETIMEDOUT' ||
+        code === 'ECONNREFUSED' ||
+        code === 'ECONNRESET' ||
+        /ENETUNREACH|timeout|terminated/i.test(message);
+      if (networkFailure || this.consecutiveDatabaseFailures >= 3) {
+        const backoffMs = Math.min(300000, 60000 * this.consecutiveDatabaseFailures);
+        this.databaseCircuitOpenUntil = Date.now() + backoffMs;
+        console.warn('[supabase-fallback] database circuit opened', {
+          backoffMs,
+          error: code ? `${code}: ${message}` : message,
+        });
+      }
+      throw error;
+    }
   }
 
   private isCircuitOpen() {

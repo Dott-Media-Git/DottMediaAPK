@@ -90,6 +90,9 @@ export class FootballTrendContentService {
         return { content: parsed, images };
     }
     async generatePosterImage(prompt, imageCount = 1) {
+        if (process.env.OPENAI_IMAGE_GENERATION_ENABLED === 'false') {
+            return [];
+        }
         const model = 'dall-e-3';
         const count = Math.min(Math.max(imageCount, 1), 1);
         const attempts = Math.max(Number(process.env.OPENAI_IMAGE_ATTEMPTS ?? 2), 1);
