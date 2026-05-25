@@ -782,11 +782,12 @@ export class AutoPostService {
       let selectedKey = '';
       let selectedScheduledPostId = '';
       const emergencyOwnerId = (process.env.BWIN_TRACK_OWNER_ID ?? process.env.BWIN_SCOPE_ID ?? '').trim();
-      const persistentRecentKeys = emergencyOwnerId
-        ? new Set(await supabaseFallbackService.getRecentScheduledPostIds(emergencyOwnerId, 400))
-        : new Set<string>();
+      const persistentRecentKeys = new Set<string>();
       if (emergencyOwnerId) {
         try {
+          for (const postId of await supabaseFallbackService.getRecentScheduledPostIds(emergencyOwnerId, 400)) {
+            persistentRecentKeys.add(postId);
+          }
           const recentPosts = await supabaseFallbackService.getPostsByUser(emergencyOwnerId, 400);
           for (const post of recentPosts) {
             const caption = String(post.caption || '');
