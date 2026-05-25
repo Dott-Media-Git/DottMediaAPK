@@ -43,6 +43,7 @@ import { NotificationDispatcher } from './packages/services/notificationDispatch
 import stripeRoutes from './routes/stripeRoutes.js';
 import { requireFirebase } from './middleware/firebaseAuth.js';
 import { autoPostService } from './services/autoPostService.js';
+import { autopostComplianceService } from './services/autopostComplianceService.js';
 import { firestore } from './db/firestore.js';
 import { ensureGeneratedMediaRoot } from './services/generatedMediaService.js';
 import { ensureSupabaseFallbackSchema } from './services/supabaseSchemaService.js';
@@ -54,6 +55,7 @@ const initializeAutomation = async () => {
             import('./jobs/prospectJob.js'),
             import('./jobs/followupJob.js'),
             import('./jobs/autoPostJob.js'),
+            import('./jobs/autopostComplianceJob.js'),
             import('./jobs/socialQueueJob.js'),
             import('./jobs/instagramCommentPollJob.js'),
             import('./jobs/facebookCommentPollJob.js'),
@@ -221,6 +223,23 @@ app.post('/api/autopost/runDue', async (req, res, next) => {
             return res.status(401).json({ message: 'Invalid token' });
         }
         const result = await autoPostService.runDueJobs();
+        res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+app.post('/api/autopost/complianceCheck', async (req, res, next) => {
+    try {
+        const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
+        const providedToken = req.header('x-autopost-token') ??
+            req.header('x-cron-token') ??
+            req.query.token ??
+            req.body?.token;
+        if (triggerToken && providedToken !== triggerToken) {
+            return res.status(401).json({ message: 'Invalid token' });
+        }
+        const result = await autopostComplianceService.checkAndRepair('manual_endpoint');
         res.json({ ok: true, ...result });
     }
     catch (error) {

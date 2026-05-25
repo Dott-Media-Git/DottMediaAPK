@@ -40,3 +40,12 @@ export async function sendMonthlyPerformanceReportEmail(to: string, company: str
     ].join('\n'),
   });
 }
+
+export async function sendOperationalAlertEmail(to: string | string[], subject: string, body: string) {
+  await transporter.sendMail({
+    from: config.smtp.from,
+    to,
+    subject,
+    text: body,
+  });
+}

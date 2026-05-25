@@ -37,3 +37,11 @@ export async function sendMonthlyPerformanceReportEmail(to, company, report) {
         ].join('\n'),
     });
 }
+export async function sendOperationalAlertEmail(to, subject, body) {
+    await transporter.sendMail({
+        from: config.smtp.from,
+        to,
+        subject,
+        text: body,
+    });
+}
