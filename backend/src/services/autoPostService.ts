@@ -428,7 +428,7 @@ export class AutoPostService {
       const envAccounts = this.getPinnedClientEnvAccounts(userId);
       const clientFallback = CLIENT_META_FALLBACKS[userId];
       const prefix = CLIENT_ENV_PREFIXES[userId];
-      const token = (prefix ? process.env[`${prefix}_META_USER_TOKEN`] : '').trim();
+      const token = (prefix ? (process.env[`${prefix}_META_USER_TOKEN`] ?? '') : '').trim();
       if (!clientFallback || !token) return envAccounts;
       try {
         const resolved = await resolveFacebookPageId(token, clientFallback.pageId);
