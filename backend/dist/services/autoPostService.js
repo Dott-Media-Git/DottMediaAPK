@@ -237,7 +237,8 @@ export class AutoPostService {
         if (!this.isBwinScopeUser(userId)) {
             const envAccounts = this.getPinnedClientEnvAccounts(userId);
             const clientFallback = CLIENT_META_FALLBACKS[userId];
-            const token = (process.env.CLIENT_META_USER_TOKEN ?? '').trim();
+            const prefix = CLIENT_ENV_PREFIXES[userId];
+            const token = (prefix ? process.env[`${prefix}_META_USER_TOKEN`] : '').trim();
             if (!clientFallback || !token)
                 return envAccounts;
             try {
