@@ -427,17 +427,24 @@ async function uploadStaysphereImage(buffer, folder = 'covers') {
     if (supabaseUrl && serviceRoleKey) {
         const safeFolder = folder.replace(/[^a-z0-9_-]/gi, '') || 'covers';
         const objectPath = `client-autopost/staysphere/${safeFolder}/${new Date().toISOString().slice(0, 10)}/${Date.now()}-${crypto.randomUUID()}.jpg`;
-        await axios.post(`${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`, buffer, {
-            headers: {
-                Authorization: `Bearer ${serviceRoleKey}`,
-                apikey: serviceRoleKey,
-                'Content-Type': 'image/jpeg',
-                'x-upsert': 'true',
-            },
-            maxBodyLength: Infinity,
-            timeout: 30000,
-        });
-        return `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+        try {
+            await axios.post(`${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`, buffer, {
+                headers: {
+                    Authorization: `Bearer ${serviceRoleKey}`,
+                    apikey: serviceRoleKey,
+                    'Content-Type': 'image/jpeg',
+                    'x-upsert': 'true',
+                },
+                maxBodyLength: Infinity,
+                timeout: 12000,
+            });
+            return `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+        }
+        catch (error) {
+            console.warn('[staysphere] supabase image upload failed; using local media fallback', {
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
     }
     return saveGeneratedImageBuffer(buffer, 'jpg');
 }

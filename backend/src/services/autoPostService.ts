@@ -1555,6 +1555,19 @@ export class AutoPostService {
     return Object.prototype.hasOwnProperty.call(CLIENT_META_FALLBACKS, userId);
   }
 
+  private hasCredentialsForPlatform(platform: string, credentials: SocialAccounts) {
+    if (platform === 'facebook' || platform === 'facebook_story') return Boolean(credentials.facebook);
+    if (platform === 'instagram' || platform === 'instagram_story' || platform === 'instagram_reels') {
+      return Boolean(credentials.instagram);
+    }
+    if (platform === 'threads') return Boolean(credentials.threads);
+    if (platform === 'linkedin') return Boolean(credentials.linkedin);
+    if (platform === 'twitter' || platform === 'x') return Boolean(credentials.twitter);
+    if (platform === 'tiktok') return Boolean(credentials.tiktok);
+    if (platform === 'youtube') return Boolean(credentials.youtube);
+    return true;
+  }
+
   private getReelsIntervalHours(userId: string, configured?: number) {
     if (this.isNicheClientAccount(userId)) {
       return configured && configured > 0 ? configured : NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS;
@@ -4540,7 +4553,30 @@ export class AutoPostService {
     }
 
     const credentials = await this.resolveCredentials(userId);
-    const results: PostResult[] = [];
+    const missingCredentialFailures = platforms
+      .filter(platform => !this.hasCredentialsForPlatform(platform, credentials))
+      .map(platform => ({
+        platform,
+        status: 'failed' as const,
+        error: `missing_${platform}_credentials`,
+      }));
+    const publishPlatforms = platforms.filter(platform => this.hasCredentialsForPlatform(platform, credentials));
+    if (!publishPlatforms.length) {
+      const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
+      await this.mirrorAutopostJob(userId, {
+        ...job,
+        active: job.active !== false,
+        [lastRunField]: admin.firestore.Timestamp.now(),
+        [resultField]: missingCredentialFailures,
+        [nextRunField]: admin.firestore.Timestamp.fromDate(nextRunDate),
+      });
+      return {
+        posted: 0,
+        failed: missingCredentialFailures,
+        nextRun: nextRunDate.toISOString(),
+      };
+    }
+    const results: PostResult[] = [...missingCredentialFailures];
     const finalGenerated = generated;
     let imageUrls = needsImages
       ? options.generatedContent
@@ -4713,11 +4749,14 @@ export class AutoPostService {
 
     if (needsImages && imageUrls.length === 0 && clientPhotoProfile?.key === 'staysphere') {
       const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
-      const failed = platforms.map(platform => ({
+      const failed = [
+        ...missingCredentialFailures,
+        ...publishPlatforms.map(platform => ({
         platform,
         status: 'failed' as const,
         error: 'staysphere_listing_source_unavailable',
-      }));
+        })),
+      ];
       try {
         await autopostCollection.doc(userId).set(
           {
@@ -4753,11 +4792,14 @@ export class AutoPostService {
 
     if (requireAiImages && imageUrls.length === 0) {
       const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
-      const failed = platforms.map(platform => ({
+      const failed = [
+        ...missingCredentialFailures,
+        ...publishPlatforms.map(platform => ({
         platform,
         status: 'failed' as const,
         error: 'ai_image_generation_failed',
-      }));
+        })),
+      ];
       try {
         await autopostCollection.doc(userId).set(
           {
@@ -4786,7 +4828,7 @@ export class AutoPostService {
       };
     }
 
-    for (const platform of platforms) {
+    for (const platform of publishPlatforms) {
       const publisher = platformPublishers[platform] ?? publishToTwitter;
       const isFeedCaptionPlatform = platform === 'facebook' || platform === 'instagram' || platform === 'threads';
       const rawCaption =
