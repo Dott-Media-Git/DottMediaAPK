@@ -6,6 +6,7 @@ import { requireAdmin } from '../middleware/adminAuth.js';
 import { withOrgContext, requireRole } from '../middleware/orgAuth.js';
 import { createOrg, getOrg, updateOrg, listOrgUsers, inviteOrgUser, updateOrgUserRole, removeOrgUser, getOrgSettings, updateOrgSettings, connectChannel, disconnectChannel, storeSecret, describeSecret, getUsage, listPlans, swapPlan, enqueueJob, logAuditEvent, } from '../services/admin/adminService.js';
 import { getAdminMetrics } from '../services/admin/adminMetricsService.js';
+import { autopostComplianceService } from '../services/autopostComplianceService.js';
 import { firestore } from '../db/firestore.js';
 const router = Router();
 router.get('/admin/metrics', requireFirebase, requireAdmin, async (_req, res, next) => {
@@ -17,6 +18,68 @@ router.get('/admin/metrics', requireFirebase, requireAdmin, async (_req, res, ne
             Expires: '0',
         });
         res.json({ metrics });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+const timestampToIso = (value) => {
+    if (!value)
+        return null;
+    if (typeof value === 'string')
+        return value;
+    const candidate = value;
+    if (typeof candidate.toDate === 'function')
+        return candidate.toDate().toISOString();
+    if (typeof candidate.toMillis === 'function')
+        return new Date(candidate.toMillis()).toISOString();
+    const seconds = typeof candidate._seconds === 'number' ? candidate._seconds : candidate.seconds;
+    return typeof seconds === 'number' ? new Date(seconds * 1000).toISOString() : null;
+};
+router.get('/admin/compliance/reports', requireFirebase, requireAdmin, async (req, res, next) => {
+    try {
+        const limit = Math.min(Math.max(Number(req.query.limit ?? 20), 1), 100);
+        const [alertsSnap, stateSnap] = await Promise.all([
+            firestore.collection('autopostComplianceAlerts').orderBy('createdAt', 'desc').limit(limit).get(),
+            firestore.collection('system').doc('autopostCompliance').get(),
+        ]);
+        const reports = alertsSnap.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                label: data.label ?? null,
+                issues: Array.isArray(data.issues) ? data.issues : [],
+                issueCount: Array.isArray(data.issues) ? data.issues.length : 0,
+                remediated: Number(data.remediated ?? 0),
+                emailed: Boolean(data.emailed),
+                dueResult: data.dueResult ?? null,
+                createdAt: timestampToIso(data.createdAt),
+            };
+        });
+        const state = stateSnap.exists ? stateSnap.data() : {};
+        res.set({
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+            Pragma: 'no-cache',
+            Expires: '0',
+        });
+        res.json({
+            reports,
+            state: {
+                lastCheckAt: timestampToIso(state?.lastCheckAt),
+                lastAlertAt: timestampToIso(state?.lastAlertAt),
+                lastIssueCount: Number(state?.lastIssueCount ?? 0),
+                lastRemediatedCount: Number(state?.lastRemediatedCount ?? 0),
+            },
+        });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.post('/admin/compliance/run', requireFirebase, requireAdmin, async (_req, res, next) => {
+    try {
+        const result = await autopostComplianceService.checkAndRepair('admin_dashboard');
+        res.json({ result });
     }
     catch (error) {
         next(error);

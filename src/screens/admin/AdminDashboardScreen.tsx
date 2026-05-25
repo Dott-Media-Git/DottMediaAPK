@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { VictoryAxis, VictoryBar, VictoryChart, VictoryLine, VictoryTheme } from 'victory-native';
 import { colors } from '@constants/colors';
@@ -7,6 +7,12 @@ import { DMCard } from '@components/DMCard';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
 import { fetchAdminMetrics, type AdminMetrics } from '@services/admin/metricsService';
+import {
+  fetchComplianceReports,
+  runComplianceCheck,
+  type ComplianceReport,
+  type ComplianceState,
+} from '@services/admin/complianceService';
 
 const ADMIN_EMAILS = ['brasioxirin@gmail.com'];
 
@@ -31,6 +37,13 @@ const emptyMetrics: AdminMetrics = {
   },
   liveFeed: [],
   updatedAt: '',
+};
+
+const emptyComplianceState: ComplianceState = {
+  lastCheckAt: null,
+  lastAlertAt: null,
+  lastIssueCount: 0,
+  lastRemediatedCount: 0,
 };
 
 const SectionHeader: React.FC<{ title: string; subtitle?: string }> = ({ title, subtitle }) => (
@@ -66,16 +79,22 @@ const formatTime = (value: string) => {
   return parsed.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 };
 
+const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
+
 export const AdminDashboardScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [metrics, setMetrics] = useState<AdminMetrics>(emptyMetrics);
+  const [complianceReports, setComplianceReports] = useState<ComplianceReport[]>([]);
+  const [complianceState, setComplianceState] = useState<ComplianceState>(emptyComplianceState);
   const [loading, setLoading] = useState(false);
+  const [complianceLoading, setComplianceLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [complianceError, setComplianceError] = useState<string | null>(null);
 
   const isAdminUser = useMemo(() => {
-    const email = state.user?.email?.toLowerCase() ?? '';
+    const email = normalizeLower(state.user?.email);
     return ADMIN_EMAILS.includes(email) || Boolean((state.user as any)?.isAdmin);
   }, [state.user]);
 
@@ -83,12 +102,32 @@ export const AdminDashboardScreen: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const payload = await fetchAdminMetrics();
+      const [payload, compliancePayload] = await Promise.all([
+        fetchAdminMetrics(),
+        fetchComplianceReports(),
+      ]);
       setMetrics(payload);
+      setComplianceReports(compliancePayload.reports);
+      setComplianceState(compliancePayload.state);
     } catch (err: any) {
       setError(err?.message ?? t('Unable to load admin metrics.'));
     } finally {
       setLoading(false);
+    }
+  }, [t]);
+
+  const runCompliance = useCallback(async () => {
+    setComplianceLoading(true);
+    setComplianceError(null);
+    try {
+      await runComplianceCheck();
+      const payload = await fetchComplianceReports();
+      setComplianceReports(payload.reports);
+      setComplianceState(payload.state);
+    } catch (err: any) {
+      setComplianceError(err?.message ?? t('Unable to run compliance check.'));
+    } finally {
+      setComplianceLoading(false);
     }
   }, [t]);
 
@@ -150,6 +189,10 @@ export const AdminDashboardScreen: React.FC = () => {
     { key: 'facebook_story', label: 'Facebook Story', color: '#1877F2' },
     { key: 'linkedin', label: 'LinkedIn', color: '#0A66C2' },
   ];
+  const latestCompliance = complianceReports[0];
+  const criticalIssues = latestCompliance?.issues.filter(issue => issue.severity === 'critical').length ?? 0;
+  const warningIssues = latestCompliance?.issues.filter(issue => issue.severity !== 'critical').length ?? 0;
+  const latestIssues = latestCompliance?.issues.slice(0, 8) ?? [];
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -185,6 +228,76 @@ export const AdminDashboardScreen: React.FC = () => {
 
       {loading ? <ActivityIndicator color={colors.accent} style={{ marginBottom: 16 }} /> : null}
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+      <DMCard
+        title={t('Compliance Watchdog')}
+        subtitle={t('Posting schedule health, repair actions, and current alerts')}
+        style={styles.cardShadow}
+      >
+        <View style={styles.complianceHeader}>
+          <View style={styles.complianceSummary}>
+            <StatCard label={t('Latest issues')} value={complianceState.lastIssueCount} />
+            <StatCard label={t('Repaired accounts')} value={complianceState.lastRemediatedCount} />
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={runCompliance}
+            disabled={complianceLoading}
+            style={({ pressed }) => [
+              styles.complianceButton,
+              pressed && !complianceLoading ? styles.complianceButtonPressed : null,
+              complianceLoading ? styles.complianceButtonDisabled : null,
+            ]}
+          >
+            <Text style={styles.complianceButtonText}>
+              {complianceLoading ? t('Running...') : t('Run check')}
+            </Text>
+          </Pressable>
+        </View>
+        {complianceError ? <Text style={styles.errorText}>{complianceError}</Text> : null}
+        <View style={styles.complianceMetaGrid}>
+          <View style={styles.complianceMeta}>
+            <Text style={styles.complianceMetaLabel}>{t('Last check')}</Text>
+            <Text style={styles.complianceMetaValue}>{complianceState.lastCheckAt ? formatTime(complianceState.lastCheckAt) : t('Never')}</Text>
+          </View>
+          <View style={styles.complianceMeta}>
+            <Text style={styles.complianceMetaLabel}>{t('Last report')}</Text>
+            <Text style={styles.complianceMetaValue}>{latestCompliance?.createdAt ? formatTime(latestCompliance.createdAt) : t('None')}</Text>
+          </View>
+          <View style={styles.complianceMeta}>
+            <Text style={styles.complianceMetaLabel}>{t('Critical')}</Text>
+            <Text style={[styles.complianceMetaValue, criticalIssues > 0 ? styles.dangerText : null]}>{criticalIssues}</Text>
+          </View>
+          <View style={styles.complianceMeta}>
+            <Text style={styles.complianceMetaLabel}>{t('Warnings')}</Text>
+            <Text style={[styles.complianceMetaValue, warningIssues > 0 ? styles.warningText : null]}>{warningIssues}</Text>
+          </View>
+        </View>
+        {!latestCompliance ? (
+          <Text style={styles.emptyText}>{t('No watchdog reports have been written yet.')}</Text>
+        ) : latestIssues.length === 0 ? (
+          <Text style={styles.emptyText}>{t('The latest watchdog report has no issues.')}</Text>
+        ) : (
+          latestIssues.map((issue, index) => (
+            <View key={`${latestCompliance.id}-${issue.userId}-${issue.channel}-${index}`} style={styles.complianceIssueRow}>
+              <View
+                style={[
+                  styles.complianceSeverity,
+                  issue.severity === 'critical' ? styles.complianceSeverityCritical : styles.complianceSeverityWarning,
+                ]}
+              />
+              <View style={styles.complianceIssueBody}>
+                <View style={styles.complianceIssueTitleRow}>
+                  <Text style={styles.complianceIssueTitle}>{issue.account}</Text>
+                  <Text style={styles.complianceIssueChannel}>{issue.channel}</Text>
+                </View>
+                <Text style={styles.complianceIssueReason}>{issue.reason}</Text>
+                <Text style={styles.complianceIssueAction}>{issue.action}</Text>
+              </View>
+            </View>
+          ))
+        )}
+      </DMCard>
 
       <DMCard
         title={t('Client Accounts Overview')}
@@ -565,6 +678,122 @@ const styles = StyleSheet.create({
   errorText: {
     color: colors.danger,
     marginBottom: 12,
+  },
+  dangerText: {
+    color: colors.danger,
+  },
+  warningText: {
+    color: colors.warning,
+  },
+  complianceHeader: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+  },
+  complianceSummary: {
+    flex: 1,
+    minWidth: 260,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  complianceButton: {
+    minWidth: 120,
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  complianceButtonPressed: {
+    opacity: 0.86,
+  },
+  complianceButtonDisabled: {
+    opacity: 0.5,
+  },
+  complianceButtonText: {
+    color: colors.text,
+    fontWeight: '800',
+  },
+  complianceMetaGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  complianceMeta: {
+    width: '48%',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+  },
+  complianceMetaLabel: {
+    color: colors.subtext,
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  complianceMetaValue: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  complianceIssueRow: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 12,
+    marginTop: 12,
+  },
+  complianceSeverity: {
+    width: 6,
+    borderRadius: 4,
+    marginRight: 10,
+  },
+  complianceSeverityCritical: {
+    backgroundColor: colors.danger,
+  },
+  complianceSeverityWarning: {
+    backgroundColor: colors.warning,
+  },
+  complianceIssueBody: {
+    flex: 1,
+  },
+  complianceIssueTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  complianceIssueTitle: {
+    color: colors.text,
+    fontWeight: '800',
+    flexShrink: 1,
+  },
+  complianceIssueChannel: {
+    color: colors.subtext,
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  complianceIssueReason: {
+    color: colors.text,
+    marginTop: 5,
+    lineHeight: 19,
+  },
+  complianceIssueAction: {
+    color: colors.subtext,
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 18,
   },
   emptyState: {
     flex: 1,
