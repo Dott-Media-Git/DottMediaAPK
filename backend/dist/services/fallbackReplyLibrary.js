@@ -63,62 +63,137 @@ const defaultLibrary = {
 const bwinbetLibrary = {
     message: {
         default: [
-            'Thanks for reaching out to Bwinbet UG. For today\'s fixtures, odds, and updates, visit www.bwinbetug.info.',
-            'Welcome to Bwinbet UG. For full sports info and latest markets, check www.bwinbetug.info.',
-            'Appreciate the message. For football picks, match previews, and offers, see www.bwinbetug.info.',
-            'Thanks for the message. For all sports betting details, please visit www.bwinbetug.info.',
+            'Thanks for reaching out to our sports team. For today\'s fixtures, odds, and updates, visit the link in bio.',
+            'Welcome to our sports team. For full sports info and latest markets, check the link in bio.',
+            'Appreciate the message. For football picks, match previews, and offers, see the link in bio.',
+            'Thanks for the message. For all sports betting details, please visit the link in bio.',
         ],
         instagram: [
-            'Thanks for the DM. For latest football updates and odds, visit www.bwinbetug.info.',
-            'Great to hear from you. For full sports info and betting options, check www.bwinbetug.info.',
-            'For lineups, fixtures, and markets, head to www.bwinbetug.info.',
+            'Thanks for the DM. For latest football updates and odds, visit the link in bio.',
+            'Great to hear from you. For full sports info and betting options, check the link in bio.',
+            'For lineups, fixtures, and markets, head to the link in bio.',
         ],
         facebook: [
-            'Thanks for the message. For the latest sports updates and odds, visit www.bwinbetug.info.',
-            'Welcome to Bwinbet UG. For full details and current markets, check www.bwinbetug.info.',
-            'For match previews and football offers, please see www.bwinbetug.info.',
+            'Thanks for the message. For the latest sports updates and odds, visit the link in bio.',
+            'Welcome to our sports team. For full details and current markets, check the link in bio.',
+            'For match previews and football offers, please see the link in bio.',
         ],
         whatsapp: [
-            'Thanks for contacting Bwinbet UG. For full sports details, visit www.bwinbetug.info.',
-            'For today\'s football markets and updates, check www.bwinbetug.info.',
-            'Need more info? Please visit www.bwinbetug.info for all sports updates.',
+            'Thanks for contacting our sports team. For full sports details, visit the link in bio.',
+            'For today\'s football markets and updates, check the link in bio.',
+            'Need more info? Please visit the link in bio for all sports updates.',
         ],
         threads: [
-            'Thanks for reaching out. For latest sports updates and offers, visit www.bwinbetug.info.',
-            'For football picks and match info, check www.bwinbetug.info.',
+            'Thanks for reaching out. For latest sports updates and offers, visit the link in bio.',
+            'For football picks and match info, check the link in bio.',
         ],
         linkedin: [
-            'Thanks for reaching out. For Bwinbet UG sports updates and market details, visit www.bwinbetug.info.',
-            'For football and wider sports information, please check www.bwinbetug.info.',
+            'Thanks for reaching out. For our sports team sports updates and market details, visit the link in bio.',
+            'For football and wider sports information, please check the link in bio.',
         ],
         web: [
-            'Welcome to Bwinbet UG. For fixtures, odds, and sports news, visit www.bwinbetug.info.',
-            'Thanks for reaching out. For full sports details and updates, check www.bwinbetug.info.',
+            'Welcome to our sports team. For fixtures, odds, and sports news, visit the link in bio.',
+            'Thanks for reaching out. For full sports details and updates, check the link in bio.',
         ],
     },
     comment: {
         default: [
-            'Thanks for the comment. For more info visit www.bwinbetug.info, and place your bets at https://bwinbetug.com.',
-            'Appreciate your engagement. Get full details at www.bwinbetug.info, then bet at https://bwinbetug.com.',
-            'Great shout. See the latest updates on www.bwinbetug.info and place bets at https://bwinbetug.com.',
+            'Thanks for the comment. For more info visit the link in bio, and place your bets at the betting link in bio.',
+            'Appreciate your engagement. Get full details at the link in bio, then bet at the betting link in bio.',
+            'Great shout. See the latest updates on the link in bio and place bets at the betting link in bio.',
         ],
         instagram: [
-            'Thanks for the comment. For full match details visit www.bwinbetug.info, and place your bets at https://bwinbetug.com.',
-            'Appreciate the support. Get more sports updates on www.bwinbetug.info, then bet at https://bwinbetug.com.',
+            'Thanks for the comment. For full match details visit the link in bio, and place your bets at the betting link in bio.',
+            'Appreciate the support. Get more sports updates on the link in bio, then bet at the betting link in bio.',
         ],
         facebook: [
-            'Thanks for the comment. For latest football updates visit www.bwinbetug.info, and place your bets at https://bwinbetug.com.',
-            'Appreciate your engagement. For more sports info check www.bwinbetug.info, then bet at https://bwinbetug.com.',
+            'Thanks for the comment. For latest football updates visit the link in bio, and place your bets at the betting link in bio.',
+            'Appreciate your engagement. For more sports info check the link in bio, then bet at the betting link in bio.',
         ],
         linkedin: [
-            'Thanks for your comment. For more sports updates visit www.bwinbetug.info, and place bets at https://bwinbetug.com.',
-            'Appreciate the note. Full information is available at www.bwinbetug.info, with betting at https://bwinbetug.com.',
+            'Thanks for your comment. For more sports updates visit the link in bio, and place bets at the betting link in bio.',
+            'Appreciate the note. Full information is available at the link in bio, with betting at the betting link in bio.',
+        ],
+    },
+};
+const carMarketplaceLibrary = {
+    message: {
+        default: [
+            'Thanks for reaching out to Carmarketug. Send your budget, preferred model, and location, and we will help you find serious car options.',
+            'Welcome to Carmarketug. Share the car type you want, your budget, and when you want to view, and we will guide you.',
+            'Appreciate the message. Tell us whether you need a family car, fuel saver, first car, or upgrade, and we will help narrow it down.',
+        ],
+        instagram: [
+            'Thanks for messaging Carmarketug. Send your budget and preferred model, and we will help with available options.',
+            'Welcome. Share your car budget, model preference, and location so we can point you to fitting options.',
+        ],
+        facebook: [
+            'Thanks for contacting Carmarketug. Send your budget, preferred car, and viewing location, and we will help you search smarter.',
+            'Happy to help. Tell us the car type you need and your budget, and we will guide you on available options.',
+        ],
+    },
+    comment: {
+        default: [
+            'Thanks for the interest. Message us your budget and preferred model so we can help.',
+            'Appreciate the comment. Send us a message with your budget and car type.',
+            'Thanks. DM Carmarketug with your preferred model, budget, and viewing area.',
+        ],
+    },
+};
+const staySphereLibrary = {
+    message: {
+        default: [
+            'Thanks for reaching out to Stay-sphere93. Send your dates, guest count, area, and budget so we can help with availability.',
+            'Welcome to Stay-sphere93. Share your check-in date, length of stay, and preferred location, and we will guide you.',
+            'Appreciate the message. Tell us your dates and guest count, and we will help find a clean, comfortable stay.',
+        ],
+        instagram: [
+            'Thanks for messaging Stay-sphere93. Send your dates, guest count, and preferred area for availability.',
+            'Welcome. Share your booking dates and budget, and we will help match you with a fitting stay.',
+        ],
+        facebook: [
+            'Thanks for contacting Stay-sphere93. Send your dates, guest count, location, and budget so we can check availability.',
+            'Happy to help with your stay. Share your dates and preferred area, and we will guide you.',
+        ],
+    },
+    comment: {
+        default: [
+            'Thanks for the interest. Message us your dates and guest count for availability.',
+            'Appreciate the comment. DM your dates, area, and budget so we can help.',
+            'Thanks. Send Stay-sphere93 your booking dates and guest count.',
+        ],
+    },
+};
+const gamersLibrary = {
+    message: {
+        default: [
+            'Thanks for reaching out to Gamers44life. Tell us what you play, your platform, and what gaming content you want to see next.',
+            'Welcome to Gamers44life. Drop your game, rank, or setup question, and we will keep the conversation going.',
+            'Appreciate the message. Share your current game or setup, and tell us what the community should feature next.',
+        ],
+        instagram: [
+            'Thanks for messaging Gamers44life. What are you playing today? Drop the game, rank, or setup you want featured.',
+            'Welcome. Send your game title, platform, or highlight idea and we will check it out.',
+        ],
+        facebook: [
+            'Thanks for contacting Gamers44life. Tell us what you play and what content you want from the community.',
+            'Appreciate the message. Drop your game, platform, or setup topic and we will respond.',
+        ],
+    },
+    comment: {
+        default: [
+            'Thanks for joining in. Drop your game or setup in DM.',
+            'Appreciate the comment. What are you playing today?',
+            'Thanks. DM your game, rank, or setup idea for Gamers44life.',
         ],
     },
 };
 const profileLibraries = {
     default: defaultLibrary,
     bwinbetug: bwinbetLibrary,
+    carmarketplace: carMarketplaceLibrary,
+    staysphere: staySphereLibrary,
+    gamers44life: gamersLibrary,
 };
 const pickRandom = (items) => items[Math.floor(Math.random() * items.length)];
 export function pickFallbackReply(options) {

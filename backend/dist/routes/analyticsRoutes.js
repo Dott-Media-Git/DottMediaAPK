@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { requireFirebase } from '../middleware/firebaseAuth';
-import { firestore } from '../db/firestore';
-import { AnalyticsService, getActivityHeatmap, incrementWebTrafficAnalytics, getOutboundStats, getInboundStats, getEngagementStats, getFollowupStats, getWebLeadStats, } from '../services/analyticsService';
-import { getLiveSocialMetrics } from '../services/liveSocialMetricsService';
+import { requireFirebase } from '../middleware/firebaseAuth.js';
+import { firestore } from '../db/firestore.js';
+import { AnalyticsService, getActivityHeatmap, incrementWebTrafficAnalytics, getOutboundStats, getInboundStats, getEngagementStats, getFollowupStats, getWebLeadStats, } from '../services/analyticsService.js';
+import { getLiveSocialMetrics } from '../services/liveSocialMetricsService.js';
 const router = Router();
 const analytics = new AnalyticsService();
 const bwinBetTargetUrl = 'https://bwinbetug.com';

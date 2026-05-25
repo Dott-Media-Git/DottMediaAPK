@@ -8,6 +8,7 @@ import { requireFirebase } from '../middleware/firebaseAuth.js';
 import { createSignedState, verifySignedState } from '../utils/oauthState.js';
 import { firestore } from '../db/firestore.js';
 import { autoPostService } from '../services/autoPostService.js';
+import { supabaseFallbackService } from '../services/supabaseFallbackService.js';
 const router = Router();
 const CALLBACK_PATH = '/integrations/meta/callback';
 const THREADS_CALLBACK_PATH = '/integrations/threads/callback';
@@ -401,6 +402,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
             }
         }
         await userRef.set({ socialAccounts: currentAccounts }, { merge: true });
+        await supabaseFallbackService.upsertSocialAccounts(state.userId, { socialAccounts: currentAccounts });
         await mergeAutopostPlatforms(state.userId, [
             'facebook',
             currentAccounts.instagram?.accountId ? 'instagram' : null,
@@ -452,6 +454,7 @@ router.get('/integrations/threads/callback', async (req, res) => {
             username: profile.username ?? currentAccounts.threads?.username,
         };
         await userRef.set({ socialAccounts: currentAccounts }, { merge: true });
+        await supabaseFallbackService.upsertSocialAccounts(state.userId, { socialAccounts: currentAccounts });
         await mergeAutopostPlatforms(state.userId, ['threads']);
         res
             .status(200)

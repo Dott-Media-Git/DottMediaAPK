@@ -1,5 +1,5 @@
 import admin from 'firebase-admin';
-import { firestore } from '../db/firestore.js';
+import { firebaseApp, firestore } from '../db/firestore.js';
 import { resolveAnalyticsScopeKey } from './analyticsScope.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 const RatingWeights = {
@@ -44,7 +44,9 @@ const activityHeatmapScore = (rows) => rows.reduce((acc, row) => acc +
     Number(row.views ?? 0) +
     Number(row.interactions ?? 0) +
     Number(row.outbound ?? 0) +
-    Number(row.conversions ?? 0), 0);
+    Number(row.conversions ?? 0) +
+    Number(row.redirectClicks ?? 0), 0);
+const useMockAnalytics = process.env.ALLOW_MOCK_AUTH === 'true' && !firebaseApp;
 const mergeActivityHeatmapRow = (target, date, incoming) => {
     if (!date)
         return;
@@ -55,11 +57,13 @@ const mergeActivityHeatmapRow = (target, date, incoming) => {
             interactions: 0,
             outbound: 0,
             conversions: 0,
+            redirectClicks: 0,
         };
     existing.views = Math.max(existing.views, Number(incoming.views ?? 0));
     existing.interactions = Math.max(existing.interactions, Number(incoming.interactions ?? 0));
     existing.outbound = Math.max(existing.outbound, Number(incoming.outbound ?? 0));
     existing.conversions = Math.max(existing.conversions, Number(incoming.conversions ?? 0));
+    existing.redirectClicks = Math.max(Number(existing.redirectClicks ?? 0), Number(incoming.redirectClicks ?? 0));
     target.set(date, existing);
 };
 const readActivityHeatmapScope = async (scope, limitValue) => {
@@ -75,6 +79,7 @@ const readActivityHeatmapScope = async (scope, limitValue) => {
         mergeActivityHeatmapRow(byDate, String(data.date ?? doc.id ?? ''), {
             views: Number(data.visitors ?? 0),
             interactions: Number(data.interactions ?? 0),
+            redirectClicks: Number(data.redirectClicks ?? 0),
         });
     });
     outboundSnap.docs.forEach(doc => {
@@ -117,6 +122,7 @@ const readActivityHeatmapSupabaseScope = async (scope, limitValue, minDate) => {
         mergeActivityHeatmapRow(byDate, row.date, {
             views: Number(row.counters?.visitors ?? 0),
             interactions: Number(row.counters?.interactions ?? 0),
+            redirectClicks: Number(row.counters?.redirectClicks ?? 0),
         });
     });
     outboundRows.forEach(row => {
@@ -213,7 +219,7 @@ async function readSummaryWithFallback(summaryDocFactory, scope, positiveKeys, s
 export class AnalyticsService {
     async getSummary(userId) {
         // Mock Data Logic
-        if (process.env.ALLOW_MOCK_AUTH === 'true') {
+        if (useMockAnalytics) {
             const mockHistory = Array.from({ length: 14 }).map((_, i) => {
                 const date = new Date();
                 date.setDate(date.getDate() - i);
@@ -567,7 +573,7 @@ function sanitizeIndustryKey(industry) {
         .slice(0, 50);
 }
 export async function getOutboundStats(scope) {
-    if (process.env.ALLOW_MOCK_AUTH === 'true') {
+    if (useMockAnalytics) {
         return {
             prospectsContacted: 1250,
             responders: 295,

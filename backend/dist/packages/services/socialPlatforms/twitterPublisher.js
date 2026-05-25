@@ -61,7 +61,7 @@ export async function publishToTwitter(input) {
             try {
                 const res = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: 120000 });
                 const buffer = Buffer.from(res.data);
-                const contentType = inferVideoMimeType(videoUrl, res.headers['content-type']);
+                const contentType = inferVideoMimeType(videoUrl, typeof res.headers['content-type'] === 'string' ? res.headers['content-type'] : undefined);
                 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                 // @ts-ignore
                 const mediaId = await rw.v1.uploadMedia(buffer, {
@@ -89,7 +89,8 @@ export async function publishToTwitter(input) {
                     else {
                         const res = await axios.get(url, { responseType: 'arraybuffer' });
                         buffer = Buffer.from(res.data);
-                        contentType = res.headers['content-type'] ?? undefined;
+                        contentType =
+                            typeof res.headers['content-type'] === 'string' ? res.headers['content-type'] : undefined;
                     }
                     const imageType = contentType || 'image/png';
                     // uploadMedia accepts Buffer and optional mimeType

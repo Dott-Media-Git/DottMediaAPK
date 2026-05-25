@@ -52,8 +52,8 @@ export const validateVideoUrl = async (videoUrl) => {
                 validateStatus: () => true,
             });
             if (headResponse.status === 200 || headResponse.status === 206) {
-                const contentType = extractContentType(headResponse.headers['content-type']);
-                const contentLength = parseContentLength(headResponse.headers['content-length']);
+                const contentType = extractContentType(typeof headResponse.headers['content-type'] === 'string' ? headResponse.headers['content-type'] : undefined);
+                const contentLength = parseContentLength(typeof headResponse.headers['content-length'] === 'string' ? headResponse.headers['content-length'] : undefined);
                 const finalUrlAfterRedirects = responseFinalUrl(headResponse, videoUrl);
                 return { contentType, contentLength, finalUrlAfterRedirects };
             }
@@ -71,8 +71,9 @@ export const validateVideoUrl = async (videoUrl) => {
         if (!(rangeResponse.status === 200 || rangeResponse.status === 206)) {
             throw new Error(`Unexpected status ${rangeResponse.status}`);
         }
-        const contentType = extractContentType(rangeResponse.headers['content-type']);
-        const contentLength = parseContentRange(rangeResponse.headers['content-range']) ?? parseContentLength(rangeResponse.headers['content-length']);
+        const contentType = extractContentType(typeof rangeResponse.headers['content-type'] === 'string' ? rangeResponse.headers['content-type'] : undefined);
+        const contentLength = parseContentRange(typeof rangeResponse.headers['content-range'] === 'string' ? rangeResponse.headers['content-range'] : undefined) ??
+            parseContentLength(typeof rangeResponse.headers['content-length'] === 'string' ? rangeResponse.headers['content-length'] : undefined);
         const finalUrlAfterRedirects = responseFinalUrl(rangeResponse, videoUrl);
         const sample = Buffer.from(rangeResponse.data ?? '');
         return { contentType, contentLength, finalUrlAfterRedirects, sample };
@@ -123,8 +124,8 @@ export const downloadVideoToTemp = async (videoUrl, options) => {
             timeout: timeoutMs,
             validateStatus: status => status === 200 || status === 206,
         });
-        const contentType = extractContentType(response.headers['content-type']);
-        const contentLength = parseContentLength(response.headers['content-length']);
+        const contentType = extractContentType(typeof response.headers['content-type'] === 'string' ? response.headers['content-type'] : undefined);
+        const contentLength = parseContentLength(typeof response.headers['content-length'] === 'string' ? response.headers['content-length'] : undefined);
         if (contentLength && contentLength > maxBytes) {
             throw new Error('Video exceeds size limit');
         }

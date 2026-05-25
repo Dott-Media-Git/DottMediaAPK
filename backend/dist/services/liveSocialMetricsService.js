@@ -10,9 +10,12 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const MAX_POSTS_PER_PLATFORM = Math.max(Number(process.env.LIVE_SOCIAL_MAX_POSTS ?? 20), 5);
 const LOOKBACK_HOURS_DEFAULT = Math.max(Number(process.env.LIVE_SOCIAL_LOOKBACK_HOURS ?? 72), 1);
 const CACHE_TTL_MS = Math.max(Number(process.env.LIVE_SOCIAL_CACHE_MS ?? 120000), 10000);
+const POST_METRIC_CACHE_TTL_MS = Math.max(Number(process.env.LIVE_SOCIAL_POST_CACHE_MS ?? 300000), 30000);
 const FACEBOOK_VIEW_FALLBACK_MULTIPLIER = Math.max(Number(process.env.FACEBOOK_VIEW_FALLBACK_MULTIPLIER ?? 18), 1);
 const INSTAGRAM_VIEW_FALLBACK_MULTIPLIER = Math.max(Number(process.env.INSTAGRAM_VIEW_FALLBACK_MULTIPLIER ?? 15), 1);
 const liveMetricsCache = new Map();
+const postMetricCache = new Map();
+const postMetricInFlight = new Map();
 const emptyPlatformMetric = () => ({
     connected: false,
     views: 0,
@@ -86,6 +89,30 @@ const mergeCounterMap = (target, raw) => {
     });
 };
 const formatRate = (interactions, views) => views > 0 ? Number(((interactions / views) * 100).toFixed(2)) : 0;
+const withPostMetricCache = async (cacheKey, loader) => {
+    const now = Date.now();
+    const cached = postMetricCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+        return cached.data;
+    }
+    const inFlight = postMetricInFlight.get(cacheKey);
+    if (inFlight) {
+        return inFlight;
+    }
+    const pending = loader()
+        .then(data => {
+        postMetricCache.set(cacheKey, {
+            expiresAt: Date.now() + POST_METRIC_CACHE_TTL_MS,
+            data,
+        });
+        return data;
+    })
+        .finally(() => {
+        postMetricInFlight.delete(cacheKey);
+    });
+    postMetricInFlight.set(cacheKey, pending);
+    return pending;
+};
 const estimateViewsFromInteractions = (platform, interactions) => {
     if (interactions <= 0)
         return 0;
@@ -195,8 +222,43 @@ const collectRemoteIds = (posts, platformNames) => toUniqueIds(posts
     .map(post => (post.remoteId ?? '').trim())
     .filter(Boolean)
     .slice(0, MAX_POSTS_PER_PLATFORM));
-const buildWithDefaults = (userData) => {
-    const allowDefaults = canUsePrimarySocialDefaults(userData);
+const mergePostedRows = (...sources) => {
+    const merged = new Map();
+    sources.flat().forEach(post => {
+        const platform = String(post.platform ?? '').trim();
+        const remoteId = String(post.remoteId ?? '').trim();
+        const postedAtMs = toMillis(post.postedAt);
+        if (!platform || !remoteId || !postedAtMs)
+            return;
+        const key = `${platform}:${remoteId}`;
+        const existing = merged.get(key);
+        if (!existing || postedAtMs > toMillis(existing.postedAt)) {
+            merged.set(key, {
+                platform,
+                status: 'posted',
+                remoteId,
+                postedAt: post.postedAt,
+            });
+        }
+    });
+    return Array.from(merged.values());
+};
+const normalizeSocialLogPost = (entry) => {
+    const platform = String(entry.platform ?? '').trim();
+    const status = String(entry.status ?? '').trim().toLowerCase();
+    const remoteId = String(entry.responseId ?? '').trim();
+    const postedAtMs = toMillis(entry.postedAt);
+    if (!platform || status !== 'posted' || !remoteId || !postedAtMs)
+        return null;
+    return {
+        platform,
+        status: 'posted',
+        remoteId,
+        postedAt: entry.postedAt,
+    };
+};
+const buildWithDefaults = (userData, userId) => {
+    const allowDefaults = canUsePrimarySocialDefaults(userData, userId);
     const merged = { ...(userData?.socialAccounts ?? {}) };
     if (allowDefaults) {
         if (!merged.facebook?.accessToken && config.channels.facebook.pageToken) {
@@ -221,128 +283,134 @@ const buildWithDefaults = (userData) => {
     return merged;
 };
 const fetchFacebookMetric = async (postId, facebookAccount) => {
-    const publishToken = facebookAccount.accessToken ?? '';
-    const metricsToken = facebookAccount.userAccessToken?.trim() || publishToken;
-    if (!publishToken) {
-        return { views: 0, interactions: 0 };
-    }
-    try {
-        const basicFields = postId.includes('_')
-            ? 'id,likes.summary(true),comments.summary(true)'
-            : 'id,likes.summary(true),comments.summary(true),page_story_id';
-        const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${postId}`, {
-            params: {
-                fields: basicFields,
-                access_token: publishToken,
-            },
-            timeout: 30000,
-        });
-        const likes = Number(basic.data?.likes?.summary?.total_count ?? 0);
-        const comments = Number(basic.data?.comments?.summary?.total_count ?? 0);
-        let views = 0;
-        let interactions = likes + comments;
-        const analyticsPostId = typeof basic.data?.page_story_id === 'string' && basic.data.page_story_id
-            ? basic.data.page_story_id
-            : postId;
+    return withPostMetricCache(`facebook:${facebookAccount.pageId ?? 'page'}:${postId}`, async () => {
+        const publishToken = facebookAccount.accessToken ?? '';
+        const metricsToken = facebookAccount.userAccessToken?.trim() || publishToken;
+        if (!publishToken) {
+            return { views: 0, interactions: 0 };
+        }
         try {
-            const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${analyticsPostId}/insights`, {
+            const basicFields = postId.includes('_')
+                ? 'id,likes.summary(true),comments.summary(true)'
+                : 'id,likes.summary(true),comments.summary(true),page_story_id';
+            const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${postId}`, {
                 params: {
-                    metric: 'post_impressions,post_impressions_unique,post_engaged_users',
-                    access_token: metricsToken,
+                    fields: basicFields,
+                    access_token: publishToken,
                 },
                 timeout: 30000,
             });
-            const insightBlock = insights.data;
-            views =
-                parseInsightValue(insightBlock, 'post_impressions') ||
-                    parseInsightValue(insightBlock, 'post_impressions_unique');
-            const engagedUsers = parseInsightValue(insightBlock, 'post_engaged_users');
-            if (engagedUsers > 0)
-                interactions = engagedUsers;
+            const likes = Number(basic.data?.likes?.summary?.total_count ?? 0);
+            const comments = Number(basic.data?.comments?.summary?.total_count ?? 0);
+            let views = 0;
+            let interactions = likes + comments;
+            const analyticsPostId = typeof basic.data?.page_story_id === 'string' && basic.data.page_story_id
+                ? basic.data.page_story_id
+                : postId;
+            try {
+                const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${analyticsPostId}/insights`, {
+                    params: {
+                        metric: 'post_impressions,post_impressions_unique,post_engaged_users',
+                        access_token: metricsToken,
+                    },
+                    timeout: 30000,
+                });
+                const insightBlock = insights.data;
+                views =
+                    parseInsightValue(insightBlock, 'post_impressions') ||
+                        parseInsightValue(insightBlock, 'post_impressions_unique');
+                const engagedUsers = parseInsightValue(insightBlock, 'post_engaged_users');
+                if (engagedUsers > 0)
+                    interactions = engagedUsers;
+            }
+            catch {
+                // Optional insights can fail if permission is unavailable; keep base metrics.
+            }
+            if (views <= 0) {
+                views = estimateViewsFromInteractions('facebook', interactions);
+            }
+            return { views, interactions };
         }
         catch {
-            // Optional insights can fail if permission is unavailable; keep base metrics.
+            return { views: 0, interactions: 0 };
         }
-        if (views <= 0) {
-            views = estimateViewsFromInteractions('facebook', interactions);
-        }
-        return { views, interactions };
-    }
-    catch {
-        return { views: 0, interactions: 0 };
-    }
+    });
 };
 const fetchInstagramMetric = async (mediaId, accessToken) => {
-    try {
-        const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
-            params: {
-                fields: 'id,like_count,comments_count,media_type,media_product_type',
-                access_token: accessToken,
-            },
-            timeout: 30000,
-        });
-        const likes = Number(basic.data?.like_count ?? 0);
-        const comments = Number(basic.data?.comments_count ?? 0);
-        let views = 0;
-        let interactions = likes + comments;
+    return withPostMetricCache(`instagram:${mediaId}`, async () => {
         try {
-            const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
+            const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
                 params: {
-                    metric: 'impressions,reach,saved,shares,total_interactions',
+                    fields: 'id,like_count,comments_count,media_type,media_product_type',
                     access_token: accessToken,
                 },
                 timeout: 30000,
             });
-            const rows = Array.isArray(insights.data?.data) ? insights.data.data : [];
-            views =
-                parseInsightArrayValue(rows, 'impressions') ||
-                    parseInsightArrayValue(rows, 'reach');
-            interactions =
-                parseInsightArrayValue(rows, 'total_interactions') ||
-                    likes +
-                        comments +
-                        parseInsightArrayValue(rows, 'saved') +
-                        parseInsightArrayValue(rows, 'shares');
+            const likes = Number(basic.data?.like_count ?? 0);
+            const comments = Number(basic.data?.comments_count ?? 0);
+            let views = 0;
+            let interactions = likes + comments;
+            try {
+                const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
+                    params: {
+                        metric: 'impressions,reach,saved,shares,total_interactions',
+                        access_token: accessToken,
+                    },
+                    timeout: 30000,
+                });
+                const rows = Array.isArray(insights.data?.data) ? insights.data.data : [];
+                views =
+                    parseInsightArrayValue(rows, 'impressions') ||
+                        parseInsightArrayValue(rows, 'reach');
+                interactions =
+                    parseInsightArrayValue(rows, 'total_interactions') ||
+                        likes +
+                            comments +
+                            parseInsightArrayValue(rows, 'saved') +
+                            parseInsightArrayValue(rows, 'shares');
+            }
+            catch {
+                // Optional insights can fail if scope is not available.
+            }
+            if (views <= 0) {
+                views = estimateViewsFromInteractions('instagram', interactions);
+            }
+            return { views, interactions };
         }
         catch {
-            // Optional insights can fail if scope is not available.
+            return { views: 0, interactions: 0 };
         }
-        if (views <= 0) {
-            views = estimateViewsFromInteractions('instagram', interactions);
-        }
-        return { views, interactions };
-    }
-    catch {
-        return { views: 0, interactions: 0 };
-    }
+    });
 };
 const fetchXMetric = async (tweetId, credentials) => {
-    const client = new TwitterApi(credentials).readWrite;
-    try {
-        const full = await client.v2.singleTweet(tweetId, {
-            'tweet.fields': ['public_metrics', 'non_public_metrics', 'organic_metrics'],
-        });
-        const data = full?.data;
-        return {
-            views: extractTwitterViews(data),
-            interactions: extractTwitterInteractions(data),
-        };
-    }
-    catch {
+    return withPostMetricCache(`x:${tweetId}`, async () => {
+        const client = new TwitterApi(credentials).readWrite;
         try {
-            const fallback = await client.v2.singleTweet(tweetId, {
-                'tweet.fields': ['public_metrics'],
+            const full = await client.v2.singleTweet(tweetId, {
+                'tweet.fields': ['public_metrics', 'non_public_metrics', 'organic_metrics'],
             });
-            const data = fallback?.data;
+            const data = full?.data;
             return {
                 views: extractTwitterViews(data),
                 interactions: extractTwitterInteractions(data),
             };
         }
         catch {
-            return { views: 0, interactions: 0 };
+            try {
+                const fallback = await client.v2.singleTweet(tweetId, {
+                    'tweet.fields': ['public_metrics'],
+                });
+                const data = fallback?.data;
+                return {
+                    views: extractTwitterViews(data),
+                    interactions: extractTwitterInteractions(data),
+                };
+            }
+            catch {
+                return { views: 0, interactions: 0 };
+            }
         }
-    }
+    });
 };
 const fetchOwnXTimelineMetrics = async (credentials) => {
     const client = new TwitterApi(credentials).readWrite;
@@ -398,21 +466,30 @@ export async function getLiveSocialMetrics(userId, options) {
                 return null;
             }),
             (async () => {
+                const scheduledRows = [];
                 try {
                     const postsSnap = await firestore.collection('scheduledPosts').where('userId', '==', userId).limit(500).get();
-                    const rows = postsSnap.docs
+                    scheduledRows.push(...postsSnap.docs
                         .map(doc => doc.data())
-                        .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
-                    if (rows.length)
-                        return rows;
+                        .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs));
                 }
                 catch (error) {
                     console.warn('[socialLive] firestore scheduled posts fetch failed', error);
                 }
                 const fallbackPosts = await supabaseFallbackService.getPostsByUser(userId, 500);
-                return fallbackPosts
+                const fallbackRows = fallbackPosts
                     .map(post => post)
                     .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
+                const fallbackLogRows = (await supabaseFallbackService.getSocialLogsByUser(userId, 500))
+                    .map(entry => normalizeSocialLogPost({
+                    platform: entry.platform,
+                    status: entry.status,
+                    responseId: entry.responseId,
+                    postedAt: entry.postedAt,
+                }))
+                    .filter((post) => Boolean(post))
+                    .filter(post => toMillis(post.postedAt) >= cutoffMs);
+                return mergePostedRows(scheduledRows, fallbackRows, fallbackLogRows);
             })(),
             getOutboundStats(options?.scope ?? { userId }),
             Promise.all(scopeKeys.map(async (key) => {
@@ -449,7 +526,7 @@ export async function getLiveSocialMetrics(userId, options) {
             })),
         ]);
         const userData = userDoc?.data();
-        const accounts = buildWithDefaults(userData);
+        const accounts = buildWithDefaults(userData, userId);
         if (isBwinScopeRequest(options?.scope, userId)) {
             if (!accounts.facebook?.accessToken && process.env.BWIN_FACEBOOK_PAGE_TOKEN && process.env.BWIN_FACEBOOK_PAGE_ID) {
                 accounts.facebook = {

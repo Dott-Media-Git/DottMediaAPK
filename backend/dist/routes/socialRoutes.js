@@ -10,6 +10,7 @@ import { socialSchedulingService } from '../packages/services/socialSchedulingSe
 import { socialPostingService } from '../packages/services/socialPostingService.js';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService.js';
 import { autoPostService } from '../services/autoPostService.js';
+import { supabaseFallbackService } from '../services/supabaseFallbackService.js';
 import { firestore } from '../db/firestore.js';
 import { config } from '../config.js';
 import { getTikTokIntegration, getYouTubeIntegration } from '../services/socialIntegrationService.js';
@@ -322,6 +323,19 @@ const autoPostSchema = z
     instagramReelsVideoUrl: z.string().url().optional(),
     instagramReelsVideoUrls: z.array(z.string().url()).optional(),
     reelsIntervalHours: z.number().positive().optional(),
+    generatedContent: z
+        .object({
+        images: z.array(z.string().url()),
+        caption_instagram: z.string(),
+        caption_linkedin: z.string(),
+        caption_x: z.string(),
+        hashtags_instagram: z.string(),
+        hashtags_generic: z.string(),
+        image_error: z.string().optional(),
+        video_url: z.string().url().optional(),
+        video_error: z.string().optional(),
+    })
+        .optional(),
 })
     .superRefine((data, ctx) => {
     const platforms = data.platforms ?? [];
@@ -395,6 +409,7 @@ router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
             instagramReelsVideoUrl: payload.instagramReelsVideoUrl,
             instagramReelsVideoUrls: payload.instagramReelsVideoUrls,
             reelsIntervalHours: payload.reelsIntervalHours,
+            generatedContent: payload.generatedContent,
         });
         res.json({ ok: true, ...result });
     }
@@ -420,8 +435,17 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
         if (!authUser)
             return res.status(401).json({ message: 'Unauthorized' });
         const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
-        const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-        const historyUserId = userDoc.data()?.historyUserId?.trim();
+        let historyUserId = '';
+        try {
+            const userDoc = await firestore.collection('users').doc(authUser.uid).get();
+            historyUserId = (userDoc.data()?.historyUserId ?? '').trim();
+        }
+        catch (error) {
+            console.warn('[social-history-route] user lookup failed; using direct auth user id', {
+                userId: authUser.uid,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
         if (requestedUserId && requestedUserId !== authUser.uid && requestedUserId !== historyUserId) {
             return res.status(403).json({ message: 'Forbidden' });
         }
@@ -444,12 +468,33 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
         const authUser = req.authUser;
         if (!authUser)
             return res.status(401).json({ message: 'Unauthorized' });
-        const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-        const userData = userDoc.data();
+        let userData;
+        try {
+            const userDoc = await firestore.collection('users').doc(authUser.uid).get();
+            userData = userDoc.data();
+        }
+        catch (error) {
+            console.warn('[social-status-route] user lookup failed; using fallback defaults', {
+                userId: authUser.uid,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
         const accounts = userData?.socialAccounts ?? {};
-        const allowDefaults = canUsePrimarySocialDefaults(userData);
-        const youtube = await getYouTubeIntegration(authUser.uid);
-        const tiktok = await getTikTokIntegration(authUser.uid);
+        const allowDefaults = canUsePrimarySocialDefaults(userData, authUser.uid);
+        let youtube = null;
+        let tiktok = null;
+        try {
+            youtube = await getYouTubeIntegration(authUser.uid);
+        }
+        catch (error) {
+            console.warn('[social-status-route] youtube lookup failed', error);
+        }
+        try {
+            tiktok = await getTikTokIntegration(authUser.uid);
+        }
+        catch (error) {
+            console.warn('[social-status-route] tiktok lookup failed', error);
+        }
         const status = {
             facebook: Boolean(accounts.facebook?.accessToken && accounts.facebook?.pageId) ||
                 (allowDefaults && Boolean(config.channels.facebook.pageToken && config.channels.facebook.pageId)),
@@ -520,6 +565,7 @@ router.get('/social/threads/callback', async (req, res) => {
             username: profile.username ?? currentAccounts.threads?.username,
         };
         await userRef.set({ socialAccounts: currentAccounts }, { merge: true });
+        await supabaseFallbackService.upsertSocialAccounts(state.userId, { socialAccounts: currentAccounts });
         await mergeAutopostPlatforms(state.userId, ['threads']);
         res
             .status(200)
@@ -720,6 +766,7 @@ router.post('/social/credentials', requireFirebase, async (req, res, next) => {
             });
         }
         await firestore.collection('users').doc(payload.userId).set({ socialAccounts: payload.credentials }, { merge: true });
+        await supabaseFallbackService.upsertSocialAccounts(payload.userId, { socialAccounts: payload.credentials });
         res.json({ success: true });
     }
     catch (error) {

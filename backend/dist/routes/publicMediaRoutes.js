@@ -117,11 +117,11 @@ router.get('/public/table-image/:id', async (req, res) => {
             league: data?.league ?? 'League Table',
             rows: rows.slice(0, 8),
             source: data?.source ?? 'Live standings',
-            cta: data?.cta ?? 'www.bwinbetug.info',
+            cta: data?.cta ?? 'More football updates in bio',
             updatedAt: data?.updatedAt ?? new Date().toISOString(),
         });
         res.set({
-            'Content-Type': 'image/png',
+            'Content-Type': 'image/jpeg',
             'Cache-Control': 'public, max-age=900',
         });
         res.end(buffer);

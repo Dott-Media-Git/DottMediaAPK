@@ -1,6 +1,9 @@
 import admin from 'firebase-admin';
 import fs from 'fs';
 import path from 'path';
+const mockModeEnabled = () => process.env.ALLOW_MOCK_AUTH === 'true';
+const hasFirebaseCredentialConfig = () => Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim() ||
+    process.env.FIREBASE_SERVICE_ACCOUNT?.trim());
 const buildMockFirestore = () => ({
     collection: () => ({
         doc: () => ({
@@ -42,16 +45,19 @@ const loadServiceAccount = () => {
             throw new Error(`Unable to read FIREBASE_SERVICE_ACCOUNT file: ${error.message}`);
         }
     }
-    if (process.env.ALLOW_MOCK_AUTH === 'true') {
+    if (mockModeEnabled()) {
         console.warn('[firestore] FIREBASE_SERVICE_ACCOUNT_JSON missing, running with mock Firestore');
         return {};
     }
     throw new Error('Missing FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT env var');
 };
 const initFirestore = () => {
-    if (process.env.ALLOW_MOCK_AUTH === 'true') {
+    if (mockModeEnabled() && !hasFirebaseCredentialConfig()) {
         console.warn('[firestore] mock mode enabled; using in-memory Firestore');
         return { firebaseApp: null, firestore: buildMockFirestore() };
+    }
+    if (mockModeEnabled()) {
+        console.warn('[firestore] mock auth enabled, but Firebase credentials were found; using real Firestore');
     }
     const credentials = loadServiceAccount();
     const projectId = credentials.projectId ?? credentials.project_id;

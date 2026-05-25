@@ -1,12 +1,37 @@
 import admin from 'firebase-admin';
 import { firestore } from '../../db/firestore.js';
 import { supabaseFallbackService } from '../../services/supabaseFallbackService.js';
+import { validateBwinSportsContent } from '../../services/bwinContentGuard.js';
+import { getBwinAccountClosureMessage, getBwinAccountClosureState, isBwinAccountClosureActive, } from '../../services/bwinAccountClosureService.js';
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
 export class SocialSchedulingService {
     async schedulePosts(payload) {
         if (!payload.platforms.length)
             throw new Error('At least one platform is required');
+        const closureState = await getBwinAccountClosureState(payload.userId);
+        if (closureState?.enabled) {
+            const shutdownAt = new Date(closureState.shutdownAt);
+            const scheduledAt = new Date(payload.scheduledFor);
+            if (await isBwinAccountClosureActive(payload.userId)) {
+                throw new Error(getBwinAccountClosureMessage(closureState));
+            }
+            if (Number.isFinite(scheduledAt.getTime()) && scheduledAt.getTime() >= shutdownAt.getTime()) {
+                throw new Error(`Bwin scheduled posts must stay before ${shutdownAt.toISOString()} because the account is set to close then.`);
+            }
+        }
+        const bwinValidation = validateBwinSportsContent({
+            userId: payload.userId,
+            platforms: payload.platforms,
+            caption: payload.caption,
+            hashtags: payload.hashtags,
+            videoTitle: payload.videoTitle,
+            imageUrls: payload.images,
+            videoUrl: payload.videoUrl ?? payload.youtubeVideoUrl ?? payload.tiktokVideoUrl ?? payload.instagramReelsVideoUrl,
+        });
+        if (!bwinValidation.ok) {
+            throw new Error(bwinValidation.reason ?? 'Bwinbet scheduled posts must stay sports-only.');
+        }
         const hasYoutube = payload.platforms.includes('youtube');
         const hasTikTok = payload.platforms.includes('tiktok');
         const hasReels = payload.platforms.includes('instagram_reels');

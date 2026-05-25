@@ -78,10 +78,10 @@ export class InboundHandler {
         const profile = await getReplyProfile(ownerId);
         const override = await getAutoReplyPromptOverride(ownerId);
         const identityLine = profile === 'bwinbetug'
-            ? `You are Bwinbet UG's sports assistant, responding on ${payload.channel}.`
+            ? `You are our sports team's sports assistant, responding on ${payload.channel}.`
             : `You are Dotti from Dott Media, responding on ${payload.channel}.`;
         const goalLine = profile === 'bwinbetug'
-            ? 'Goal: keep it sports-focused, helpful, concise (<=3 sentences), and direct them to www.bwinbetug.info for full details, fixtures, markets, and support.'
+            ? 'Goal: keep it sports-focused, helpful, concise (<=3 sentences), and direct them to the link in bio for full details, fixtures, markets, and support.'
             : 'Goal: move them toward buying or booking a demo of the Dott Media AI Sales Agent. Keep it friendly, concise (<=3 sentences), give a clear CTA (book a demo or get the Sales Agent), and offer a link or next step.';
         const prompt = `
 ${identityLine}
@@ -100,7 +100,7 @@ ${override ? `Additional guidance: ${override}` : ''}
                     {
                         role: 'system',
                         content: profile === 'bwinbetug'
-                            ? 'You are Bwinbet UG sports support. Keep replies brief, natural, and always include www.bwinbetug.info as the next step.'
+                            ? 'You are our sports team sports support. Keep replies brief, natural, and always include the link in bio as the next step.'
                             : 'You are Dotti, the AI sales concierge for Dott Media.',
                     },
                     { role: 'user', content: prompt },

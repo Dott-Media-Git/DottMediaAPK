@@ -541,13 +541,23 @@ export class AssistantStrategyService {
         };
     }
     async sendMonthlyReport(input) {
-        const recipient = await this.resolveReportRecipient(input.userId, input.email ?? null);
-        if (!recipient) {
+        const addresses = (input.emails ?? []).map(email => email.trim().toLowerCase()).filter(Boolean);
+        let recipients = [];
+        if (addresses.length > 0) {
+            recipients = Array.from(new Set(addresses));
+        }
+        else {
+            const fallback = await this.resolveReportRecipient(input.userId, input.email ?? null);
+            if (fallback) {
+                recipients = [fallback];
+            }
+        }
+        if (!recipients.length) {
             return { message: 'I do not have an email address for this account yet.' };
         }
         const metrics = await this.buildPeriodMetrics(input.userId, 30);
         const reportText = this.formatMonthlyReport(metrics, input.company);
-        await sendMonthlyPerformanceReportEmail(recipient, input.company ?? 'your team', reportText);
-        return { message: `Monthly performance report emailed to ${recipient}.` };
+        await Promise.all(recipients.map(recipient => sendMonthlyPerformanceReportEmail(recipient, input.company ?? 'your team', reportText)));
+        return { message: `Monthly performance report emailed to ${recipients.join(', ')}.` };
     }
 }

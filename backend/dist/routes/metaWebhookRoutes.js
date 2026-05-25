@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import axios from 'axios';
 import admin from 'firebase-admin';
 import { generateReply, replyToFacebookComment, replyToInstagramComment, replyToInstagramMessage, replyToFacebookMessage, likeInstagramComment, likeFacebookComment, } from '../services/autoReplyService.js';
 import { incrementEngagementAnalytics, incrementInboundAnalytics } from '../services/analyticsService.js';
+import { getBwinAccountClosureMessage, getBwinAccountClosureState, isBwinAccountClosureActive, } from '../services/bwinAccountClosureService.js';
 import fs from 'fs';
 import path from 'path';
 import { firestore } from '../db/firestore.js';
@@ -10,6 +12,61 @@ const verifyToken = process.env.META_VERIFY_TOKEN ?? process.env.VERIFY_TOKEN;
 const igBusinessId = process.env.INSTAGRAM_BUSINESS_ID;
 const pageId = process.env.FACEBOOK_PAGE_ID;
 const logFile = path.join(process.cwd(), 'meta-webhook.log');
+const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
+const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
+const WORKER_CONFIG_BUCKET = 'worker-config';
+const CONTEXT_CACHE_TTL_MS = 60 * 1000;
+const KNOWN_FALLBACK_CONTEXTS = [
+    { userId: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', objectName: 'bwin-meta-accounts.json' },
+    { userId: 'cMPZQccGggbhZe9dbvtxFmBehP02', objectName: 'dott-main-meta-accounts.json' },
+];
+const workerConfigCache = new Map();
+const hasSupabaseConfig = () => Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+const getWorkerConfig = async (objectName) => {
+    if (!hasSupabaseConfig())
+        return null;
+    const now = Date.now();
+    const cached = workerConfigCache.get(objectName);
+    if (cached && now - cached.fetchedAt < CONTEXT_CACHE_TTL_MS) {
+        return cached.value;
+    }
+    try {
+        const response = await axios.get(`${SUPABASE_URL}/storage/v1/object/authenticated/${WORKER_CONFIG_BUCKET}/${objectName}`, {
+            headers: {
+                apikey: SUPABASE_SERVICE_ROLE_KEY,
+                Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+            timeout: 30000,
+        });
+        const value = response.data ?? null;
+        workerConfigCache.set(objectName, { value, fetchedAt: now });
+        return value;
+    }
+    catch (error) {
+        console.warn('[meta-webhook] failed to read Supabase worker config', objectName, error.message);
+        workerConfigCache.set(objectName, { value: null, fetchedAt: now });
+        return null;
+    }
+};
+const resolvePlatformContextFromSupabase = async (platform, entryId) => {
+    if (!entryId || !hasSupabaseConfig())
+        return null;
+    const field = platform === 'instagram' ? 'accountId' : 'pageId';
+    for (const candidate of KNOWN_FALLBACK_CONTEXTS) {
+        const payload = await getWorkerConfig(candidate.objectName);
+        const account = payload?.[platform];
+        if (!account || account[field] !== entryId)
+            continue;
+        return {
+            userId: candidate.userId,
+            orgId: candidate.userId,
+            accessToken: account.accessToken,
+            accountId: account.accountId,
+            pageId: account.pageId,
+        };
+    }
+    return null;
+};
 const resolvePlatformContext = async (platform, entryId) => {
     if (!entryId)
         return null;
@@ -35,8 +92,8 @@ const resolvePlatformContext = async (platform, entryId) => {
     }
     catch (error) {
         console.warn('[meta-webhook] failed to resolve user context', error.message);
-        return null;
     }
+    return resolvePlatformContextFromSupabase(platform, entryId);
 };
 const buildDedupeKey = (platform, type, id) => {
     if (!id)
@@ -118,32 +175,39 @@ const reserveInbound = async (event) => {
         const ref = await saveInbound(event);
         return { ref, shouldProcess: true };
     }
-    const ref = firestore.collection('messages').doc(dedupeKey);
-    const payload = {
-        ...event,
-        replyStatus: 'pending',
-        dedupeKey,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
     try {
+        const ref = firestore.collection('messages').doc(dedupeKey);
+        const payload = {
+            ...event,
+            replyStatus: 'pending',
+            dedupeKey,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
         await ref.create(payload);
         return { ref, shouldProcess: true };
     }
     catch (error) {
-        if (!isAlreadyExistsError(error))
-            throw error;
-        const snap = await ref.get();
-        const existing = snap.exists ? snap.data() : null;
-        if (shouldSkipExistingReply(existing)) {
-            return { ref, shouldProcess: false };
+        try {
+            if (!isAlreadyExistsError(error))
+                throw error;
+            const ref = firestore.collection('messages').doc(dedupeKey);
+            const snap = await ref.get();
+            const existing = snap.exists ? snap.data() : null;
+            if (shouldSkipExistingReply(existing)) {
+                return { ref, shouldProcess: false };
+            }
+            await ref.set({
+                ...event,
+                replyStatus: 'pending',
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            return { ref, shouldProcess: true };
         }
-        await ref.set({
-            ...event,
-            replyStatus: 'pending',
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-        return { ref, shouldProcess: true };
+        catch (innerError) {
+            console.warn('[meta-webhook] inbound reservation fallback', innerError.message);
+            return { ref: null, shouldProcess: true };
+        }
     }
 };
 const updateReplyStatus = async (ref, status, error) => {
@@ -214,11 +278,16 @@ router.post('/meta/webhook', async (req, res) => {
                         logEvent('IG comment duplicate skipped', { commentId });
                         continue;
                     }
+                    const instagramClosureState = await getBwinAccountClosureState(instagramContext?.userId);
+                    if (instagramClosureState?.enabled && (await isBwinAccountClosureActive(instagramContext?.userId))) {
+                        await updateReplyStatus(inbound.ref, 'failed', getBwinAccountClosureMessage(instagramClosureState));
+                        continue;
+                    }
                     try {
                         const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'comment');
+                        await likeInstagramComment(commentId, instagramContext?.accessToken).catch(err => console.warn('IG comment like failed', err));
                         await replyToInstagramComment(commentId, reply, instagramContext?.accessToken);
                         await updateReplyStatus(inbound.ref, 'sent');
-                        await likeInstagramComment(commentId, instagramContext?.accessToken).catch(err => console.warn('IG comment like failed', err));
                         if (analyticsScopeId) {
                             await incrementEngagementAnalytics({ repliesSent: 1 }, { scopeId: analyticsScopeId });
                         }
@@ -257,6 +326,11 @@ router.post('/meta/webhook', async (req, res) => {
                             scopeId: analyticsScopeId,
                             raw: msg,
                         });
+                        const instagramClosureState = await getBwinAccountClosureState(instagramContext?.userId);
+                        if (instagramClosureState?.enabled && (await isBwinAccountClosureActive(instagramContext?.userId))) {
+                            await updateReplyStatus(inboundRef, 'failed', getBwinAccountClosureMessage(instagramClosureState));
+                            continue;
+                        }
                         try {
                             const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'message');
                             await replyToInstagramMessage(senderId, reply, {
@@ -297,11 +371,16 @@ router.post('/meta/webhook', async (req, res) => {
                             logEvent('FB comment duplicate skipped', { commentId });
                             continue;
                         }
+                        const facebookClosureState = await getBwinAccountClosureState(facebookContext?.userId);
+                        if (facebookClosureState?.enabled && (await isBwinAccountClosureActive(facebookContext?.userId))) {
+                            await updateReplyStatus(inbound.ref, 'failed', getBwinAccountClosureMessage(facebookClosureState));
+                            continue;
+                        }
                         try {
                             const reply = await generateReply(message, 'facebook', facebookContext?.userId, 'comment');
+                            await likeFacebookComment(commentId, facebookContext?.accessToken).catch(err => console.warn('FB comment like failed', err));
                             await replyToFacebookComment(commentId, reply, facebookContext?.accessToken);
                             await updateReplyStatus(inbound.ref, 'sent');
-                            await likeFacebookComment(commentId, facebookContext?.accessToken).catch(err => console.warn('FB comment like failed', err));
                             if (analyticsScopeId) {
                                 await incrementEngagementAnalytics({ repliesSent: 1 }, { scopeId: analyticsScopeId });
                             }
@@ -342,6 +421,11 @@ router.post('/meta/webhook', async (req, res) => {
                         scopeId: analyticsScopeId,
                         raw: event,
                     });
+                    const closureState = await getBwinAccountClosureState(context?.userId);
+                    if (closureState?.enabled && (await isBwinAccountClosureActive(context?.userId))) {
+                        await updateReplyStatus(inboundRef, 'failed', getBwinAccountClosureMessage(closureState));
+                        continue;
+                    }
                     try {
                         const platform = body.object === 'instagram' ? 'instagram' : 'facebook';
                         const reply = await generateReply(message, platform, context?.userId, 'message');
