@@ -79,6 +79,18 @@ const pickLeastRecentlyUsedListing = (items, recentKeysOrdered) => {
         return bIndex - aIndex;
     })[0];
 };
+const pickRotatingListing = (items, recent) => {
+    if (!items.length)
+        return undefined;
+    const bucketMs = Math.max(Number(process.env.STAYSPHERE_LISTING_ROTATION_MINUTES ?? 60), 15) * 60 * 1000;
+    const offset = Math.floor(Date.now() / bucketMs) % items.length;
+    for (let index = 0; index < items.length; index += 1) {
+        const candidate = items[(offset + index) % items.length];
+        if (!recent.has(listingKey(candidate.url)))
+            return candidate;
+    }
+    return undefined;
+};
 const escapeSvg = (value) => value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -370,7 +382,7 @@ export async function pickStaysphereListing(options = {}) {
         return uniqueListings(candidates);
     };
     const candidates = await collectCandidates(true);
-    const fresh = candidates.find(listing => !recent.has(listingKey(listing.url)));
+    const fresh = pickRotatingListing(candidates, recent);
     if (fresh)
         return fresh;
     const reusableCandidates = await collectCandidates(false);

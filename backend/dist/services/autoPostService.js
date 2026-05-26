@@ -4987,13 +4987,12 @@ export class AutoPostService {
     async getScheduledPostContentHistory(userId) {
         const empty = { imageUrls: [], videoUrls: [], captions: [], contentKeys: [] };
         const maxHistory = Math.max(Number(process.env.AUTOPOST_SCHEDULED_HISTORY_SCAN ?? 240), 40);
-        const collect = (docs) => {
+        const collectRows = (rows) => {
             const imageUrls = [];
             const videoUrls = [];
             const captions = [];
             const contentKeys = [];
-            for (const doc of docs) {
-                const data = doc.data();
+            for (const data of rows) {
                 const platform = String(data.platform || '').trim();
                 const caption = String(data.caption || '').trim();
                 if (caption) {
@@ -5021,6 +5020,11 @@ export class AutoPostService {
                 contentKeys: this.uniqueHistoryValues(contentKeys),
             };
         };
+        const collect = (docs) => collectRows(docs.map(doc => doc.data()));
+        const collectSupabaseHistory = async () => {
+            const fallbackPosts = await supabaseFallbackService.getPostsByUser(userId, maxHistory);
+            return collectRows(fallbackPosts.map(post => post));
+        };
         try {
             const snapshot = await scheduledPostsCollection
                 .where('userId', '==', userId)
@@ -5044,8 +5048,45 @@ export class AutoPostService {
                 userId,
                 error: error instanceof Error ? error.message : String(error),
             });
-            return empty;
         }
+        try {
+            const fallbackHistory = await collectSupabaseHistory();
+            if (fallbackHistory.imageUrls.length ||
+                fallbackHistory.videoUrls.length ||
+                fallbackHistory.captions.length ||
+                fallbackHistory.contentKeys.length) {
+                return fallbackHistory;
+            }
+        }
+        catch (error) {
+            console.warn('[autopost] supabase scheduled post history lookup failed', {
+                userId,
+                error: logSafeError(error),
+            });
+        }
+        try {
+            const job = (await supabaseFallbackService.getAutopostJob(userId));
+            if (job) {
+                return {
+                    imageUrls: this.uniqueHistoryValues(Array.isArray(job.recentImageUrls) ? job.recentImageUrls.filter(Boolean) : []),
+                    videoUrls: this.uniqueHistoryValues(Array.isArray(job.recentVideoUrls) ? job.recentVideoUrls.filter(Boolean) : []),
+                    captions: this.uniqueHistoryValues(Array.isArray(job.recentCaptions) ? job.recentCaptions.filter(Boolean) : []),
+                    contentKeys: this.uniqueHistoryValues([
+                        ...(Array.isArray(job.recentImageUrls) ? job.recentImageUrls : []),
+                        ...(Array.isArray(job.recentCaptions) ? job.recentCaptions : []),
+                    ]
+                        .map(value => this.extractContentKeys(String(value || '')))
+                        .flat()),
+                };
+            }
+        }
+        catch (error) {
+            console.warn('[autopost] supabase autopost job history lookup failed', {
+                userId,
+                error: logSafeError(error),
+            });
+        }
+        return empty;
     }
     extractContentKeys(value) {
         const keys = [];
