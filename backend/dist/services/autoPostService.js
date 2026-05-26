@@ -4101,7 +4101,7 @@ export class AutoPostService {
         let gamersSteamCaption = null;
         let usedGamersSteamKey = null;
         let clientInstagramSourceImageUrls = [];
-        if (clientPhotoProfile?.key === 'carmarketplace' && !isStoryRun && needsImages) {
+        if (clientPhotoProfile?.key === 'carmarketplace' && needsImages) {
             try {
                 const recentStockNos = new Set([...recentImages, ...recentCaptions]
                     .map(value => {
@@ -4112,34 +4112,41 @@ export class AutoPostService {
                 })
                     .filter((value) => Boolean(value)));
                 const vehicle = await pickCarmarketVehicle({ recentStockNos });
-                const vehicleImages = vehicle.images.slice(0, 10);
-                clientInstagramSourceImageUrls = vehicleImages.slice(0, 5);
-                const coverImageUrl = await renderCarmarketCoverImage(vehicle).catch(error => {
-                    console.warn('[autopost] Carmarket cover image render failed; skipping vehicle listing to avoid raw cover', {
-                        userId,
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                    return null;
-                });
-                if (!coverImageUrl) {
-                    throw new Error('carmarket_cover_render_failed');
+                const vehicleImages = vehicle.images.slice(0, isStoryRun ? 1 : 10);
+                clientInstagramSourceImageUrls = vehicleImages.slice(0, isStoryRun ? 1 : 5);
+                if (isStoryRun) {
+                    imageUrls = clientInstagramSourceImageUrls;
+                    carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
+                    usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
                 }
-                const preparedVehicleImages = await Promise.all(vehicleImages.slice(1, 5).map(async (imageUrl) => {
-                    try {
-                        return await prepareCarmarketVehicleImage(imageUrl);
-                    }
-                    catch (error) {
-                        console.warn('[autopost] Carmarket listing image preparation failed; skipping raw source URL', {
+                else {
+                    const coverImageUrl = await renderCarmarketCoverImage(vehicle).catch(error => {
+                        console.warn('[autopost] Carmarket cover image render failed; skipping vehicle listing to avoid raw cover', {
                             userId,
-                            imageUrl,
                             error: error instanceof Error ? error.message : String(error),
                         });
                         return null;
+                    });
+                    if (!coverImageUrl) {
+                        throw new Error('carmarket_cover_render_failed');
                     }
-                }));
-                imageUrls = [coverImageUrl, ...preparedVehicleImages.filter((url) => Boolean(url))];
-                carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
-                usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
+                    const preparedVehicleImages = await Promise.all(vehicleImages.slice(1, 5).map(async (imageUrl) => {
+                        try {
+                            return await prepareCarmarketVehicleImage(imageUrl);
+                        }
+                        catch (error) {
+                            console.warn('[autopost] Carmarket listing image preparation failed; skipping raw source URL', {
+                                userId,
+                                imageUrl,
+                                error: error instanceof Error ? error.message : String(error),
+                            });
+                            return null;
+                        }
+                    }));
+                    imageUrls = [coverImageUrl, ...preparedVehicleImages.filter((url) => Boolean(url))];
+                    carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
+                    usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
+                }
             }
             catch (error) {
                 console.warn('[autopost] BE FORWARD vehicle lookup failed; using client photo fallback', {
@@ -4193,13 +4200,14 @@ export class AutoPostService {
                 });
             }
         }
-        if (clientPhotoProfile?.key === 'gamers44life' && !isStoryRun && needsImages) {
+        if (clientPhotoProfile?.key === 'gamers44life' && needsImages) {
             try {
                 const recentSteamKeys = new Set([...recentImages, ...recentCaptions]
                     .map(value => String(value).match(/steam-game:\d+/i)?.[0]?.toLowerCase())
                     .filter((value) => Boolean(value)));
                 const steamPost = await pickGamersSteamScreenshots({ recentKeys: recentSteamKeys });
-                imageUrls = steamPost.images.slice(0, 6);
+                imageUrls = steamPost.images.slice(0, isStoryRun ? 1 : 6);
+                clientInstagramSourceImageUrls = imageUrls;
                 gamersSteamCaption = buildGamersSteamCaption(steamPost);
                 usedGamersSteamKey = gamersSteamHistoryKey(steamPost);
             }
@@ -4396,6 +4404,14 @@ export class AutoPostService {
                         : clientPhotoProfile?.key === 'staysphere' && platform === 'facebook'
                             ? imageUrls.slice(0, 1)
                             : imageUrls;
+                if (!videoUrl &&
+                    (platform === 'instagram' || platform === 'instagram_story') &&
+                    publishImageUrls.some(url => /\/public\/generated-media\//i.test(url))) {
+                    const errorMessage = 'instagram_requires_durable_public_media_url';
+                    results.push({ platform, status: 'failed', error: errorMessage });
+                    historyEntries.push({ platform, status: 'failed', caption, errorMessage });
+                    continue;
+                }
                 const response = await publisher({
                     caption,
                     imageUrls: publishImageUrls,
