@@ -7,6 +7,8 @@ import { getOutboundStats, getWebTrafficStats } from './analyticsService.js';
 import { resolveAnalyticsScopeKey } from './analyticsScope.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
+const THREADS_GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
+const THREADS_GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
 const MAX_POSTS_PER_PLATFORM = Math.max(Number(process.env.LIVE_SOCIAL_MAX_POSTS ?? 20), 5);
 const LOOKBACK_HOURS_DEFAULT = Math.max(Number(process.env.LIVE_SOCIAL_LOOKBACK_HOURS ?? 72), 1);
 const CACHE_TTL_MS = Math.max(Number(process.env.LIVE_SOCIAL_CACHE_MS ?? 120000), 10000);
@@ -263,6 +265,120 @@ const normalizeSocialLogPost = (entry) => {
         postedAt: entry.postedAt,
     };
 };
+const hasSocialAccounts = (profile) => Boolean(profile?.socialAccounts && Object.keys(profile.socialAccounts).length > 0);
+const mergeSocialProfiles = (profiles) => {
+    const mergedAccounts = {};
+    let email;
+    let orgId;
+    let id;
+    profiles.forEach(profile => {
+        if (!profile)
+            return;
+        if (!id && profile.id)
+            id = profile.id;
+        if (!email && profile.email)
+            email = profile.email;
+        if (!orgId && profile.orgId)
+            orgId = profile.orgId;
+        const accounts = profile.socialAccounts ?? {};
+        Object.entries(accounts).forEach(([platform, account]) => {
+            const current = mergedAccounts[platform];
+            if (!current || !Object.keys(current).length) {
+                mergedAccounts[platform] = account;
+                return;
+            }
+            mergedAccounts[platform] = {
+                ...account,
+                ...current,
+            };
+        });
+    });
+    if (!id && !email && !orgId && !Object.keys(mergedAccounts).length)
+        return undefined;
+    return { id, email, orgId, socialAccounts: mergedAccounts };
+};
+const fetchSupabaseSocialProfile = async (userId) => {
+    try {
+        const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+        if (!fallback)
+            return null;
+        return {
+            id: userId,
+            email: fallback.email ?? null,
+            socialAccounts: fallback.socialAccounts,
+        };
+    }
+    catch (error) {
+        console.warn('[socialLive] supabase social account fetch failed', { userId, error });
+        return null;
+    }
+};
+const resolveLiveMetricOwners = async (userId, scope) => {
+    const rawScopeId = scope?.scopeId?.trim();
+    const candidateIds = Array.from(new Set([rawScopeId, userId].filter(Boolean)));
+    const profilesById = new Map();
+    const orderedProfiles = [];
+    const addProfile = (profile) => {
+        if (!profile)
+            return;
+        const profileId = profile.id?.trim();
+        if (profileId && !profilesById.has(profileId)) {
+            profilesById.set(profileId, profile);
+            orderedProfiles.push(profile);
+        }
+        else if (!profileId) {
+            orderedProfiles.push(profile);
+        }
+    };
+    await Promise.all(candidateIds.map(async (candidateId) => {
+        try {
+            const snap = await firestore.collection('users').doc(candidateId).get();
+            if (snap.exists) {
+                const data = snap.data();
+                addProfile({
+                    id: snap.id,
+                    email: data.email ?? null,
+                    orgId: data.orgId ?? null,
+                    socialAccounts: data.socialAccounts,
+                });
+            }
+        }
+        catch (error) {
+            console.warn('[socialLive] firestore user fetch failed', { userId: candidateId, error });
+        }
+    }));
+    if (rawScopeId) {
+        try {
+            const snap = await firestore.collection('users').where('orgId', '==', rawScopeId).limit(5).get();
+            snap.docs.forEach(doc => {
+                const data = doc.data();
+                addProfile({
+                    id: doc.id,
+                    email: data.email ?? null,
+                    orgId: data.orgId ?? null,
+                    socialAccounts: data.socialAccounts,
+                });
+            });
+        }
+        catch (error) {
+            console.warn('[socialLive] firestore org owner lookup failed', { scopeId: rawScopeId, error });
+        }
+    }
+    await Promise.all(candidateIds.map(async (candidateId) => {
+        if (hasSocialAccounts(profilesById.get(candidateId)))
+            return;
+        const fallback = await fetchSupabaseSocialProfile(candidateId);
+        addProfile(fallback);
+    }));
+    const ownerIds = Array.from(new Set([
+        ...orderedProfiles.map(profile => profile.id).filter(Boolean),
+        ...candidateIds,
+    ]));
+    return {
+        ownerIds: ownerIds.length ? ownerIds : [userId],
+        userProfile: mergeSocialProfiles(orderedProfiles),
+    };
+};
 const buildWithDefaults = (userData, userId) => {
     const allowDefaults = canUsePrimarySocialDefaults(userData, userId);
     const merged = { ...(userData?.socialAccounts ?? {}) };
@@ -417,6 +533,29 @@ const fetchInstagramMetric = async (mediaId, accessToken) => {
         }
     });
 };
+const fetchThreadsMetric = async (mediaId, accessToken) => {
+    return withPostMetricCache(`threads:${mediaId}`, async () => {
+        try {
+            const response = await axios.get(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/${mediaId}/insights`, {
+                params: {
+                    metric: 'views,likes,replies,reposts,quotes',
+                    access_token: accessToken,
+                },
+                timeout: 30000,
+            });
+            const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+            const views = parseInsightArrayValue(rows, 'views');
+            const interactions = parseInsightArrayValue(rows, 'likes') +
+                parseInsightArrayValue(rows, 'replies') +
+                parseInsightArrayValue(rows, 'reposts') +
+                parseInsightArrayValue(rows, 'quotes');
+            return { views, interactions };
+        }
+        catch {
+            return { views: 0, interactions: 0 };
+        }
+    });
+};
 const fetchRecentInstagramMedia = async (instagramAccount, cutoffMs) => {
     const accountId = instagramAccount.accountId?.trim();
     const accessToken = instagramAccount.accessToken?.trim();
@@ -449,6 +588,35 @@ const fetchRecentInstagramMedia = async (instagramAccount, cutoffMs) => {
     }
     catch (error) {
         console.warn('[socialLive] direct Instagram media fetch failed', error);
+        return [];
+    }
+};
+const fetchRecentThreadsMedia = async (threadsAccount, cutoffMs) => {
+    const accountId = threadsAccount.accountId?.trim();
+    const accessToken = threadsAccount.accessToken?.trim();
+    if (!accountId || !accessToken)
+        return [];
+    try {
+        const response = await axios.get(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/${accountId}/threads`, {
+            params: {
+                fields: 'id,timestamp',
+                limit: MAX_POSTS_PER_PLATFORM,
+                access_token: accessToken,
+            },
+            timeout: 30000,
+        });
+        return (Array.isArray(response.data?.data) ? response.data.data : [])
+            .map((thread) => {
+            const remoteId = String(thread?.id ?? '').trim();
+            const postedAtMs = Date.parse(String(thread?.timestamp ?? ''));
+            if (!remoteId || !Number.isFinite(postedAtMs) || postedAtMs < cutoffMs)
+                return null;
+            return asPostedRow('threads', remoteId, postedAtMs);
+        })
+            .filter((post) => Boolean(post));
+    }
+    catch (error) {
+        console.warn('[socialLive] direct Threads timeline fetch failed', error);
         return [];
     }
 };
@@ -526,51 +694,51 @@ export async function getLiveSocialMetrics(userId, options) {
     const lookbackDays = Math.max(Math.ceil(lookbackHours / 24) + 1, 2);
     const minDate = new Date(cutoffMs).toISOString().slice(0, 10);
     try {
-        const [userDoc, recentPosted, outbound, webTrafficCandidates] = await Promise.all([
-            firestore
-                .collection('users')
-                .doc(userId)
-                .get()
-                .catch(error => {
-                console.warn('[socialLive] firestore user fetch failed', error);
-                return null;
-            }),
+        const ownerContext = await resolveLiveMetricOwners(userId, options?.scope);
+        const ownerIds = ownerContext.ownerIds;
+        const [recentPosted, outbound, webTrafficCandidates] = await Promise.all([
             (async () => {
                 const scheduledRows = [];
-                try {
-                    const postsSnap = await firestore.collection('scheduledPosts').where('userId', '==', userId).limit(500).get();
-                    scheduledRows.push(...postsSnap.docs
-                        .map(doc => doc.data())
-                        .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs));
-                }
-                catch (error) {
-                    console.warn('[socialLive] firestore scheduled posts fetch failed', error);
-                }
+                await Promise.all(ownerIds.map(async (ownerId) => {
+                    try {
+                        const postsSnap = await firestore.collection('scheduledPosts').where('userId', '==', ownerId).limit(500).get();
+                        scheduledRows.push(...postsSnap.docs
+                            .map(doc => doc.data())
+                            .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs));
+                    }
+                    catch (error) {
+                        console.warn('[socialLive] firestore scheduled posts fetch failed', { userId: ownerId, error });
+                    }
+                }));
                 let fallbackRows = [];
-                try {
-                    const fallbackPosts = await supabaseFallbackService.getPostsByUser(userId, 500);
-                    fallbackRows = fallbackPosts
-                        .map(post => post)
-                        .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
-                }
-                catch (error) {
-                    console.warn('[socialLive] supabase scheduled posts fetch failed', error);
-                }
+                await Promise.all(ownerIds.map(async (ownerId) => {
+                    try {
+                        const fallbackPosts = await supabaseFallbackService.getPostsByUser(ownerId, 500);
+                        fallbackRows.push(...fallbackPosts
+                            .map(post => post)
+                            .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs));
+                    }
+                    catch (error) {
+                        console.warn('[socialLive] supabase scheduled posts fetch failed', { userId: ownerId, error });
+                    }
+                }));
                 let fallbackLogRows = [];
-                try {
-                    fallbackLogRows = (await supabaseFallbackService.getSocialLogsByUser(userId, 500))
-                        .map(entry => normalizeSocialLogPost({
-                        platform: entry.platform,
-                        status: entry.status,
-                        responseId: entry.responseId,
-                        postedAt: entry.postedAt,
-                    }))
-                        .filter((post) => Boolean(post))
-                        .filter(post => toMillis(post.postedAt) >= cutoffMs);
-                }
-                catch (error) {
-                    console.warn('[socialLive] supabase social log fetch failed', error);
-                }
+                await Promise.all(ownerIds.map(async (ownerId) => {
+                    try {
+                        fallbackLogRows.push(...(await supabaseFallbackService.getSocialLogsByUser(ownerId, 500))
+                            .map(entry => normalizeSocialLogPost({
+                            platform: entry.platform,
+                            status: entry.status,
+                            responseId: entry.responseId,
+                            postedAt: entry.postedAt,
+                        }))
+                            .filter((post) => Boolean(post))
+                            .filter(post => toMillis(post.postedAt) >= cutoffMs));
+                    }
+                    catch (error) {
+                        console.warn('[socialLive] supabase social log fetch failed', { userId: ownerId, error });
+                    }
+                }));
                 return mergePostedRows(scheduledRows, fallbackRows, fallbackLogRows);
             })(),
             getOutboundStats(options?.scope ?? { userId }),
@@ -596,19 +764,26 @@ export async function getLiveSocialMetrics(userId, options) {
                 catch (error) {
                     console.warn('[socialLive] firestore web traffic daily fetch failed', error);
                 }
-                const fallbackRows = await supabaseFallbackService.getMetricDailyRows('webTraffic', { scopeId: key }, lookbackDays, minDate);
-                const rows = fallbackRows.map(row => ({
-                    date: row.date,
-                    visitors: toNumber(row.counters?.visitors),
-                    interactions: toNumber(row.counters?.interactions),
-                    redirectClicks: toNumber(row.counters?.redirectClicks),
-                    sourceRedirectClicks: row.counters?.sourceRedirectClicks ?? {},
-                }));
-                return { key, rows };
+                try {
+                    const fallbackRows = await supabaseFallbackService.getMetricDailyRows('webTraffic', { scopeId: key }, lookbackDays, minDate);
+                    const rows = fallbackRows.map(row => ({
+                        date: row.date,
+                        visitors: toNumber(row.counters?.visitors),
+                        interactions: toNumber(row.counters?.interactions),
+                        redirectClicks: toNumber(row.counters?.redirectClicks),
+                        sourceRedirectClicks: row.counters?.sourceRedirectClicks ?? {},
+                    }));
+                    return { key, rows };
+                }
+                catch (error) {
+                    console.warn('[socialLive] supabase web traffic fetch failed', { scopeId: key, error });
+                    return { key, rows: [] };
+                }
             })),
         ]);
-        const userData = userDoc?.data();
-        const accounts = buildWithDefaults(userData, userId);
+        const userData = ownerContext.userProfile;
+        const primaryOwnerId = userData?.id ?? ownerIds[0] ?? userId;
+        const accounts = buildWithDefaults(userData, primaryOwnerId);
         if (isBwinScopeRequest(options?.scope, userId)) {
             if (!accounts.facebook?.accessToken && process.env.BWIN_FACEBOOK_PAGE_TOKEN && process.env.BWIN_FACEBOOK_PAGE_ID) {
                 accounts.facebook = {
@@ -637,6 +812,13 @@ export async function getLiveSocialMetrics(userId, options) {
             const hasInstagramRows = metricPostedRows.some(post => ['instagram', 'instagram_reels', 'instagram_story'].includes(post.platform));
             if (!hasInstagramRows) {
                 const directRows = await fetchRecentInstagramMedia(accounts.instagram, cutoffMs);
+                metricPostedRows = mergePostedRows(metricPostedRows, directRows);
+            }
+        }
+        if (accounts.threads?.accessToken && accounts.threads?.accountId) {
+            const hasThreadsRows = metricPostedRows.some(post => post.platform === 'threads');
+            if (!hasThreadsRows) {
+                const directRows = await fetchRecentThreadsMedia(accounts.threads, cutoffMs);
                 metricPostedRows = mergePostedRows(metricPostedRows, directRows);
             }
         }
@@ -710,7 +892,7 @@ export async function getLiveSocialMetrics(userId, options) {
             output.platforms.instagram.engagementRate = formatRate(output.platforms.instagram.interactions, output.platforms.instagram.views);
         }
         if (accounts.threads?.accessToken && threadsIds.length > 0) {
-            const rows = await Promise.all(threadsIds.map(id => fetchInstagramMetric(id, accounts.threads?.accessToken ?? '')));
+            const rows = await Promise.all(threadsIds.map(id => fetchThreadsMetric(id, accounts.threads?.accessToken ?? '')));
             output.platforms.threads.views = sum(rows.map(row => row.views));
             output.platforms.threads.interactions = sum(rows.map(row => row.interactions));
             output.platforms.threads.engagementRate = formatRate(output.platforms.threads.interactions, output.platforms.threads.views);
