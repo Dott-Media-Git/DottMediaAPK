@@ -5497,18 +5497,27 @@ export class AutoPostService {
         const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
         const bucket = process.env.CLIENT_CAMPAIGN_BUCKET?.trim() || 'dott-campaign';
         if (supabaseUrl && serviceRoleKey) {
-            const objectPath = `client-autopost/${profileKey}/${new Date().toISOString().slice(0, 10)}/${format}-${Date.now()}-${crypto.randomUUID()}.jpg`;
-            await axios.post(`${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`, buffer, {
-                headers: {
-                    Authorization: `Bearer ${serviceRoleKey}`,
-                    apikey: serviceRoleKey,
-                    'Content-Type': 'image/jpeg',
-                    'x-upsert': 'true',
-                },
-                maxBodyLength: Infinity,
-                timeout: 30000,
-            });
-            return `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+            try {
+                const objectPath = `client-autopost/${profileKey}/${new Date().toISOString().slice(0, 10)}/${format}-${Date.now()}-${crypto.randomUUID()}.jpg`;
+                await axios.post(`${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`, buffer, {
+                    headers: {
+                        Authorization: `Bearer ${serviceRoleKey}`,
+                        apikey: serviceRoleKey,
+                        'Content-Type': 'image/jpeg',
+                        'x-upsert': 'true',
+                    },
+                    maxBodyLength: Infinity,
+                    timeout: 12000,
+                });
+                return `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+            }
+            catch (error) {
+                console.warn('[autopost] client fallback image upload failed; using local media fallback', {
+                    profile: profileKey,
+                    format,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
         }
         return saveGeneratedImageBuffer(buffer, 'jpg');
     }
