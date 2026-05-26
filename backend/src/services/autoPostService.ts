@@ -4604,6 +4604,7 @@ export class AutoPostService {
     let usedStaysphereListingKey: string | null = null;
     let gamersSteamCaption: string | null = null;
     let usedGamersSteamKey: string | null = null;
+    let clientInstagramSourceImageUrls: string[] = [];
 
     if (clientPhotoProfile?.key === 'carmarketplace' && !isStoryRun && needsImages) {
       try {
@@ -4618,6 +4619,7 @@ export class AutoPostService {
         );
         const vehicle = await pickCarmarketVehicle({ recentStockNos });
         const vehicleImages = vehicle.images.slice(0, 10);
+        clientInstagramSourceImageUrls = vehicleImages.slice(0, 5);
         const coverImageUrl = await renderCarmarketCoverImage(vehicle).catch(error => {
           console.warn('[autopost] Carmarket cover image render failed; skipping vehicle listing to avoid raw cover', {
             userId,
@@ -4663,6 +4665,7 @@ export class AutoPostService {
           recentListingKeysOrdered,
         });
         const listingImages = listing.images.slice(0, isStoryRun ? 1 : 5);
+        clientInstagramSourceImageUrls = listingImages.slice(0, isStoryRun ? 1 : 5);
         const coverImageUrl = await renderStaysphereCoverImage(
           listing,
           listingImages[0],
@@ -4925,9 +4928,14 @@ export class AutoPostService {
       }
 
       try {
+        const hasLocalGeneratedImages = imageUrls.some(url => /\/public\/generated-media\//i.test(url));
         const publishImageUrls =
           videoUrl
             ? []
+            : hasLocalGeneratedImages &&
+                clientInstagramSourceImageUrls.length &&
+                (platform === 'instagram' || platform === 'instagram_story')
+              ? clientInstagramSourceImageUrls
             : clientPhotoProfile?.key === 'staysphere' && platform === 'facebook'
               ? imageUrls.slice(0, 1)
               : imageUrls;

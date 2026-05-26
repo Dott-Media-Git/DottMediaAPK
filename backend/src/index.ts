@@ -267,7 +267,7 @@ app.post('/api/autopost/complianceCheck', async (req, res, next) => {
     }
 
     const result = await autopostComplianceService.checkAndRepair('manual_endpoint');
-    res.json({ ok: true, ...result });
+    res.json({ ...result, ok: true });
   } catch (error) {
     next(error);
   }

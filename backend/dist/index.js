@@ -44,7 +44,6 @@ import stripeRoutes from './routes/stripeRoutes.js';
 import { requireFirebase } from './middleware/firebaseAuth.js';
 import { autoPostService } from './services/autoPostService.js';
 import { autopostComplianceService } from './services/autopostComplianceService.js';
-import { firestore } from './db/firestore.js';
 import { ensureGeneratedMediaRoot } from './services/generatedMediaService.js';
 import { ensureSupabaseFallbackSchema } from './services/supabaseSchemaService.js';
 import { backfillSupabaseFallback } from './services/supabaseBackfillService.js';
@@ -240,7 +239,7 @@ app.post('/api/autopost/complianceCheck', async (req, res, next) => {
             return res.status(401).json({ message: 'Invalid token' });
         }
         const result = await autopostComplianceService.checkAndRepair('manual_endpoint');
-        res.json({ ok: true, ...result });
+        res.json({ ...result, ok: true });
     }
     catch (error) {
         next(error);
@@ -257,7 +256,7 @@ app.post('/api/autopost/runBwinNewsNow', async (req, res, next) => {
             return res.status(401).json({ message: 'Invalid token' });
         }
         const uid = '1zvY9nNyXMcfxdPQEyx0bIdK7r53';
-        const job = (await autoPostService.loadAutopostJob(uid)) ?? {};
+        const job = ((await autoPostService.loadAutopostJob(uid)) ?? {});
         const requestedPlatforms = Array.isArray(req.body?.platforms) ? req.body.platforms : null;
         const trendPlatforms = requestedPlatforms?.length
             ? requestedPlatforms.filter((platform) => typeof platform === 'string' && platform.trim())

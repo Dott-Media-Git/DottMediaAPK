@@ -4100,6 +4100,7 @@ export class AutoPostService {
         let usedStaysphereListingKey = null;
         let gamersSteamCaption = null;
         let usedGamersSteamKey = null;
+        let clientInstagramSourceImageUrls = [];
         if (clientPhotoProfile?.key === 'carmarketplace' && !isStoryRun && needsImages) {
             try {
                 const recentStockNos = new Set([...recentImages, ...recentCaptions]
@@ -4112,6 +4113,7 @@ export class AutoPostService {
                     .filter((value) => Boolean(value)));
                 const vehicle = await pickCarmarketVehicle({ recentStockNos });
                 const vehicleImages = vehicle.images.slice(0, 10);
+                clientInstagramSourceImageUrls = vehicleImages.slice(0, 5);
                 const coverImageUrl = await renderCarmarketCoverImage(vehicle).catch(error => {
                     console.warn('[autopost] Carmarket cover image render failed; skipping vehicle listing to avoid raw cover', {
                         userId,
@@ -4156,6 +4158,7 @@ export class AutoPostService {
                     recentListingKeysOrdered,
                 });
                 const listingImages = listing.images.slice(0, isStoryRun ? 1 : 5);
+                clientInstagramSourceImageUrls = listingImages.slice(0, isStoryRun ? 1 : 5);
                 const coverImageUrl = await renderStaysphereCoverImage(listing, listingImages[0], isStoryRun ? 'story' : 'feed').catch(error => {
                     console.warn('[autopost] Staysphere cover image render failed; using raw listing cover', {
                         userId,
@@ -4230,9 +4233,9 @@ export class AutoPostService {
             const failed = [
                 ...missingCredentialFailures,
                 ...publishPlatforms.map(platform => ({
-                platform,
-                status: 'failed',
-                error: 'staysphere_listing_source_unavailable',
+                    platform,
+                    status: 'failed',
+                    error: 'staysphere_listing_source_unavailable',
                 })),
             ];
             try {
@@ -4269,9 +4272,9 @@ export class AutoPostService {
             const failed = [
                 ...missingCredentialFailures,
                 ...publishPlatforms.map(platform => ({
-                platform,
-                status: 'failed',
-                error: 'ai_image_generation_failed',
+                    platform,
+                    status: 'failed',
+                    error: 'ai_image_generation_failed',
                 })),
             ];
             try {
@@ -4383,11 +4386,16 @@ export class AutoPostService {
                 continue;
             }
             try {
+                const hasLocalGeneratedImages = imageUrls.some(url => /\/public\/generated-media\//i.test(url));
                 const publishImageUrls = videoUrl
                     ? []
-                    : clientPhotoProfile?.key === 'staysphere' && platform === 'facebook'
-                        ? imageUrls.slice(0, 1)
-                        : imageUrls;
+                    : hasLocalGeneratedImages &&
+                        clientInstagramSourceImageUrls.length &&
+                        (platform === 'instagram' || platform === 'instagram_story')
+                        ? clientInstagramSourceImageUrls
+                        : clientPhotoProfile?.key === 'staysphere' && platform === 'facebook'
+                            ? imageUrls.slice(0, 1)
+                            : imageUrls;
                 const response = await publisher({
                     caption,
                     imageUrls: publishImageUrls,

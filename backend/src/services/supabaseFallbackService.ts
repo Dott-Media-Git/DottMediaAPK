@@ -1,6 +1,6 @@
 import admin from 'firebase-admin';
 import axios, { type AxiosRequestConfig, type Method } from 'axios';
-import { Pool } from 'pg';
+import { Pool, type QueryResultRow } from 'pg';
 import dns from 'dns';
 import { resolveAnalyticsScopeKey, type AnalyticsScope } from './analyticsScope';
 
@@ -214,7 +214,7 @@ class SupabaseFallbackService {
     return Boolean(pgPool);
   }
 
-  private async databaseQuery<T = any>(sql: string, values: unknown[] = []) {
+  private async databaseQuery<T extends QueryResultRow = QueryResultRow>(sql: string, values: unknown[] = []) {
     if (!pgPool) throw new Error('supabase_database_not_configured');
     if (Date.now() < this.databaseCircuitOpenUntil) {
       throw new Error(`supabase_database_circuit_open retry_after_ms=${this.databaseCircuitOpenUntil - Date.now()}`);
