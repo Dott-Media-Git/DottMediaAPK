@@ -243,6 +243,12 @@ const mergePostedRows = (...sources) => {
     });
     return Array.from(merged.values());
 };
+const asPostedRow = (platform, remoteId, postedAtMs) => ({
+    platform,
+    status: 'posted',
+    remoteId,
+    postedAt: { seconds: Math.floor(postedAtMs / 1000) },
+});
 const normalizeSocialLogPost = (entry) => {
     const platform = String(entry.platform ?? '').trim();
     const status = String(entry.status ?? '').trim().toLowerCase();
@@ -336,6 +342,35 @@ const fetchFacebookMetric = async (postId, facebookAccount) => {
         }
     });
 };
+const fetchRecentFacebookPosts = async (facebookAccount, cutoffMs) => {
+    const pageId = facebookAccount.pageId?.trim();
+    const accessToken = facebookAccount.accessToken?.trim();
+    if (!pageId || !accessToken)
+        return [];
+    try {
+        const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/posts`, {
+            params: {
+                fields: 'id,created_time',
+                limit: MAX_POSTS_PER_PLATFORM,
+                access_token: accessToken,
+            },
+            timeout: 30000,
+        });
+        return (Array.isArray(response.data?.data) ? response.data.data : [])
+            .map((post) => {
+            const remoteId = String(post?.id ?? '').trim();
+            const postedAtMs = Date.parse(String(post?.created_time ?? ''));
+            if (!remoteId || !Number.isFinite(postedAtMs) || postedAtMs < cutoffMs)
+                return null;
+            return asPostedRow('facebook', remoteId, postedAtMs);
+        })
+            .filter((post) => Boolean(post));
+    }
+    catch (error) {
+        console.warn('[socialLive] direct Facebook timeline fetch failed', error);
+        return [];
+    }
+};
 const fetchInstagramMetric = async (mediaId, accessToken) => {
     return withPostMetricCache(`instagram:${mediaId}`, async () => {
         try {
@@ -381,6 +416,41 @@ const fetchInstagramMetric = async (mediaId, accessToken) => {
             return { views: 0, interactions: 0 };
         }
     });
+};
+const fetchRecentInstagramMedia = async (instagramAccount, cutoffMs) => {
+    const accountId = instagramAccount.accountId?.trim();
+    const accessToken = instagramAccount.accessToken?.trim();
+    if (!accountId || !accessToken)
+        return [];
+    try {
+        const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${accountId}/media`, {
+            params: {
+                fields: 'id,timestamp,media_product_type',
+                limit: MAX_POSTS_PER_PLATFORM,
+                access_token: accessToken,
+            },
+            timeout: 30000,
+        });
+        return (Array.isArray(response.data?.data) ? response.data.data : [])
+            .map((media) => {
+            const remoteId = String(media?.id ?? '').trim();
+            const postedAtMs = Date.parse(String(media?.timestamp ?? ''));
+            if (!remoteId || !Number.isFinite(postedAtMs) || postedAtMs < cutoffMs)
+                return null;
+            const product = String(media?.media_product_type ?? '').toLowerCase();
+            const platform = product.includes('story')
+                ? 'instagram_story'
+                : product.includes('reels')
+                    ? 'instagram_reels'
+                    : 'instagram';
+            return asPostedRow(platform, remoteId, postedAtMs);
+        })
+            .filter((post) => Boolean(post));
+    }
+    catch (error) {
+        console.warn('[socialLive] direct Instagram media fetch failed', error);
+        return [];
+    }
 };
 const fetchXMetric = async (tweetId, credentials) => {
     return withPostMetricCache(`x:${tweetId}`, async () => {
@@ -476,19 +546,31 @@ export async function getLiveSocialMetrics(userId, options) {
                 catch (error) {
                     console.warn('[socialLive] firestore scheduled posts fetch failed', error);
                 }
-                const fallbackPosts = await supabaseFallbackService.getPostsByUser(userId, 500);
-                const fallbackRows = fallbackPosts
-                    .map(post => post)
-                    .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
-                const fallbackLogRows = (await supabaseFallbackService.getSocialLogsByUser(userId, 500))
-                    .map(entry => normalizeSocialLogPost({
-                    platform: entry.platform,
-                    status: entry.status,
-                    responseId: entry.responseId,
-                    postedAt: entry.postedAt,
-                }))
-                    .filter((post) => Boolean(post))
-                    .filter(post => toMillis(post.postedAt) >= cutoffMs);
+                let fallbackRows = [];
+                try {
+                    const fallbackPosts = await supabaseFallbackService.getPostsByUser(userId, 500);
+                    fallbackRows = fallbackPosts
+                        .map(post => post)
+                        .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
+                }
+                catch (error) {
+                    console.warn('[socialLive] supabase scheduled posts fetch failed', error);
+                }
+                let fallbackLogRows = [];
+                try {
+                    fallbackLogRows = (await supabaseFallbackService.getSocialLogsByUser(userId, 500))
+                        .map(entry => normalizeSocialLogPost({
+                        platform: entry.platform,
+                        status: entry.status,
+                        responseId: entry.responseId,
+                        postedAt: entry.postedAt,
+                    }))
+                        .filter((post) => Boolean(post))
+                        .filter(post => toMillis(post.postedAt) >= cutoffMs);
+                }
+                catch (error) {
+                    console.warn('[socialLive] supabase social log fetch failed', error);
+                }
                 return mergePostedRows(scheduledRows, fallbackRows, fallbackLogRows);
             })(),
             getOutboundStats(options?.scope ?? { userId }),
@@ -543,10 +625,25 @@ export async function getLiveSocialMetrics(userId, options) {
                 };
             }
         }
-        const facebookIds = collectRemoteIds(recentPosted, ['facebook', 'facebook_story']);
-        const instagramIds = collectRemoteIds(recentPosted, ['instagram', 'instagram_reels', 'instagram_story']);
-        const threadsIds = collectRemoteIds(recentPosted, ['threads']);
-        const xIds = collectRemoteIds(recentPosted, ['x', 'twitter']);
+        let metricPostedRows = recentPosted;
+        if (accounts.facebook?.accessToken && accounts.facebook?.pageId) {
+            const hasFacebookRows = metricPostedRows.some(post => ['facebook', 'facebook_story'].includes(post.platform));
+            if (!hasFacebookRows) {
+                const directRows = await fetchRecentFacebookPosts(accounts.facebook, cutoffMs);
+                metricPostedRows = mergePostedRows(metricPostedRows, directRows);
+            }
+        }
+        if (accounts.instagram?.accessToken && accounts.instagram?.accountId) {
+            const hasInstagramRows = metricPostedRows.some(post => ['instagram', 'instagram_reels', 'instagram_story'].includes(post.platform));
+            if (!hasInstagramRows) {
+                const directRows = await fetchRecentInstagramMedia(accounts.instagram, cutoffMs);
+                metricPostedRows = mergePostedRows(metricPostedRows, directRows);
+            }
+        }
+        const facebookIds = collectRemoteIds(metricPostedRows, ['facebook', 'facebook_story']);
+        const instagramIds = collectRemoteIds(metricPostedRows, ['instagram', 'instagram_reels', 'instagram_story']);
+        const threadsIds = collectRemoteIds(metricPostedRows, ['threads']);
+        const xIds = collectRemoteIds(metricPostedRows, ['x', 'twitter']);
         const sourceRedirectClicks = {};
         const recentWebTrafficRows = pickWebTrafficRows(webTrafficCandidates);
         const webVisitors = sum(recentWebTrafficRows.map(row => toNumber(row.visitors)));

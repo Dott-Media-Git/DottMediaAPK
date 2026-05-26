@@ -12,9 +12,12 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const MAX_POSTS_PER_PLATFORM = Math.max(Number(process.env.LIVE_SOCIAL_MAX_POSTS ?? 20), 5);
 const LOOKBACK_HOURS_DEFAULT = Math.max(Number(process.env.LIVE_SOCIAL_LOOKBACK_HOURS ?? 72), 1);
 const CACHE_TTL_MS = Math.max(Number(process.env.LIVE_SOCIAL_CACHE_MS ?? 120000), 10000);
+const POST_METRIC_CACHE_TTL_MS = Math.max(Number(process.env.LIVE_SOCIAL_POST_CACHE_MS ?? 300000), 30000);
 const FACEBOOK_VIEW_FALLBACK_MULTIPLIER = Math.max(Number(process.env.FACEBOOK_VIEW_FALLBACK_MULTIPLIER ?? 18), 1);
 const INSTAGRAM_VIEW_FALLBACK_MULTIPLIER = Math.max(Number(process.env.INSTAGRAM_VIEW_FALLBACK_MULTIPLIER ?? 15), 1);
 const liveMetricsCache = new Map<string, { expiresAt: number; data: LiveSocialMetrics }>();
+const postMetricCache = new Map<string, { expiresAt: number; data: { views: number; interactions: number } }>();
+const postMetricInFlight = new Map<string, Promise<{ views: number; interactions: number }>>();
 
 type RawTimestamp =
   | { seconds?: number; _seconds?: number; nanoseconds?: number; _nanoseconds?: number; toDate?: () => Date }
@@ -22,6 +25,13 @@ type RawTimestamp =
   | undefined;
 
 type ScheduledPost = {
+  platform: string;
+  status: string;
+  remoteId?: string;
+  postedAt?: RawTimestamp;
+};
+
+type LoggedSocialPost = {
   platform: string;
   status: string;
   remoteId?: string;
@@ -152,6 +162,34 @@ const mergeCounterMap = (target: Record<string, number>, raw: unknown) => {
 const formatRate = (interactions: number, views: number) =>
   views > 0 ? Number(((interactions / views) * 100).toFixed(2)) : 0;
 
+const withPostMetricCache = async (
+  cacheKey: string,
+  loader: () => Promise<{ views: number; interactions: number }>,
+) => {
+  const now = Date.now();
+  const cached = postMetricCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.data;
+  }
+  const inFlight = postMetricInFlight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+  const pending = loader()
+    .then(data => {
+      postMetricCache.set(cacheKey, {
+        expiresAt: Date.now() + POST_METRIC_CACHE_TTL_MS,
+        data,
+      });
+      return data;
+    })
+    .finally(() => {
+      postMetricInFlight.delete(cacheKey);
+    });
+  postMetricInFlight.set(cacheKey, pending);
+  return pending;
+};
+
 const estimateViewsFromInteractions = (platform: 'facebook' | 'instagram', interactions: number) => {
   if (interactions <= 0) return 0;
   const multiplier =
@@ -279,6 +317,53 @@ const collectRemoteIds = (posts: ScheduledPost[], platformNames: string[]) =>
       .slice(0, MAX_POSTS_PER_PLATFORM),
   );
 
+const mergePostedRows = (...sources: ScheduledPost[][]) => {
+  const merged = new Map<string, ScheduledPost>();
+  sources.flat().forEach(post => {
+    const platform = String(post.platform ?? '').trim();
+    const remoteId = String(post.remoteId ?? '').trim();
+    const postedAtMs = toMillis(post.postedAt);
+    if (!platform || !remoteId || !postedAtMs) return;
+    const key = `${platform}:${remoteId}`;
+    const existing = merged.get(key);
+    if (!existing || postedAtMs > toMillis(existing.postedAt)) {
+      merged.set(key, {
+        platform,
+        status: 'posted',
+        remoteId,
+        postedAt: post.postedAt,
+      });
+    }
+  });
+  return Array.from(merged.values());
+};
+
+const asPostedRow = (platform: string, remoteId: string, postedAtMs: number): ScheduledPost => ({
+  platform,
+  status: 'posted',
+  remoteId,
+  postedAt: { seconds: Math.floor(postedAtMs / 1000) },
+});
+
+const normalizeSocialLogPost = (entry: {
+  platform?: unknown;
+  status?: unknown;
+  responseId?: unknown;
+  postedAt?: RawTimestamp;
+}): LoggedSocialPost | null => {
+  const platform = String(entry.platform ?? '').trim();
+  const status = String(entry.status ?? '').trim().toLowerCase();
+  const remoteId = String(entry.responseId ?? '').trim();
+  const postedAtMs = toMillis(entry.postedAt);
+  if (!platform || status !== 'posted' || !remoteId || !postedAtMs) return null;
+  return {
+    platform,
+    status: 'posted',
+    remoteId,
+    postedAt: entry.postedAt,
+  };
+};
+
 const buildWithDefaults = (
   userData: { email?: string | null; socialAccounts?: UserSocialAccounts } | undefined,
   userId?: string,
@@ -313,102 +398,172 @@ const fetchFacebookMetric = async (
   postId: string,
   facebookAccount: NonNullable<UserSocialAccounts['facebook']>,
 ) => {
-  const publishToken = facebookAccount.accessToken ?? '';
-  const metricsToken = facebookAccount.userAccessToken?.trim() || publishToken;
-  if (!publishToken) {
-    return { views: 0, interactions: 0 };
-  }
-  try {
-    const basicFields = postId.includes('_')
-      ? 'id,likes.summary(true),comments.summary(true)'
-      : 'id,likes.summary(true),comments.summary(true),page_story_id';
-    const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${postId}`, {
-      params: {
-        fields: basicFields,
-        access_token: publishToken,
-      },
-      timeout: 30000,
-    });
-
-    const likes = Number(basic.data?.likes?.summary?.total_count ?? 0);
-    const comments = Number(basic.data?.comments?.summary?.total_count ?? 0);
-    let views = 0;
-    let interactions = likes + comments;
-    const analyticsPostId =
-      typeof basic.data?.page_story_id === 'string' && basic.data.page_story_id
-        ? basic.data.page_story_id
-        : postId;
-
+  return withPostMetricCache(`facebook:${facebookAccount.pageId ?? 'page'}:${postId}`, async () => {
+    const publishToken = facebookAccount.accessToken ?? '';
+    const metricsToken = facebookAccount.userAccessToken?.trim() || publishToken;
+    if (!publishToken) {
+      return { views: 0, interactions: 0 };
+    }
     try {
-      const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${analyticsPostId}/insights`, {
+      const basicFields = postId.includes('_')
+        ? 'id,likes.summary(true),comments.summary(true)'
+        : 'id,likes.summary(true),comments.summary(true),page_story_id';
+      const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${postId}`, {
         params: {
-          metric: 'post_impressions,post_impressions_unique,post_engaged_users',
-          access_token: metricsToken,
+          fields: basicFields,
+          access_token: publishToken,
         },
         timeout: 30000,
       });
-      const insightBlock = insights.data;
-      views =
-        parseInsightValue(insightBlock, 'post_impressions') ||
-        parseInsightValue(insightBlock, 'post_impressions_unique');
-      const engagedUsers = parseInsightValue(insightBlock, 'post_engaged_users');
-      if (engagedUsers > 0) interactions = engagedUsers;
-    } catch {
-      // Optional insights can fail if permission is unavailable; keep base metrics.
-    }
 
-    if (views <= 0) {
-      views = estimateViewsFromInteractions('facebook', interactions);
+      const likes = Number(basic.data?.likes?.summary?.total_count ?? 0);
+      const comments = Number(basic.data?.comments?.summary?.total_count ?? 0);
+      let views = 0;
+      let interactions = likes + comments;
+      const analyticsPostId =
+        typeof basic.data?.page_story_id === 'string' && basic.data.page_story_id
+          ? basic.data.page_story_id
+          : postId;
+
+      try {
+        const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${analyticsPostId}/insights`, {
+          params: {
+            metric: 'post_impressions,post_impressions_unique,post_engaged_users',
+            access_token: metricsToken,
+          },
+          timeout: 30000,
+        });
+        const insightBlock = insights.data;
+        views =
+          parseInsightValue(insightBlock, 'post_impressions') ||
+          parseInsightValue(insightBlock, 'post_impressions_unique');
+        const engagedUsers = parseInsightValue(insightBlock, 'post_engaged_users');
+        if (engagedUsers > 0) interactions = engagedUsers;
+      } catch {
+        // Optional insights can fail if permission is unavailable; keep base metrics.
+      }
+
+      if (views <= 0) {
+        views = estimateViewsFromInteractions('facebook', interactions);
+      }
+      return { views, interactions };
+    } catch {
+      return { views: 0, interactions: 0 };
     }
-    return { views, interactions };
-  } catch {
-    return { views: 0, interactions: 0 };
-  }
+  });
 };
 
-const fetchInstagramMetric = async (mediaId: string, accessToken: string) => {
+const fetchRecentFacebookPosts = async (
+  facebookAccount: NonNullable<UserSocialAccounts['facebook']>,
+  cutoffMs: number,
+) => {
+  const pageId = facebookAccount.pageId?.trim();
+  const accessToken = facebookAccount.accessToken?.trim();
+  if (!pageId || !accessToken) return [];
   try {
-    const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
+    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/posts`, {
       params: {
-        fields: 'id,like_count,comments_count,media_type,media_product_type',
+        fields: 'id,created_time',
+        limit: MAX_POSTS_PER_PLATFORM,
         access_token: accessToken,
       },
       timeout: 30000,
     });
+    return (Array.isArray(response.data?.data) ? response.data.data : [])
+      .map((post: any) => {
+        const remoteId = String(post?.id ?? '').trim();
+        const postedAtMs = Date.parse(String(post?.created_time ?? ''));
+        if (!remoteId || !Number.isFinite(postedAtMs) || postedAtMs < cutoffMs) return null;
+        return asPostedRow('facebook', remoteId, postedAtMs);
+      })
+      .filter((post: ScheduledPost | null): post is ScheduledPost => Boolean(post));
+  } catch (error) {
+    console.warn('[socialLive] direct Facebook timeline fetch failed', error);
+    return [];
+  }
+};
 
-    const likes = Number(basic.data?.like_count ?? 0);
-    const comments = Number(basic.data?.comments_count ?? 0);
-    let views = 0;
-    let interactions = likes + comments;
-
+const fetchInstagramMetric = async (mediaId: string, accessToken: string) => {
+  return withPostMetricCache(`instagram:${mediaId}`, async () => {
     try {
-      const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
+      const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
         params: {
-          metric: 'impressions,reach,saved,shares,total_interactions',
+          fields: 'id,like_count,comments_count,media_type,media_product_type',
           access_token: accessToken,
         },
         timeout: 30000,
       });
-      const rows = Array.isArray(insights.data?.data) ? insights.data.data : [];
-      views =
-        parseInsightArrayValue(rows, 'impressions') ||
-        parseInsightArrayValue(rows, 'reach');
-      interactions =
-        parseInsightArrayValue(rows, 'total_interactions') ||
-        likes +
-          comments +
-          parseInsightArrayValue(rows, 'saved') +
-          parseInsightArrayValue(rows, 'shares');
-    } catch {
-      // Optional insights can fail if scope is not available.
-    }
 
-    if (views <= 0) {
-      views = estimateViewsFromInteractions('instagram', interactions);
+      const likes = Number(basic.data?.like_count ?? 0);
+      const comments = Number(basic.data?.comments_count ?? 0);
+      let views = 0;
+      let interactions = likes + comments;
+
+      try {
+        const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
+          params: {
+            metric: 'impressions,reach,saved,shares,total_interactions',
+            access_token: accessToken,
+          },
+          timeout: 30000,
+        });
+        const rows = Array.isArray(insights.data?.data) ? insights.data.data : [];
+        views =
+          parseInsightArrayValue(rows, 'impressions') ||
+          parseInsightArrayValue(rows, 'reach');
+        interactions =
+          parseInsightArrayValue(rows, 'total_interactions') ||
+          likes +
+            comments +
+            parseInsightArrayValue(rows, 'saved') +
+            parseInsightArrayValue(rows, 'shares');
+      } catch {
+        // Optional insights can fail if scope is not available.
+      }
+
+      if (views <= 0) {
+        views = estimateViewsFromInteractions('instagram', interactions);
+      }
+      return { views, interactions };
+    } catch {
+      return { views: 0, interactions: 0 };
     }
-    return { views, interactions };
-  } catch {
-    return { views: 0, interactions: 0 };
+  });
+};
+
+const fetchRecentInstagramMedia = async (
+  instagramAccount: NonNullable<UserSocialAccounts['instagram']>,
+  cutoffMs: number,
+) => {
+  const accountId = instagramAccount.accountId?.trim();
+  const accessToken = instagramAccount.accessToken?.trim();
+  if (!accountId || !accessToken) return [];
+  try {
+    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${accountId}/media`, {
+      params: {
+        fields: 'id,timestamp,media_product_type',
+        limit: MAX_POSTS_PER_PLATFORM,
+        access_token: accessToken,
+      },
+      timeout: 30000,
+    });
+    return (Array.isArray(response.data?.data) ? response.data.data : [])
+      .map((media: any) => {
+        const remoteId = String(media?.id ?? '').trim();
+        const postedAtMs = Date.parse(String(media?.timestamp ?? ''));
+        if (!remoteId || !Number.isFinite(postedAtMs) || postedAtMs < cutoffMs) return null;
+        const product = String(media?.media_product_type ?? '').toLowerCase();
+        const platform = product.includes('story')
+          ? 'instagram_story'
+          : product.includes('reels')
+            ? 'instagram_reels'
+            : 'instagram';
+        return asPostedRow(platform, remoteId, postedAtMs);
+      })
+      .filter((post: ScheduledPost | null): post is ScheduledPost => Boolean(post));
+  } catch (error) {
+    console.warn('[socialLive] direct Instagram media fetch failed', error);
+    return [];
   }
 };
 
@@ -416,30 +571,33 @@ const fetchXMetric = async (
   tweetId: string,
   credentials: { appKey: string; appSecret: string; accessToken: string; accessSecret: string },
 ) => {
-  const client = new TwitterApi(credentials).readWrite;
-  try {
-    const full = await client.v2.singleTweet(tweetId, {
-      'tweet.fields': ['public_metrics', 'non_public_metrics', 'organic_metrics'],
-    });
-    const data = (full as any)?.data;
-    return {
-      views: extractTwitterViews(data),
-      interactions: extractTwitterInteractions(data),
-    };
-  } catch {
+  return withPostMetricCache(`x:${tweetId}`, async () => {
+    const client = new TwitterApi(credentials).readWrite;
     try {
-      const fallback = await client.v2.singleTweet(tweetId, {
-        'tweet.fields': ['public_metrics'],
+      const full = await client.v2.singleTweet(tweetId, {
+        'tweet.fields': ['public_metrics', 'non_public_metrics', 'organic_metrics'],
       });
-      const data = (fallback as any)?.data;
+      const data = (full as any)?.data;
       return {
         views: extractTwitterViews(data),
         interactions: extractTwitterInteractions(data),
       };
-    } catch {
-      return { views: 0, interactions: 0 };
     }
-  }
+    catch {
+      try {
+        const fallback = await client.v2.singleTweet(tweetId, {
+          'tweet.fields': ['public_metrics'],
+        });
+        const data = (fallback as any)?.data;
+        return {
+          views: extractTwitterViews(data),
+          interactions: extractTwitterInteractions(data),
+        };
+      } catch {
+        return { views: 0, interactions: 0 };
+      }
+    }
+  });
 };
 
 const fetchOwnXTimelineMetrics = async (credentials: {
@@ -505,19 +663,46 @@ export async function getLiveSocialMetrics(
           return null;
         }),
       (async () => {
+        const scheduledRows: ScheduledPost[] = [];
         try {
           const postsSnap = await firestore.collection('scheduledPosts').where('userId', '==', userId).limit(500).get();
-          const rows = postsSnap.docs
+          scheduledRows.push(
+            ...postsSnap.docs
             .map(doc => doc.data() as ScheduledPost)
-            .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
-          if (rows.length) return rows;
+            .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs),
+          );
         } catch (error) {
           console.warn('[socialLive] firestore scheduled posts fetch failed', error);
         }
-        const fallbackPosts = await supabaseFallbackService.getPostsByUser(userId, 500);
-        return fallbackPosts
-          .map(post => post as ScheduledPost)
-          .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
+
+        let fallbackRows: ScheduledPost[] = [];
+        try {
+          const fallbackPosts = await supabaseFallbackService.getPostsByUser(userId, 500);
+          fallbackRows = fallbackPosts
+            .map(post => post as ScheduledPost)
+            .filter(post => post.status === 'posted' && toMillis(post.postedAt) >= cutoffMs);
+        } catch (error) {
+          console.warn('[socialLive] supabase scheduled posts fetch failed', error);
+        }
+
+        let fallbackLogRows: LoggedSocialPost[] = [];
+        try {
+          fallbackLogRows = (await supabaseFallbackService.getSocialLogsByUser(userId, 500))
+            .map(entry =>
+              normalizeSocialLogPost({
+                platform: entry.platform,
+                status: entry.status,
+                responseId: entry.responseId,
+                postedAt: entry.postedAt as RawTimestamp,
+              }),
+            )
+            .filter((post): post is LoggedSocialPost => Boolean(post))
+            .filter(post => toMillis(post.postedAt) >= cutoffMs);
+        } catch (error) {
+          console.warn('[socialLive] supabase social log fetch failed', error);
+        }
+
+        return mergePostedRows(scheduledRows, fallbackRows, fallbackLogRows);
       })(),
       getOutboundStats(options?.scope ?? { userId }),
       Promise.all(
@@ -582,10 +767,28 @@ export async function getLiveSocialMetrics(
       }
     }
 
-    const facebookIds = collectRemoteIds(recentPosted, ['facebook', 'facebook_story']);
-    const instagramIds = collectRemoteIds(recentPosted, ['instagram', 'instagram_reels', 'instagram_story']);
-    const threadsIds = collectRemoteIds(recentPosted, ['threads']);
-    const xIds = collectRemoteIds(recentPosted, ['x', 'twitter']);
+    let metricPostedRows = recentPosted;
+    if (accounts.facebook?.accessToken && accounts.facebook?.pageId) {
+      const hasFacebookRows = metricPostedRows.some(post => ['facebook', 'facebook_story'].includes(post.platform));
+      if (!hasFacebookRows) {
+        const directRows = await fetchRecentFacebookPosts(accounts.facebook, cutoffMs);
+        metricPostedRows = mergePostedRows(metricPostedRows, directRows);
+      }
+    }
+    if (accounts.instagram?.accessToken && accounts.instagram?.accountId) {
+      const hasInstagramRows = metricPostedRows.some(post =>
+        ['instagram', 'instagram_reels', 'instagram_story'].includes(post.platform),
+      );
+      if (!hasInstagramRows) {
+        const directRows = await fetchRecentInstagramMedia(accounts.instagram, cutoffMs);
+        metricPostedRows = mergePostedRows(metricPostedRows, directRows);
+      }
+    }
+
+    const facebookIds = collectRemoteIds(metricPostedRows, ['facebook', 'facebook_story']);
+    const instagramIds = collectRemoteIds(metricPostedRows, ['instagram', 'instagram_reels', 'instagram_story']);
+    const threadsIds = collectRemoteIds(metricPostedRows, ['threads']);
+    const xIds = collectRemoteIds(metricPostedRows, ['x', 'twitter']);
     const sourceRedirectClicks: Record<string, number> = {};
     const recentWebTrafficRows = pickWebTrafficRows(webTrafficCandidates);
     const webVisitors = sum(recentWebTrafficRows.map(row => toNumber(row.visitors)));
