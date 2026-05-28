@@ -6,7 +6,7 @@ import { colors } from '@constants/colors';
 
 import { useAuth } from '@context/AuthContext';
 import { isFirebaseEnabled, realtimeDb } from '@services/firebase';
-import { fetchSocialStatus, saveSocialCredentials, type SocialConnectionStatus } from '@services/social';
+import { fetchSocialStatus, fetchThreadsConnectUrl, saveSocialCredentials, type SocialConnectionStatus } from '@services/social';
 import { useI18n } from '@context/I18nContext';
 import {
   fetchYouTubeConfig,
@@ -30,14 +30,15 @@ import {
   type TikTokStatus
 } from '@services/tiktokIntegration';
 
-type ManualPlatform = 'facebook' | 'linkedin' | 'instagram' | 'twitter';
+type ManualPlatform = 'facebook' | 'linkedin' | 'instagram' | 'threads' | 'twitter';
 type PlatformKey = ManualPlatform | 'tiktok' | 'youtube';
 
-const PLATFORM_ORDER: PlatformKey[] = ['facebook', 'linkedin', 'instagram', 'twitter', 'tiktok', 'youtube'];
+const PLATFORM_ORDER: PlatformKey[] = ['facebook', 'linkedin', 'instagram', 'threads', 'twitter', 'tiktok', 'youtube'];
 const PLATFORM_LABELS: Record<PlatformKey, string> = {
   facebook: 'Facebook',
   linkedin: 'LinkedIn',
   instagram: 'Instagram',
+  threads: 'Threads',
   twitter: 'X / Twitter',
   tiktok: 'TikTok',
   youtube: 'YouTube'
@@ -56,6 +57,10 @@ const MANUAL_FIELDS: Record<ManualPlatform, Array<{ key: string; label: string; 
     { key: 'accessToken', label: 'Access token', placeholder: 'Paste Instagram access token' },
     { key: 'accountId', label: 'Account ID', placeholder: 'Paste Instagram account ID' }
   ],
+  threads: [
+    { key: 'accessToken', label: 'Access token', placeholder: 'Paste Threads access token' },
+    { key: 'accountId', label: 'Account ID', placeholder: 'Paste Threads account ID' }
+  ],
   twitter: [
     { key: 'accessToken', label: 'Access token', placeholder: 'Paste X access token' },
     { key: 'accessSecret', label: 'Access secret', placeholder: 'Paste X access secret' }
@@ -66,6 +71,7 @@ const EMPTY_DRAFTS: Record<ManualPlatform, Record<string, string>> = {
   facebook: { accessToken: '', pageId: '' },
   linkedin: { accessToken: '', urn: '' },
   instagram: { accessToken: '', accountId: '' },
+  threads: { accessToken: '', accountId: '' },
   twitter: { accessToken: '', accessSecret: '' }
 };
 
@@ -320,6 +326,25 @@ export const AccountIntegrationsScreen: React.FC = () => {
     }
   };
 
+  const handleThreadsConnect = async () => {
+    try {
+      const response = await fetchThreadsConnectUrl();
+      const url = response?.url;
+      if (!url) {
+        Alert.alert(t('Error'), t('Missing connect URL'));
+        return;
+      }
+      const canOpen = await Linking.canOpenURL(url);
+      if (!canOpen) {
+        Alert.alert(t('Error'), t('Unable to open the Threads connect URL.'));
+        return;
+      }
+      await Linking.openURL(url);
+    } catch (error: any) {
+      Alert.alert(t('Error'), error.message ?? t('Unable to open the Threads connect URL.'));
+    }
+  };
+
   const isManualConnected = (platform: ManualPlatform) => {
     const current = (socialAccounts?.[platform] ?? {}) as Record<string, string>;
     return MANUAL_FIELDS[platform].every(field => Boolean(current[field.key]));
@@ -545,6 +570,35 @@ export const AccountIntegrationsScreen: React.FC = () => {
                         disabled={tiktokLoading}
                       />
                     </View>
+                  ) : platform === 'threads' ? (
+                    <>
+                      <View style={styles.inlineActions}>
+                        <DMButton
+                          title={t('Connect Threads')}
+                          onPress={handleThreadsConnect}
+                          disabled={isSaving}
+                        />
+                      </View>
+                      {MANUAL_FIELDS[manualPlatform].map(field => (
+                        <View key={field.key} style={styles.fieldBlock}>
+                          <Text style={styles.label}>{field.label}</Text>
+                          <TextInput
+                            value={drafts[manualPlatform]?.[field.key] ?? ''}
+                            onChangeText={value => updateDraft(manualPlatform, field.key, value)}
+                            placeholder={field.placeholder}
+                            placeholderTextColor={colors.subtext}
+                            style={styles.input}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                          />
+                        </View>
+                      ))}
+                      <DMButton
+                        title={isSaving ? t('Saving...') : t('Save manually')}
+                        onPress={() => handleManualSave(manualPlatform)}
+                        disabled={isSaving}
+                      />
+                    </>
                   ) : (
                     <>
                       {MANUAL_FIELDS[manualPlatform].map(field => (

@@ -163,6 +163,10 @@ export const fetchSocialStatus = async (): Promise<{ status: SocialConnectionSta
   return authedFetch('/api/social/status');
 };
 
+export const fetchThreadsConnectUrl = async (): Promise<{ url?: string }> => {
+  return authedFetch('/api/social/threads/connect-url');
+};
+
 export const saveSocialCredentials = async (userId: string, credentials: any) => {
   const body = JSON.stringify({ userId, credentials });
   return authedFetch('/api/social/credentials', { method: 'POST', body });
