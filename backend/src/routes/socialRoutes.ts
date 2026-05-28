@@ -513,10 +513,26 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
       const userDoc = await firestore.collection('users').doc(authUser.uid).get();
       userData = userDoc.data() as { email?: string | null; socialAccounts?: Record<string, any> } | undefined;
     } catch (error) {
-      console.warn('[social-status-route] user lookup failed; using fallback defaults', {
+      console.warn('[social-status-route] user lookup failed; checking fallback social accounts', {
         userId: authUser.uid,
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+    if (!userData?.socialAccounts || Object.keys(userData.socialAccounts).length === 0) {
+      try {
+        const fallback = await supabaseFallbackService.getSocialAccounts(authUser.uid);
+        if (fallback?.socialAccounts) {
+          userData = {
+            email: fallback.email ?? userData?.email ?? null,
+            socialAccounts: fallback.socialAccounts as Record<string, any>,
+          };
+        }
+      } catch (error) {
+        console.warn('[social-status-route] fallback social account lookup failed', {
+          userId: authUser.uid,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     const accounts = userData?.socialAccounts ?? {};
     const allowDefaults = canUsePrimarySocialDefaults(userData, authUser.uid);
