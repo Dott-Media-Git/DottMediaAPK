@@ -331,18 +331,35 @@ const pickEducationBackgroundPath = (topic) => {
   const hash = Array.from(topic.id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
   return candidates[hash % candidates.length].filePath;
 };
+const renderEducationBackground = async (backgroundPath, width, height) => {
+  if (!backgroundPath) {
+    return sharp({
+      create: {
+        width,
+        height,
+        channels: 3,
+        background: { r: 232, g: 247, b: 238 }
+      }
+    }).toBuffer();
+  }
+  const source = sharp(backgroundPath);
+  const metadata = await source.metadata();
+  const sourceWidth = metadata.width ?? width;
+  const sourceHeight = metadata.height ?? height;
+  const cleanCropLeft = Math.round(sourceWidth * 0.46);
+  const cleanCropWidth = Math.max(sourceWidth - cleanCropLeft, Math.round(sourceWidth * 0.42));
+  return sharp(backgroundPath).extract({
+    left: Math.min(cleanCropLeft, sourceWidth - 1),
+    top: 0,
+    width: Math.min(cleanCropWidth, sourceWidth - cleanCropLeft),
+    height: sourceHeight
+  }).resize(width, height, { fit: "cover", position: "center" }).modulate({ brightness: 0.86, saturation: 1.08 }).blur(0.3).toBuffer();
+};
 async function renderDottEnergyEducationCard(topic) {
   const width = 1080;
   const height = 1080;
   const backgroundPath = pickEducationBackgroundPath(topic);
-  const background = backgroundPath ? await sharp(backgroundPath).resize(width, height, { fit: "cover", position: "right" }).modulate({ brightness: 0.86, saturation: 1.08 }).blur(0.3).toBuffer() : await sharp({
-    create: {
-      width,
-      height,
-      channels: 3,
-      background: { r: 232, g: 247, b: 238 }
-    }
-  }).toBuffer();
+  const background = await renderEducationBackground(backgroundPath, width, height);
   const base = Buffer.from(buildEducationCardSvg(topic, width, height));
   const composites = [{ input: base, top: 0, left: 0 }];
   const buffer = await sharp(background).composite(composites).jpeg({ quality: 92, mozjpeg: true }).toBuffer();
