@@ -138,6 +138,64 @@ const fetchThreadsMe = async (accessToken) => {
         username: response.data?.username,
     };
 };
+const loadStoredSocialAccounts = async (userId) => {
+    let userData = {};
+    try {
+        const userDoc = await firestore.collection('users').doc(userId).get();
+        userData = userDoc.data() ?? {};
+    }
+    catch (error) {
+        console.warn('[social] Firestore social account lookup failed; using fallback store', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+    if (!userData.socialAccounts || Object.keys(userData.socialAccounts).length === 0) {
+        try {
+            const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+            if (fallback?.socialAccounts) {
+                userData = {
+                    email: fallback.email ?? userData.email ?? null,
+                    socialAccounts: fallback.socialAccounts,
+                };
+            }
+        }
+        catch (error) {
+            console.warn('[social] fallback social account lookup failed', {
+                userId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+    return userData;
+};
+const persistSocialAccounts = async (userId, payload) => {
+    let firestoreError = null;
+    let fallbackError = null;
+    try {
+        await firestore.collection('users').doc(userId).set({ socialAccounts: payload.socialAccounts }, { merge: true });
+    }
+    catch (error) {
+        firestoreError = error;
+        console.warn('[social] Firestore social account save failed; saving to fallback store', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+    try {
+        await supabaseFallbackService.upsertSocialAccounts(userId, payload);
+    }
+    catch (error) {
+        fallbackError = error;
+        console.warn('[social] fallback social account save failed', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+    if (firestoreError && fallbackError) {
+        throw fallbackError;
+    }
+};
 const mergeAutopostPlatforms = async (userId, platformsToAdd) => {
     const autopostRef = firestore.collection('autopostJobs').doc(userId);
     const autopostSnap = await autopostRef.get();
@@ -468,34 +526,7 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
         const authUser = req.authUser;
         if (!authUser)
             return res.status(401).json({ message: 'Unauthorized' });
-        let userData;
-        try {
-            const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-            userData = userDoc.data();
-        }
-        catch (error) {
-            console.warn('[social-status-route] user lookup failed; checking fallback social accounts', {
-                userId: authUser.uid,
-                error: error instanceof Error ? error.message : String(error),
-            });
-        }
-        if (!userData?.socialAccounts || Object.keys(userData.socialAccounts).length === 0) {
-            try {
-                const fallback = await supabaseFallbackService.getSocialAccounts(authUser.uid);
-                if (fallback?.socialAccounts) {
-                    userData = {
-                        email: fallback.email ?? userData?.email ?? null,
-                        socialAccounts: fallback.socialAccounts,
-                    };
-                }
-            }
-            catch (error) {
-                console.warn('[social-status-route] fallback social account lookup failed', {
-                    userId: authUser.uid,
-                    error: error instanceof Error ? error.message : String(error),
-                });
-            }
-        }
+        const userData = await loadStoredSocialAccounts(authUser.uid);
         const accounts = userData?.socialAccounts ?? {};
         const allowDefaults = canUsePrimarySocialDefaults(userData, authUser.uid);
         let youtube = null;
@@ -572,18 +603,23 @@ router.get('/social/threads/callback', async (req, res) => {
         if (!profile.id) {
             throw new Error('Unable to resolve Threads profile');
         }
-        const userRef = firestore.collection('users').doc(state.userId);
-        const userSnap = await userRef.get();
-        const userData = userSnap.data() ?? {};
+        const userData = await loadStoredSocialAccounts(state.userId);
         const currentAccounts = { ...(userData.socialAccounts ?? {}) };
         currentAccounts.threads = {
             accessToken,
             accountId: profile.id,
             username: profile.username ?? currentAccounts.threads?.username,
         };
-        await userRef.set({ socialAccounts: currentAccounts }, { merge: true });
-        await supabaseFallbackService.upsertSocialAccounts(state.userId, { socialAccounts: currentAccounts });
-        await mergeAutopostPlatforms(state.userId, ['threads']);
+        await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
+        try {
+            await mergeAutopostPlatforms(state.userId, ['threads']);
+        }
+        catch (error) {
+            console.warn('[threads] autopost platform merge failed after successful credential save', {
+                userId: state.userId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
         res
             .status(200)
             .send(renderThreadsCallbackHtml('Threads connected', `Threads${profile.username ? ` (@${profile.username})` : ''} is now connected. You can close this window and return to Dott Media.`));
@@ -782,8 +818,7 @@ router.post('/social/credentials', requireFirebase, async (req, res, next) => {
                 message: 'Threads accountId is required. Connect a Threads profile or provide accountId.',
             });
         }
-        await firestore.collection('users').doc(payload.userId).set({ socialAccounts: payload.credentials }, { merge: true });
-        await supabaseFallbackService.upsertSocialAccounts(payload.userId, { socialAccounts: payload.credentials });
+        await persistSocialAccounts(payload.userId, { socialAccounts: payload.credentials });
         res.json({ success: true });
     }
     catch (error) {

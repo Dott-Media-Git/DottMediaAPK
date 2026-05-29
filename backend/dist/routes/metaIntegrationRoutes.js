@@ -233,6 +233,64 @@ const fetchThreadsMe = async (accessToken) => {
         username: response.data?.username,
     };
 };
+const loadStoredSocialAccounts = async (userId) => {
+    let userData = {};
+    try {
+        const userDoc = await firestore.collection('users').doc(userId).get();
+        userData = userDoc.data() ?? {};
+    }
+    catch (error) {
+        console.warn('[meta] Firestore social account lookup failed; using fallback store', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+    if (!userData.socialAccounts || Object.keys(userData.socialAccounts).length === 0) {
+        try {
+            const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+            if (fallback?.socialAccounts) {
+                userData = {
+                    email: fallback.email ?? userData.email ?? null,
+                    socialAccounts: fallback.socialAccounts,
+                };
+            }
+        }
+        catch (error) {
+            console.warn('[meta] fallback social account lookup failed', {
+                userId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+    return userData;
+};
+const persistSocialAccounts = async (userId, payload) => {
+    let firestoreError = null;
+    let fallbackError = null;
+    try {
+        await firestore.collection('users').doc(userId).set({ socialAccounts: payload.socialAccounts }, { merge: true });
+    }
+    catch (error) {
+        firestoreError = error;
+        console.warn('[meta] Firestore social account save failed; saving to fallback store', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+    try {
+        await supabaseFallbackService.upsertSocialAccounts(userId, payload);
+    }
+    catch (error) {
+        fallbackError = error;
+        console.warn('[meta] fallback social account save failed', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+    if (firestoreError && fallbackError) {
+        throw fallbackError;
+    }
+};
 const mergeAutopostPlatforms = async (userId, platformsToAdd) => {
     const autopostRef = firestore.collection('autopostJobs').doc(userId);
     const autopostSnap = await autopostRef.get();
@@ -369,9 +427,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
         if (!pages.length) {
             throw new Error('No managed Facebook Pages found for this Meta account');
         }
-        const userRef = firestore.collection('users').doc(state.userId);
-        const userSnap = await userRef.get();
-        const userData = userSnap.data() ?? {};
+        const userData = await loadStoredSocialAccounts(state.userId);
         const currentAccounts = { ...(userData.socialAccounts ?? {}) };
         const preferredPageId = String(currentAccounts.facebook?.pageId ?? '').trim();
         const selectedPage = (preferredPageId ? pages.find(page => page.id === preferredPageId) : null) ??
@@ -401,13 +457,20 @@ router.get('/integrations/meta/callback', async (req, res) => {
                 };
             }
         }
-        await userRef.set({ socialAccounts: currentAccounts }, { merge: true });
-        await supabaseFallbackService.upsertSocialAccounts(state.userId, { socialAccounts: currentAccounts });
-        await mergeAutopostPlatforms(state.userId, [
-            'facebook',
-            currentAccounts.instagram?.accountId ? 'instagram' : null,
-            currentAccounts.threads?.accountId ? 'threads' : null,
-        ].filter(Boolean));
+        await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
+        try {
+            await mergeAutopostPlatforms(state.userId, [
+                'facebook',
+                currentAccounts.instagram?.accountId ? 'instagram' : null,
+                currentAccounts.threads?.accountId ? 'threads' : null,
+            ].filter(Boolean));
+        }
+        catch (error) {
+            console.warn('[meta] autopost platform merge failed after successful credential save', {
+                userId: state.userId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
         const connectedChannels = [
             'Facebook',
             currentAccounts.instagram?.accountId ? 'Instagram' : null,
@@ -444,18 +507,23 @@ router.get('/integrations/threads/callback', async (req, res) => {
         if (!profile.id) {
             throw new Error('Unable to resolve Threads profile');
         }
-        const userRef = firestore.collection('users').doc(state.userId);
-        const userSnap = await userRef.get();
-        const userData = userSnap.data() ?? {};
+        const userData = await loadStoredSocialAccounts(state.userId);
         const currentAccounts = { ...(userData.socialAccounts ?? {}) };
         currentAccounts.threads = {
             accessToken,
             accountId: profile.id,
             username: profile.username ?? currentAccounts.threads?.username,
         };
-        await userRef.set({ socialAccounts: currentAccounts }, { merge: true });
-        await supabaseFallbackService.upsertSocialAccounts(state.userId, { socialAccounts: currentAccounts });
-        await mergeAutopostPlatforms(state.userId, ['threads']);
+        await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
+        try {
+            await mergeAutopostPlatforms(state.userId, ['threads']);
+        }
+        catch (error) {
+            console.warn('[threads] autopost platform merge failed after successful credential save', {
+                userId: state.userId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
         res
             .status(200)
             .send(renderCallbackHtml('Threads connected', `Threads${profile.username ? ` (@${profile.username})` : ''} is now connected. You can close this window and return to Dott Media.`));

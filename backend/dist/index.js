@@ -1,460 +1,438 @@
-import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import morgan from 'morgan';
-import createHttpError from 'http-errors';
-import fs from 'fs';
-import path from 'path';
-import { config } from './config.js';
-import automationRoutes from './routes/automationRoutes.js';
-import assistantRoutes from './routes/assistantRoutes.js';
-import analyticsRoutes from './routes/analyticsRoutes.js';
-import whatsappRoutes from './routes/whatsappRoutes.js';
-import facebookRoutes from './routes/facebookRoutes.js';
-import instagramRoutes from './routes/instagramRoutes.js';
-import threadsRoutes from './routes/threadsRoutes.js';
-import linkedinRoutes from './routes/linkedinRoutes.js';
-import widgetRoutes from './routes/widgetRoutes.js';
-import outreachRoutes from './routes/outreachRoutes.js';
-import followUpRoutes from './routes/followUpRoutes.js';
-import schedulerRoutes from './routes/schedulerRoutes.js';
-import offerRoutes from './routes/offerRoutes.js';
-import knowledgeRoutes from './routes/knowledgeRoutes.js';
-import botRoutes from './routes/botRoutes.js';
-import webhookReplyRoutes from './routes/webhookReplyRoutes.js';
-import inboundWebhookRoutes from './routes/inboundWebhookRoutes.js';
-import engagementWebhookRoutes from './routes/engagementWebhookRoutes.js';
-import webWidgetRoutes from './routes/webWidgetRoutes.js';
-import adminRoutes from './routes/adminRoutes.js';
-import contentRoutes from './routes/contentRoutes.js';
-import footballTrendRoutes from './routes/footballTrendRoutes.js';
-import trendRoutes from './routes/trendRoutes.js';
-import socialRoutes from './routes/socialRoutes.js';
-import metaWebhookRoutes from './routes/metaWebhookRoutes.js';
-import metaIntegrationRoutes from './routes/metaIntegrationRoutes.js';
-import authRoutes from './routes/authRoutes.js';
-import youtubeIntegrationRoutes from './routes/youtubeIntegrationRoutes.js';
-import tiktokIntegrationRoutes from './routes/tiktokIntegrationRoutes.js';
-import instagramReelsSoraRoutes from './routes/instagramReelsSoraRoutes.js';
-import publicMediaRoutes from './routes/publicMediaRoutes.js';
-import redirectRoutes from './routes/redirectRoutes.js';
-import mediaRoutes from './routes/mediaRoutes.js';
-import { NotificationDispatcher } from './packages/services/notificationDispatcher.js';
-import stripeRoutes from './routes/stripeRoutes.js';
-import { requireFirebase } from './middleware/firebaseAuth.js';
-import { autoPostService } from './services/autoPostService.js';
-import { autopostComplianceService } from './services/autopostComplianceService.js';
-import { ensureGeneratedMediaRoot } from './services/generatedMediaService.js';
-import { ensureSupabaseFallbackSchema } from './services/supabaseSchemaService.js';
-import { backfillSupabaseFallback } from './services/supabaseBackfillService.js';
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
+import morgan from "morgan";
+import createHttpError from "http-errors";
+import fs from "fs";
+import path from "path";
+import { config } from "./config.js";
+import automationRoutes from "./routes/automationRoutes.js";
+import assistantRoutes from "./routes/assistantRoutes.js";
+import analyticsRoutes from "./routes/analyticsRoutes.js";
+import whatsappRoutes from "./routes/whatsappRoutes.js";
+import facebookRoutes from "./routes/facebookRoutes.js";
+import instagramRoutes from "./routes/instagramRoutes.js";
+import threadsRoutes from "./routes/threadsRoutes.js";
+import linkedinRoutes from "./routes/linkedinRoutes.js";
+import widgetRoutes from "./routes/widgetRoutes.js";
+import outreachRoutes from "./routes/outreachRoutes.js";
+import followUpRoutes from "./routes/followUpRoutes.js";
+import schedulerRoutes from "./routes/schedulerRoutes.js";
+import offerRoutes from "./routes/offerRoutes.js";
+import knowledgeRoutes from "./routes/knowledgeRoutes.js";
+import botRoutes from "./routes/botRoutes.js";
+import webhookReplyRoutes from "./routes/webhookReplyRoutes.js";
+import inboundWebhookRoutes from "./routes/inboundWebhookRoutes.js";
+import engagementWebhookRoutes from "./routes/engagementWebhookRoutes.js";
+import webWidgetRoutes from "./routes/webWidgetRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
+import contentRoutes from "./routes/contentRoutes.js";
+import footballTrendRoutes from "./routes/footballTrendRoutes.js";
+import trendRoutes from "./routes/trendRoutes.js";
+import socialRoutes from "./routes/socialRoutes.js";
+import metaWebhookRoutes from "./routes/metaWebhookRoutes.js";
+import metaIntegrationRoutes from "./routes/metaIntegrationRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
+import youtubeIntegrationRoutes from "./routes/youtubeIntegrationRoutes.js";
+import tiktokIntegrationRoutes from "./routes/tiktokIntegrationRoutes.js";
+import instagramReelsSoraRoutes from "./routes/instagramReelsSoraRoutes.js";
+import publicMediaRoutes from "./routes/publicMediaRoutes.js";
+import redirectRoutes from "./routes/redirectRoutes.js";
+import mediaRoutes from "./routes/mediaRoutes.js";
+import { NotificationDispatcher } from "./packages/services/notificationDispatcher.js";
+import stripeRoutes from "./routes/stripeRoutes.js";
+import { requireFirebase } from "./middleware/firebaseAuth.js";
+import { autoPostService } from "./services/autoPostService.js";
+import { autopostComplianceService } from "./services/autopostComplianceService.js";
+import { ensureGeneratedMediaRoot } from "./services/generatedMediaService.js";
+import { ensureSupabaseFallbackSchema } from "./services/supabaseSchemaService.js";
+import { backfillSupabaseFallback } from "./services/supabaseBackfillService.js";
 const initializeAutomation = async () => {
-    try {
-        await Promise.all([
-            import('./workers/automationWorker.js'),
-            import('./jobs/prospectJob.js'),
-            import('./jobs/followupJob.js'),
-            import('./jobs/autoPostJob.js'),
-            import('./jobs/autopostComplianceJob.js'),
-            import('./jobs/socialQueueJob.js'),
-            import('./jobs/instagramCommentPollJob.js'),
-            import('./jobs/facebookCommentPollJob.js'),
-            import('./jobs/threadsCommentPollJob.js'),
-            import('./workers/youtubeWorker.js'),
-        ]);
-    }
-    catch (error) {
-        console.error('Failed to initialize automation background jobs', error);
-    }
+  try {
+    await Promise.all([
+      import("./workers/automationWorker.js"),
+      import("./jobs/prospectJob.js"),
+      import("./jobs/followupJob.js"),
+      import("./jobs/autoPostJob.js"),
+      import("./jobs/autopostComplianceJob.js"),
+      import("./jobs/socialQueueJob.js"),
+      import("./jobs/instagramCommentPollJob.js"),
+      import("./jobs/facebookCommentPollJob.js"),
+      import("./jobs/threadsCommentPollJob.js"),
+      import("./workers/youtubeWorker.js")
+    ]);
+  } catch (error) {
+    console.error("Failed to initialize automation background jobs", error);
+  }
 };
 if (config.security.allowMockAuth) {
-    console.warn('Skipping automation workers in mock mode');
-}
-else {
-    void initializeAutomation();
+  console.warn("Skipping automation workers in mock mode");
+} else {
+  void initializeAutomation();
 }
 const notificationDispatcher = new NotificationDispatcher();
 if (config.security.allowMockAuth) {
-    console.warn('Skipping NotificationDispatcher in mock mode');
+  console.warn("Skipping NotificationDispatcher in mock mode");
+} else {
+  notificationDispatcher.start();
 }
-else {
-    notificationDispatcher.start();
-}
-void ensureSupabaseFallbackSchema().then(ready => {
-    if (!ready)
-        return;
-    if (process.env.SUPABASE_BACKFILL_ON_STARTUP === 'true') {
-        void backfillSupabaseFallback();
-    }
-    else {
-        console.info('[supabase-backfill] startup backfill disabled; set SUPABASE_BACKFILL_ON_STARTUP=true to run it.');
-    }
+void ensureSupabaseFallbackSchema().then((ready) => {
+  if (!ready) return;
+  if (process.env.SUPABASE_BACKFILL_ON_STARTUP === "true") {
+    void backfillSupabaseFallback();
+  } else {
+    console.info("[supabase-backfill] startup backfill disabled; set SUPABASE_BACKFILL_ON_STARTUP=true to run it.");
+  }
 });
 const app = express();
-const startedAt = new Date().toISOString();
-const footballTrendsEnabled = process.env.FOOTBALL_TRENDS_ENABLED === 'true';
-app.use('/stripe/webhook', express.raw({ type: 'application/json' }), stripeRoutes);
+const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+const footballTrendsEnabled = process.env.FOOTBALL_TRENDS_ENABLED === "true";
+app.use("/stripe/webhook", express.raw({ type: "application/json" }), stripeRoutes);
 app.use(helmet());
-app.use(cors({
-    origin: '*',
-}));
-app.use(express.json({ limit: '1mb' }));
-app.use(morgan('combined'));
+app.use(
+  cors({
+    origin: "*"
+  })
+);
+app.use(express.json({ limit: "1mb" }));
+app.use(morgan("combined"));
 const fallbackDir = process.env.AUTOPOST_FALLBACK_DIR?.trim();
 if (fallbackDir) {
-    const resolved = path.resolve(fallbackDir);
-    if (fs.existsSync(resolved)) {
-        app.use('/public/fallback-images', express.static(resolved));
-        console.info(`[autopost] fallback image directory enabled (${resolved}).`);
-    }
-    else {
-        console.warn(`[autopost] fallback image directory not found (${resolved}).`);
-    }
+  const resolved = path.resolve(fallbackDir);
+  if (fs.existsSync(resolved)) {
+    app.use("/public/fallback-images", express.static(resolved));
+    console.info(`[autopost] fallback image directory enabled (${resolved}).`);
+  } else {
+    console.warn(`[autopost] fallback image directory not found (${resolved}).`);
+  }
 }
-const fallbackVideoDir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim() || './public/fallback-videos';
+const fallbackVideoDir = process.env.AUTOPOST_FALLBACK_VIDEO_DIR?.trim() || "./public/fallback-videos";
 if (fallbackVideoDir) {
-    const resolved = path.resolve(fallbackVideoDir);
-    if (fs.existsSync(resolved)) {
-        app.use('/public/fallback-videos', express.static(resolved));
-        console.info(`[autopost] fallback video directory enabled (${resolved}).`);
-    }
-    else {
-        console.warn(`[autopost] fallback video directory not found (${resolved}).`);
-    }
+  const resolved = path.resolve(fallbackVideoDir);
+  if (fs.existsSync(resolved)) {
+    app.use("/public/fallback-videos", express.static(resolved));
+    console.info(`[autopost] fallback video directory enabled (${resolved}).`);
+  } else {
+    console.warn(`[autopost] fallback video directory not found (${resolved}).`);
+  }
 }
 const generatedMediaRoot = ensureGeneratedMediaRoot();
-app.use('/public/generated-media', express.static(generatedMediaRoot));
-app.get('/healthz', (_req, res) => res.json({ ok: true }));
-app.get('/version', (_req, res) => {
-    res.set({
-        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-        Pragma: 'no-cache',
-        Expires: '0',
-    });
-    res.json({
-        ok: true,
-        startedAt,
-        commit: process.env.RENDER_GIT_COMMIT ??
-            process.env.GIT_COMMIT ??
-            process.env.SOURCE_VERSION ??
-            null,
-        serviceId: process.env.RENDER_SERVICE_ID ?? null,
-        serviceName: process.env.RENDER_SERVICE_NAME ?? null,
-    });
+app.use("/public/generated-media", express.static(generatedMediaRoot));
+app.get("/healthz", (_req, res) => res.json({ ok: true }));
+app.get("/version", (_req, res) => {
+  res.set({
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    Pragma: "no-cache",
+    Expires: "0"
+  });
+  res.json({
+    ok: true,
+    startedAt,
+    commit: process.env.RENDER_GIT_COMMIT ?? process.env.GIT_COMMIT ?? process.env.SOURCE_VERSION ?? null,
+    serviceId: process.env.RENDER_SERVICE_ID ?? null,
+    serviceName: process.env.RENDER_SERVICE_NAME ?? null
+  });
 });
-app.use('/', inboundWebhookRoutes);
-app.use('/', engagementWebhookRoutes);
-app.use('/', metaWebhookRoutes);
-app.use('/', webWidgetRoutes);
-app.use('/', whatsappRoutes);
-app.use('/', facebookRoutes);
-app.use('/', instagramRoutes);
-app.use('/', threadsRoutes);
-app.use('/', linkedinRoutes);
-app.use('/', widgetRoutes);
-app.use('/', botRoutes);
-app.use('/', webhookReplyRoutes);
-app.use('/api', outreachRoutes);
-app.use('/api', followUpRoutes);
-app.use('/api', schedulerRoutes);
-app.use('/api', offerRoutes);
-app.use('/api', knowledgeRoutes);
-app.use('/api', automationRoutes);
-app.use('/api', assistantRoutes);
-app.use('/api', analyticsRoutes);
-app.use('/api', contentRoutes);
-app.use('/api', trendRoutes);
+app.use("/", inboundWebhookRoutes);
+app.use("/", engagementWebhookRoutes);
+app.use("/", metaWebhookRoutes);
+app.use("/", webWidgetRoutes);
+app.use("/", whatsappRoutes);
+app.use("/", facebookRoutes);
+app.use("/", instagramRoutes);
+app.use("/", threadsRoutes);
+app.use("/", linkedinRoutes);
+app.use("/", widgetRoutes);
+app.use("/", botRoutes);
+app.use("/", webhookReplyRoutes);
+app.use("/api", outreachRoutes);
+app.use("/api", followUpRoutes);
+app.use("/api", schedulerRoutes);
+app.use("/api", offerRoutes);
+app.use("/api", knowledgeRoutes);
+app.use("/api", automationRoutes);
+app.use("/api", assistantRoutes);
+app.use("/api", analyticsRoutes);
+app.use("/api", contentRoutes);
+app.use("/api", trendRoutes);
 if (footballTrendsEnabled) {
-    app.use('/api', footballTrendRoutes);
+  app.use("/api", footballTrendRoutes);
+} else {
+  console.info("[football-trends] Routes disabled (set FOOTBALL_TRENDS_ENABLED=true).");
 }
-else {
-    console.info('[football-trends] Routes disabled (set FOOTBALL_TRENDS_ENABLED=true).');
-}
-app.use('/api', socialRoutes);
-app.use('/', metaIntegrationRoutes);
-app.use('/api', authRoutes);
-app.use('/', youtubeIntegrationRoutes);
-app.use('/', tiktokIntegrationRoutes);
-app.use('/', instagramReelsSoraRoutes);
-app.use('/', publicMediaRoutes);
-app.use('/', redirectRoutes);
-app.use('/', mediaRoutes);
-app.use('/', adminRoutes);
-// Direct autopost endpoint to ensure availability (mirrors socialRoutes autopost handler)
-app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
-    try {
-        const authUser = req.authUser;
-        if (!authUser)
-            return res.status(401).json({ message: 'Unauthorized' });
-        const { platforms, prompt, businessType, videoUrl, videoUrls, videoTitle, youtubePrivacyStatus, youtubeVideoUrl, youtubeVideoUrls, youtubeShorts, tiktokVideoUrl, tiktokVideoUrls, instagramReelsVideoUrl, instagramReelsVideoUrls, reelsIntervalHours, } = req.body ?? {};
-        const result = await autoPostService.start({
-            userId: authUser.uid,
-            platforms,
-            prompt,
-            businessType,
-            videoUrl,
-            videoUrls,
-            videoTitle,
-            youtubePrivacyStatus,
-            youtubeVideoUrl,
-            youtubeVideoUrls,
-            youtubeShorts,
-            tiktokVideoUrl,
-            tiktokVideoUrls,
-            instagramReelsVideoUrl,
-            instagramReelsVideoUrls,
-            reelsIntervalHours,
-        });
-        res.json({ ok: true, ...result });
-    }
-    catch (error) {
-        next(error);
-    }
+app.use("/api", socialRoutes);
+app.use("/", metaIntegrationRoutes);
+app.use("/api", authRoutes);
+app.use("/", youtubeIntegrationRoutes);
+app.use("/", tiktokIntegrationRoutes);
+app.use("/", instagramReelsSoraRoutes);
+app.use("/", publicMediaRoutes);
+app.use("/", redirectRoutes);
+app.use("/", mediaRoutes);
+app.use("/", adminRoutes);
+app.post("/api/autopost/runNow", requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = req.authUser;
+    if (!authUser) return res.status(401).json({ message: "Unauthorized" });
+    const {
+      platforms,
+      prompt,
+      businessType,
+      videoUrl,
+      videoUrls,
+      videoTitle,
+      youtubePrivacyStatus,
+      youtubeVideoUrl,
+      youtubeVideoUrls,
+      youtubeShorts,
+      tiktokVideoUrl,
+      tiktokVideoUrls,
+      instagramReelsVideoUrl,
+      instagramReelsVideoUrls,
+      reelsIntervalHours
+    } = req.body ?? {};
+    const result = await autoPostService.start({
+      userId: authUser.uid,
+      platforms,
+      prompt,
+      businessType,
+      videoUrl,
+      videoUrls,
+      videoTitle,
+      youtubePrivacyStatus,
+      youtubeVideoUrl,
+      youtubeVideoUrls,
+      youtubeShorts,
+      tiktokVideoUrl,
+      tiktokVideoUrls,
+      instagramReelsVideoUrl,
+      instagramReelsVideoUrls,
+      reelsIntervalHours
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
 });
-// Manual server-side trigger for due autopost jobs.
-app.post('/api/autopost/runDue', async (req, res, next) => {
-    try {
-        const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
-        const providedToken = req.header('x-autopost-token') ??
-            req.header('x-cron-token') ??
-            req.query.token ??
-            req.body?.token;
-        if (triggerToken && providedToken !== triggerToken) {
-            return res.status(401).json({ message: 'Invalid token' });
-        }
-        const result = await autoPostService.runDueJobs();
-        res.json({ ok: true, ...result });
+app.post("/api/autopost/runDue", async (req, res, next) => {
+  try {
+    const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? "";
+    const providedToken = req.header("x-autopost-token") ?? req.header("x-cron-token") ?? req.query.token ?? req.body?.token;
+    if (triggerToken && providedToken !== triggerToken) {
+      return res.status(401).json({ message: "Invalid token" });
     }
-    catch (error) {
-        next(error);
-    }
+    const result = await autoPostService.runDueJobs();
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
 });
-app.post('/api/autopost/complianceCheck', async (req, res, next) => {
-    try {
-        const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
-        const providedToken = req.header('x-autopost-token') ??
-            req.header('x-cron-token') ??
-            req.query.token ??
-            req.body?.token;
-        if (triggerToken && providedToken !== triggerToken) {
-            return res.status(401).json({ message: 'Invalid token' });
-        }
-        const result = await autopostComplianceService.checkAndRepair('manual_endpoint');
-        res.json({ ...result, ok: true });
+app.post("/api/autopost/complianceCheck", async (req, res, next) => {
+  try {
+    const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? "";
+    const providedToken = req.header("x-autopost-token") ?? req.header("x-cron-token") ?? req.query.token ?? req.body?.token;
+    if (triggerToken && providedToken !== triggerToken) {
+      return res.status(401).json({ message: "Invalid token" });
     }
-    catch (error) {
-        next(error);
-    }
+    const result = await autopostComplianceService.checkAndRepair("manual_endpoint");
+    res.json({ ...result, ok: true });
+  } catch (error) {
+    next(error);
+  }
 });
-app.post('/api/autopost/runBwinNewsNow', async (req, res, next) => {
+app.post("/api/autopost/runBwinNewsNow", async (req, res, next) => {
+  try {
+    const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? "";
+    const providedToken = req.header("x-autopost-token") ?? req.header("x-cron-token") ?? req.query.token ?? req.body?.token;
+    if (triggerToken && providedToken !== triggerToken) {
+      return res.status(401).json({ message: "Invalid token" });
+    }
+    const uid = "1zvY9nNyXMcfxdPQEyx0bIdK7r53";
+    const job = await autoPostService.loadAutopostJob(uid) ?? {};
+    const requestedPlatforms = Array.isArray(req.body?.platforms) ? req.body.platforms : null;
+    const trendPlatforms = requestedPlatforms?.length ? requestedPlatforms.filter((platform) => typeof platform === "string" && platform.trim()) : ["facebook", "instagram", "threads"];
+    let outcome;
     try {
-        const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
-        const providedToken = req.header('x-autopost-token') ??
-            req.header('x-cron-token') ??
-            req.query.token ??
-            req.body?.token;
-        if (triggerToken && providedToken !== triggerToken) {
-            return res.status(401).json({ message: 'Invalid token' });
-        }
-        const uid = '1zvY9nNyXMcfxdPQEyx0bIdK7r53';
-        const job = ((await autoPostService.loadAutopostJob(uid)) ?? {});
-        const requestedPlatforms = Array.isArray(req.body?.platforms) ? req.body.platforms : null;
-        const trendPlatforms = requestedPlatforms?.length
-            ? requestedPlatforms.filter((platform) => typeof platform === 'string' && platform.trim())
-            : ['facebook', 'instagram', 'threads'];
-        let outcome;
-        try {
-            outcome = await autoPostService.executeTrendPosts(uid, {
-                ...job,
-                trendEnabled: true,
-                trendContentType: 'news',
-                trendContentTypes: ['news'],
-                trendContentCycle: ['news'],
-                trendStructuredScheduleEnabled: false,
-                trendPlatforms,
-            });
-        }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            console.warn('[autopost] manual Bwin news trigger failed', error);
-            return res.json({
-                ok: false,
-                posted: 0,
-                failed: [{ platform: 'bwin_news', status: 'failed', error: message }],
-                nextRun: null,
-            });
-        }
-        res.json({
-            ok: true,
-            posted: outcome?.posted ?? 0,
-            failed: Array.isArray(outcome?.failed)
-                ? outcome.failed.map((failure) => ({
-                    platform: failure.platform,
-                    status: failure.status,
-                    error: failure.error,
-                }))
-                : [],
-            nextRun: outcome?.nextRun ?? null,
-        });
+      outcome = await autoPostService.executeTrendPosts(uid, {
+        ...job,
+        trendEnabled: true,
+        trendContentType: "news",
+        trendContentTypes: ["news"],
+        trendContentCycle: ["news"],
+        trendStructuredScheduleEnabled: false,
+        trendPlatforms
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("[autopost] manual Bwin news trigger failed", error);
+      return res.json({
+        ok: false,
+        posted: 0,
+        failed: [{ platform: "bwin_news", status: "failed", error: message }],
+        nextRun: null
+      });
     }
-    catch (error) {
-        next(error);
-    }
+    res.json({
+      ok: true,
+      posted: outcome?.posted ?? 0,
+      failed: Array.isArray(outcome?.failed) ? outcome.failed.map((failure) => ({
+        platform: failure.platform,
+        status: failure.status,
+        error: failure.error
+      })) : [],
+      nextRun: outcome?.nextRun ?? null
+    });
+  } catch (error) {
+    next(error);
+  }
 });
-app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
-    try {
-        const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
-        const providedToken = req.header('x-autopost-token') ??
-            req.header('x-cron-token') ??
-            req.query.token ??
-            req.body?.token;
-        if (triggerToken && providedToken !== triggerToken) {
-            return res.status(401).json({ message: 'Invalid token' });
-        }
-        const allAccounts = [
-            { label: 'Bwin', uid: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', bwin: true },
-            { label: 'Carmarketug', uid: 'acmVetCcOiTHeGk5D7eDYieamDF3', reels: true },
-            { label: 'Staysphere', uid: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2', reels: true },
-            { label: 'Gamers44life', uid: 'vzdH1DnfFLVjlY8bBgC26WACmmw2', reels: true },
-        ];
-        const requestedAccounts = Array.isArray(req.body?.accounts)
-            ? new Set(req.body.accounts
-                .map((value) => String(value ?? '').trim().toLowerCase())
-                .filter(Boolean))
-            : null;
-        const accounts = requestedAccounts
-            ? allAccounts.filter(account => requestedAccounts.has(account.label.toLowerCase()) || requestedAccounts.has(account.uid))
-            : allAccounts;
-        const service = autoPostService;
-        const summarize = (outcome) => ({
-            posted: outcome?.posted ?? 0,
-            failed: Array.isArray(outcome?.failed)
-                ? outcome.failed.map((failure) => ({
-                    platform: failure.platform,
-                    status: failure.status,
-                    error: failure.error,
-                }))
-                : [],
-            nextRun: outcome?.nextRun ?? null,
-        });
-        const runFreshSet = async () => {
-            const results = [];
-            for (const account of accounts) {
-                const job = await service.loadAutopostJob(account.uid);
-                if (!job) {
-                    results.push({ account: account.label, error: 'autopost_job_missing' });
-                    continue;
-                }
-                const result = { account: account.label };
-                if (account.bwin) {
-                    const newsJob = {
-                        ...job,
-                        trendContentType: 'news',
-                        trendContentTypes: ['news'],
-                        trendPlatforms: ['facebook', 'instagram'],
-                        storyPlatforms: ['facebook_story', 'instagram_story'],
-                    };
-                    result.feed = summarize(await service.executeTrendPosts(account.uid, newsJob));
-                    result.stories = summarize(await service.executeTrendStories(account.uid, newsJob));
-                }
-                else {
-                    result.feed = summarize(await service.executeJob(account.uid, job, {
-                        platforms: ['facebook', 'instagram'],
-                        intervalHours: job.intervalHours ?? 1,
-                        nextRunField: 'nextRun',
-                        lastRunField: 'lastRunAt',
-                        resultField: 'lastResult',
-                    }));
-                    result.stories = summarize(await service.executeJob(account.uid, job, {
-                        platforms: Array.isArray(job.storyPlatforms) && job.storyPlatforms.length
-                            ? job.storyPlatforms
-                            : ['facebook_story', 'instagram_story'],
-                        intervalHours: job.storyIntervalHours ?? 1,
-                        nextRunField: 'storyNextRun',
-                        lastRunField: 'storyLastRunAt',
-                        resultField: 'storyLastResult',
-                    }));
-                    if (account.reels) {
-                        result.reels = summarize(await service.executeJob(account.uid, job, {
-                            platforms: ['instagram_reels'],
-                            intervalHours: job.reelsIntervalHours ?? 2,
-                            nextRunField: 'reelsNextRun',
-                            lastRunField: 'reelsLastRunAt',
-                            resultField: 'reelsLastResult',
-                            useGenericVideoFallback: false,
-                        }));
-                    }
-                }
-                results.push(result);
-            }
-            return results;
-        };
-        if (req.body?.background === true) {
-            void runFreshSet()
-                .then(results => console.info('[autopost] runFreshSocialSet background complete', { results }))
-                .catch(error => console.error('[autopost] runFreshSocialSet background failed', error));
-            return res.status(202).json({ ok: true, accepted: true, accounts: accounts.map(account => account.label) });
-        }
-        res.json({ ok: true, results: await runFreshSet() });
+app.post("/api/autopost/runFreshSocialSet", async (req, res, next) => {
+  try {
+    const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? "";
+    const providedToken = req.header("x-autopost-token") ?? req.header("x-cron-token") ?? req.query.token ?? req.body?.token;
+    if (triggerToken && providedToken !== triggerToken) {
+      return res.status(401).json({ message: "Invalid token" });
     }
-    catch (error) {
-        next(error);
+    const allAccounts = [
+      { label: "Bwin", uid: "1zvY9nNyXMcfxdPQEyx0bIdK7r53", bwin: true },
+      { label: "Carmarketug", uid: "acmVetCcOiTHeGk5D7eDYieamDF3", reels: true },
+      { label: "Staysphere", uid: "D1iNgjLKNRaQhH35M0NmGfw1LVD2", reels: true },
+      { label: "Gamers44life", uid: "vzdH1DnfFLVjlY8bBgC26WACmmw2", reels: true },
+      { label: "DottEnergy", uid: "LVR7p3WzdFM51ds92Kacf6S40og2", reels: false }
+    ];
+    const requestedAccounts = Array.isArray(req.body?.accounts) ? new Set(
+      req.body.accounts.map((value) => String(value ?? "").trim().toLowerCase()).filter(Boolean)
+    ) : null;
+    const accounts = requestedAccounts ? allAccounts.filter((account) => requestedAccounts.has(account.label.toLowerCase()) || requestedAccounts.has(account.uid)) : allAccounts;
+    const service = autoPostService;
+    const summarize = (outcome) => ({
+      posted: outcome?.posted ?? 0,
+      failed: Array.isArray(outcome?.failed) ? outcome.failed.map((failure) => ({
+        platform: failure.platform,
+        status: failure.status,
+        error: failure.error
+      })) : [],
+      nextRun: outcome?.nextRun ?? null
+    });
+    const runFreshSet = async () => {
+      const results = [];
+      for (const account of accounts) {
+        const job = await service.loadAutopostJob(account.uid);
+        if (!job) {
+          results.push({ account: account.label, error: "autopost_job_missing" });
+          continue;
+        }
+        const result = { account: account.label };
+        if (account.bwin) {
+          const newsJob = {
+            ...job,
+            trendContentType: "news",
+            trendContentTypes: ["news"],
+            trendPlatforms: ["facebook", "instagram"],
+            storyPlatforms: ["facebook_story", "instagram_story"]
+          };
+          result.feed = summarize(await service.executeTrendPosts(account.uid, newsJob));
+          result.stories = summarize(await service.executeTrendStories(account.uid, newsJob));
+        } else {
+          result.feed = summarize(
+            await service.executeJob(account.uid, job, {
+              platforms: ["facebook", "instagram"],
+              intervalHours: job.intervalHours ?? 1,
+              nextRunField: "nextRun",
+              lastRunField: "lastRunAt",
+              resultField: "lastResult"
+            })
+          );
+          result.stories = summarize(
+            await service.executeJob(account.uid, job, {
+              platforms: Array.isArray(job.storyPlatforms) && job.storyPlatforms.length ? job.storyPlatforms : ["facebook_story", "instagram_story"],
+              intervalHours: job.storyIntervalHours ?? 1,
+              nextRunField: "storyNextRun",
+              lastRunField: "storyLastRunAt",
+              resultField: "storyLastResult"
+            })
+          );
+          if (account.reels) {
+            result.reels = summarize(
+              await service.executeJob(account.uid, job, {
+                platforms: ["instagram_reels"],
+                intervalHours: job.reelsIntervalHours ?? 2,
+                nextRunField: "reelsNextRun",
+                lastRunField: "reelsLastRunAt",
+                resultField: "reelsLastResult",
+                useGenericVideoFallback: false
+              })
+            );
+          }
+        }
+        results.push(result);
+      }
+      return results;
+    };
+    if (req.body?.background === true) {
+      void runFreshSet().then((results) => console.info("[autopost] runFreshSocialSet background complete", { results })).catch((error) => console.error("[autopost] runFreshSocialSet background failed", error));
+      return res.status(202).json({ ok: true, accepted: true, accounts: accounts.map((account) => account.label) });
     }
+    res.json({ ok: true, results: await runFreshSet() });
+  } catch (error) {
+    next(error);
+  }
 });
-// Manual server-side trigger for outbound discovery + messaging.
-app.post('/api/outbound/runNow', async (req, res, next) => {
-    try {
-        const triggerToken = process.env.OUTBOUND_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
-        const providedToken = req.header('x-outbound-token') ??
-            req.header('x-cron-token') ??
-            req.query.token ??
-            req.body?.token;
-        if (triggerToken && providedToken !== triggerToken) {
-            return res.status(401).json({ message: 'Invalid token' });
-        }
-        const requestedUserId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : '';
-        const { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } = await import('./services/outboundTargetingService.js');
-        const { runProspectDiscovery } = await import('./packages/services/prospectFinder/index.js');
-        const { outreachAgent } = await import('./packages/services/outreachAgent/index.js');
-        const target = await resolveOutboundDiscoveryTarget();
-        const limit = resolveDiscoveryLimit();
-        const prospects = await runProspectDiscovery({ industry: target.industry, country: target.country, limit });
-        const outreach = await outreachAgent.runDailyOutreach(prospects, requestedUserId ? { userId: requestedUserId } : undefined);
-        res.json({
-            ok: true,
-            target,
-            discovered: prospects.length,
-            outreach,
-            userId: requestedUserId || null,
-        });
+app.post("/api/outbound/runNow", async (req, res, next) => {
+  try {
+    const triggerToken = process.env.OUTBOUND_RUN_TOKEN ?? process.env.CRON_SECRET ?? "";
+    const providedToken = req.header("x-outbound-token") ?? req.header("x-cron-token") ?? req.query.token ?? req.body?.token;
+    if (triggerToken && providedToken !== triggerToken) {
+      return res.status(401).json({ message: "Invalid token" });
     }
-    catch (error) {
-        next(error);
-    }
+    const requestedUserId = typeof req.body?.userId === "string" ? req.body.userId.trim() : "";
+    const { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } = await import("./services/outboundTargetingService.js");
+    const { runProspectDiscovery } = await import("./packages/services/prospectFinder/index.js");
+    const { outreachAgent } = await import("./packages/services/outreachAgent/index.js");
+    const target = await resolveOutboundDiscoveryTarget();
+    const limit = resolveDiscoveryLimit();
+    const prospects = await runProspectDiscovery({ industry: target.industry, country: target.country, limit });
+    const outreach = await outreachAgent.runDailyOutreach(
+      prospects,
+      requestedUserId ? { userId: requestedUserId } : void 0
+    );
+    res.json({
+      ok: true,
+      target,
+      discovered: prospects.length,
+      outreach,
+      userId: requestedUserId || null
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 app.use((req, _res, next) => {
-    next(createHttpError(404, `Route ${req.path} not found`));
+  next(createHttpError(404, `Route ${req.path} not found`));
 });
 app.use((err, req, res, _next) => {
-    const status = err.status ?? 500;
-    const message = status === 500 ? 'Internal server error' : err.message;
-    const debugEnabled = process.env.DEBUG_ERRORS === 'true';
-    const debugToken = process.env.DEBUG_ERRORS_TOKEN;
-    const debugRequested = ['1', 'true', 'yes'].includes((req.header('x-debug') ?? '').toLowerCase());
-    const debugAuthorized = !debugToken || req.header('x-debug-token') === debugToken;
-    const payload = { message };
-    if (status === 500) {
-        console.error(err);
-        if (debugEnabled && debugRequested && debugAuthorized) {
-            payload.details = err.message ?? 'unknown_error';
-            payload.name = err.name ?? 'Error';
-        }
+  const status = err.status ?? 500;
+  const message = status === 500 ? "Internal server error" : err.message;
+  const debugEnabled = process.env.DEBUG_ERRORS === "true";
+  const debugToken = process.env.DEBUG_ERRORS_TOKEN;
+  const debugRequested = ["1", "true", "yes"].includes((req.header("x-debug") ?? "").toLowerCase());
+  const debugAuthorized = !debugToken || req.header("x-debug-token") === debugToken;
+  const payload = { message };
+  if (status === 500) {
+    console.error(err);
+    if (debugEnabled && debugRequested && debugAuthorized) {
+      payload.details = err.message ?? "unknown_error";
+      payload.name = err.name ?? "Error";
     }
-    res.status(status).json(payload);
+  }
+  res.status(status).json(payload);
 });
-export { app };
-import { fileURLToPath } from 'url';
+import { fileURLToPath } from "url";
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-    app.listen(config.port, () => {
-        console.log(`Dott Media backend running on :${config.port}`);
-    });
+  app.listen(config.port, () => {
+    console.log(`Dott Media backend running on :${config.port}`);
+  });
 }
+export {
+  app
+};
