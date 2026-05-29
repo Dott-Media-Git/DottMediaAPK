@@ -111,6 +111,8 @@ const EDUCATION_TOPICS: DottEnergyEducationTopic[] = [
   },
 ];
 
+const EDUCATION_BACKGROUND_NAMES = ['poster-08.jpg', 'poster-11.jpg', 'poster-03.jpg', 'poster-05.jpg'];
+
 
 type ShopifyProduct = {
   id?: number;
@@ -398,68 +400,76 @@ const buildEducationCardSvg = (topic: DottEnergyEducationTopic, width: number, h
   return `
 <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#eaf7ee"/>
-      <stop offset="0.5" stop-color="#d8f2e4"/>
-      <stop offset="1" stop-color="#d9f3fb"/>
-    </linearGradient>
     <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#06140f"/>
-      <stop offset="1" stop-color="#0b2a23"/>
+      <stop offset="0" stop-color="#03100d" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#092820" stop-opacity="0.86"/>
+    </linearGradient>
+    <linearGradient id="shade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#03100d" stop-opacity="0.78"/>
+      <stop offset="0.64" stop-color="#03100d" stop-opacity="0.48"/>
+      <stop offset="1" stop-color="#03100d" stop-opacity="0.12"/>
     </linearGradient>
   </defs>
-  <rect width="${width}" height="${height}" fill="url(#bg)"/>
-  <circle cx="950" cy="140" r="250" fill="#7ed957" opacity="0.20"/>
-  <circle cx="140" cy="940" r="270" fill="#0097d7" opacity="0.16"/>
-  <path d="M760 125 C920 220 1005 420 930 610 C850 810 650 910 470 840 C630 740 705 610 695 450 C688 335 715 220 760 125Z" fill="#7ed957" opacity="0.18"/>
-  <rect x="70" y="175" width="940" height="820" rx="42" fill="url(#panel)"/>
-  <rect x="70" y="175" width="18" height="820" rx="9" fill="#7ed957"/>
-  <text x="120" y="290" fill="#7ed957" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="58" font-weight="900">DID YOU KNOW?</text>
+  <rect width="${width}" height="${height}" fill="url(#shade)"/>
+  <rect x="58" y="120" width="760" height="930" rx="42" fill="url(#panel)"/>
+  <rect x="58" y="120" width="16" height="930" rx="8" fill="#7ed957"/>
+  <text x="110" y="245" fill="#7ed957" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="56" font-weight="900">DID YOU KNOW?</text>
   ${headlineLines
     .map(
       (line, index) =>
-        `<text x="120" y="${410 + index * 72}" fill="#ffffff" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="58" font-weight="900">${escapeSvg(line)}</text>`,
+        `<text x="110" y="${370 + index * 70}" fill="#ffffff" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="56" font-weight="900">${escapeSvg(line)}</text>`,
     )
     .join('')}
   ${bodyLines
     .map(
       (line, index) =>
-        `<text x="120" y="${650 + index * 46}" fill="#dff8e7" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700">${escapeSvg(line)}</text>`,
+        `<text x="110" y="${610 + index * 44}" fill="#dff8e7" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="700">${escapeSvg(line)}</text>`,
     )
     .join('')}
-  <rect x="120" y="800" width="820" height="150" rx="28" fill="#e9fff0" opacity="0.96"/>
+  <rect x="110" y="796" width="650" height="152" rx="28" fill="#e9fff0" opacity="0.96"/>
   ${reasonLines
     .slice(0, 3)
     .map(
       (line, index) =>
-        `<text x="155" y="${842 + index * 38}" fill="#082019" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="800">${escapeSvg(line)}</text>`,
+        `<text x="142" y="${838 + index * 38}" fill="#082019" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="800">${escapeSvg(line)}</text>`,
     )
     .join('')}
-  <text x="120" y="1018" fill="#0b352b" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="800">${escapeSvg(SHOP_URL.replace(/^https?:\/\//, ''))}</text>
+  <text x="110" y="1030" fill="#e9fff0" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="800">${escapeSvg(SHOP_URL.replace(/^https?:\/\//, ''))}</text>
 </svg>`;
+};
+
+const pickEducationBackgroundPath = (topic: DottEnergyEducationTopic) => {
+  const posters = listDottEnergyFallbackPosters();
+  const preferred = EDUCATION_BACKGROUND_NAMES
+    .map(name => posters.find(poster => poster.name === name))
+    .filter((poster): poster is DottEnergyFallbackPoster => Boolean(poster));
+  const candidates = preferred.length ? preferred : posters;
+  if (!candidates.length) return null;
+  const hash = Array.from(topic.id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return candidates[hash % candidates.length].filePath;
 };
 
 export async function renderDottEnergyEducationCard(topic: DottEnergyEducationTopic) {
   const width = 1080;
   const height = 1080;
+  const backgroundPath = pickEducationBackgroundPath(topic);
+  const background = backgroundPath
+    ? await sharp(backgroundPath)
+        .resize(width, height, { fit: 'cover', position: 'right' })
+        .modulate({ brightness: 0.86, saturation: 1.08 })
+        .blur(0.3)
+        .toBuffer()
+    : await sharp({
+        create: {
+          width,
+          height,
+          channels: 3,
+          background: { r: 232, g: 247, b: 238 },
+        },
+      }).toBuffer();
   const base = Buffer.from(buildEducationCardSvg(topic, width, height));
-  const logo = await logoOverlay(width, height);
-  const logoWidth = Math.round(width * 0.34);
-  const logoHeight = Math.round(height * 0.085);
   const composites: sharp.OverlayOptions[] = [{ input: base, top: 0, left: 0 }];
-  if (logo) {
-    composites.push({ input: logo, top: 44, left: 62 });
-  } else {
-    composites.push({ input: Buffer.from(buildFallbackLogoSvg(logoWidth, logoHeight)), top: 44, left: 62 });
-  }
-  const buffer = await sharp({
-    create: {
-      width,
-      height,
-      channels: 3,
-      background: { r: 232, g: 247, b: 238 },
-    },
-  })
+  const buffer = await sharp(background)
     .composite(composites)
     .jpeg({ quality: 92, mozjpeg: true })
     .toBuffer();
