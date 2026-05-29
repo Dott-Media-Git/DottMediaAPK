@@ -2,6 +2,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import admin from 'firebase-admin';
 import { firestore } from '../src/db/firestore';
+import { supabaseFallbackService } from '../src/services/supabaseFallbackService';
 
 for (const envPath of [path.resolve(process.cwd(), '.env'), path.resolve(process.cwd(), 'backend/.env')]) {
   dotenv.config({ path: envPath, override: false });
@@ -20,6 +21,7 @@ type ClientConfig = {
   fallbackCaption: string;
   fallbackHashtags: string;
   autoReplyPrompt: string;
+  includeReels?: boolean;
 };
 
 const intervalHours = Math.max(Number(process.env.CLIENT_SOCIAL_INTERVAL_HOURS ?? 1), 0.25);
@@ -68,6 +70,20 @@ const clients: ClientConfig[] = [
     autoReplyPrompt:
       'Reply as Gamers44life. Ask about the game, platform, rank, setup, highlights, or community content ideas. Keep replies natural and never mention Dott Media.',
   },
+  {
+    key: 'dottenergy',
+    label: 'Dott Energy',
+    uid: 'LVR7p3WzdFM51ds92Kacf6S40og2',
+    prompt:
+      'Create product-led social posts for Dott Energy, a wind turbine and renewable energy store. Use real wind turbine/product language, mention off-grid use cases, and promote the Shopify store.',
+    businessType: 'Wind turbines and renewable energy products',
+    fallbackCaption:
+      'Clean power starts with the right setup. Dott Energy supplies wind turbines, generators and controllers for homes, farms, lodges and off-grid sites.',
+    fallbackHashtags: 'DottEnergy, WindPower, CleanEnergy, RenewableEnergy, OffGridPower, UgandaBusiness',
+    autoReplyPrompt:
+      'Reply as Dott Energy. Ask for the customer location, power needs, preferred turbine size, battery/inverter setup, and whether they need a wind turbine, generator, or controller. Promote the store when relevant and never mention Dott Media.',
+    includeReels: false,
+  },
 ];
 
 function readArg(name: string) {
@@ -86,8 +102,6 @@ async function ensureClient(client: ClientConfig) {
     storyPlatforms: ['facebook_story', 'instagram_story'],
     storyIntervalHours: intervalHours,
     storyNextRun: now,
-    reelsIntervalHours,
-    reelsSourceMode: 'dynamic',
     storyTrendEnabled: false,
     prompt: client.prompt,
     businessType: client.businessType,
@@ -96,6 +110,12 @@ async function ensureClient(client: ClientConfig) {
     requireAiImages: false,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+  if (client.includeReels !== false) {
+    Object.assign(autopostPayload, {
+      reelsIntervalHours,
+      reelsSourceMode: 'dynamic',
+    });
+  }
   const settingsPayload = {
     autoReplyPrompt: client.autoReplyPrompt,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -107,14 +127,26 @@ async function ensureClient(client: ClientConfig) {
       platforms: autopostPayload.platforms,
       storyPlatforms: autopostPayload.storyPlatforms,
       intervalHours,
-      reelsIntervalHours,
+      reelsIntervalHours: client.includeReels === false ? 'disabled' : reelsIntervalHours,
     });
     return;
   }
 
-  await firestore.collection('autopostJobs').doc(client.uid).set(autopostPayload, { merge: true });
-  await firestore.collection('assistant_settings').doc(client.uid).set(settingsPayload, { merge: true });
-  console.log(`configured ${client.label}: feed + stories every ${intervalHours}h, reels every ${reelsIntervalHours}h, autoreply prompt set`);
+  try {
+    await firestore.collection('autopostJobs').doc(client.uid).set(autopostPayload, { merge: true });
+    await firestore.collection('assistant_settings').doc(client.uid).set(settingsPayload, { merge: true });
+  } catch (error) {
+    console.warn(`Firestore configure failed for ${client.label}; writing autopost fallback`, error instanceof Error ? error.message : String(error));
+    await supabaseFallbackService.upsertAutopostJob(client.uid, {
+      ...autopostPayload,
+      nextRun: now.toDate(),
+      storyNextRun: now.toDate(),
+      updatedAt: new Date(),
+    });
+  }
+  console.log(
+    `configured ${client.label}: feed + stories every ${intervalHours}h, reels ${client.includeReels === false ? 'disabled' : `every ${reelsIntervalHours}h`}, autoreply prompt set`,
+  );
 }
 
 async function run() {

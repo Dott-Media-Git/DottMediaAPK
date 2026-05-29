@@ -16,7 +16,8 @@
     "schedule-client-two-hour-campaign": "tsx scripts/scheduleClientTwoHourCampaign.ts",
     "ensure-client-social-automation": "tsx scripts/ensureClientSocialAutomation.ts",
     "process-client-comments-once": "tsx scripts/processClientCommentsOnce.ts",
-    "post-stored-reel-backups-once": "tsx scripts/postStoredReelBackupsOnce.ts"
+    "post-stored-reel-backups-once": "tsx scripts/postStoredReelBackupsOnce.ts",
+    "post-dott-energy-sample": "tsx scripts/postDottEnergySample.ts"
   },
   "keywords": [],
   "author": "",

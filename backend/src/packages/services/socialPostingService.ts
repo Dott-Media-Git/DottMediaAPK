@@ -39,6 +39,18 @@ const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId
     instagramAccountId: '17841412643148539',
     instagramUsername: 'gamers44life',
   },
+  LVR7p3WzdFM51ds92Kacf6S40og2: {
+    pageId: '1201086759745632',
+    instagramAccountId: '17841433799368009',
+    instagramUsername: 'dottenergy100',
+  },
+};
+
+const CLIENT_ENV_PREFIXES: Record<string, string> = {
+  acmVetCcOiTHeGk5D7eDYieamDF3: 'CARMARKETPLACE',
+  D1iNgjLKNRaQhH35M0NmGfw1LVD2: 'STAYSPHERE',
+  vzdH1DnfFLVjlY8bBgC26WACmmw2: 'GAMERS44LIFE',
+  LVR7p3WzdFM51ds92Kacf6S40og2: 'DOTTENERGY',
 };
 
 const MAX_PER_DAY = 5;
@@ -128,6 +140,26 @@ export class SocialPostingService {
     const fallback: SocialAccounts = {};
     if (!this.isBwinScopeUser(userId)) {
       const clientFallback = CLIENT_META_FALLBACKS[userId];
+      const prefix = CLIENT_ENV_PREFIXES[userId];
+      if (clientFallback && prefix) {
+        const value = (name: string) => (process.env[`${prefix}_${name}`] ?? '').trim();
+        const facebookToken = value('FACEBOOK_PAGE_TOKEN') || value('FACEBOOK_ACCESS_TOKEN');
+        const instagramToken = value('INSTAGRAM_ACCESS_TOKEN') || facebookToken;
+        if (facebookToken) {
+          fallback.facebook = {
+            accessToken: facebookToken,
+            pageId: value('FACEBOOK_PAGE_ID') || clientFallback.pageId,
+          };
+        }
+        if (instagramToken) {
+          fallback.instagram = {
+            accessToken: instagramToken,
+            accountId: value('INSTAGRAM_ACCOUNT_ID') || clientFallback.instagramAccountId,
+            username: value('INSTAGRAM_USERNAME') || clientFallback.instagramUsername,
+          };
+        }
+        if (fallback.facebook || fallback.instagram) return fallback;
+      }
       const token = (process.env.CLIENT_META_USER_TOKEN ?? process.env.FACEBOOK_PAGE_TOKEN ?? process.env.META_GRAPH_TOKEN ?? '').trim();
       if (!clientFallback || !token) return fallback;
       try {

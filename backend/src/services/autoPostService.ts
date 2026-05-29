@@ -50,6 +50,12 @@ import {
   pickGamersSteamScreenshots,
   pickGamersSteamVideo,
 } from './gamersContentService.js';
+import {
+  buildDottEnergyProductCaption,
+  dottEnergyProductHistoryKey,
+  pickDottEnergyProduct,
+  renderDottEnergyProductImage,
+} from './dottEnergyProductService.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from './bwinContentGuard.js';
 import {
@@ -228,12 +234,18 @@ const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId
     instagramAccountId: '17841412643148539',
     instagramUsername: 'gamers44life',
   },
+  LVR7p3WzdFM51ds92Kacf6S40og2: {
+    pageId: '1201086759745632',
+    instagramAccountId: '17841433799368009',
+    instagramUsername: 'dottenergy100',
+  },
 };
 
 const CLIENT_ENV_PREFIXES: Record<string, string> = {
   acmVetCcOiTHeGk5D7eDYieamDF3: 'CARMARKETPLACE',
   D1iNgjLKNRaQhH35M0NmGfw1LVD2: 'STAYSPHERE',
   vzdH1DnfFLVjlY8bBgC26WACmmw2: 'GAMERS44LIFE',
+  LVR7p3WzdFM51ds92Kacf6S40og2: 'DOTTENERGY',
 };
 
 const PINNED_CLIENT_RUNTIME_PROMPTS: Record<string, Pick<AutoPostJob, 'prompt' | 'businessType' | 'fallbackHashtags'>> = {
@@ -251,6 +263,11 @@ const PINNED_CLIENT_RUNTIME_PROMPTS: Record<string, Pick<AutoPostJob, 'prompt' |
     prompt: 'Create a gaming post using real gameplay language and clear gamer-first wording. Avoid unrelated brand or Dott Media copy.',
     businessType: 'gaming media and gameplay highlights',
     fallbackHashtags: '#Gamers44life #Gaming #Gameplay #GamingCommunity',
+  },
+  LVR7p3WzdFM51ds92Kacf6S40og2: {
+    prompt: 'Create a product-led Dott Energy post for wind turbines, wind generators, MPPT controllers, and off-grid clean power. Use practical buyer language, promote the Shopify store, and avoid generic climate slogans.',
+    businessType: 'wind turbines and renewable energy products',
+    fallbackHashtags: '#DottEnergy #WindPower #CleanEnergy #RenewableEnergy #OffGridPower',
   },
 };
 
@@ -524,10 +541,11 @@ export class AutoPostService {
     const profile = PINNED_CLIENT_RUNTIME_PROMPTS[userId];
     if (!profile) return null;
     const now = admin.firestore.Timestamp.now();
+    const isDottEnergy = userId === 'LVR7p3WzdFM51ds92Kacf6S40og2';
     return {
       userId,
       active: true,
-      platforms: ['facebook', 'instagram', 'threads'],
+      platforms: isDottEnergy ? ['facebook', 'instagram'] : ['facebook', 'instagram', 'threads'],
       storyPlatforms: ['facebook_story', 'instagram_story'],
       prompt: profile.prompt,
       businessType: profile.businessType,
@@ -537,8 +555,8 @@ export class AutoPostService {
       nextRun: now,
       storyIntervalHours: NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS,
       storyNextRun: now,
-      reelsIntervalHours: NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS,
-      reelsNextRun: userId === 'vzdH1DnfFLVjlY8bBgC26WACmmw2' ? now : undefined,
+      reelsIntervalHours: isDottEnergy ? undefined : NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS,
+      reelsNextRun: !isDottEnergy && userId === 'vzdH1DnfFLVjlY8bBgC26WACmmw2' ? now : undefined,
     };
   }
 
@@ -4604,6 +4622,8 @@ export class AutoPostService {
     let usedStaysphereListingKey: string | null = null;
     let gamersSteamCaption: string | null = null;
     let usedGamersSteamKey: string | null = null;
+    let dottEnergyProductCaption: string | null = null;
+    let usedDottEnergyProductKey: string | null = null;
     let clientInstagramSourceImageUrls: string[] = [];
 
     if (clientPhotoProfile?.key === 'carmarketplace' && needsImages) {
@@ -4731,12 +4751,39 @@ export class AutoPostService {
       }
     }
 
+    if (clientPhotoProfile?.key === 'dottenergy' && needsImages) {
+      try {
+        const recentProductKeys = new Set(
+          [...recentImages, ...recentCaptions]
+            .map(value => String(value).match(/dott-energy-product:[^\s,]+/i)?.[0]?.toLowerCase())
+            .filter((value): value is string => Boolean(value)),
+        );
+        const product = await pickDottEnergyProduct({ recentKeys: recentProductKeys });
+        const coverImageUrl = await renderDottEnergyProductImage(
+          product,
+          product.images[0],
+          isStoryRun ? 'story' : 'feed',
+        );
+        imageUrls = [coverImageUrl];
+        clientInstagramSourceImageUrls = product.images.slice(0, 1);
+        dottEnergyProductCaption = buildDottEnergyProductCaption(product);
+        usedDottEnergyProductKey = dottEnergyProductHistoryKey(product);
+      } catch (error) {
+        console.warn('[autopost] Dott Energy Shopify product lookup failed; source-only post will fail instead of using unrelated fallback', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     if (
       clientPhotoProfile &&
       clientPhotoProfile.key !== 'staysphere' &&
+      clientPhotoProfile.key !== 'dottenergy' &&
       !carmarketVehicleCaption &&
       !staysphereListingCaption &&
-      !gamersSteamCaption
+      !gamersSteamCaption &&
+      !dottEnergyProductCaption
     ) {
       const sourcedPhoto = await this.pickClientPhotoImageUrl(clientPhotoProfile, isStoryRun ? 'story' : 'feed', recentSet);
       if (sourcedPhoto) {
@@ -4849,14 +4896,16 @@ export class AutoPostService {
             ? staysphereListingCaption
             : gamersSteamCaption && isFeedCaptionPlatform
               ? gamersSteamCaption
-          : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
+              : dottEnergyProductCaption && isFeedCaptionPlatform
+                ? dottEnergyProductCaption
+                : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
       const shortsCaption =
         platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
       const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
       const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
       const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
       const threadSafeCaption = this.limitThreadsCaption(platform, brandedCaption);
-      let captionSelection = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption
+      let captionSelection = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption || dottEnergyProductCaption
         ? { caption: threadSafeCaption, signature: this.buildCaptionSignature(platform, threadSafeCaption) }
         : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
       let caption = this.limitThreadsCaption(platform, captionSelection.caption);
@@ -5032,9 +5081,14 @@ export class AutoPostService {
     const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
     const nextRecentImages = this.mergeRecentImages(
       recentImages,
-      [...imageUrls, usedClientSourceImageUrl, usedBeforwardStockKey, usedStaysphereListingKey, usedGamersSteamKey].filter(
-        (url): url is string => Boolean(url),
-      ),
+      [
+        ...imageUrls,
+        usedClientSourceImageUrl,
+        usedBeforwardStockKey,
+        usedStaysphereListingKey,
+        usedGamersSteamKey,
+        usedDottEnergyProductKey,
+      ].filter((url): url is string => Boolean(url)),
     );
     const postedVideoUrls = historyEntries
       .filter(entry => entry.status === 'posted')
@@ -5043,9 +5097,13 @@ export class AutoPostService {
     const nextRecentVideos = this.mergeRecentVideos(recentVideos, postedVideoUrls);
     const nextRecentCaptions = this.mergeRecentCaptions(
       recentCaptions,
-      [...usedCaptions, usedBeforwardStockKey, usedStaysphereListingKey, usedGamersSteamKey].filter(
-        (value): value is string => Boolean(value),
-      ),
+      [
+        ...usedCaptions,
+        usedBeforwardStockKey,
+        usedStaysphereListingKey,
+        usedGamersSteamKey,
+        usedDottEnergyProductKey,
+      ].filter((value): value is string => Boolean(value)),
     );
 
     if (usedGenericVideo && typeof genericVideoSelection.nextCursor === 'number') {
@@ -5668,6 +5726,9 @@ export class AutoPostService {
     for (const match of value.matchAll(/beforward-stock:([^\s,]+)/gi)) {
       keys.push(`beforward-stock:${match[1].toUpperCase()}`);
     }
+    for (const match of value.matchAll(/dott-energy-product:([^\s,]+)/gi)) {
+      keys.push(`dott-energy-product:${match[1].toLowerCase()}`);
+    }
     for (const match of value.matchAll(/\b[A-Z]{2}\d{6}\b/gi)) {
       keys.push(`beforward-stock:${match[0].toUpperCase()}`);
     }
@@ -5679,6 +5740,10 @@ export class AutoPostService {
       }
       if (/aderokestates\.com\/properties\/|simbaproperties\.co\.ug\/properties\/|jiji\.ug\//i.test(normalized)) {
         keys.push(`staysphere-listing:${normalized.toLowerCase()}`);
+      }
+      if (/dott-energy-2\.myshopify\.com\/products\/([^/?#]+)/i.test(normalized)) {
+        const handle = normalized.match(/dott-energy-2\.myshopify\.com\/products\/([^/?#]+)/i)?.[1];
+        if (handle) keys.push(`dott-energy-product:${handle.toLowerCase()}`);
       }
     }
     return keys;
@@ -5969,6 +6034,28 @@ export class AutoPostService {
             'https://images.pexels.com/photos/7915357/pexels-photo-7915357.jpeg?auto=compress&cs=tinysrgb&h=1920',
             'https://images.pexels.com/photos/3945683/pexels-photo-3945683.jpeg?auto=compress&cs=tinysrgb&h=1920',
             'https://images.pexels.com/photos/777001/pexels-photo-777001.jpeg?auto=compress&cs=tinysrgb&h=1920',
+          ],
+        },
+      },
+      LVR7p3WzdFM51ds92Kacf6S40og2: {
+        key: 'dottenergy',
+        brand: 'DOTT-ENERGY',
+        accent: '#7ed957',
+        dark: '#07120f',
+        light: '#f4fff4',
+        hooks: ['Clean wind power', 'Off-grid ready', 'Turbine spotlight', 'Energy backup', 'Shop wind systems', 'Power your site'],
+        sublines: ['Clean power. Stronger future.', 'Shop wind turbines', 'DM your power needs', 'Built for off-grid sites'],
+        queries: ['wind turbine', 'renewable energy turbine', 'off grid power', 'wind generator', 'clean energy'],
+        curatedImages: {
+          feed: [
+            'https://images.pexels.com/photos/414837/pexels-photo-414837.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/433308/pexels-photo-433308.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/159397/solar-panel-array-power-sun-electricity-159397.jpeg?auto=compress&cs=tinysrgb&w=1600',
+          ],
+          story: [
+            'https://images.pexels.com/photos/414837/pexels-photo-414837.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/433308/pexels-photo-433308.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/159397/solar-panel-array-power-sun-electricity-159397.jpeg?auto=compress&cs=tinysrgb&h=1920',
           ],
         },
       },

@@ -347,6 +347,7 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
       { label: 'Carmarketug', uid: 'acmVetCcOiTHeGk5D7eDYieamDF3', reels: true },
       { label: 'Staysphere', uid: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2', reels: true },
       { label: 'Gamers44life', uid: 'vzdH1DnfFLVjlY8bBgC26WACmmw2', reels: true },
+      { label: 'DottEnergy', uid: 'LVR7p3WzdFM51ds92Kacf6S40og2', reels: false },
     ];
     const requestedAccounts = Array.isArray(req.body?.accounts)
       ? new Set(
