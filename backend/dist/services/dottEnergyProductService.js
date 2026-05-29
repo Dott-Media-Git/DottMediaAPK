@@ -187,8 +187,9 @@ async function pickDottEnergyProduct(options = {}) {
   const products = await fetchDottEnergyProducts();
   if (!products.length) throw new Error("No Dott Energy Shopify products found");
   const recent = options.recentKeys ?? /* @__PURE__ */ new Set();
-  const fresh = products.find((product) => !recent.has(dottEnergyProductHistoryKey(product).toLowerCase()));
-  return fresh ?? products[Math.floor(Date.now() / (60 * 60 * 1e3)) % products.length];
+  const fresh = products.filter((product) => !recent.has(dottEnergyProductHistoryKey(product).toLowerCase()));
+  const candidates = fresh.length ? fresh : products;
+  return candidates[Math.floor(Date.now() / (60 * 60 * 1e3)) % candidates.length];
 }
 function buildDottEnergyProductCaption(product) {
   const price = formatUsd(product.priceUsd);

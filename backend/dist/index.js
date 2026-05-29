@@ -343,20 +343,22 @@ app.post("/api/autopost/runFreshSocialSet", async (req, res, next) => {
               resultField: "lastResult"
             })
           );
+          const afterFeedJob = await service.loadAutopostJob(account.uid) ?? job;
           result.stories = summarize(
-            await service.executeJob(account.uid, job, {
-              platforms: Array.isArray(job.storyPlatforms) && job.storyPlatforms.length ? job.storyPlatforms : ["facebook_story", "instagram_story"],
-              intervalHours: job.storyIntervalHours ?? 1,
+            await service.executeJob(account.uid, afterFeedJob, {
+              platforms: Array.isArray(afterFeedJob.storyPlatforms) && afterFeedJob.storyPlatforms.length ? afterFeedJob.storyPlatforms : ["facebook_story", "instagram_story"],
+              intervalHours: afterFeedJob.storyIntervalHours ?? 1,
               nextRunField: "storyNextRun",
               lastRunField: "storyLastRunAt",
               resultField: "storyLastResult"
             })
           );
           if (account.reels) {
+            const afterStoriesJob = await service.loadAutopostJob(account.uid) ?? afterFeedJob;
             result.reels = summarize(
-              await service.executeJob(account.uid, job, {
+              await service.executeJob(account.uid, afterStoriesJob, {
                 platforms: ["instagram_reels"],
-                intervalHours: job.reelsIntervalHours ?? 2,
+                intervalHours: afterStoriesJob.reelsIntervalHours ?? 2,
                 nextRunField: "reelsNextRun",
                 lastRunField: "reelsLastRunAt",
                 resultField: "reelsLastResult",
