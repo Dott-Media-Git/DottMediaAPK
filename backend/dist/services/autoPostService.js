@@ -50,11 +50,15 @@ import {
 } from "./gamersContentService.js";
 import {
   buildDottEnergyFallbackCaption,
+  buildDottEnergyEducationCaption,
   buildDottEnergyProductCaption,
+  dottEnergyEducationHistoryKey,
   dottEnergyFallbackPosterHistoryKey,
   dottEnergyProductHistoryKey,
+  pickDottEnergyEducationTopic,
   pickDottEnergyFallbackPoster,
   pickDottEnergyProduct,
+  renderDottEnergyEducationCard,
   renderDottEnergyFallbackPoster,
   renderDottEnergyProductImage,
   shouldUseDottEnergyFallbackPoster
@@ -3895,11 +3899,16 @@ Official clip: ${sourceTweetUrl}`,
     }
     if (clientPhotoProfile?.key === "dottenergy" && needsImages) {
       const recentDottEnergyKeys = new Set(
-        [...recentImages, ...recentCaptions].map((value) => String(value).match(/dott-energy-(?:product|poster):[^\s,]+/i)?.[0]?.toLowerCase()).filter((value) => Boolean(value))
+        [...recentImages, ...recentCaptions].map((value) => String(value).match(/dott-energy-(?:product|poster|education):[^\s,]+/i)?.[0]?.toLowerCase()).filter((value) => Boolean(value))
       );
       const usePoster = shouldUseDottEnergyFallbackPoster();
       try {
-        if (usePoster) {
+        if (!isStoryRun) {
+          const topic = pickDottEnergyEducationTopic({ recentKeys: recentDottEnergyKeys });
+          imageUrls = [await renderDottEnergyEducationCard(topic)];
+          dottEnergyProductCaption = buildDottEnergyEducationCaption(topic);
+          usedDottEnergyProductKey = dottEnergyEducationHistoryKey(topic);
+        } else if (usePoster) {
           const poster = pickDottEnergyFallbackPoster({ recentKeys: recentDottEnergyKeys });
           if (!poster) throw new Error("No Dott Energy fallback posters found");
           imageUrls = [await renderDottEnergyFallbackPoster(poster, isStoryRun ? "story" : "feed")];
