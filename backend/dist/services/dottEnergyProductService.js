@@ -15,6 +15,9 @@ const LOGO_PATH = path.resolve(
 const FALLBACK_POSTER_DIR = path.resolve(
   process.env.DOTT_ENERGY_FALLBACK_POSTER_DIR?.trim() || path.join(process.cwd(), "assets/dott-energy/fallback-posters")
 );
+const EDUCATION_BACKGROUND_DIR = path.resolve(
+  process.env.DOTT_ENERGY_EDUCATION_BACKGROUND_DIR?.trim() || path.join(process.cwd(), "assets/dott-energy/education-backgrounds")
+);
 const EDUCATION_TOPICS = [
   {
     id: "night-output",
@@ -77,7 +80,8 @@ const EDUCATION_TOPICS = [
     buyerReason: "Together, they can create a more balanced clean-energy setup."
   }
 ];
-const EDUCATION_BACKGROUND_NAMES = ["poster-08.jpg", "poster-11.jpg", "poster-03.jpg", "poster-05.jpg"];
+const EDUCATION_BACKGROUND_ASSETS = ["wind-turbine-clean-02.png"];
+const EDUCATION_BACKGROUND_NAMES = ["poster-08.jpg", "poster-11.jpg"];
 const cleanText = (value) => String(value ?? "").replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 const escapeSvg = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 const unique = (items) => {
@@ -324,6 +328,11 @@ const buildEducationCardSvg = (topic, width, height) => {
 </svg>`;
 };
 const pickEducationBackgroundPath = (topic) => {
+  const cleanAssets = EDUCATION_BACKGROUND_ASSETS.map((name) => path.join(EDUCATION_BACKGROUND_DIR, name)).filter((asset) => fs.existsSync(asset));
+  if (cleanAssets.length) {
+    const hash2 = Array.from(topic.id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+    return cleanAssets[hash2 % cleanAssets.length];
+  }
   const posters = listDottEnergyFallbackPosters();
   const preferred = EDUCATION_BACKGROUND_NAMES.map((name) => posters.find((poster) => poster.name === name)).filter((poster) => Boolean(poster));
   const candidates = preferred.length ? preferred : posters;
@@ -341,6 +350,9 @@ const renderEducationBackground = async (backgroundPath, width, height) => {
         background: { r: 232, g: 247, b: 238 }
       }
     }).toBuffer();
+  }
+  if (path.dirname(backgroundPath) === EDUCATION_BACKGROUND_DIR) {
+    return sharp(backgroundPath).resize(width, height, { fit: "cover", position: "center" }).modulate({ brightness: 0.9, saturation: 1.08 }).blur(0.3).toBuffer();
   }
   const source = sharp(backgroundPath);
   const metadata = await source.metadata();

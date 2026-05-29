@@ -47,6 +47,10 @@ const FALLBACK_POSTER_DIR = path.resolve(
   process.env.DOTT_ENERGY_FALLBACK_POSTER_DIR?.trim() ||
     path.join(process.cwd(), 'assets/dott-energy/fallback-posters'),
 );
+const EDUCATION_BACKGROUND_DIR = path.resolve(
+  process.env.DOTT_ENERGY_EDUCATION_BACKGROUND_DIR?.trim() ||
+    path.join(process.cwd(), 'assets/dott-energy/education-backgrounds'),
+);
 
 const EDUCATION_TOPICS: DottEnergyEducationTopic[] = [
   {
@@ -111,7 +115,8 @@ const EDUCATION_TOPICS: DottEnergyEducationTopic[] = [
   },
 ];
 
-const EDUCATION_BACKGROUND_NAMES = ['poster-08.jpg', 'poster-11.jpg', 'poster-03.jpg', 'poster-05.jpg'];
+const EDUCATION_BACKGROUND_ASSETS = ['wind-turbine-clean-02.png'];
+const EDUCATION_BACKGROUND_NAMES = ['poster-08.jpg', 'poster-11.jpg'];
 
 
 type ShopifyProduct = {
@@ -439,6 +444,13 @@ const buildEducationCardSvg = (topic: DottEnergyEducationTopic, width: number, h
 };
 
 const pickEducationBackgroundPath = (topic: DottEnergyEducationTopic) => {
+  const cleanAssets = EDUCATION_BACKGROUND_ASSETS.map(name => path.join(EDUCATION_BACKGROUND_DIR, name)).filter(asset =>
+    fs.existsSync(asset),
+  );
+  if (cleanAssets.length) {
+    const hash = Array.from(topic.id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+    return cleanAssets[hash % cleanAssets.length];
+  }
   const posters = listDottEnergyFallbackPosters();
   const preferred = EDUCATION_BACKGROUND_NAMES
     .map(name => posters.find(poster => poster.name === name))
@@ -459,6 +471,13 @@ const renderEducationBackground = async (backgroundPath: string | null, width: n
         background: { r: 232, g: 247, b: 238 },
       },
     }).toBuffer();
+  }
+  if (path.dirname(backgroundPath) === EDUCATION_BACKGROUND_DIR) {
+    return sharp(backgroundPath)
+      .resize(width, height, { fit: 'cover', position: 'center' })
+      .modulate({ brightness: 0.9, saturation: 1.08 })
+      .blur(0.3)
+      .toBuffer();
   }
   const source = sharp(backgroundPath);
   const metadata = await source.metadata();
