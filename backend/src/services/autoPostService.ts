@@ -119,6 +119,8 @@ type AutoPostJob = {
   trendLastContentKey?: string;
   trendRecentKeys?: string[];
   trendPredictionsUrl?: string;
+  dottEnergyProductNextRun?: admin.firestore.Timestamp;
+  dottEnergyProductLastRunAt?: admin.firestore.Timestamp;
   xHighlightAccounts?: string[];
   xLastHighlightTweetId?: string;
   xLastHighlightUsername?: string;
@@ -163,6 +165,8 @@ type HistoryEntry = {
   videoUrl?: string;
   videoTitle?: string;
 };
+
+const DOTT_ENERGY_PRODUCT_INTERVAL_HOURS = 2;
 type ScheduledPostContentHistory = {
   imageUrls: string[];
   videoUrls: string[];
@@ -282,6 +286,7 @@ const PINNED_CLIENT_RUNTIME_PROMPTS: Record<string, Pick<AutoPostJob, 'prompt' |
 
 const NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS = 3;
 const NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS = 4;
+const DOTT_ENERGY_USER_ID = 'LVR7p3WzdFM51ds92Kacf6S40og2';
 
 const logSafeError = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -1604,6 +1609,9 @@ export class AutoPostService {
   }
 
   private getFeedIntervalHours(userId: string, configured?: number) {
+    if (userId === DOTT_ENERGY_USER_ID) {
+      return 1;
+    }
     if (this.isNicheClientAccount(userId)) {
       return NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS;
     }
@@ -4633,6 +4641,7 @@ export class AutoPostService {
     let usedGamersSteamKey: string | null = null;
     let dottEnergyProductCaption: string | null = null;
     let usedDottEnergyProductKey: string | null = null;
+    let dottEnergyPostedStoreProduct = false;
     let clientInstagramSourceImageUrls: string[] = [];
 
     if (clientPhotoProfile?.key === 'carmarketplace' && needsImages) {
@@ -4768,12 +4777,16 @@ export class AutoPostService {
       );
       const usePoster = shouldUseDottEnergyFallbackPoster();
       try {
-        if (!isStoryRun) {
+        const productDueAt = this.timestampToMillis(job.dottEnergyProductNextRun);
+        const shouldPostStoreProduct =
+          !isStoryRun &&
+          (!productDueAt || productDueAt <= Date.now());
+        if (!isStoryRun && !shouldPostStoreProduct) {
           const topic = pickDottEnergyEducationTopic({ recentKeys: recentDottEnergyKeys });
           imageUrls = [await renderDottEnergyEducationCard(topic)];
           dottEnergyProductCaption = buildDottEnergyEducationCaption(topic);
           usedDottEnergyProductKey = dottEnergyEducationHistoryKey(topic);
-        } else if (usePoster) {
+        } else if (isStoryRun && usePoster) {
           const poster = pickDottEnergyFallbackPoster({ recentKeys: recentDottEnergyKeys });
           if (!poster) throw new Error('No Dott Energy fallback posters found');
           imageUrls = [await renderDottEnergyFallbackPoster(poster, isStoryRun ? 'story' : 'feed')];
@@ -4790,6 +4803,7 @@ export class AutoPostService {
           clientInstagramSourceImageUrls = product.images.slice(0, 1);
           dottEnergyProductCaption = buildDottEnergyProductCaption(product);
           usedDottEnergyProductKey = dottEnergyProductHistoryKey(product);
+          dottEnergyPostedStoreProduct = !isStoryRun;
         }
       } catch (error) {
         console.warn('[autopost] Dott Energy primary source failed; trying fallback poster', {
@@ -5159,6 +5173,17 @@ export class AutoPostService {
     for (const field of instagramAttemptFields) {
       updatePayload[field] = admin.firestore.FieldValue.serverTimestamp();
     }
+    if (clientPhotoProfile?.key === 'dottenergy' && !isReelsRun && !isStoryRun) {
+      updatePayload.dottEnergyProductNextRun = admin.firestore.Timestamp.fromDate(
+        new Date(
+          Date.now() +
+            (dottEnergyPostedStoreProduct ? DOTT_ENERGY_PRODUCT_INTERVAL_HOURS : 1) * 60 * 60 * 1000,
+        ),
+      );
+      if (dottEnergyPostedStoreProduct) {
+        updatePayload.dottEnergyProductLastRunAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+    }
     if (!isReelsRun && !isStoryRun) {
       updatePayload.intervalHours = effectiveIntervalHours;
     } else if (isReelsRun) {
@@ -5193,6 +5218,17 @@ export class AutoPostService {
     };
     for (const field of instagramAttemptFields) {
       nextRecord[field] = admin.firestore.Timestamp.now();
+    }
+    if (clientPhotoProfile?.key === 'dottenergy' && !isReelsRun && !isStoryRun) {
+      nextRecord.dottEnergyProductNextRun = admin.firestore.Timestamp.fromDate(
+        new Date(
+          Date.now() +
+            (dottEnergyPostedStoreProduct ? DOTT_ENERGY_PRODUCT_INTERVAL_HOURS : 1) * 60 * 60 * 1000,
+        ),
+      );
+      if (dottEnergyPostedStoreProduct) {
+        nextRecord.dottEnergyProductLastRunAt = admin.firestore.Timestamp.now();
+      }
     }
     if (!isReelsRun && !isStoryRun) {
       nextRecord.intervalHours = effectiveIntervalHours;
