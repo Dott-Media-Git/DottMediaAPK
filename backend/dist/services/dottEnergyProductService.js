@@ -12,6 +12,9 @@ const httpsAgent = process.env.DOTT_ENERGY_TLS_INSECURE === "false" ? void 0 : n
 const LOGO_PATH = path.resolve(
   process.env.DOTT_ENERGY_LOGO_PATH?.trim() || path.join(process.cwd(), "assets/dott-energy/logo.png")
 );
+const FALLBACK_POSTER_DIR = path.resolve(
+  process.env.DOTT_ENERGY_FALLBACK_POSTER_DIR?.trim() || path.join(process.cwd(), "assets/dott-energy/fallback-posters")
+);
 const cleanText = (value) => String(value ?? "").replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 const escapeSvg = (value) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 const unique = (items) => {
@@ -119,7 +122,19 @@ const logoOverlay = async (width, height) => {
   if (!fs.existsSync(LOGO_PATH)) return null;
   const logoWidth = Math.round(width * 0.34);
   const logoHeight = Math.round(height * 0.085);
-  return sharp(LOGO_PATH).resize(logoWidth, logoHeight, { fit: "cover", position: "center" }).jpeg({ quality: 88 }).toBuffer();
+  const { data, info } = await sharp(LOGO_PATH).resize(logoWidth, logoHeight, { fit: "cover", position: "center" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  for (let index = 0; index < data.length; index += info.channels) {
+    const red = data[index] ?? 0;
+    const green = data[index + 1] ?? 0;
+    const blue = data[index + 2] ?? 0;
+    const alphaIndex = index + 3;
+    if (red < 34 && green < 38 && blue < 38) {
+      data[alphaIndex] = 0;
+    } else if (red < 58 && green < 64 && blue < 64) {
+      data[alphaIndex] = Math.min(data[alphaIndex] ?? 255, 90);
+    }
+  }
+  return sharp(data, { raw: info }).png({ compressionLevel: 9 }).toBuffer();
 };
 const buildFallbackLogoSvg = (width, height) => `
 <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
@@ -130,50 +145,24 @@ const buildFallbackLogoSvg = (width, height) => `
 </svg>`;
 const buildOverlaySvg = (product, format, width, height) => {
   const isStory = format === "story";
-  const headline = product.powerOptions.length ? `${product.powerOptions.slice(0, 3).join(" / ")} Wind Power` : product.productType || "Clean Wind Power";
-  const headlineLines = wrapWords(headline, isStory ? 19 : 26, 2);
-  const productLines = wrapWords(product.title, isStory ? 22 : 25, 2);
-  const price = formatUsd(product.priceUsd);
-  const options = [
-    product.voltageOptions.length ? product.voltageOptions.slice(0, 3).join(" / ") : null,
-    product.productType || null
-  ].filter(Boolean).join("  |  ");
-  const safeStore = SHOP_URL.replace(/^https?:\/\//, "");
-  const bottomY = isStory ? height - 455 : height - 260;
-  const textX = isStory ? 70 : 58;
-  const headlineSize = isStory ? 70 : 50;
-  const titleSize = isStory ? 44 : 34;
-  const cardWidth = isStory ? width - 140 : width - 116;
-  const cardHeight = isStory ? 405 : 198;
   return `
 <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#06100d" stop-opacity="0.72"/>
+      <stop offset="0" stop-color="#06100d" stop-opacity="${isStory ? 0.24 : 0.16}"/>
       <stop offset="1" stop-color="#06100d" stop-opacity="0"/>
     </linearGradient>
     <linearGradient id="bottom" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#06100d" stop-opacity="0"/>
-      <stop offset="0.25" stop-color="#06100d" stop-opacity="0.74"/>
-      <stop offset="1" stop-color="#06100d" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#06100d" stop-opacity="${isStory ? 0.18 : 0.12}"/>
     </linearGradient>
   </defs>
-  <rect width="${width}" height="${Math.round(height * 0.24)}" fill="url(#top)"/>
-  <rect y="${Math.round(height * 0.5)}" width="${width}" height="${Math.round(height * 0.5)}" fill="url(#bottom)"/>
-  <rect x="${textX}" y="${bottomY}" width="${cardWidth}" height="${cardHeight}" rx="32" fill="#07120f" opacity="0.82"/>
-  <rect x="${textX}" y="${bottomY}" width="14" height="${cardHeight}" rx="7" fill="#7ed957"/>
-  ${headlineLines.map(
-    (line, index) => `<text x="${textX + 44}" y="${bottomY + (isStory ? 78 : 58) + index * (headlineSize + 8)}" fill="#f4fff4" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="${headlineSize}" font-weight="900">${escapeSvg(line)}</text>`
-  ).join("")}
-  ${productLines.map(
-    (line, index) => `<text x="${textX + 48}" y="${bottomY + (isStory ? 235 : 118) + index * (titleSize + 12)}" fill="#d7f7e0" font-family="Arial, Helvetica, sans-serif" font-size="${titleSize}" font-weight="700">${escapeSvg(line)}</text>`
-  ).join("")}
-  ${price ? `<rect x="${width - (isStory ? 370 : 300)}" y="${bottomY + (isStory ? 318 : 132)}" width="${isStory ? 300 : 242}" height="${isStory ? 78 : 64}" rx="28" fill="#7ed957"/><text x="${width - (isStory ? 220 : 178)}" y="${bottomY + (isStory ? 370 : 175)}" text-anchor="middle" fill="#07120f" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="${isStory ? 40 : 32}" font-weight="900">From ${escapeSvg(price)}</text>` : ""}
-  <text x="${textX + 48}" y="${height - (isStory ? 105 : 58)}" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="${isStory ? 34 : 24}" font-weight="700">${escapeSvg(options || "Wind turbines, generators and controllers")}</text>
-  <text x="${width - textX}" y="${isStory ? 172 : height - 30}" text-anchor="end" fill="#8ee6ff" font-family="Arial, Helvetica, sans-serif" font-size="${isStory ? 30 : 22}" font-weight="700">${escapeSvg(safeStore)}</text>
+  <rect width="${width}" height="${Math.round(height * 0.18)}" fill="url(#top)"/>
+  <rect y="${Math.round(height * 0.72)}" width="${width}" height="${Math.round(height * 0.28)}" fill="url(#bottom)"/>
 </svg>`;
 };
 const dottEnergyProductHistoryKey = (product) => `dott-energy-product:${product.handle || product.id}`;
+const dottEnergyFallbackPosterHistoryKey = (poster) => `dott-energy-poster:${poster.name}`;
 async function fetchDottEnergyProducts() {
   const response = await axios.get(PRODUCTS_URL, {
     headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
@@ -190,6 +179,37 @@ async function pickDottEnergyProduct(options = {}) {
   const fresh = products.filter((product) => !recent.has(dottEnergyProductHistoryKey(product).toLowerCase()));
   const candidates = fresh.length ? fresh : products;
   return candidates[Math.floor(Date.now() / (60 * 60 * 1e3)) % candidates.length];
+}
+function listDottEnergyFallbackPosters() {
+  if (!fs.existsSync(FALLBACK_POSTER_DIR)) return [];
+  return fs.readdirSync(FALLBACK_POSTER_DIR).filter((name) => /\.(?:png|jpe?g|webp)$/i.test(name)).sort((left, right) => left.localeCompare(right)).map((name) => ({
+    key: `dott-energy-poster:${name}`,
+    filePath: path.join(FALLBACK_POSTER_DIR, name),
+    name
+  }));
+}
+function pickDottEnergyFallbackPoster(options = {}) {
+  const posters = listDottEnergyFallbackPosters();
+  if (!posters.length) return null;
+  const recent = options.recentKeys ?? /* @__PURE__ */ new Set();
+  const fresh = posters.filter((poster) => !recent.has(dottEnergyFallbackPosterHistoryKey(poster).toLowerCase()));
+  const candidates = fresh.length ? fresh : posters;
+  return candidates[Math.floor(Date.now() / (60 * 60 * 1e3)) % candidates.length];
+}
+function shouldUseDottEnergyFallbackPoster(date = /* @__PURE__ */ new Date()) {
+  return date.getUTCHours() % 4 === 1;
+}
+function buildDottEnergyFallbackCaption() {
+  return [
+    "Dott Energy clean power solutions",
+    "",
+    "Explore wind turbines, generators and controllers for homes, farms, lodges and off-grid businesses.",
+    "",
+    `Shop Dott Energy: ${SHOP_URL}`,
+    "DM Dott Energy with your site, location and power needs so we can recommend the right setup.",
+    "",
+    "#DottEnergy #WindPower #CleanEnergy #RenewableEnergy #OffGridPower #UgandaBusiness"
+  ].join("\n");
 }
 function buildDottEnergyProductCaption(product) {
   const price = formatUsd(product.priceUsd);
@@ -250,10 +270,25 @@ async function renderDottEnergyProductImage(product, imageUrl = product.images[0
   }).composite(composites).jpeg({ quality: 91, mozjpeg: true }).toBuffer();
   return uploadDottEnergyImage(buffer, format === "story" ? "stories" : "covers");
 }
+async function renderDottEnergyFallbackPoster(poster, format = "feed") {
+  const width = 1080;
+  const height = format === "story" ? 1920 : 1080;
+  const posterBuffer = await sharp(poster.filePath).resize(width, height, {
+    fit: "cover",
+    position: "center"
+  }).jpeg({ quality: 91, mozjpeg: true }).toBuffer();
+  return uploadDottEnergyImage(posterBuffer, format === "story" ? "poster-stories" : "posters");
+}
 export {
+  buildDottEnergyFallbackCaption,
   buildDottEnergyProductCaption,
+  dottEnergyFallbackPosterHistoryKey,
   dottEnergyProductHistoryKey,
   fetchDottEnergyProducts,
+  listDottEnergyFallbackPosters,
+  pickDottEnergyFallbackPoster,
   pickDottEnergyProduct,
-  renderDottEnergyProductImage
+  renderDottEnergyFallbackPoster,
+  renderDottEnergyProductImage,
+  shouldUseDottEnergyFallbackPoster
 };

@@ -49,10 +49,15 @@ import {
   pickGamersSteamVideo
 } from "./gamersContentService.js";
 import {
+  buildDottEnergyFallbackCaption,
   buildDottEnergyProductCaption,
+  dottEnergyFallbackPosterHistoryKey,
   dottEnergyProductHistoryKey,
+  pickDottEnergyFallbackPoster,
   pickDottEnergyProduct,
-  renderDottEnergyProductImage
+  renderDottEnergyFallbackPoster,
+  renderDottEnergyProductImage,
+  shouldUseDottEnergyFallbackPoster
 } from "./dottEnergyProductService.js";
 import { saveGeneratedImageBuffer } from "./generatedMediaService.js";
 import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from "./bwinContentGuard.js";
@@ -3889,25 +3894,46 @@ Official clip: ${sourceTweetUrl}`,
       }
     }
     if (clientPhotoProfile?.key === "dottenergy" && needsImages) {
+      const recentDottEnergyKeys = new Set(
+        [...recentImages, ...recentCaptions].map((value) => String(value).match(/dott-energy-(?:product|poster):[^\s,]+/i)?.[0]?.toLowerCase()).filter((value) => Boolean(value))
+      );
+      const usePoster = shouldUseDottEnergyFallbackPoster();
       try {
-        const recentProductKeys = new Set(
-          [...recentImages, ...recentCaptions].map((value) => String(value).match(/dott-energy-product:[^\s,]+/i)?.[0]?.toLowerCase()).filter((value) => Boolean(value))
-        );
-        const product = await pickDottEnergyProduct({ recentKeys: recentProductKeys });
-        const coverImageUrl = await renderDottEnergyProductImage(
-          product,
-          product.images[0],
-          isStoryRun ? "story" : "feed"
-        );
-        imageUrls = [coverImageUrl];
-        clientInstagramSourceImageUrls = product.images.slice(0, 1);
-        dottEnergyProductCaption = buildDottEnergyProductCaption(product);
-        usedDottEnergyProductKey = dottEnergyProductHistoryKey(product);
+        if (usePoster) {
+          const poster = pickDottEnergyFallbackPoster({ recentKeys: recentDottEnergyKeys });
+          if (!poster) throw new Error("No Dott Energy fallback posters found");
+          imageUrls = [await renderDottEnergyFallbackPoster(poster, isStoryRun ? "story" : "feed")];
+          dottEnergyProductCaption = buildDottEnergyFallbackCaption();
+          usedDottEnergyProductKey = dottEnergyFallbackPosterHistoryKey(poster);
+        } else {
+          const product = await pickDottEnergyProduct({ recentKeys: recentDottEnergyKeys });
+          const coverImageUrl = await renderDottEnergyProductImage(
+            product,
+            product.images[0],
+            isStoryRun ? "story" : "feed"
+          );
+          imageUrls = [coverImageUrl];
+          clientInstagramSourceImageUrls = product.images.slice(0, 1);
+          dottEnergyProductCaption = buildDottEnergyProductCaption(product);
+          usedDottEnergyProductKey = dottEnergyProductHistoryKey(product);
+        }
       } catch (error) {
-        console.warn("[autopost] Dott Energy Shopify product lookup failed; source-only post will fail instead of using unrelated fallback", {
+        console.warn("[autopost] Dott Energy primary source failed; trying fallback poster", {
           userId,
           error: error instanceof Error ? error.message : String(error)
         });
+        try {
+          const poster = pickDottEnergyFallbackPoster({ recentKeys: recentDottEnergyKeys });
+          if (!poster) throw new Error("No Dott Energy fallback posters found");
+          imageUrls = [await renderDottEnergyFallbackPoster(poster, isStoryRun ? "story" : "feed")];
+          dottEnergyProductCaption = buildDottEnergyFallbackCaption();
+          usedDottEnergyProductKey = dottEnergyFallbackPosterHistoryKey(poster);
+        } catch (fallbackError) {
+          console.warn("[autopost] Dott Energy fallback poster failed; source-only post will fail instead of using unrelated fallback", {
+            userId,
+            error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+          });
+        }
       }
     }
     if (clientPhotoProfile && clientPhotoProfile.key !== "staysphere" && clientPhotoProfile.key !== "dottenergy" && !carmarketVehicleCaption && !staysphereListingCaption && !gamersSteamCaption && !dottEnergyProductCaption) {
