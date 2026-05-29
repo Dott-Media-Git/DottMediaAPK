@@ -1249,7 +1249,8 @@ class AutoPostService {
     if (!attemptField) return false;
     const lastAttempt = this.timestampToMillis(job[attemptField]);
     if (!lastAttempt) return false;
-    return now - lastAttempt < NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS * 60 * 60 * 1e3;
+    const cooldownHours = platform === "instagram_story" ? this.getStoryIntervalHours(userId, job.storyIntervalHours) : this.getFeedIntervalHours(userId, job.intervalHours);
+    return now - lastAttempt < cooldownHours * 60 * 60 * 1e3;
   }
   async claimDueRun(userId, job, field, now) {
     if (!supabaseFallbackService.isConfigured()) return true;
