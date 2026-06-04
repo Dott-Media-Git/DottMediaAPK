@@ -14,7 +14,7 @@
     "generate-checklists": "node scripts/generate-checklists.js"
   },
   "dependencies": {
-    "@expo/vector-icons": "15.0.3",
+    "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "1.24.0",
     "@react-native-community/datetimepicker": "^8.5.0",
     "@react-navigation/bottom-tabs": "^6.6.0",
@@ -26,11 +26,12 @@
     "expo-constants": "~18.0.10",
     "expo-linear-gradient": "~15.0.7",
     "expo-linking": "~8.0.8",
-    "expo-notifications": "^0.32.12",
     "expo-modules-core": "3.0.23",
+    "expo-notifications": "^0.32.12",
     "expo-splash-screen": "~31.0.10",
     "expo-status-bar": "~3.0.8",
     "expo-updates": "~29.0.12",
+    "fbjs": "^1.0.0",
     "firebase": "^11.0.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

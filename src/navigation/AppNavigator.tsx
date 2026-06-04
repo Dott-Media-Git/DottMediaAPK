@@ -19,6 +19,7 @@ import { CreateContentScreen } from '@screens/CreateContentScreen';
 import { SchedulePostScreen } from '@screens/SchedulePostScreen';
 import { PostingHistoryScreen } from '@screens/PostingHistoryScreen';
 import { AccountIntegrationsScreen } from '@screens/AccountIntegrationsScreen';
+import { AdsManagerScreen } from '@screens/AdsManagerScreen';
 import { TrendingNewsScreen } from '@screens/TrendingNewsScreen';
 import { navigationRef } from '@navigation/navigationRef';
 import { ProfileScreen } from '@screens/ProfileScreen';
@@ -55,6 +56,7 @@ const linking = {
           SchedulePost: 'schedule',
           PostingHistory: 'history',
           AccountIntegrations: 'integrations',
+          AdsManager: 'ads',
           TrendingNews: 'trending',
           Support: 'support',
           Admin: 'admin'
@@ -94,6 +96,7 @@ const baseDrawerScreens = [
     component: AccountIntegrationsScreen,
     icon: 'link-outline'
   },
+  { name: 'AdsManager', labelKey: 'Ads Manager', component: AdsManagerScreen, icon: 'megaphone-outline' },
   { name: 'Support', labelKey: 'Support', component: SupportScreen, icon: 'chatbubbles-outline' }
 ];
 
@@ -125,8 +128,8 @@ const DrawerNavigator = () => {
       initialRouteName="Dashboard"
       backBehavior="history"
       detachInactiveScreens={false}
-      drawerContent={props => <CustomDrawerContent {...props} screens={drawerScreens} />}
-      screenOptions={({ navigation }) => ({
+      drawerContent={(props: any) => <CustomDrawerContent {...props} screens={drawerScreens} />}
+      screenOptions={({ navigation }: any) => ({
         freezeOnBlur: true,
         headerStyle: { backgroundColor: colors.background },
         headerTintColor: colors.text,
