@@ -13,6 +13,7 @@ import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from '../..
 import { canUsePrimarySocialDefaults } from '../../utils/socialAccess';
 import { supabaseFallbackService } from '../../services/supabaseFallbackService';
 import { resolveFacebookPageId } from '../../services/socialAccountResolver';
+import { metaAdsService } from '../../services/metaAdsService';
 import { isBwinScopeUser, validateBwinSportsContent } from '../../services/bwinContentGuard';
 import {
   getBwinAccountClosureMessage,
@@ -588,6 +589,15 @@ export class SocialPostingService {
             userId: post.userId,
             date: post.targetDate,
             postedCount: 1,
+          });
+        }
+        if (post.platform === 'facebook' && response.remoteId) {
+          await metaAdsService.autoBoostAfterPost({
+            userId: post.userId,
+            platform: post.platform,
+            postId: response.remoteId,
+            caption: payload.caption,
+            imageUrl: post.imageUrls[0] ?? null,
           });
         }
         await this.log(post, 'posted', response.remoteId);

@@ -141,6 +141,8 @@ const getScopes = () => {
     'pages_manage_posts',
     'pages_manage_metadata',
     'publish_video',
+    'ads_read',
+    'ads_management',
     'instagram_basic',
     'instagram_content_publish',
     'threads_basic',
