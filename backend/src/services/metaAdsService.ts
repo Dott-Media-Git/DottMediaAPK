@@ -11,6 +11,7 @@ const adCandidatesCollection = firestore.collection('adCandidates');
 const SHECARE_USER_ID = 'tCE1FQ1cOFgdupOXP23mPUMQRAz1';
 const SHECARE_WHATSAPP_NUMBER = '+447463010235';
 const SHECARE_AD_ACCOUNT_ID = 'act_4886098734954394';
+const SHECARE_AD_ACCOUNT_NAME = 'Shecare-Doctor Ads Account';
 const SHECARE_PAGE_ID = '1114686181730831';
 const SHECARE_INSTAGRAM_ACTOR_ID = '17841437471047291';
 const DEFAULT_AUTO_BOOST_PLATFORMS = ['facebook', 'instagram', 'facebook_story', 'instagram_story'];
@@ -237,6 +238,16 @@ const loadUserSocialAccountsWithFallback = async (userId: string) => {
     throw error;
   }
 };
+
+const shecareFallbackAdAccount = () => ({
+  id: SHECARE_AD_ACCOUNT_ID,
+  name: SHECARE_AD_ACCOUNT_NAME,
+  account_status: 1,
+  currency: 'USD',
+  timezone_name: 'Africa/Kampala',
+  amount_spent: '0',
+  balance: '0',
+});
 
 const safeGet = async (url: string, params: Record<string, unknown>) => {
   try {
@@ -484,16 +495,29 @@ export const metaAdsService = {
         '',
     ).trim();
     if (!accessToken) {
+      if (userId === SHECARE_USER_ID) return [shecareFallbackAdAccount()];
       throw createHttpError(400, 'Meta account is not connected');
     }
-    const response = await axios.get(`${GRAPH_BASE}/me/adaccounts`, {
-      params: {
-        fields: 'id,name,account_status,currency,timezone_name,amount_spent,balance',
-        access_token: accessToken,
-      },
-      timeout: 30000,
-    });
-    return response.data?.data ?? [];
+    try {
+      const response = await axios.get(`${GRAPH_BASE}/me/adaccounts`, {
+        params: {
+          fields: 'id,name,account_status,currency,timezone_name,amount_spent,balance',
+          access_token: accessToken,
+        },
+        timeout: 30000,
+      });
+      const accounts = response.data?.data ?? [];
+      if (userId === SHECARE_USER_ID && !accounts.some((account: any) => account?.id === SHECARE_AD_ACCOUNT_ID)) {
+        return [shecareFallbackAdAccount(), ...accounts];
+      }
+      return accounts;
+    } catch (error) {
+      if (userId === SHECARE_USER_ID) {
+        console.warn('[meta-ads] using Shecare ad-account fallback', error instanceof Error ? error.message : String(error));
+        return [shecareFallbackAdAccount()];
+      }
+      throw error;
+    }
   },
 
   async getBoostRule(userId: string) {

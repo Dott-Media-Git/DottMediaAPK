@@ -16,6 +16,8 @@ import { useAuth } from '@context/AuthContext';
 const DEFAULT_WHATSAPP = '+447463010235';
 const SHECARE_USER_ID = 'tCE1FQ1cOFgdupOXP23mPUMQRAz1';
 const SHECARE_EMAIL = 'shecaredoctor@gmail.com';
+const SHECARE_AD_ACCOUNT_ID = 'act_4886098734954394';
+const SHECARE_AD_ACCOUNT_NAME = 'Shecare-Doctor Ads Account';
 const AUTO_BOOST_PLATFORMS = [
   { key: 'facebook', label: 'Facebook feed' },
   { key: 'instagram', label: 'Instagram feed' },
@@ -62,9 +64,25 @@ export const AdsManagerScreen: React.FC = () => {
     audience: { countries: ['UG'], ageMin: 18, ageMax: 65 },
   });
 
+  const displayAccounts = useMemo(() => {
+    if (!isShecareAccount) return accounts;
+    const hasShecareAccount = accounts.some(account => account.id === SHECARE_AD_ACCOUNT_ID);
+    if (hasShecareAccount) return accounts;
+    return [
+      {
+        id: SHECARE_AD_ACCOUNT_ID,
+        name: SHECARE_AD_ACCOUNT_NAME,
+        account_status: 1,
+        currency: 'USD',
+        timezone_name: 'Africa/Kampala',
+      },
+      ...accounts,
+    ];
+  }, [accounts, isShecareAccount]);
+
   const selectedAccount = useMemo(
-    () => accounts.find(account => account.id === rule.adAccountId),
-    [accounts, rule.adAccountId],
+    () => displayAccounts.find(account => account.id === rule.adAccountId),
+    [displayAccounts, rule.adAccountId],
   );
 
   const load = async () => {
@@ -74,6 +92,8 @@ export const AdsManagerScreen: React.FC = () => {
       setRule(current => ({
         ...current,
         ...ruleResponse.rule,
+        adAccountId: isShecareAccount ? ruleResponse.rule?.adAccountId || SHECARE_AD_ACCOUNT_ID : ruleResponse.rule?.adAccountId,
+        currency: isShecareAccount ? ruleResponse.rule?.currency || 'USD' : ruleResponse.rule?.currency,
         whatsappNumber: ruleResponse.rule?.whatsappNumber || defaultWhatsapp,
         dailyBudgetUsd: budgetUsdFromRule(ruleResponse.rule ?? current),
         autoBoostPlatforms: ruleResponse.rule?.autoBoostPlatforms?.length
@@ -280,9 +300,9 @@ export const AdsManagerScreen: React.FC = () => {
 
       <View style={styles.panel}>
         <Text style={styles.sectionTitle}>Ad Account</Text>
-        {accounts.length ? (
+        {displayAccounts.length ? (
           <View style={styles.accountList}>
-            {accounts.map(account => (
+            {displayAccounts.map(account => (
               <TouchableOpacity
                 key={account.id}
                 style={[styles.accountRow, rule.adAccountId === account.id && styles.accountRowActive]}
