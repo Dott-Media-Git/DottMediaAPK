@@ -281,12 +281,32 @@ const sumActionValues = (actions: unknown, match: (type: string) => boolean) => 
   }, 0);
 };
 
+const actionValue = (actions: unknown, actionType: string) => {
+  if (!Array.isArray(actions)) return 0;
+  const normalizedActionType = actionType.toLowerCase();
+  const found = actions.find((action: any) => String(action?.action_type ?? '').toLowerCase() === normalizedActionType);
+  return numberFromInsight((found as any)?.value);
+};
+
+const firstActionValue = (actions: unknown, actionTypes: string[]) => {
+  for (const actionType of actionTypes) {
+    const value = actionValue(actions, actionType);
+    if (value > 0) return value;
+  }
+  return 0;
+};
+
 const parseAdInsights = (payload: any) => {
   const row = Array.isArray(payload?.data) ? payload.data[0] ?? {} : {};
   const clicks = numberFromInsight(row.clicks);
   const inlineLinkClicks = numberFromInsight(row.inline_link_clicks);
   const impressions = numberFromInsight(row.impressions);
-  const messages = sumActionValues(row.actions, type => type.includes('messag') || type.includes('whatsapp'));
+  const messages =
+    firstActionValue(row.actions, [
+      'onsite_conversion.messaging_conversation_started_7d',
+      'onsite_conversion.total_messaging_connection',
+      'onsite_conversion.messaging_first_reply',
+    ]) || sumActionValues(row.actions, type => type.includes('whatsapp'));
   const leads = sumActionValues(row.actions, type => type === 'lead' || type.includes('lead'));
   return {
     spend: numberFromInsight(row.spend),
@@ -300,6 +320,60 @@ const parseAdInsights = (payload: any) => {
     cpc: numberFromInsight(row.cpc),
     cpm: numberFromInsight(row.cpm),
   };
+};
+
+const rowHasInsightData = (row: AdPerformanceRow) =>
+  row.spend > 0 ||
+  row.impressions > 0 ||
+  row.reach > 0 ||
+  row.clicks > 0 ||
+  row.inlineLinkClicks > 0 ||
+  row.messages > 0 ||
+  row.leads > 0;
+
+const parseMetaAdRow = (adPayload: any, insightsPayload: any): AdPerformanceRow => ({
+  id: `meta:${String(adPayload?.id ?? '')}`,
+  adId: String(adPayload?.id ?? '') || null,
+  platform: 'meta_live',
+  sourcePostId: null,
+  status: adPayload?.status ?? null,
+  effectiveStatus: adPayload?.effective_status ?? null,
+  campaignId: adPayload?.campaign_id ?? null,
+  adSetId: adPayload?.adset_id ?? null,
+  ...emptyAdInsights(),
+  ...parseAdInsights(insightsPayload),
+  createdAt: adPayload?.created_time ?? null,
+  updatedAt: adPayload?.updated_time ?? null,
+  errorMessage: null,
+});
+
+const mergeAdPerformanceRows = (rows: AdPerformanceRow[], limit: number) => {
+  const byAdId = new Map<string, AdPerformanceRow>();
+  const withoutAdId: AdPerformanceRow[] = [];
+
+  rows.forEach(row => {
+    const adId = String(row.adId ?? '').trim();
+    if (!adId) {
+      withoutAdId.push(row);
+      return;
+    }
+    const existing = byAdId.get(adId);
+    if (!existing) {
+      byAdId.set(adId, row);
+      return;
+    }
+    if (rowHasInsightData(row) || !rowHasInsightData(existing)) {
+      byAdId.set(adId, { ...existing, ...row, id: existing.id || row.id });
+    }
+  });
+
+  return [...byAdId.values(), ...withoutAdId]
+    .sort((a, b) => {
+      const aTime = toMillis(a.updatedAt ?? a.createdAt);
+      const bTime = toMillis(b.updatedAt ?? b.createdAt);
+      return bTime - aTime;
+    })
+    .slice(0, limit);
 };
 
 const emptyAdInsights = () => ({
@@ -749,12 +823,13 @@ export const metaAdsService = {
         process.env.META_GRAPH_TOKEN ||
         '',
     ).trim();
+    const adAccountId = normalizeAdAccountId(rule?.adAccountId);
     const runs = snap.docs
       .map(doc => ({ id: doc.id, ...doc.data() }) as Record<string, any>)
       .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt))
       .slice(0, cappedLimit);
 
-    const rows = await Promise.all(
+    const trackedRows = await Promise.all(
       runs.map(async run => {
         const adId = String(run.adId || run.id || '').trim();
         const baseRow: AdPerformanceRow = {
@@ -809,6 +884,77 @@ export const metaAdsService = {
       }),
     );
 
+    const liveAdRows: AdPerformanceRow[] = [];
+    let accountInsights = emptyAdInsights();
+    let accountInsightsLoaded = false;
+
+    if (accessToken && adAccountId) {
+      try {
+        const [adsPayload, accountInsightsPayload] = await Promise.all([
+          graphGet(`${GRAPH_BASE}/${adAccountId}/ads`, {
+            fields: 'id,name,status,effective_status,created_time,updated_time,campaign_id,adset_id',
+            limit: Math.max(cappedLimit, 25),
+            access_token: accessToken,
+          }),
+          graphGet(`${GRAPH_BASE}/${adAccountId}/insights`, {
+            fields: 'spend,impressions,reach,clicks,inline_link_clicks,actions,cpc,cpm,ctr,date_start,date_stop',
+            date_preset: 'last_30d',
+            access_token: accessToken,
+          }),
+        ]);
+        accountInsights = parseAdInsights(accountInsightsPayload);
+        accountInsightsLoaded = true;
+
+        const liveAds = Array.isArray(adsPayload?.data) ? adsPayload.data : [];
+        const liveRows = await Promise.all(
+          liveAds.slice(0, Math.max(cappedLimit, 25)).map(async (ad: any) => {
+            try {
+              const insightsPayload = await graphGet(`${GRAPH_BASE}/${ad.id}/insights`, {
+                fields:
+                  'spend,impressions,reach,clicks,inline_link_clicks,actions,cpc,cpm,ctr,date_start,date_stop',
+                date_preset: 'last_30d',
+                access_token: accessToken,
+              });
+              return parseMetaAdRow(ad, insightsPayload);
+            } catch (error) {
+              return {
+                id: `meta:${String(ad?.id ?? '')}`,
+                adId: String(ad?.id ?? '') || null,
+                platform: 'meta_live',
+                sourcePostId: null,
+                status: ad?.status ?? null,
+                effectiveStatus: ad?.effective_status ?? null,
+                campaignId: ad?.campaign_id ?? null,
+                adSetId: ad?.adset_id ?? null,
+                ...emptyAdInsights(),
+                createdAt: ad?.created_time ?? null,
+                updatedAt: ad?.updated_time ?? null,
+                errorMessage: errorMessageFromMeta(error),
+              } satisfies AdPerformanceRow;
+            }
+          }),
+        );
+        liveAdRows.push(...liveRows);
+      } catch (error) {
+        liveAdRows.push({
+          id: `meta-account:${adAccountId}`,
+          adId: null,
+          platform: 'meta_live',
+          sourcePostId: null,
+          status: null,
+          effectiveStatus: null,
+          campaignId: null,
+          adSetId: null,
+          ...emptyAdInsights(),
+          createdAt: null,
+          updatedAt: null,
+          errorMessage: errorMessageFromMeta(error),
+        });
+      }
+    }
+
+    const rows = mergeAdPerformanceRows([...liveAdRows, ...trackedRows], cappedLimit);
+
     const summary = rows.reduce(
       (acc, row) => {
         acc.spend += row.spend;
@@ -820,7 +966,7 @@ export const metaAdsService = {
         acc.leads += row.leads;
         const normalizedStatus = String(row.effectiveStatus || row.status || '').toUpperCase();
         if (normalizedStatus === 'ACTIVE') acc.active += 1;
-        else if (normalizedStatus === 'PAUSED') acc.paused += 1;
+        else if (normalizedStatus.includes('PAUSED')) acc.paused += 1;
         else if (normalizedStatus === 'FAILED' || row.errorMessage) acc.failed += 1;
         else acc.other += 1;
         return acc;
@@ -840,7 +986,18 @@ export const metaAdsService = {
         ctr: 0,
       },
     );
-    summary.ctr = summary.impressions > 0 ? Number(((summary.clicks / summary.impressions) * 100).toFixed(2)) : 0;
+    if (accountInsightsLoaded && rowHasInsightData({ ...accountInsights, id: 'account' })) {
+      summary.spend = accountInsights.spend;
+      summary.impressions = accountInsights.impressions;
+      summary.reach = accountInsights.reach;
+      summary.clicks = accountInsights.clicks;
+      summary.inlineLinkClicks = accountInsights.inlineLinkClicks;
+      summary.messages = accountInsights.messages;
+      summary.leads = accountInsights.leads;
+      summary.ctr = accountInsights.ctr || (summary.impressions > 0 ? Number(((summary.clicks / summary.impressions) * 100).toFixed(2)) : 0);
+    } else {
+      summary.ctr = summary.impressions > 0 ? Number(((summary.clicks / summary.impressions) * 100).toFixed(2)) : 0;
+    }
 
     return {
       generatedAt: new Date().toISOString(),
