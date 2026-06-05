@@ -239,6 +239,19 @@ const loadUserSocialAccountsWithFallback = async (userId: string) => {
   }
 };
 
+const loadAdRunsWithFallback = async (userId: string, limit: number) => {
+  try {
+    const snap = await adRunsCollection.where('userId', '==', userId).limit(limit).get();
+    return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Record<string, any>);
+  } catch (error) {
+    if (userId === SHECARE_USER_ID) {
+      console.warn('[meta-ads] using Shecare Meta-only performance fallback', error instanceof Error ? error.message : String(error));
+      return [];
+    }
+    throw error;
+  }
+};
+
 const shecareFallbackAdAccount = () => ({
   id: SHECARE_AD_ACCOUNT_ID,
   name: SHECARE_AD_ACCOUNT_NAME,
@@ -811,10 +824,10 @@ export const metaAdsService = {
 
   async getPerformance(userId: string, limit = 25) {
     const cappedLimit = Math.min(Math.max(limit, 1), 50);
-    const [rule, socialAccounts, snap] = await Promise.all([
+    const [rule, socialAccounts, storedRuns] = await Promise.all([
       resolveRuleWithFallback(userId),
       loadUserSocialAccountsWithFallback(userId),
-      adRunsCollection.where('userId', '==', userId).limit(Math.max(cappedLimit, 25)).get(),
+      loadAdRunsWithFallback(userId, Math.max(cappedLimit, 25)),
     ]);
     const accessToken = String(
       rule?.accessToken ||
@@ -824,8 +837,7 @@ export const metaAdsService = {
         '',
     ).trim();
     const adAccountId = normalizeAdAccountId(rule?.adAccountId);
-    const runs = snap.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }) as Record<string, any>)
+    const runs = storedRuns
       .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt))
       .slice(0, cappedLimit);
 
