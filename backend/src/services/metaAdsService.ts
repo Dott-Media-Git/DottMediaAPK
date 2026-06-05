@@ -314,12 +314,12 @@ const parseAdInsights = (payload: any) => {
   const clicks = numberFromInsight(row.clicks);
   const inlineLinkClicks = numberFromInsight(row.inline_link_clicks);
   const impressions = numberFromInsight(row.impressions);
+  const messagingConnections = actionValue(row.actions, 'onsite_conversion.total_messaging_connection');
+  const messagingFirstReplies = actionValue(row.actions, 'onsite_conversion.messaging_first_reply');
   const messages =
-    firstActionValue(row.actions, [
-      'onsite_conversion.messaging_conversation_started_7d',
-      'onsite_conversion.total_messaging_connection',
-      'onsite_conversion.messaging_first_reply',
-    ]) || sumActionValues(row.actions, type => type.includes('whatsapp'));
+    messagingConnections + messagingFirstReplies ||
+    firstActionValue(row.actions, ['onsite_conversion.messaging_conversation_started_7d']) ||
+    sumActionValues(row.actions, type => type.includes('whatsapp'));
   const leads = sumActionValues(row.actions, type => type === 'lead' || type.includes('lead'));
   return {
     spend: numberFromInsight(row.spend),
