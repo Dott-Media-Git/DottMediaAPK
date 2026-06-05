@@ -170,8 +170,8 @@ const resolveRule = async (userId: string) => {
 
 const buildShecareFallbackRule = (userId: string): BoostRule => ({
   userId,
-  enabled: true,
-  mode: 'auto',
+  enabled: false,
+  mode: 'manual',
   adAccountId: SHECARE_AD_ACCOUNT_ID,
   pageId: SHECARE_PAGE_ID,
   instagramActorId: SHECARE_INSTAGRAM_ACTOR_ID,
