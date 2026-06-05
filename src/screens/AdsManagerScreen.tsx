@@ -16,6 +16,12 @@ import { useAuth } from '@context/AuthContext';
 const DEFAULT_WHATSAPP = '+447463010235';
 const SHECARE_USER_ID = 'tCE1FQ1cOFgdupOXP23mPUMQRAz1';
 const SHECARE_EMAIL = 'shecaredoctor@gmail.com';
+const AUTO_BOOST_PLATFORMS = [
+  { key: 'facebook', label: 'Facebook feed' },
+  { key: 'instagram', label: 'Instagram feed' },
+  { key: 'facebook_story', label: 'Facebook story' },
+  { key: 'instagram_story', label: 'Instagram story' },
+];
 
 const parseUsdBudget = (value: string) => {
   const normalized = value.replace(/[^\d.]/g, '');
@@ -48,6 +54,11 @@ export const AdsManagerScreen: React.FC = () => {
     dailyBudgetUsd: 5,
     durationHours: 24,
     statusOnCreate: 'PAUSED',
+    autoBoostPlatforms: AUTO_BOOST_PLATFORMS.map(platform => platform.key),
+    autoBoostStrategy: 'best_performing',
+    performanceWindowHours: 48,
+    minCandidateAgeMinutes: 15,
+    autoBoostCooldownHours: 6,
     audience: { countries: ['UG'], ageMin: 18, ageMax: 65 },
   });
 
@@ -65,6 +76,13 @@ export const AdsManagerScreen: React.FC = () => {
         ...ruleResponse.rule,
         whatsappNumber: ruleResponse.rule?.whatsappNumber || defaultWhatsapp,
         dailyBudgetUsd: budgetUsdFromRule(ruleResponse.rule ?? current),
+        autoBoostPlatforms: ruleResponse.rule?.autoBoostPlatforms?.length
+          ? ruleResponse.rule.autoBoostPlatforms
+          : current.autoBoostPlatforms,
+        autoBoostStrategy: ruleResponse.rule?.autoBoostStrategy ?? current.autoBoostStrategy,
+        performanceWindowHours: ruleResponse.rule?.performanceWindowHours ?? current.performanceWindowHours,
+        minCandidateAgeMinutes: ruleResponse.rule?.minCandidateAgeMinutes ?? current.minCandidateAgeMinutes,
+        autoBoostCooldownHours: ruleResponse.rule?.autoBoostCooldownHours ?? current.autoBoostCooldownHours,
       }));
       setRuns(runsResponse.runs ?? []);
       try {
@@ -85,6 +103,15 @@ export const AdsManagerScreen: React.FC = () => {
   }, [defaultWhatsapp]);
 
   const updateRule = (patch: Partial<BoostRule>) => setRule(current => ({ ...current, ...patch }));
+
+  const toggleAutoBoostPlatform = (platform: string) => {
+    setRule(current => {
+      const selected = new Set(current.autoBoostPlatforms?.length ? current.autoBoostPlatforms : []);
+      if (selected.has(platform)) selected.delete(platform);
+      else selected.add(platform);
+      return { ...current, autoBoostPlatforms: Array.from(selected) };
+    });
+  };
 
   const handleSave = async () => {
     if (!String(rule.whatsappNumber ?? '').trim()) {
@@ -167,7 +194,7 @@ export const AdsManagerScreen: React.FC = () => {
         <View style={styles.switchRow}>
           <View>
             <Text style={styles.sectionTitle}>Auto Boost</Text>
-            <Text style={styles.helper}>When enabled, new Facebook feed posts create ads automatically.</Text>
+            <Text style={styles.helper}>When enabled, DottMedia scores eligible posts and boosts one winner after the cooldown.</Text>
           </View>
           <Switch value={Boolean(rule.enabled)} onValueChange={value => updateRule({ enabled: value })} />
         </View>
@@ -185,6 +212,70 @@ export const AdsManagerScreen: React.FC = () => {
             </TouchableOpacity>
           ))}
         </View>
+      </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.sectionTitle}>Auto Selection</Text>
+        <Text style={styles.helper}>Choose which post types can enter the auto-boost pool. The system will not boost all of them at the same time.</Text>
+        <View style={styles.platformGrid}>
+          {AUTO_BOOST_PLATFORMS.map(platform => {
+            const active = Boolean(rule.autoBoostPlatforms?.includes(platform.key));
+            return (
+              <TouchableOpacity
+                key={platform.key}
+                style={[styles.platformChip, active && styles.platformChipActive]}
+                onPress={() => toggleAutoBoostPlatform(platform.key)}
+              >
+                <Ionicons
+                  name={active ? 'checkmark-circle-outline' : 'ellipse-outline'}
+                  size={17}
+                  color={active ? '#ffffff' : colors.subtext}
+                />
+                <Text style={[styles.platformChipText, active && styles.platformChipTextActive]}>{platform.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <View style={styles.segment}>
+          {(['best_performing', 'latest'] as const).map(strategy => (
+            <TouchableOpacity
+              key={strategy}
+              style={[styles.segmentButton, rule.autoBoostStrategy === strategy && styles.segmentButtonActive]}
+              onPress={() => updateRule({ autoBoostStrategy: strategy })}
+            >
+              <Text style={[styles.segmentText, rule.autoBoostStrategy === strategy && styles.segmentTextActive]}>
+                {strategy === 'best_performing' ? 'Best post' : 'Latest post'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.label}>Performance window hours</Text>
+        <TextInput
+          style={styles.input}
+          value={String(rule.performanceWindowHours ?? 48)}
+          onChangeText={value => updateRule({ performanceWindowHours: Number(value.replace(/[^\d]/g, '')) || 1 })}
+          keyboardType="number-pad"
+          placeholder="48"
+          placeholderTextColor={colors.subtext}
+        />
+        <Text style={styles.label}>Minimum age before scoring (minutes)</Text>
+        <TextInput
+          style={styles.input}
+          value={String(rule.minCandidateAgeMinutes ?? 15)}
+          onChangeText={value => updateRule({ minCandidateAgeMinutes: Number(value.replace(/[^\d]/g, '')) || 0 })}
+          keyboardType="number-pad"
+          placeholder="15"
+          placeholderTextColor={colors.subtext}
+        />
+        <Text style={styles.label}>Cooldown between boosts (hours)</Text>
+        <TextInput
+          style={styles.input}
+          value={String(rule.autoBoostCooldownHours ?? 6)}
+          onChangeText={value => updateRule({ autoBoostCooldownHours: Number(value.replace(/[^\d]/g, '')) || 0 })}
+          keyboardType="number-pad"
+          placeholder="6"
+          placeholderTextColor={colors.subtext}
+        />
       </View>
 
       <View style={styles.panel}>
@@ -344,6 +435,20 @@ const styles = StyleSheet.create({
   accountRowActive: { borderColor: colors.accent },
   accountText: { flex: 1 },
   accountName: { color: colors.text, fontWeight: '700' },
+  platformGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  platformChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  platformChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  platformChipText: { color: colors.subtext, fontWeight: '600', fontSize: 13 },
+  platformChipTextActive: { color: '#ffffff' },
   label: { color: colors.text, fontSize: 13, fontWeight: '600' },
   input: {
     borderWidth: 1,

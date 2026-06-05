@@ -7,8 +7,10 @@ const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 const boostRulesCollection = firestore.collection('boostRules');
 const adRunsCollection = firestore.collection('adRuns');
+const adCandidatesCollection = firestore.collection('adCandidates');
 const SHECARE_USER_ID = 'tCE1FQ1cOFgdupOXP23mPUMQRAz1';
 const SHECARE_WHATSAPP_NUMBER = '+447463010235';
+const DEFAULT_AUTO_BOOST_PLATFORMS = ['facebook', 'instagram', 'facebook_story', 'instagram_story'];
 
 export type BoostRule = {
   userId: string;
@@ -28,6 +30,11 @@ export type BoostRule = {
   billingEvent?: string;
   optimizationGoal?: string;
   statusOnCreate?: 'PAUSED' | 'ACTIVE';
+  autoBoostPlatforms?: string[];
+  autoBoostStrategy?: 'latest' | 'best_performing';
+  performanceWindowHours?: number;
+  minCandidateAgeMinutes?: number;
+  autoBoostCooldownHours?: number;
   audience?: {
     countries?: string[];
     ageMin?: number;
@@ -43,6 +50,16 @@ type BoostPublishedPostInput = {
   postId: string;
   caption: string;
   imageUrl?: string | null;
+};
+
+type BoostCandidate = BoostPublishedPostInput & {
+  id?: string;
+  score?: number;
+  metrics?: Record<string, number>;
+  postedAt?: admin.firestore.Timestamp;
+  evaluatedAt?: admin.firestore.Timestamp;
+  boostedAt?: admin.firestore.Timestamp;
+  status?: string;
 };
 
 type ManualBoostInput = BoostPublishedPostInput & {
@@ -75,6 +92,36 @@ const budgetUsdFromRule = (rule: Partial<BoostRule>) => {
 
 const budgetMinorFromUsd = (value?: number | null) => Math.max(Math.round(toUsdBudget(value) * 100), 100);
 
+const numericOrDefault = (value: unknown, fallback: number, min: number) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(numeric, min) : fallback;
+};
+
+const normalizeAutoPlatforms = (platforms?: string[] | null) => {
+  const normalized = (Array.isArray(platforms) ? platforms : DEFAULT_AUTO_BOOST_PLATFORMS)
+    .map(platform => String(platform ?? '').trim().toLowerCase())
+    .filter(Boolean);
+  return Array.from(new Set(normalized.length ? normalized : DEFAULT_AUTO_BOOST_PLATFORMS));
+};
+
+const candidateDocId = (input: BoostPublishedPostInput) =>
+  `${input.userId}_${input.platform}_${input.postId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 140);
+
+const toMillis = (value: unknown) => {
+  if (!value) return 0;
+  if (value instanceof admin.firestore.Timestamp) return value.toMillis();
+  if (typeof (value as any)?.toMillis === 'function') return (value as any).toMillis();
+  if (typeof (value as any)?.seconds === 'number') return (value as any).seconds * 1000;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const sumValues = (values: Array<unknown>) =>
+  values.reduce((sum, value) => {
+    const numeric = Number(value);
+    return sum + (Number.isFinite(numeric) ? numeric : 0);
+  }, 0);
+
 export const buildWhatsappLink = (phone?: string | null, text?: string) => {
   const normalized = normalizeWhatsappNumber(phone);
   if (!normalized) return '';
@@ -97,6 +144,90 @@ const resolveRule = async (userId: string) => {
 const loadUserSocialAccounts = async (userId: string) => {
   const snap = await firestore.collection('users').doc(userId).get();
   return (snap.data()?.socialAccounts ?? {}) as Record<string, any>;
+};
+
+const safeGet = async (url: string, params: Record<string, unknown>) => {
+  try {
+    const response = await axios.get(url, { params, timeout: 30000 });
+    return response.data;
+  } catch (error) {
+    return null;
+  }
+};
+
+const fetchCandidateMetrics = async (candidate: BoostCandidate, socialAccounts: Record<string, any>) => {
+  const platform = String(candidate.platform ?? '').toLowerCase();
+  const postId = String(candidate.postId ?? '').trim();
+  const facebookToken = String(socialAccounts.facebook?.accessToken || socialAccounts.facebook?.userAccessToken || '').trim();
+  const instagramToken = String(socialAccounts.instagram?.accessToken || facebookToken).trim();
+
+  if (!postId) return { score: 0, metrics: {} };
+
+  if (platform === 'facebook') {
+    const data = await safeGet(`${GRAPH_BASE}/${postId}`, {
+      fields: 'reactions.summary(true),comments.summary(true),shares',
+      access_token: facebookToken,
+    });
+    const reactions = Number(data?.reactions?.summary?.total_count ?? 0);
+    const comments = Number(data?.comments?.summary?.total_count ?? 0);
+    const shares = Number(data?.shares?.count ?? 0);
+    const score = reactions + comments * 2 + shares * 3;
+    return { score, metrics: { reactions, comments, shares } };
+  }
+
+  if (platform === 'instagram') {
+    const data = await safeGet(`${GRAPH_BASE}/${postId}`, {
+      fields: 'like_count,comments_count',
+      access_token: instagramToken,
+    });
+    const likes = Number(data?.like_count ?? 0);
+    const comments = Number(data?.comments_count ?? 0);
+    const score = likes + comments * 2;
+    return { score, metrics: { likes, comments } };
+  }
+
+  if (platform === 'instagram_story') {
+    const data = await safeGet(`${GRAPH_BASE}/${postId}/insights`, {
+      metric: 'impressions,reach,replies,total_interactions',
+      access_token: instagramToken,
+    });
+    const rows = Array.isArray(data?.data) ? data.data : [];
+    const metric = (name: string) => rows.find((row: any) => row?.name === name)?.values?.[0]?.value ?? 0;
+    const impressions = Number(metric('impressions'));
+    const reach = Number(metric('reach'));
+    const replies = Number(metric('replies'));
+    const interactions = Number(metric('total_interactions'));
+    const score = sumValues([interactions, replies * 3, reach / 100, impressions / 250]);
+    return { score, metrics: { impressions, reach, replies, interactions } };
+  }
+
+  if (platform === 'facebook_story') {
+    const data = await safeGet(`${GRAPH_BASE}/${postId}/insights`, {
+      metric: 'post_impressions,post_engaged_users',
+      access_token: facebookToken,
+    });
+    const rows = Array.isArray(data?.data) ? data.data : [];
+    const metric = (name: string) => rows.find((row: any) => row?.name === name)?.values?.[0]?.value ?? 0;
+    const impressions = Number(metric('post_impressions'));
+    const engagedUsers = Number(metric('post_engaged_users'));
+    const score = sumValues([engagedUsers * 2, impressions / 250]);
+    return { score, metrics: { impressions, engagedUsers } };
+  }
+
+  return { score: 0, metrics: {} };
+};
+
+const hasRecentBoost = async (userId: string, cooldownHours: number) => {
+  const cooldownMs = cooldownHours * 60 * 60 * 1000;
+  if (cooldownMs <= 0) return false;
+  const snap = await adRunsCollection.where('userId', '==', userId).limit(40).get();
+  const now = Date.now();
+  return snap.docs.some(doc => {
+    const data = doc.data();
+    if (data.status === 'failed') return false;
+    const createdAt = toMillis(data.createdAt);
+    return createdAt > 0 && now - createdAt < cooldownMs;
+  });
 };
 
 const createCampaign = async (rule: BoostRule, accessToken: string) => {
@@ -225,6 +356,11 @@ export const metaAdsService = {
       dailyBudgetMinor: 500,
       durationHours: 24,
       statusOnCreate: 'PAUSED',
+      autoBoostPlatforms: DEFAULT_AUTO_BOOST_PLATFORMS,
+      autoBoostStrategy: 'best_performing',
+      performanceWindowHours: 48,
+      minCandidateAgeMinutes: 15,
+      autoBoostCooldownHours: 6,
     };
   },
 
@@ -251,6 +387,11 @@ export const metaAdsService = {
       billingEvent: payload.billingEvent ?? 'IMPRESSIONS',
       optimizationGoal: payload.optimizationGoal ?? 'POST_ENGAGEMENT',
       statusOnCreate: payload.statusOnCreate === 'ACTIVE' ? 'ACTIVE' : 'PAUSED',
+      autoBoostPlatforms: normalizeAutoPlatforms(payload.autoBoostPlatforms),
+      autoBoostStrategy: payload.autoBoostStrategy === 'latest' ? 'latest' : 'best_performing',
+      performanceWindowHours: numericOrDefault(payload.performanceWindowHours, 48, 1),
+      minCandidateAgeMinutes: numericOrDefault(payload.minCandidateAgeMinutes, 15, 0),
+      autoBoostCooldownHours: numericOrDefault(payload.autoBoostCooldownHours, 6, 0),
       audience: payload.audience,
       updatedAt: admin.firestore.Timestamp.now(),
     };
@@ -291,6 +432,7 @@ export const metaAdsService = {
       userId: input.userId,
       platform: input.platform,
       sourcePostId: input.postId,
+      sourceImageUrl: input.imageUrl ?? null,
       campaignId,
       adSetId,
       creativeId,
@@ -300,15 +442,92 @@ export const metaAdsService = {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
     await adRunsCollection.doc(adId).set(run, { merge: true });
+    await adCandidatesCollection.doc(candidateDocId(input)).set(
+      {
+        boostedAt: admin.firestore.FieldValue.serverTimestamp(),
+        boostAdId: adId,
+        status: 'boosted',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
     return run;
   },
 
   async autoBoostAfterPost(input: BoostPublishedPostInput) {
-    if (input.platform !== 'facebook') return null;
     const rule = await resolveRule(input.userId);
+    const eligiblePlatforms = normalizeAutoPlatforms(rule?.autoBoostPlatforms);
+    if (!eligiblePlatforms.includes(String(input.platform ?? '').toLowerCase())) return null;
+    const candidateId = candidateDocId(input);
+    await adCandidatesCollection.doc(candidateId).set(
+      {
+        ...input,
+        status: 'candidate',
+        postedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
     if (!rule?.enabled || rule.mode !== 'auto') return null;
+    const cooldownHours = numericOrDefault(rule.autoBoostCooldownHours, 6, 0);
+    if (await hasRecentBoost(input.userId, cooldownHours)) return null;
+
+    const strategy = rule.autoBoostStrategy === 'latest' ? 'latest' : 'best_performing';
+    if (strategy === 'latest') {
+      try {
+        return await this.boostPublishedPost(input);
+      } catch (error) {
+        await adRunsCollection.doc().set({
+          userId: input.userId,
+          platform: input.platform,
+          sourcePostId: input.postId,
+          status: 'failed',
+          errorMessage: error instanceof Error ? error.message : String(error),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return null;
+      }
+    }
+
     try {
-      return await this.boostPublishedPost(input);
+      const windowHours = numericOrDefault(rule.performanceWindowHours, 48, 1);
+      const minAgeMinutes = numericOrDefault(rule.minCandidateAgeMinutes, 15, 0);
+      const minPostedAt = Date.now() - windowHours * 60 * 60 * 1000;
+      const maxPostedAt = Date.now() - minAgeMinutes * 60 * 1000;
+      const socialAccounts = await loadUserSocialAccounts(input.userId);
+      const snap = await adCandidatesCollection.where('userId', '==', input.userId).limit(80).get();
+      const candidates = snap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }) as BoostCandidate)
+        .filter(candidate => {
+          const platform = String(candidate.platform ?? '').toLowerCase();
+          const postedAt = toMillis(candidate.postedAt);
+          return (
+            eligiblePlatforms.includes(platform) &&
+            String(candidate.status ?? '') !== 'boosted' &&
+            !candidate.boostedAt &&
+            postedAt >= minPostedAt &&
+            postedAt <= maxPostedAt &&
+            candidate.postId
+          );
+        });
+
+      let best: BoostCandidate | null = null;
+      for (const candidate of candidates) {
+        const { score, metrics } = await fetchCandidateMetrics(candidate, socialAccounts);
+        await adCandidatesCollection.doc(candidate.id ?? candidateDocId(candidate)).set(
+          {
+            score,
+            metrics,
+            evaluatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        if (!best || score > Number(best.score ?? -1)) best = { ...candidate, score, metrics };
+      }
+
+      if (!best) return null;
+      return await this.boostPublishedPost(best);
     } catch (error) {
       await adRunsCollection.doc().set({
         userId: input.userId,

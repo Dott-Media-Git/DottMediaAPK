@@ -43,6 +43,11 @@ export type BoostRule = {
   durationHours?: number;
   currency?: string | null;
   statusOnCreate?: 'PAUSED' | 'ACTIVE';
+  autoBoostPlatforms?: string[];
+  autoBoostStrategy?: 'latest' | 'best_performing';
+  performanceWindowHours?: number;
+  minCandidateAgeMinutes?: number;
+  autoBoostCooldownHours?: number;
   audience?: {
     countries?: string[];
     ageMin?: number;

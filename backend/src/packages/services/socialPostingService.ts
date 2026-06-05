@@ -591,7 +591,10 @@ export class SocialPostingService {
             postedCount: 1,
           });
         }
-        if (post.platform === 'facebook' && response.remoteId) {
+        if (
+          ['facebook', 'instagram', 'facebook_story', 'instagram_story'].includes(post.platform) &&
+          response.remoteId
+        ) {
           await metaAdsService.autoBoostAfterPost({
             userId: post.userId,
             platform: post.platform,

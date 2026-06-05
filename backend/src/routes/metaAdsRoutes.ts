@@ -29,6 +29,11 @@ const boostRuleSchema = z.object({
   billingEvent: z.string().optional(),
   optimizationGoal: z.string().optional(),
   statusOnCreate: z.enum(['PAUSED', 'ACTIVE']).optional(),
+  autoBoostPlatforms: z.array(z.string()).optional(),
+  autoBoostStrategy: z.enum(['latest', 'best_performing']).optional(),
+  performanceWindowHours: z.number().positive().optional(),
+  minCandidateAgeMinutes: z.number().min(0).optional(),
+  autoBoostCooldownHours: z.number().min(0).optional(),
   audience: audienceSchema,
 });
 

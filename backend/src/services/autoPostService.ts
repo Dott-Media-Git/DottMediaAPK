@@ -5075,7 +5075,10 @@ export class AutoPostService {
           tags,
           credentials,
         });
-        if (platform === 'facebook' && response?.remoteId) {
+        if (
+          ['facebook', 'instagram', 'facebook_story', 'instagram_story'].includes(platform) &&
+          response?.remoteId
+        ) {
           await metaAdsService.autoBoostAfterPost({
             userId,
             platform,
