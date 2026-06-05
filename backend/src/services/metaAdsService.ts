@@ -70,6 +70,30 @@ type ManualBoostInput = BoostPublishedPostInput & {
   whatsappNumber?: string;
 };
 
+type AdPerformanceRow = {
+  id: string;
+  adId?: string | null;
+  platform?: string | null;
+  sourcePostId?: string | null;
+  status?: string | null;
+  effectiveStatus?: string | null;
+  campaignId?: string | null;
+  adSetId?: string | null;
+  spend: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  inlineLinkClicks: number;
+  messages: number;
+  leads: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  errorMessage?: string | null;
+};
+
 const normalizeAdAccountId = (value?: string | null) => {
   const trimmed = String(value ?? '').trim();
   if (!trimmed) return '';
@@ -153,6 +177,68 @@ const safeGet = async (url: string, params: Record<string, unknown>) => {
   } catch (error) {
     return null;
   }
+};
+
+const graphGet = async (url: string, params: Record<string, unknown>) => {
+  const response = await axios.get(url, { params, timeout: 30000 });
+  return response.data;
+};
+
+const firestoreDateToIso = (value: unknown) => {
+  const millis = toMillis(value);
+  return millis > 0 ? new Date(millis).toISOString() : null;
+};
+
+const numberFromInsight = (value: unknown) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+};
+
+const sumActionValues = (actions: unknown, match: (type: string) => boolean) => {
+  if (!Array.isArray(actions)) return 0;
+  return actions.reduce((sum, action: any) => {
+    const type = String(action?.action_type ?? '').toLowerCase();
+    return match(type) ? sum + numberFromInsight(action?.value) : sum;
+  }, 0);
+};
+
+const parseAdInsights = (payload: any) => {
+  const row = Array.isArray(payload?.data) ? payload.data[0] ?? {} : {};
+  const clicks = numberFromInsight(row.clicks);
+  const inlineLinkClicks = numberFromInsight(row.inline_link_clicks);
+  const impressions = numberFromInsight(row.impressions);
+  const messages = sumActionValues(row.actions, type => type.includes('messag') || type.includes('whatsapp'));
+  const leads = sumActionValues(row.actions, type => type === 'lead' || type.includes('lead'));
+  return {
+    spend: numberFromInsight(row.spend),
+    impressions,
+    reach: numberFromInsight(row.reach),
+    clicks,
+    inlineLinkClicks,
+    messages,
+    leads,
+    ctr: numberFromInsight(row.ctr),
+    cpc: numberFromInsight(row.cpc),
+    cpm: numberFromInsight(row.cpm),
+  };
+};
+
+const emptyAdInsights = () => ({
+  spend: 0,
+  impressions: 0,
+  reach: 0,
+  clicks: 0,
+  inlineLinkClicks: 0,
+  messages: 0,
+  leads: 0,
+  ctr: 0,
+  cpc: 0,
+  cpm: 0,
+});
+
+const errorMessageFromMeta = (error: unknown) => {
+  const data = axios.isAxiosError(error) ? error.response?.data : null;
+  return String(data?.error?.message || (error instanceof Error ? error.message : error) || 'Meta insights unavailable');
 };
 
 const fetchCandidateMetrics = async (candidate: BoostCandidate, socialAccounts: Record<string, any>) => {
@@ -549,5 +635,121 @@ export const metaAdsService = {
   async listRuns(userId: string, limit = 25) {
     const snap = await adRunsCollection.where('userId', '==', userId).limit(Math.min(Math.max(limit, 1), 100)).get();
     return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  },
+
+  async getPerformance(userId: string, limit = 25) {
+    const cappedLimit = Math.min(Math.max(limit, 1), 50);
+    const [rule, socialAccounts, snap] = await Promise.all([
+      resolveRule(userId),
+      loadUserSocialAccounts(userId),
+      adRunsCollection.where('userId', '==', userId).limit(Math.max(cappedLimit, 25)).get(),
+    ]);
+    const accessToken = String(
+      rule?.accessToken ||
+        socialAccounts.facebook?.userAccessToken ||
+        socialAccounts.facebook?.accessToken ||
+        process.env.META_GRAPH_TOKEN ||
+        '',
+    ).trim();
+    const runs = snap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }) as Record<string, any>)
+      .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt))
+      .slice(0, cappedLimit);
+
+    const rows = await Promise.all(
+      runs.map(async run => {
+        const adId = String(run.adId || run.id || '').trim();
+        const baseRow: AdPerformanceRow = {
+          id: String(run.id ?? adId),
+          adId: adId || null,
+          platform: run.platform ?? null,
+          sourcePostId: run.sourcePostId ?? null,
+          status: run.status ?? null,
+          effectiveStatus: run.effectiveStatus ?? null,
+          campaignId: run.campaignId ?? null,
+          adSetId: run.adSetId ?? null,
+          ...emptyAdInsights(),
+          createdAt: firestoreDateToIso(run.createdAt),
+          updatedAt: firestoreDateToIso(run.updatedAt),
+          errorMessage: run.errorMessage ?? null,
+        };
+        if (!adId || run.status === 'failed') return baseRow;
+        if (!accessToken) {
+          return {
+            ...baseRow,
+            errorMessage: baseRow.errorMessage ?? 'Missing Meta token with ads insights access',
+          };
+        }
+        try {
+          const [adPayload, insightsPayload] = await Promise.all([
+            graphGet(`${GRAPH_BASE}/${adId}`, {
+              fields: 'id,name,status,effective_status,created_time,updated_time,campaign_id,adset_id',
+              access_token: accessToken,
+            }),
+            graphGet(`${GRAPH_BASE}/${adId}/insights`, {
+              fields:
+                'spend,impressions,reach,clicks,inline_link_clicks,actions,cpc,cpm,ctr,date_start,date_stop',
+              date_preset: 'last_30d',
+              access_token: accessToken,
+            }),
+          ]);
+          return {
+            ...baseRow,
+            status: adPayload?.status ?? baseRow.status,
+            effectiveStatus: adPayload?.effective_status ?? baseRow.effectiveStatus,
+            campaignId: adPayload?.campaign_id ?? baseRow.campaignId,
+            adSetId: adPayload?.adset_id ?? baseRow.adSetId,
+            ...parseAdInsights(insightsPayload),
+            updatedAt: adPayload?.updated_time ?? baseRow.updatedAt,
+          };
+        } catch (error) {
+          return {
+            ...baseRow,
+            errorMessage: errorMessageFromMeta(error),
+          };
+        }
+      }),
+    );
+
+    const summary = rows.reduce(
+      (acc, row) => {
+        acc.spend += row.spend;
+        acc.impressions += row.impressions;
+        acc.reach += row.reach;
+        acc.clicks += row.clicks;
+        acc.inlineLinkClicks += row.inlineLinkClicks;
+        acc.messages += row.messages;
+        acc.leads += row.leads;
+        const normalizedStatus = String(row.effectiveStatus || row.status || '').toUpperCase();
+        if (normalizedStatus === 'ACTIVE') acc.active += 1;
+        else if (normalizedStatus === 'PAUSED') acc.paused += 1;
+        else if (normalizedStatus === 'FAILED' || row.errorMessage) acc.failed += 1;
+        else acc.other += 1;
+        return acc;
+      },
+      {
+        spend: 0,
+        impressions: 0,
+        reach: 0,
+        clicks: 0,
+        inlineLinkClicks: 0,
+        messages: 0,
+        leads: 0,
+        active: 0,
+        paused: 0,
+        failed: 0,
+        other: 0,
+        ctr: 0,
+      },
+    );
+    summary.ctr = summary.impressions > 0 ? Number(((summary.clicks / summary.impressions) * 100).toFixed(2)) : 0;
+
+    return {
+      generatedAt: new Date().toISOString(),
+      lookbackDays: 30,
+      currency: rule?.currency || 'USD',
+      summary,
+      rows,
+    };
   },
 };

@@ -118,4 +118,16 @@ router.get('/meta-ads/runs', requireFirebase, async (req, res, next) => {
   }
 });
 
+router.get('/meta-ads/performance', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = (req as AuthedRequest).authUser?.uid;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const limit = Number(req.query.limit ?? 25);
+    const performance = await metaAdsService.getPerformance(userId, limit);
+    res.json({ performance });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

@@ -55,6 +55,49 @@ export type BoostRule = {
   };
 };
 
+export type AdPerformanceRow = {
+  id: string;
+  adId?: string | null;
+  platform?: string | null;
+  sourcePostId?: string | null;
+  status?: string | null;
+  effectiveStatus?: string | null;
+  spend: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  inlineLinkClicks: number;
+  messages: number;
+  leads: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  errorMessage?: string | null;
+};
+
+export type AdPerformance = {
+  generatedAt: string;
+  lookbackDays: number;
+  currency: string;
+  summary: {
+    spend: number;
+    impressions: number;
+    reach: number;
+    clicks: number;
+    inlineLinkClicks: number;
+    messages: number;
+    leads: number;
+    active: number;
+    paused: number;
+    failed: number;
+    other: number;
+    ctr: number;
+  };
+  rows: AdPerformanceRow[];
+};
+
 export const fetchMetaAdAccounts = async () =>
   authedFetch('/api/meta-ads/ad-accounts') as Promise<{ accounts: MetaAdAccount[] }>;
 
@@ -85,3 +128,6 @@ export const boostMetaPost = async (payload: {
 
 export const fetchAdRuns = async (limit = 25) =>
   authedFetch(`/api/meta-ads/runs?limit=${limit}`) as Promise<{ runs: any[] }>;
+
+export const fetchAdPerformance = async (limit = 12) =>
+  authedFetch(`/api/meta-ads/performance?limit=${limit}`) as Promise<{ performance: AdPerformance }>;
