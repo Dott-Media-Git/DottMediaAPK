@@ -10,6 +10,9 @@ const adRunsCollection = firestore.collection('adRuns');
 const adCandidatesCollection = firestore.collection('adCandidates');
 const SHECARE_USER_ID = 'tCE1FQ1cOFgdupOXP23mPUMQRAz1';
 const SHECARE_WHATSAPP_NUMBER = '+447463010235';
+const SHECARE_AD_ACCOUNT_ID = 'act_4886098734954394';
+const SHECARE_PAGE_ID = '1114686181730831';
+const SHECARE_INSTAGRAM_ACTOR_ID = '17841437471047291';
 const DEFAULT_AUTO_BOOST_PLATFORMS = ['facebook', 'instagram', 'facebook_story', 'instagram_story'];
 
 export type BoostRule = {
@@ -165,9 +168,74 @@ const resolveRule = async (userId: string) => {
   return snap.data() as BoostRule;
 };
 
+const buildShecareFallbackRule = (userId: string): BoostRule => ({
+  userId,
+  enabled: true,
+  mode: 'auto',
+  adAccountId: SHECARE_AD_ACCOUNT_ID,
+  pageId: SHECARE_PAGE_ID,
+  instagramActorId: SHECARE_INSTAGRAM_ACTOR_ID,
+  accessToken: String(process.env.META_GRAPH_TOKEN || '').trim(),
+  whatsappNumber: SHECARE_WHATSAPP_NUMBER,
+  whatsappLink: buildWhatsappLink(SHECARE_WHATSAPP_NUMBER, 'Hello, I would like private support.'),
+  dailyBudgetUsd: 5,
+  dailyBudgetMinor: 500,
+  durationHours: 24,
+  currency: 'USD',
+  objective: 'OUTCOME_ENGAGEMENT',
+  billingEvent: 'IMPRESSIONS',
+  optimizationGoal: 'POST_ENGAGEMENT',
+  statusOnCreate: 'PAUSED',
+  autoBoostPlatforms: DEFAULT_AUTO_BOOST_PLATFORMS,
+  autoBoostStrategy: 'best_performing',
+  performanceWindowHours: 48,
+  minCandidateAgeMinutes: 15,
+  autoBoostCooldownHours: 6,
+  audience: { countries: ['AE'], ageMin: 18, ageMax: 65 },
+});
+
+const resolveRuleWithFallback = async (userId: string) => {
+  try {
+    return await resolveRule(userId);
+  } catch (error) {
+    if (userId === SHECARE_USER_ID) {
+      console.warn('[meta-ads] using Shecare boost-rule fallback', error instanceof Error ? error.message : String(error));
+      return buildShecareFallbackRule(userId);
+    }
+    throw error;
+  }
+};
+
 const loadUserSocialAccounts = async (userId: string) => {
   const snap = await firestore.collection('users').doc(userId).get();
   return (snap.data()?.socialAccounts ?? {}) as Record<string, any>;
+};
+
+const loadUserSocialAccountsWithFallback = async (userId: string) => {
+  try {
+    return await loadUserSocialAccounts(userId);
+  } catch (error) {
+    if (userId === SHECARE_USER_ID) {
+      console.warn('[meta-ads] using Shecare social-account fallback', error instanceof Error ? error.message : String(error));
+      const token = String(process.env.META_GRAPH_TOKEN || '').trim();
+      return {
+        facebook: {
+          connected: Boolean(token),
+          pageId: SHECARE_PAGE_ID,
+          pageName: 'Shecare-Doctor',
+          userAccessToken: token,
+          accessToken: token,
+        },
+        instagram: {
+          connected: Boolean(token),
+          accountId: SHECARE_INSTAGRAM_ACTOR_ID,
+          username: 'shecaredoctor',
+          accessToken: token,
+        },
+      };
+    }
+    throw error;
+  }
 };
 
 const safeGet = async (url: string, params: Record<string, unknown>) => {
@@ -408,8 +476,13 @@ const createAd = async (rule: BoostRule, adSetId: string, creativeId: string, ac
 
 export const metaAdsService = {
   async listAdAccounts(userId: string) {
-    const socialAccounts = await loadUserSocialAccounts(userId);
-    const accessToken = String(socialAccounts.facebook?.userAccessToken || socialAccounts.facebook?.accessToken || '').trim();
+    const socialAccounts = await loadUserSocialAccountsWithFallback(userId);
+    const accessToken = String(
+      socialAccounts.facebook?.userAccessToken ||
+        socialAccounts.facebook?.accessToken ||
+        (userId === SHECARE_USER_ID ? process.env.META_GRAPH_TOKEN : '') ||
+        '',
+    ).trim();
     if (!accessToken) {
       throw createHttpError(400, 'Meta account is not connected');
     }
@@ -424,7 +497,7 @@ export const metaAdsService = {
   },
 
   async getBoostRule(userId: string) {
-    const rule = await resolveRule(userId);
+    const rule = await resolveRuleWithFallback(userId);
     const defaultWhatsappNumber = userId === SHECARE_USER_ID ? SHECARE_WHATSAPP_NUMBER : null;
     if (rule) {
       const { accessToken: _accessToken, ...safeRule } = rule;
@@ -451,7 +524,7 @@ export const metaAdsService = {
   },
 
   async upsertBoostRule(userId: string, payload: Partial<BoostRule>) {
-    const socialAccounts = await loadUserSocialAccounts(userId);
+    const socialAccounts = await loadUserSocialAccountsWithFallback(userId);
     const existing = await boostRulesCollection.doc(userId).get();
     const whatsappNumber = normalizeWhatsappNumber(payload.whatsappNumber);
     const dailyBudgetUsd = budgetUsdFromRule(payload);
@@ -494,7 +567,8 @@ export const metaAdsService = {
   },
 
   async boostPublishedPost(input: ManualBoostInput) {
-    const existingRule = (await resolveRule(input.userId)) ?? ({ userId: input.userId, enabled: false, mode: 'manual' } as BoostRule);
+    const existingRule =
+      (await resolveRuleWithFallback(input.userId)) ?? ({ userId: input.userId, enabled: false, mode: 'manual' } as BoostRule);
     const rule: BoostRule = {
       ...existingRule,
       adAccountId: input.adAccountId ?? existingRule.adAccountId,
@@ -541,7 +615,7 @@ export const metaAdsService = {
   },
 
   async autoBoostAfterPost(input: BoostPublishedPostInput) {
-    const rule = await resolveRule(input.userId);
+    const rule = await resolveRuleWithFallback(input.userId);
     const eligiblePlatforms = normalizeAutoPlatforms(rule?.autoBoostPlatforms);
     if (!eligiblePlatforms.includes(String(input.platform ?? '').toLowerCase())) return null;
     const candidateId = candidateDocId(input);
@@ -580,7 +654,7 @@ export const metaAdsService = {
       const minAgeMinutes = numericOrDefault(rule.minCandidateAgeMinutes, 15, 0);
       const minPostedAt = Date.now() - windowHours * 60 * 60 * 1000;
       const maxPostedAt = Date.now() - minAgeMinutes * 60 * 1000;
-      const socialAccounts = await loadUserSocialAccounts(input.userId);
+      const socialAccounts = await loadUserSocialAccountsWithFallback(input.userId);
       const snap = await adCandidatesCollection.where('userId', '==', input.userId).limit(80).get();
       const candidates = snap.docs
         .map(doc => ({ id: doc.id, ...doc.data() }) as BoostCandidate)
@@ -640,8 +714,8 @@ export const metaAdsService = {
   async getPerformance(userId: string, limit = 25) {
     const cappedLimit = Math.min(Math.max(limit, 1), 50);
     const [rule, socialAccounts, snap] = await Promise.all([
-      resolveRule(userId),
-      loadUserSocialAccounts(userId),
+      resolveRuleWithFallback(userId),
+      loadUserSocialAccountsWithFallback(userId),
       adRunsCollection.where('userId', '==', userId).limit(Math.max(cappedLimit, 25)).get(),
     ]);
     const accessToken = String(
