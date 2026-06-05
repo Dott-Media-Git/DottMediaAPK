@@ -5066,16 +5066,6 @@ export class AutoPostService {
             : clientPhotoProfile?.key === 'staysphere' && platform === 'facebook'
               ? imageUrls.slice(0, 1)
               : imageUrls;
-        if (
-          !videoUrl &&
-          (platform === 'instagram' || platform === 'instagram_story') &&
-          publishImageUrls.some(url => /\/public\/generated-media\//i.test(url))
-        ) {
-          const errorMessage = 'instagram_requires_durable_public_media_url';
-          results.push({ platform, status: 'failed', error: errorMessage });
-          historyEntries.push({ platform, status: 'failed', caption, errorMessage });
-          continue;
-        }
         const response = await (publisher as any)({
           caption,
           imageUrls: publishImageUrls,
