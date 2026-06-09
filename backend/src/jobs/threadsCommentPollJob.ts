@@ -29,6 +29,8 @@ type PollTarget = {
 };
 
 const CLIENT_POLL_USER_IDS = [
+  '80bYIeiuukNFtUvXTUobXmfC7pu1',
+  'LVR7p3WzdFM51ds92Kacf6S40og2',
   '1zvY9nNyXMcfxdPQEyx0bIdK7r53',
   'acmVetCcOiTHeGk5D7eDYieamDF3',
   'D1iNgjLKNRaQhH35M0NmGfw1LVD2',

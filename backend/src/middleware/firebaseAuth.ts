@@ -14,9 +14,10 @@ export async function requireFirebase(req: Request, _res: Response, next: NextFu
   const [scheme, token] = header.split(' ');
   if (scheme !== 'Bearer' || !token) return next(createHttpError(401, 'Invalid auth header'));
   if (config.security.allowMockAuth && token.startsWith('mock-')) {
+    const mockUid = token.replace('mock-', '');
     (req as AuthedRequest).authUser = {
-      uid: token.replace('mock-', ''),
-      email: 'mock@dott.media',
+      uid: mockUid,
+      email: mockUid === 'brasioxirin' ? 'brasioxirin@gmail.com' : 'mock@dott.media',
       exp: Date.now() / 1000 + 3600,
       iat: Date.now() / 1000,
     } as admin.auth.DecodedIdToken;

@@ -18,6 +18,9 @@ type CommentItem = { id: string; message?: string; created_time?: string; from?:
 type PollTarget = { userId?: string; pageId: string; accessToken: string };
 
 const CLIENT_POLL_USER_IDS = [
+  'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
+  '80bYIeiuukNFtUvXTUobXmfC7pu1',
+  'LVR7p3WzdFM51ds92Kacf6S40og2',
   'acmVetCcOiTHeGk5D7eDYieamDF3',
   'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
   'vzdH1DnfFLVjlY8bBgC26WACmmw2',

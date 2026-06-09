@@ -33,6 +33,23 @@ const KNOWN_FALLBACK_CONTEXTS = [
   { userId: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', objectName: 'bwin-meta-accounts.json' },
   { userId: 'cMPZQccGggbhZe9dbvtxFmBehP02', objectName: 'dott-main-meta-accounts.json' },
 ] as const;
+const KNOWN_META_ACCOUNTS = [
+  {
+    userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
+    pageId: '1114686181730831',
+    instagramAccountId: '17841437471047291',
+  },
+  {
+    userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
+    pageId: '1154065791120794',
+    instagramAccountId: '17841426388091930',
+  },
+  {
+    userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
+    pageId: '1201086759745632',
+    instagramAccountId: '17841433799368009',
+  },
+] as const;
 
 type SocialAccount = {
   accessToken?: string;
@@ -106,6 +123,61 @@ const resolvePlatformContextFromSupabase = async (
   return null;
 };
 
+const resolveKnownMetaContext = async (
+  platform: 'instagram' | 'facebook',
+  entryId?: string,
+): Promise<AccountContext | null> => {
+  if (!entryId) return null;
+  const known = KNOWN_META_ACCOUNTS.find(account =>
+    platform === 'facebook' ? account.pageId === entryId : account.instagramAccountId === entryId,
+  );
+  if (!known) return null;
+
+  const rootToken = (
+    process.env.META_GRAPH_TOKEN ??
+    process.env.CLIENT_META_USER_TOKEN ??
+    process.env.FACEBOOK_PAGE_TOKEN ??
+    process.env.INSTAGRAM_ACCESS_TOKEN ??
+    ''
+  ).trim();
+  if (!rootToken) {
+    return {
+      userId: known.userId,
+      orgId: known.userId,
+      accountId: known.instagramAccountId,
+      pageId: known.pageId,
+    };
+  }
+
+  try {
+    const response = await axios.get(`https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? 'v23.0'}/${known.pageId}`, {
+      params: {
+        fields: 'id,name,access_token,instagram_business_account{id,username}',
+        access_token: rootToken,
+      },
+      timeout: 30000,
+    });
+    const pageToken = String(response.data?.access_token || '').trim();
+    const instagramId = String(response.data?.instagram_business_account?.id || known.instagramAccountId);
+    return {
+      userId: known.userId,
+      orgId: known.userId,
+      accessToken: pageToken || rootToken,
+      accountId: instagramId,
+      pageId: known.pageId,
+    };
+  } catch (error) {
+    console.warn('[meta-webhook] known Meta context fallback token lookup failed', (error as Error).message);
+    return {
+      userId: known.userId,
+      orgId: known.userId,
+      accessToken: rootToken,
+      accountId: known.instagramAccountId,
+      pageId: known.pageId,
+    };
+  }
+};
+
 const resolvePlatformContext = async (platform: 'instagram' | 'facebook', entryId?: string): Promise<AccountContext | null> => {
   if (!entryId) return null;
   const field = platform === 'instagram' ? 'accountId' : 'pageId';
@@ -129,7 +201,7 @@ const resolvePlatformContext = async (platform: 'instagram' | 'facebook', entryI
   } catch (error) {
     console.warn('[meta-webhook] failed to resolve user context', (error as Error).message);
   }
-  return resolvePlatformContextFromSupabase(platform, entryId);
+  return (await resolvePlatformContextFromSupabase(platform, entryId)) ?? resolveKnownMetaContext(platform, entryId);
 };
 
 const buildDedupeKey = (platform: 'instagram' | 'facebook', type: 'comment' | 'dm', id?: string) => {

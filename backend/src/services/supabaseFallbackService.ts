@@ -2,6 +2,7 @@ import admin from 'firebase-admin';
 import axios, { type AxiosRequestConfig, type Method } from 'axios';
 import { Pool, type QueryResultRow } from 'pg';
 import dns from 'dns';
+import https from 'https';
 import { resolveAnalyticsScopeKey, type AnalyticsScope } from './analyticsScope';
 
 type QueryValue = string | number | boolean | null | undefined;
@@ -82,6 +83,11 @@ const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
 const SUPABASE_DATABASE_URL = (process.env.SUPABASE_DATABASE_URL ?? '').trim();
 const REST_BASE = SUPABASE_URL ? `${SUPABASE_URL}/rest/v1` : '';
+const allowInsecureSupabaseTls =
+  process.env.ALLOW_INSECURE_SUPABASE_TLS === 'true' ||
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0' ||
+  (process.env.NODE_ENV !== 'production' && process.env.ALLOW_INSECURE_SUPABASE_TLS !== 'false');
+const supabaseHttpsAgent = allowInsecureSupabaseTls ? new https.Agent({ rejectUnauthorized: false }) : undefined;
 const NOW = () => new Date().toISOString();
 dns.setDefaultResultOrder('ipv4first');
 const pgPool = SUPABASE_DATABASE_URL
@@ -326,6 +332,7 @@ class SupabaseFallbackService {
       },
       data: options.body,
       timeout: 30000,
+      ...(supabaseHttpsAgent ? { httpsAgent: supabaseHttpsAgent } : {}),
     };
 
     if (this.isCircuitOpen()) {
@@ -459,6 +466,18 @@ class SupabaseFallbackService {
       params: {
         select: '*',
         user_id: `eq.${userId}`,
+        order: 'created_at.desc',
+        limit,
+      },
+    });
+    return Array.isArray(rows) ? rows.map(row => this.deserializeScheduledPost(row)) : [];
+  }
+
+  async getRecentScheduledPosts(limit = 500) {
+    if (!this.isConfigured()) return [];
+    const rows = await this.request<any[]>('GET', 'dott_scheduled_posts', {
+      params: {
+        select: '*',
         order: 'created_at.desc',
         limit,
       },
@@ -686,6 +705,28 @@ class SupabaseFallbackService {
       : [];
   }
 
+  async getRecentSocialLogs(limit = 500) {
+    if (!this.isConfigured()) return [] as SocialLogRecord[];
+    const rows = await this.request<any[]>('GET', 'dott_social_logs', {
+      params: {
+        select: '*',
+        order: 'posted_at.desc',
+        limit,
+      },
+    });
+    return Array.isArray(rows)
+      ? rows.map(row => ({
+          userId: row.user_id,
+          platform: row.platform,
+          scheduledPostId: row.scheduled_post_id,
+          status: row.status,
+          responseId: row.response_id ?? null,
+          error: row.error ?? null,
+          postedAt: toTimestampStub(row.posted_at),
+        }))
+      : [];
+  }
+
   async getRecentScheduledPostIds(userId: string, limit = 250) {
     if (!this.isConfigured() || !userId) return [] as string[];
     const rows = await this.request<any[]>('GET', 'dott_social_logs', {
@@ -850,6 +891,51 @@ class SupabaseFallbackService {
       email: row.email ?? null,
       socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
     };
+  }
+
+  async getAllSocialAccounts(limit = 1000) {
+    if (!this.isConfigured()) return [] as Array<{ userId: string; email?: string | null; socialAccounts: Record<string, unknown> }>;
+    try {
+      const rows = await this.request<any[]>('GET', 'dott_social_accounts', {
+        params: {
+          select: '*',
+          order: 'updated_at.desc',
+          limit,
+        },
+      });
+      return Array.isArray(rows)
+        ? rows.map(row => ({
+            userId: row.user_id,
+            email: row.email ?? null,
+            socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
+          }))
+        : [];
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status !== 404 && this.hasDatabaseFallback()) {
+        const rows = await this.databaseQuery<any>(
+          'select user_id, email, accounts from public.dott_social_accounts order by updated_at desc limit $1',
+          [limit],
+        );
+        return rows.map(row => ({
+          userId: row.user_id,
+          email: row.email ?? null,
+          socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
+        }));
+      }
+      if (status !== 404) throw error;
+      const jobs = await this.getActiveAutopostJobs(limit);
+      return jobs
+        .map(job => ({
+          userId: String(job.userId ?? ''),
+          email: (job.email as string | undefined) ?? null,
+          socialAccounts:
+            job.socialAccounts && typeof job.socialAccounts === 'object'
+              ? (job.socialAccounts as Record<string, unknown>)
+              : {},
+        }))
+        .filter(row => row.userId);
+    }
   }
 
   private async getSocialAccountsFromDatabase(userId: string) {

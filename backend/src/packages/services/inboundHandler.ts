@@ -16,6 +16,11 @@ const messagesCollection = firestore.collection('messages');
 const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
 const replyPromptCache = new Map<string, { value: string; fetchedAt: number; loaded: boolean }>();
 const replyProfileCache = new Map<string, { value: string; fetchedAt: number; loaded: boolean }>();
+const DIRECT_REPLY_PROFILES: Record<string, string> = {
+  tce1fq1cofgdupoxp23mpumqraz1: 'shecare',
+  '80byieiuuknftuvxtuobxmfc7pu1': 'dotthr',
+  lvr7p3wzdfm51ds92kacf6s40og2: 'dottenergy',
+};
 
 export type InboundPayload = {
   channel: 'whatsapp' | 'instagram' | 'facebook' | 'linkedin' | 'web';
@@ -104,11 +109,23 @@ export class InboundHandler {
     const override = await getAutoReplyPromptOverride(ownerId);
     const identityLine =
       profile === 'bwinbetug'
-        ? `You are Bwinbet UG's sports assistant, responding on ${payload.channel}.`
+        ? `You are our sports team's sports assistant, responding on ${payload.channel}.`
+        : profile === 'shecare'
+          ? `You are SheCare Doctor support, responding privately on ${payload.channel}.`
+          : profile === 'dotthr'
+            ? `You are Dott Human Resource support, responding on ${payload.channel}.`
+            : profile === 'dottenergy'
+              ? `You are Dott Energy support, responding on ${payload.channel}.`
         : `You are Dotti from Dott Media, responding on ${payload.channel}.`;
     const goalLine =
       profile === 'bwinbetug'
-        ? 'Goal: keep it sports-focused, helpful, concise (<=3 sentences), and direct them to www.bwinbetug.info for full details, fixtures, markets, and support.'
+        ? 'Goal: keep it sports-focused, helpful, concise (<=3 sentences), and direct them to the link in bio for full details, fixtures, markets, and support.'
+        : profile === 'shecare'
+          ? 'Goal: be warm, discreet, respectful, and concise. Encourage a private DM or WhatsApp for confidential women’s health support. Do not give medical instructions.'
+          : profile === 'dotthr'
+            ? 'Goal: be professional and practical. Ask about hiring needs, team size, HR structure, onboarding, policy, or staff management support.'
+            : profile === 'dottenergy'
+              ? 'Goal: ask about location, power needs, turbine size, battery/inverter setup, and whether they need a turbine, generator, or controller.'
         : 'Goal: move them toward buying or booking a demo of the Dott Media AI Sales Agent. Keep it friendly, concise (<=3 sentences), give a clear CTA (book a demo or get the Sales Agent), and offer a link or next step.';
     const prompt = `
 ${identityLine}
@@ -129,7 +146,7 @@ ${override ? `Additional guidance: ${override}` : ''}
             role: 'system',
             content:
               profile === 'bwinbetug'
-                ? 'You are Bwinbet UG sports support. Keep replies brief, natural, and always include www.bwinbetug.info as the next step.'
+                ? 'You are our sports team sports support. Keep replies brief, natural, and always include the link in bio as the next step.'
                 : 'You are Dotti, the AI sales concierge for Dott Media.',
           },
           { role: 'user', content: prompt },
@@ -210,6 +227,8 @@ const getAutoReplyPromptOverride = async (userId?: string) => {
 
 const getReplyProfile = async (userId?: string) => {
   if (!userId) return null;
+  const directProfile = DIRECT_REPLY_PROFILES[userId.trim().toLowerCase()];
+  if (directProfile) return directProfile;
   const now = Date.now();
   const cached = replyProfileCache.get(userId);
   if (cached?.loaded && now - cached.fetchedAt < SETTINGS_CACHE_TTL_MS) {

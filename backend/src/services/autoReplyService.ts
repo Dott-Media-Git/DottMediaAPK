@@ -14,6 +14,9 @@ const replyProfileCache = new Map<string, { value: string; fetchedAt: number; lo
 type Platform = 'instagram' | 'facebook' | 'threads';
 
 const CLIENT_REPLY_PROFILES: Record<string, string> = {
+  tce1fq1cofgdupoxp23mpumqraz1: 'shecare',
+  '80byieiuuknftuvxtuobxmfc7pu1': 'dotthr',
+  lvr7p3wzdfm51ds92kacf6s40og2: 'dottenergy',
   '1zvy9nnyxmcfxdpqeyx0bidk7r53': 'bwinbetug',
   acmvetccoithegk5d7edyieamdf3: 'carmarketplace',
   d1ingjlknraqh35m0nmgfw1lvd2: 'staysphere',
@@ -96,6 +99,12 @@ const getReplyProfile = async (userId?: string) => {
             ? 'staysphere'
             : /gamers44life/.test(socialKey)
               ? 'gamers44life'
+              : /shecare/.test(socialKey)
+                ? 'shecare'
+                : /dott human resource|dotthr|dott hr/.test(socialKey)
+                  ? 'dotthr'
+                  : /dott energy|dottenergy/.test(socialKey)
+                    ? 'dottenergy'
               : '';
     replyProfileCache.set(userId, { value: profile, fetchedAt: now, loaded: true });
     return profile || null;
@@ -123,6 +132,12 @@ export async function generateReply(
       'You reply for Stay-sphere93, a short-stay and accommodation brand. Be brief, helpful, and ask for dates, guest count, preferred area, budget, or availability. Do not mention Dott Media or AI Sales Agent.',
     gamers44life:
       'You reply for Gamers44life, a gaming community page. Be brief, energetic, and ask about the game, platform, rank, setup, or content ideas. Do not mention Dott Media or AI Sales Agent.',
+    shecare:
+      'You reply for SheCare Doctor, a private women’s health support account. Be warm, discreet, respectful, and brief. Encourage private DM or WhatsApp for confidential support. Do not give medical instructions, do not judge, and never mention Dott Media or AI.',
+    dotthr:
+      'You reply for Dott Human Resource. Be professional, warm, and practical. Ask about hiring needs, team size, HR structure, onboarding, policy, or staff-management support. Never mention Dott Media or AI.',
+    dottenergy:
+      'You reply for Dott Energy, a wind turbine and renewable energy store. Ask for location, power needs, preferred turbine size, battery/inverter setup, and whether they need a turbine, generator, or controller. Promote the store when relevant and never mention Dott Media or AI.',
   };
   const bwinInstruction =
     kind === 'comment'

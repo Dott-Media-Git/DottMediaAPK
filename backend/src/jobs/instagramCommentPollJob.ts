@@ -17,7 +17,16 @@ type MediaItem = { id: string; timestamp?: string };
 type CommentItem = { id: string; text?: string; timestamp?: string; from?: { id?: string } };
 type PollTarget = { userId?: string; igBusinessId: string; accessToken: string };
 
+const KNOWN_IG_TARGETS: Record<string, { igBusinessId: string }> = {
+  tCE1FQ1cOFgdupOXP23mPUMQRAz1: { igBusinessId: '17841437471047291' },
+  '80bYIeiuukNFtUvXTUobXmfC7pu1': { igBusinessId: '17841426388091930' },
+  LVR7p3WzdFM51ds92Kacf6S40og2: { igBusinessId: '17841433799368009' },
+};
+
 const CLIENT_POLL_USER_IDS = [
+  'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
+  '80bYIeiuukNFtUvXTUobXmfC7pu1',
+  'LVR7p3WzdFM51ds92Kacf6S40og2',
   'acmVetCcOiTHeGk5D7eDYieamDF3',
   'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
   'vzdH1DnfFLVjlY8bBgC26WACmmw2',
@@ -157,6 +166,13 @@ const processComment = async (comment: CommentItem, target: PollTarget) => {
 
 const loadClientTargets = async (): Promise<PollTarget[]> => {
   const targets: PollTarget[] = [];
+  const rootToken = (
+    process.env.META_GRAPH_TOKEN ??
+    process.env.CLIENT_META_USER_TOKEN ??
+    process.env.INSTAGRAM_ACCESS_TOKEN ??
+    process.env.FACEBOOK_PAGE_TOKEN ??
+    ''
+  ).trim();
   if (config.channels.instagram.businessId && config.channels.instagram.accessToken) {
     targets.push({
       igBusinessId: config.channels.instagram.businessId,
@@ -190,9 +206,15 @@ const loadClientTargets = async (): Promise<PollTarget[]> => {
           ?.instagram;
         if (instagram?.accountId && instagram.accessToken) {
           targets.push({ userId, igBusinessId: instagram.accountId, accessToken: instagram.accessToken });
+          return;
         }
       } catch (error) {
         console.warn('[ig-comment-poll] Supabase target lookup failed', userId, (error as Error).message);
+      }
+
+      const known = KNOWN_IG_TARGETS[userId];
+      if (known && rootToken) {
+        targets.push({ userId, igBusinessId: known.igBusinessId, accessToken: rootToken });
       }
     }),
   );
