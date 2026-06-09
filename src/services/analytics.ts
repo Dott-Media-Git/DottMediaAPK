@@ -132,12 +132,15 @@ const normalizePlatform = (value: any): LiveSocialPlatformStats => ({
   postsAnalyzed: toFiniteNumber(value?.postsAnalyzed),
 });
 
-const normalizeLiveSocialStats = (value: any): LiveSocialStats => ({
+const normalizeLiveSocialStats = (value: any, requestedLookbackHours?: number): LiveSocialStats => ({
   generatedAt:
     typeof value?.generatedAt === 'string' && value.generatedAt
       ? value.generatedAt
       : new Date().toISOString(),
-  lookbackHours: Math.max(toFiniteNumber(value?.lookbackHours, 72), 1),
+  lookbackHours: Math.max(
+    toFiniteNumber(value?.lookbackHours, requestedLookbackHours ?? 72),
+    1,
+  ),
   summary: {
     views: toFiniteNumber(value?.summary?.views),
     interactions: toFiniteNumber(value?.summary?.interactions),
@@ -191,7 +194,7 @@ const buildAuthHeader = async (userId: string) => {
   const token = await getIdToken();
   if (token) {
     headers.Authorization = `Bearer ${token}`;
-  } else if (userId) {
+  } else if (userId && env.offline) {
     headers.Authorization = `Bearer mock-${userId}`;
   }
   return headers;
@@ -730,7 +733,12 @@ export const fetchLiveSocialStats = (
     ? `/api/stats/socialLive?lookbackHours=${encodeURIComponent(String(lookbackHours))}`
     : '/api/stats/socialLive';
   return simpleFetch<LiveSocialStats>(query, userId, scopeId).then(stats =>
-    stats ? normalizeLiveSocialStats(stats) : { ...emptyLiveSocialStats },
+    stats
+      ? normalizeLiveSocialStats(stats, lookbackHours)
+      : {
+          ...emptyLiveSocialStats,
+          lookbackHours: Math.max(toFiniteNumber(lookbackHours, emptyLiveSocialStats.lookbackHours), 1),
+        },
   );
 };
 

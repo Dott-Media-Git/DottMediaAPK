@@ -30,6 +30,7 @@ type Credentials = {
 
 type ProfileDoc = {
   user?: AuthUser;
+  isAdmin?: boolean;
   subscriptionStatus?: SubscriptionStatus;
   crmData?: CRMData;
   onboardingComplete?: boolean;
@@ -55,6 +56,7 @@ const firebaseApp = firebaseEnabled
 const auth = firebaseApp ? getAuth(firebaseApp) : null;
 const db = firebaseApp ? getFirestore(firebaseApp) : null;
 const useFirebase = Boolean(auth && db);
+let authBootstrapPromise: Promise<void> | null = null;
 
 const mockDatabase: Record<string, Profile> = {};
 
@@ -67,12 +69,26 @@ const createAnalytics = (): CRMAnalytics => ({
 
 const delay = (ms = 650) => new Promise(resolve => setTimeout(resolve, ms));
 
-const mapFirebaseUser = (user: FirebaseUser): AuthUser => ({
-  uid: user.uid,
-  email: user.email ?? 'member@dott-media.com',
-  name: user.displayName ?? user.email ?? 'Dott Media Member',
-  photoURL: user.photoURL ?? undefined
-});
+const mapFirebaseUser = (user: FirebaseUser): AuthUser => {
+  const photoURL = typeof user.photoURL === 'string' ? user.photoURL.trim() : '';
+  return {
+    uid: user.uid,
+    email: user.email ?? 'member@dott-media.com',
+    name: user.displayName ?? user.email ?? 'Dott Media Member',
+    ...(photoURL ? { photoURL } : {})
+  };
+};
+
+const sanitizeAuthUser = (user: AuthUser): AuthUser => {
+  const photoURL = typeof user.photoURL === 'string' ? user.photoURL.trim() : '';
+  return {
+    uid: user.uid,
+    email: user.email,
+    name: user.name,
+    ...(photoURL ? { photoURL } : {}),
+    ...(user.isAdmin ? { isAdmin: true } : {})
+  };
+};
 
 const mockSignUp = async (name: string, email: string): Promise<Credentials> => {
   await delay();
@@ -177,9 +193,12 @@ const defaultUser = (uid: string): AuthUser => {
 };
 
 const normalizeProfile = (data: ProfileDoc | undefined, fallbackUser: AuthUser): Profile => ({
-  user: data?.user ?? fallbackUser,
+  user: sanitizeAuthUser({
+    ...(data?.user ?? fallbackUser),
+    ...(data?.isAdmin ? { isAdmin: true } : {})
+  }),
   subscriptionStatus: data?.subscriptionStatus ?? 'none',
-  crmData: data?.crmData,
+  ...(data?.crmData ? { crmData: data.crmData } : {}),
   onboardingComplete: data?.onboardingComplete ?? Boolean(data?.crmData)
 });
 
@@ -190,7 +209,7 @@ const ensureProfileDoc = async (
 ) => {
   if (!useFirebase) return;
   const payload: Record<string, unknown> = {
-    user,
+    user: sanitizeAuthUser(user),
     lastLoginAt: serverTimestamp()
   };
   if (options?.subscriptionStatus !== undefined) {
@@ -311,7 +330,15 @@ export const fetchProfile = async (uid: string): Promise<Profile> => {
   const snapshot = await getDoc(profileRef(uid));
   if (!snapshot.exists()) {
     const profile = normalizeProfile(undefined, fallback);
-    await setDoc(profileRef(uid), profile, { merge: true });
+    const payload: Record<string, unknown> = {
+      user: sanitizeAuthUser(profile.user),
+      subscriptionStatus: profile.subscriptionStatus,
+      onboardingComplete: profile.onboardingComplete
+    };
+    if (profile.crmData) {
+      payload.crmData = profile.crmData;
+    }
+    await setDoc(profileRef(uid), payload, { merge: true });
     return profile;
   }
   return normalizeProfile(snapshot.data() as ProfileDoc, fallback);
@@ -365,10 +392,49 @@ export const observeAuthState = (
   return onAuthStateChanged(auth, user => handler(user ? mapFirebaseUser(user) : null));
 };
 
+const waitForAuthBootstrap = async (timeoutMs = 3000) => {
+  if (!useFirebase || !auth || auth.currentUser) {
+    return;
+  }
+
+  if (!authBootstrapPromise) {
+    authBootstrapPromise = new Promise(resolve => {
+      let resolved = false;
+      const finalize = () => {
+        if (resolved) return;
+        resolved = true;
+        authBootstrapPromise = null;
+        resolve();
+      };
+      const unsubscribe = onAuthStateChanged(
+        auth,
+        () => {
+          unsubscribe();
+          finalize();
+        },
+        () => {
+          unsubscribe();
+          finalize();
+        },
+      );
+      setTimeout(() => {
+        unsubscribe();
+        finalize();
+      }, timeoutMs);
+    });
+  }
+
+  await authBootstrapPromise;
+};
+
 export const getIdToken = async (): Promise<string | null> => {
   requireFirebaseAuth();
-  if (!useFirebase || !auth?.currentUser) {
+  if (!useFirebase || !auth) {
     return null;
   }
+  if (!auth.currentUser) {
+    await waitForAuthBootstrap();
+  }
+  if (!auth.currentUser) return null;
   return auth.currentUser.getIdToken();
 };

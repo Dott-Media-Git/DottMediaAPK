@@ -1,5 +1,6 @@
 import { getAuth } from 'firebase/auth';
 import { translate, type Locale } from '@constants/i18n';
+import { env } from '@services/env';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -15,16 +16,13 @@ export const sendChatQuery = async (
     const auth = getAuth();
     const token = await auth.currentUser?.getIdToken();
 
-    // If using mock auth in frontend, we might not have a real token.
-    // The backend handles mock auth via ALLOW_MOCK_AUTH, but we should send a dummy token if needed.
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
     };
 
     if (token) {
         headers['Authorization'] = `Bearer ${token}`;
-    } else {
-        // Fallback for mock mode if no firebase user
+    } else if (env.offline) {
         headers['Authorization'] = 'Bearer mock-token';
     }
 

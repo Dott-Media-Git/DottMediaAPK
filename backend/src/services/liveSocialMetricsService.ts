@@ -376,6 +376,105 @@ const normalizeSocialLogPost = (entry: {
 const hasSocialAccounts = (profile?: UserSocialProfile | null) =>
   Boolean(profile?.socialAccounts && Object.keys(profile.socialAccounts).length > 0);
 
+const rootMetaToken = () =>
+  (
+    process.env.META_GRAPH_TOKEN ??
+    process.env.CLIENT_META_USER_TOKEN ??
+    process.env.INSTAGRAM_ACCESS_TOKEN ??
+    process.env.FACEBOOK_PAGE_TOKEN ??
+    ''
+  ).trim();
+
+const knownAccountToken = (envKeys: string[]) => {
+  for (const key of envKeys) {
+    const value = process.env[key]?.trim();
+    if (value) return value;
+  }
+  return rootMetaToken();
+};
+
+const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
+  userId: string;
+  email?: string;
+  facebookPageId?: string;
+  instagramAccountId?: string;
+  facebookTokenEnv?: string[];
+  instagramTokenEnv?: string[];
+}> = [
+  {
+    userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
+    email: 'shecaredoctor@gmail.com',
+    facebookPageId: '1114686181730831',
+    instagramAccountId: '17841437471047291',
+  },
+  {
+    userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
+    email: 'kingbrasio100@gmail.com',
+    facebookPageId: '1154065791120794',
+    instagramAccountId: '17841426388091930',
+  },
+  {
+    userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
+    facebookPageId: '1201086759745632',
+    instagramAccountId: '17841433799368009',
+    facebookTokenEnv: ['DOTTENERGY_FACEBOOK_PAGE_TOKEN', 'DOTTENERGY_FACEBOOK_ACCESS_TOKEN'],
+    instagramTokenEnv: ['DOTTENERGY_INSTAGRAM_ACCESS_TOKEN'],
+  },
+  {
+    userId: 'acmVetCcOiTHeGk5D7eDYieamDF3',
+    facebookPageId: '1033657279841186',
+    instagramAccountId: '17841414110816982',
+    facebookTokenEnv: ['CARMARKETPLACE_FACEBOOK_PAGE_TOKEN', 'CARMARKETPLACE_FACEBOOK_ACCESS_TOKEN'],
+    instagramTokenEnv: ['CARMARKETPLACE_INSTAGRAM_ACCESS_TOKEN'],
+  },
+  {
+    userId: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
+    facebookPageId: '1191303874068642',
+    instagramAccountId: '17841448080672466',
+    facebookTokenEnv: ['STAYSPHERE_FACEBOOK_PAGE_TOKEN', 'STAYSPHERE_FACEBOOK_ACCESS_TOKEN'],
+    instagramTokenEnv: ['STAYSPHERE_INSTAGRAM_ACCESS_TOKEN'],
+  },
+  {
+    userId: 'vzdH1DnfFLVjlY8bBgC26WACmmw2',
+    facebookPageId: '1121885391014110',
+    instagramAccountId: '17841412643148539',
+    facebookTokenEnv: ['GAMERS44LIFE_FACEBOOK_PAGE_TOKEN', 'GAMERS44LIFE_FACEBOOK_ACCESS_TOKEN'],
+    instagramTokenEnv: ['GAMERS44LIFE_INSTAGRAM_ACCESS_TOKEN'],
+  },
+];
+
+const resolveKnownLiveSocialProfile = (scopeId?: string | null): UserSocialProfile | null => {
+  const key = String(scopeId ?? '').trim();
+  if (!key) return null;
+  const known = KNOWN_LIVE_SOCIAL_PROFILES.find(
+    profile => profile.userId === key || profile.email?.toLowerCase() === key.toLowerCase(),
+  );
+  if (!known) return null;
+
+  const facebookToken = knownAccountToken(known.facebookTokenEnv ?? []);
+  const instagramToken = knownAccountToken(known.instagramTokenEnv ?? []);
+  const socialAccounts: UserSocialAccounts = {};
+  if (known.facebookPageId && facebookToken) {
+    socialAccounts.facebook = {
+      accessToken: facebookToken,
+      pageId: known.facebookPageId,
+    };
+  }
+  if (known.instagramAccountId && instagramToken) {
+    socialAccounts.instagram = {
+      accessToken: instagramToken,
+      accountId: known.instagramAccountId,
+    };
+  }
+
+  if (!Object.keys(socialAccounts).length) return null;
+  return {
+    id: known.userId,
+    email: known.email ?? null,
+    socialAccounts,
+  };
+};
+
 const mergeSocialProfiles = (profiles: Array<UserSocialProfile | null | undefined>): UserSocialProfile | undefined => {
   const mergedAccounts: UserSocialAccounts = {};
   let email: string | null | undefined;
@@ -481,6 +580,9 @@ const resolveLiveMetricOwners = async (
       if (hasSocialAccounts(profilesById.get(candidateId))) return;
       const fallback = await fetchSupabaseSocialProfile(candidateId);
       addProfile(fallback);
+      if (!hasSocialAccounts(fallback)) {
+        addProfile(resolveKnownLiveSocialProfile(candidateId));
+      }
     }),
   );
 
