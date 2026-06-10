@@ -652,8 +652,8 @@ const fetchFacebookMetric = async (
     }
     try {
       const basicFields = postId.includes('_')
-        ? 'id,likes.summary(true),comments.summary(true),shares'
-        : 'id,likes.summary(true),comments.summary(true),shares,page_story_id';
+        ? 'id,likes.summary(true),reactions.summary(true),comments.summary(true),shares'
+        : 'id,likes.summary(true),reactions.summary(true),comments.summary(true),shares,page_story_id';
       const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${postId}`, {
         params: {
           fields: basicFields,
@@ -663,10 +663,11 @@ const fetchFacebookMetric = async (
       });
 
       const likes = Number(basic.data?.likes?.summary?.total_count ?? 0);
+      const reactions = Number(basic.data?.reactions?.summary?.total_count ?? 0);
       const comments = Number(basic.data?.comments?.summary?.total_count ?? 0);
       const shares = Number(basic.data?.shares?.count ?? 0);
       let views = 0;
-      let interactions = likes + comments + shares;
+      let interactions = Math.max(likes, reactions) + comments + shares;
       const analyticsPostId =
         typeof basic.data?.page_story_id === 'string' && basic.data.page_story_id
           ? basic.data.page_story_id
