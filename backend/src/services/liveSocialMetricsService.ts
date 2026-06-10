@@ -15,8 +15,6 @@ const MAX_POSTS_PER_PLATFORM = Math.max(Number(process.env.LIVE_SOCIAL_MAX_POSTS
 const LOOKBACK_HOURS_DEFAULT = Math.max(Number(process.env.LIVE_SOCIAL_LOOKBACK_HOURS ?? 72), 1);
 const CACHE_TTL_MS = Math.max(Number(process.env.LIVE_SOCIAL_CACHE_MS ?? 120000), 10000);
 const POST_METRIC_CACHE_TTL_MS = Math.max(Number(process.env.LIVE_SOCIAL_POST_CACHE_MS ?? 300000), 30000);
-const FACEBOOK_VIEW_FALLBACK_MULTIPLIER = Math.max(Number(process.env.FACEBOOK_VIEW_FALLBACK_MULTIPLIER ?? 18), 1);
-const INSTAGRAM_VIEW_FALLBACK_MULTIPLIER = Math.max(Number(process.env.INSTAGRAM_VIEW_FALLBACK_MULTIPLIER ?? 15), 1);
 const liveMetricsCache = new Map<string, { expiresAt: number; data: LiveSocialMetrics }>();
 const postMetricCache = new Map<string, { expiresAt: number; data: { views: number; interactions: number } }>();
 const postMetricInFlight = new Map<string, Promise<{ views: number; interactions: number }>>();
@@ -197,13 +195,6 @@ const withPostMetricCache = async (
     });
   postMetricInFlight.set(cacheKey, pending);
   return pending;
-};
-
-const estimateViewsFromInteractions = (platform: 'facebook' | 'instagram', interactions: number) => {
-  if (interactions <= 0) return 0;
-  const multiplier =
-    platform === 'facebook' ? FACEBOOK_VIEW_FALLBACK_MULTIPLIER : INSTAGRAM_VIEW_FALLBACK_MULTIPLIER;
-  return Math.max(Math.round(interactions * multiplier), interactions);
 };
 
 const getTwitterCredential = (accounts: UserSocialAccounts) => {
@@ -678,9 +669,6 @@ const fetchFacebookMetric = async (
         // Optional insights can fail if permission is unavailable; keep base metrics.
       }
 
-      if (views <= 0) {
-        views = estimateViewsFromInteractions('facebook', interactions);
-      }
       return { views, interactions };
     } catch {
       return { views: 0, interactions: 0 };
@@ -756,9 +744,6 @@ const fetchInstagramMetric = async (mediaId: string, accessToken: string) => {
         // Optional insights can fail if scope is not available.
       }
 
-      if (views <= 0) {
-        views = estimateViewsFromInteractions('instagram', interactions);
-      }
       return { views, interactions };
     } catch {
       return { views: 0, interactions: 0 };
@@ -1073,21 +1058,24 @@ export async function getLiveSocialMetrics(
     }
 
     let metricPostedRows = recentPosted;
+    const directFacebookRows =
+      accounts.facebook?.accessToken && accounts.facebook?.pageId
+        ? await fetchRecentFacebookPosts(accounts.facebook, cutoffMs)
+        : [];
+    const directInstagramRows =
+      accounts.instagram?.accessToken && accounts.instagram?.accountId
+        ? await fetchRecentInstagramMedia(accounts.instagram, cutoffMs)
+        : [];
+
     if (accounts.facebook?.accessToken && accounts.facebook?.pageId) {
-      const hasFacebookRows = metricPostedRows.some(post => ['facebook', 'facebook_story'].includes(post.platform));
-      if (!hasFacebookRows) {
-        const directRows = await fetchRecentFacebookPosts(accounts.facebook, cutoffMs);
-        metricPostedRows = mergePostedRows(metricPostedRows, directRows);
-      }
+      metricPostedRows = metricPostedRows.filter(post => !['facebook', 'facebook_story'].includes(post.platform));
+      metricPostedRows = mergePostedRows(metricPostedRows, directFacebookRows);
     }
     if (accounts.instagram?.accessToken && accounts.instagram?.accountId) {
-      const hasInstagramRows = metricPostedRows.some(post =>
-        ['instagram', 'instagram_reels', 'instagram_story'].includes(post.platform),
+      metricPostedRows = metricPostedRows.filter(
+        post => !['instagram', 'instagram_reels', 'instagram_story'].includes(post.platform),
       );
-      if (!hasInstagramRows) {
-        const directRows = await fetchRecentInstagramMedia(accounts.instagram, cutoffMs);
-        metricPostedRows = mergePostedRows(metricPostedRows, directRows);
-      }
+      metricPostedRows = mergePostedRows(metricPostedRows, directInstagramRows);
     }
     if (accounts.threads?.accessToken && accounts.threads?.accountId) {
       const hasThreadsRows = metricPostedRows.some(post => post.platform === 'threads');
