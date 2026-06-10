@@ -376,12 +376,28 @@ const rootMetaToken = () =>
     ''
   ).trim();
 
-const knownAccountToken = (envKeys: string[]) => {
+const rootFacebookToken = () =>
+  (
+    process.env.FACEBOOK_PAGE_TOKEN ??
+    process.env.META_GRAPH_TOKEN ??
+    process.env.CLIENT_META_USER_TOKEN ??
+    ''
+  ).trim();
+
+const rootInstagramToken = () =>
+  (
+    process.env.INSTAGRAM_ACCESS_TOKEN ??
+    process.env.META_GRAPH_TOKEN ??
+    process.env.CLIENT_META_USER_TOKEN ??
+    ''
+  ).trim();
+
+const knownAccountToken = (envKeys: string[], fallback: () => string) => {
   for (const key of envKeys) {
     const value = process.env[key]?.trim();
     if (value) return value;
   }
-  return rootMetaToken();
+  return fallback();
 };
 
 const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
@@ -397,12 +413,16 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
     email: 'shecaredoctor@gmail.com',
     facebookPageId: '1114686181730831',
     instagramAccountId: '17841437471047291',
+    facebookTokenEnv: ['SHECARE_FACEBOOK_PAGE_TOKEN', 'SHECARE_FACEBOOK_ACCESS_TOKEN'],
+    instagramTokenEnv: ['SHECARE_INSTAGRAM_ACCESS_TOKEN'],
   },
   {
     userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
     email: 'kingbrasio100@gmail.com',
     facebookPageId: '1154065791120794',
     instagramAccountId: '17841426388091930',
+    facebookTokenEnv: ['DOTT_HR_FACEBOOK_PAGE_TOKEN', 'DOTT_HR_FACEBOOK_ACCESS_TOKEN', 'DOTTHR_FACEBOOK_PAGE_TOKEN'],
+    instagramTokenEnv: ['DOTT_HR_INSTAGRAM_ACCESS_TOKEN', 'DOTTHR_INSTAGRAM_ACCESS_TOKEN'],
   },
   {
     userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
@@ -442,8 +462,8 @@ const resolveKnownLiveSocialProfile = (scopeId?: string | null): UserSocialProfi
   );
   if (!known) return null;
 
-  const facebookToken = knownAccountToken(known.facebookTokenEnv ?? []);
-  const instagramToken = knownAccountToken(known.instagramTokenEnv ?? []);
+  const facebookToken = knownAccountToken(known.facebookTokenEnv ?? [], rootFacebookToken);
+  const instagramToken = knownAccountToken(known.instagramTokenEnv ?? [], rootInstagramToken);
   const socialAccounts: UserSocialAccounts = {};
   if (known.facebookPageId && facebookToken) {
     socialAccounts.facebook = {
