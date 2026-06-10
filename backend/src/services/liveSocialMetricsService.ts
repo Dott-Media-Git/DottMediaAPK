@@ -392,6 +392,14 @@ const rootInstagramToken = () =>
     ''
   ).trim();
 
+const rootThreadsToken = () =>
+  (
+    process.env.THREADS_ACCESS_TOKEN ??
+    process.env.DOTT_HR_THREADS_ACCESS_TOKEN ??
+    process.env.DOTTHR_THREADS_ACCESS_TOKEN ??
+    ''
+  ).trim();
+
 const knownAccountToken = (envKeys: string[], fallback: () => string) => {
   for (const key of envKeys) {
     const value = process.env[key]?.trim();
@@ -405,8 +413,10 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
   email?: string;
   facebookPageId?: string;
   instagramAccountId?: string;
+  threadsAccountId?: string;
   facebookTokenEnv?: string[];
   instagramTokenEnv?: string[];
+  threadsTokenEnv?: string[];
 }> = [
   {
     userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
@@ -421,8 +431,10 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
     email: 'kingbrasio100@gmail.com',
     facebookPageId: '1154065791120794',
     instagramAccountId: '17841426388091930',
+    threadsAccountId: '27456972033906662',
     facebookTokenEnv: ['DOTT_HR_FACEBOOK_PAGE_TOKEN', 'DOTT_HR_FACEBOOK_ACCESS_TOKEN', 'DOTTHR_FACEBOOK_PAGE_TOKEN'],
     instagramTokenEnv: ['DOTT_HR_INSTAGRAM_ACCESS_TOKEN', 'DOTTHR_INSTAGRAM_ACCESS_TOKEN'],
+    threadsTokenEnv: ['DOTT_HR_THREADS_ACCESS_TOKEN', 'DOTTHR_THREADS_ACCESS_TOKEN', 'DOTT_HR_THREADS_TOKEN'],
   },
   {
     userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
@@ -464,6 +476,7 @@ const resolveKnownLiveSocialProfile = (scopeId?: string | null): UserSocialProfi
 
   const facebookToken = knownAccountToken(known.facebookTokenEnv ?? [], rootFacebookToken);
   const instagramToken = knownAccountToken(known.instagramTokenEnv ?? [], rootInstagramToken);
+  const threadsToken = knownAccountToken(known.threadsTokenEnv ?? [], rootThreadsToken);
   const socialAccounts: UserSocialAccounts = {};
   if (known.facebookPageId && facebookToken) {
     socialAccounts.facebook = {
@@ -475,6 +488,12 @@ const resolveKnownLiveSocialProfile = (scopeId?: string | null): UserSocialProfi
     socialAccounts.instagram = {
       accessToken: instagramToken,
       accountId: known.instagramAccountId,
+    };
+  }
+  if (known.threadsAccountId && threadsToken) {
+    socialAccounts.threads = {
+      accessToken: threadsToken,
+      accountId: known.threadsAccountId,
     };
   }
 
@@ -726,6 +745,41 @@ const fetchRecentFacebookPosts = async (
   } catch (error) {
     console.warn('[socialLive] direct Facebook timeline fetch failed', error);
     return [];
+  }
+};
+
+const fetchFacebookPageMetric = async (
+  facebookAccount: NonNullable<UserSocialAccounts['facebook']>,
+  cutoffMs: number,
+) => {
+  const pageId = facebookAccount.pageId?.trim();
+  const accessToken = facebookAccount.accessToken?.trim();
+  if (!pageId || !accessToken) return { views: 0, interactions: 0 };
+  const since = Math.floor(cutoffMs / 1000);
+  const until = Math.floor(Date.now() / 1000);
+  try {
+    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/insights`, {
+      params: {
+        metric: 'page_views_total,page_total_actions',
+        period: 'day',
+        since,
+        until,
+        access_token: accessToken,
+      },
+      timeout: 30000,
+    });
+    const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+    const metricTotal = (metric: string) =>
+      rows
+        .find((row: any) => row?.name === metric)
+        ?.values?.reduce((acc: number, entry: any) => acc + toNumber(entry?.value), 0) ?? 0;
+    return {
+      views: metricTotal('page_views_total'),
+      interactions: metricTotal('page_total_actions'),
+    };
+  } catch (error) {
+    console.warn('[socialLive] direct Facebook page insights fetch failed', error);
+    return { views: 0, interactions: 0 };
   }
 };
 
@@ -1168,11 +1222,15 @@ export async function getLiveSocialMetrics(
     };
 
     if (accounts.facebook?.accessToken && facebookIds.length > 0) {
-      const rows = await Promise.all(
-        facebookIds.map(id => fetchFacebookMetric(id, accounts.facebook!)),
+      const [rows, pageMetric] = await Promise.all([
+        Promise.all(facebookIds.map(id => fetchFacebookMetric(id, accounts.facebook!))),
+        fetchFacebookPageMetric(accounts.facebook, cutoffMs),
+      ]);
+      output.platforms.facebook.views = Math.max(sum(rows.map(row => row.views)), pageMetric.views);
+      output.platforms.facebook.interactions = Math.max(
+        sum(rows.map(row => row.interactions)),
+        pageMetric.interactions,
       );
-      output.platforms.facebook.views = sum(rows.map(row => row.views));
-      output.platforms.facebook.interactions = sum(rows.map(row => row.interactions));
       output.platforms.facebook.engagementRate = formatRate(
         output.platforms.facebook.interactions,
         output.platforms.facebook.views,
