@@ -652,8 +652,8 @@ const fetchFacebookMetric = async (
     }
     try {
       const basicFields = postId.includes('_')
-        ? 'id,likes.summary(true),comments.summary(true)'
-        : 'id,likes.summary(true),comments.summary(true),page_story_id';
+        ? 'id,likes.summary(true),comments.summary(true),shares'
+        : 'id,likes.summary(true),comments.summary(true),shares,page_story_id';
       const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${postId}`, {
         params: {
           fields: basicFields,
@@ -664,8 +664,9 @@ const fetchFacebookMetric = async (
 
       const likes = Number(basic.data?.likes?.summary?.total_count ?? 0);
       const comments = Number(basic.data?.comments?.summary?.total_count ?? 0);
+      const shares = Number(basic.data?.shares?.count ?? 0);
       let views = 0;
-      let interactions = likes + comments;
+      let interactions = likes + comments + shares;
       const analyticsPostId =
         typeof basic.data?.page_story_id === 'string' && basic.data.page_story_id
           ? basic.data.page_story_id
@@ -674,17 +675,18 @@ const fetchFacebookMetric = async (
       try {
         const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${analyticsPostId}/insights`, {
           params: {
-            metric: 'post_impressions,post_impressions_unique,post_engaged_users',
+            metric: 'post_clicks,post_reactions_by_type_total,post_activity_by_action_type',
             access_token: metricsToken,
           },
           timeout: 30000,
         });
         const insightBlock = insights.data;
-        views =
-          parseInsightValue(insightBlock, 'post_impressions') ||
-          parseInsightValue(insightBlock, 'post_impressions_unique');
-        const engagedUsers = parseInsightValue(insightBlock, 'post_engaged_users');
-        if (engagedUsers > 0) interactions = engagedUsers;
+        const postClicks = parseInsightValue(insightBlock, 'post_clicks');
+        const reactions = parseInsightValue(insightBlock, 'post_reactions_by_type_total');
+        const activities = parseInsightValue(insightBlock, 'post_activity_by_action_type');
+        if (postClicks + reactions + activities > interactions) {
+          interactions = postClicks + reactions + activities;
+        }
       } catch {
         // Optional insights can fail if permission is unavailable; keep base metrics.
       }
@@ -745,14 +747,14 @@ const fetchInstagramMetric = async (mediaId: string, accessToken: string) => {
       try {
         const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
           params: {
-            metric: 'impressions,reach,saved,shares,total_interactions',
+            metric: 'views,reach,saved,shares,total_interactions',
             access_token: accessToken,
           },
           timeout: 30000,
         });
         const rows = Array.isArray(insights.data?.data) ? insights.data.data : [];
         views =
-          parseInsightArrayValue(rows, 'impressions') ||
+          parseInsightArrayValue(rows, 'views') ||
           parseInsightArrayValue(rows, 'reach');
         interactions =
           parseInsightArrayValue(rows, 'total_interactions') ||
