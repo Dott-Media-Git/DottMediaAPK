@@ -38,16 +38,37 @@ const KNOWN_META_ACCOUNTS = [
     userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
     pageId: '1114686181730831',
     instagramAccountId: '17841437471047291',
+    pageTokenEnv: 'SHECARE_FACEBOOK_PAGE_TOKEN',
   },
   {
     userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
     pageId: '1154065791120794',
     instagramAccountId: '17841426388091930',
+    pageTokenEnv: 'DOTT_HR_FACEBOOK_PAGE_TOKEN',
   },
   {
     userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
     pageId: '1201086759745632',
     instagramAccountId: '17841433799368009',
+    pageTokenEnv: 'DOTTENERGY_FACEBOOK_PAGE_TOKEN',
+  },
+  {
+    userId: 'acmVetCcOiTHeGk5D7eDYieamDF3',
+    pageId: '1033657279841186',
+    instagramAccountId: '17841414110816982',
+    pageTokenEnv: 'CARMARKETPLACE_FACEBOOK_PAGE_TOKEN',
+  },
+  {
+    userId: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
+    pageId: '1191303874068642',
+    instagramAccountId: '17841448080672466',
+    pageTokenEnv: 'STAYSPHERE_FACEBOOK_PAGE_TOKEN',
+  },
+  {
+    userId: 'vzdH1DnfFLVjlY8bBgC26WACmmw2',
+    pageId: '1121885391014110',
+    instagramAccountId: '17841412643148539',
+    pageTokenEnv: 'GAMERS44LIFE_FACEBOOK_PAGE_TOKEN',
   },
 ] as const;
 
@@ -132,6 +153,16 @@ const resolveKnownMetaContext = async (
     platform === 'facebook' ? account.pageId === entryId : account.instagramAccountId === entryId,
   );
   if (!known) return null;
+  const knownPageToken = (process.env[known.pageTokenEnv] ?? '').trim();
+  if (knownPageToken) {
+    return {
+      userId: known.userId,
+      orgId: known.userId,
+      accessToken: knownPageToken,
+      accountId: known.instagramAccountId,
+      pageId: known.pageId,
+    };
+  }
 
   const rootToken = (
     process.env.META_GRAPH_TOKEN ??
@@ -187,17 +218,18 @@ const resolvePlatformContext = async (platform: 'instagram' | 'facebook', entryI
       .where(`socialAccounts.${platform}.${field}`, '==', entryId)
       .limit(1)
       .get();
-    if (snap.empty) return null;
-    const doc = snap.docs[0];
-    const data = doc.data() as { orgId?: string; socialAccounts?: Record<string, SocialAccount> };
-    const account = data.socialAccounts?.[platform] ?? {};
-    return {
-      userId: doc.id,
-      orgId: data.orgId,
-      accessToken: account.accessToken,
-      accountId: account.accountId,
-      pageId: account.pageId,
-    };
+    if (!snap.empty) {
+      const doc = snap.docs[0];
+      const data = doc.data() as { orgId?: string; socialAccounts?: Record<string, SocialAccount> };
+      const account = data.socialAccounts?.[platform] ?? {};
+      return {
+        userId: doc.id,
+        orgId: data.orgId,
+        accessToken: account.accessToken,
+        accountId: account.accountId,
+        pageId: account.pageId,
+      };
+    }
   } catch (error) {
     console.warn('[meta-webhook] failed to resolve user context', (error as Error).message);
   }
