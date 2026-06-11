@@ -9,8 +9,59 @@ const scheduleExpression = process.env.IG_DM_POLL_CRON ?? '*/1 * * * *';
 const conversationLimit = Math.max(Number(process.env.IG_DM_CONVERSATION_LIMIT ?? 10), 1);
 const messageLimit = Math.max(Number(process.env.IG_DM_MESSAGE_LIMIT ?? 10), 1);
 const startAtMs = Date.parse(process.env.IG_DM_POLL_START_AT ?? new Date().toISOString());
-const DOTT_HR_USER_ID = '80bYIeiuukNFtUvXTUobXmfC7pu1';
 const processedInMemory = new Set<string>();
+
+type IgDmPollTarget = {
+  key: string;
+  userId: string;
+  username: string;
+  tokenEnv: string[];
+};
+
+const IG_DM_POLL_TARGETS: IgDmPollTarget[] = [
+  {
+    key: 'dotthr',
+    userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
+    username: 'dott_human_resource',
+    tokenEnv: ['DOTT_HR_INSTAGRAM_LOGIN_TOKEN', 'DOTTHR_INSTAGRAM_LOGIN_TOKEN'],
+  },
+  {
+    key: 'dottenergy',
+    userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
+    username: 'dottenergy100',
+    tokenEnv: ['DOTTENERGY_INSTAGRAM_LOGIN_TOKEN', 'DOTT_ENERGY_INSTAGRAM_LOGIN_TOKEN'],
+  },
+  {
+    key: 'carmarketplace',
+    userId: 'acmVetCcOiTHeGk5D7eDYieamDF3',
+    username: 'carmarketplace999',
+    tokenEnv: ['CARMARKETPLACE_INSTAGRAM_LOGIN_TOKEN', 'CARMARKET_INSTAGRAM_LOGIN_TOKEN'],
+  },
+  {
+    key: 'staysphere',
+    userId: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
+    username: 'staysphere93',
+    tokenEnv: ['STAYSPHERE_INSTAGRAM_LOGIN_TOKEN'],
+  },
+  {
+    key: 'gamers44life',
+    userId: 'vzdH1DnfFLVjlY8bBgC26WACmmw2',
+    username: 'gamers44life',
+    tokenEnv: ['GAMERS44LIFE_INSTAGRAM_LOGIN_TOKEN', 'GAMERS_INSTAGRAM_LOGIN_TOKEN'],
+  },
+  {
+    key: 'ballanalytics',
+    userId: '1zvY9nNyXMcfxdPQEyx0bIdK7r53',
+    username: 'ball_analytics',
+    tokenEnv: ['BALL_ANALYTICS_INSTAGRAM_LOGIN_TOKEN', 'FOOTBALL_ANALYTICS_INSTAGRAM_LOGIN_TOKEN'],
+  },
+  {
+    key: 'shecare',
+    userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
+    username: 'shecaredoctor',
+    tokenEnv: ['SHECARE_INSTAGRAM_LOGIN_TOKEN', 'SHECARE_DOCTOR_INSTAGRAM_LOGIN_TOKEN'],
+  },
+];
 
 type IgConversation = {
   id: string;
@@ -26,12 +77,13 @@ type IgConversation = {
   };
 };
 
-const getDottHrInstagramLoginToken = () =>
-  (
-    process.env.DOTT_HR_INSTAGRAM_LOGIN_TOKEN ??
-    process.env.DOTTHR_INSTAGRAM_LOGIN_TOKEN ??
-    ''
-  ).trim();
+const getInstagramLoginToken = (target: IgDmPollTarget) => {
+  for (const envKey of target.tokenEnv) {
+    const value = process.env[envKey]?.trim();
+    if (value) return value;
+  }
+  return '';
+};
 
 const withinWindow = (createdAt?: string) => {
   const createdAtMs = Date.parse(createdAt ?? '');
@@ -70,27 +122,32 @@ const upsertReplyStatus = async (
   await docRef.set(update, { merge: true });
 };
 
-const reserveMessage = async (message: NonNullable<IgConversation['messages']>['data'][number]) => {
+const reserveMessage = async (
+  target: IgDmPollTarget,
+  message: NonNullable<IgConversation['messages']>['data'][number],
+) => {
   const messageId = String(message.id ?? '').trim();
-  if (!messageId || processedInMemory.has(messageId)) return null;
-  processedInMemory.add(messageId);
+  const memoryKey = `${target.key}:${messageId}`;
+  if (!messageId || processedInMemory.has(memoryKey)) return null;
+  processedInMemory.add(memoryKey);
 
   const text = String(message.message ?? '').trim();
   if (!text) return null;
   const senderId = String(message.from?.id ?? '').trim();
-  const senderUsername = String(message.from?.username ?? '').trim();
-  if (!senderId || senderUsername === 'dott_human_resource') return null;
+  const senderUsername = String(message.from?.username ?? '').trim().toLowerCase();
+  if (!senderId || senderUsername === target.username.toLowerCase()) return null;
   if (!withinWindow(message.created_time)) return null;
 
-  const docRef = firestore.collection('messages').doc(`instagram_dm_${messageId}`);
+  const docRef = firestore.collection('messages').doc(`instagram_dm_${target.key}_${messageId}`);
   const payload = {
     platform: 'instagram',
     type: 'dm',
     senderId,
     senderUsername: senderUsername || null,
     text,
-    ownerId: DOTT_HR_USER_ID,
-    accountId: 'dott_human_resource',
+    ownerId: target.userId,
+    accountId: target.username,
+    targetKey: target.key,
     source: 'instagram-login-poller',
     replyStatus: 'pending',
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -107,31 +164,35 @@ const reserveMessage = async (message: NonNullable<IgConversation['messages']>['
 };
 
 export const pollInstagramDmsOnce = async () => {
-  const accessToken = getDottHrInstagramLoginToken();
-  if (!accessToken) {
-    console.warn('[ig-dm-poll] missing Dott HR Instagram Login token; polling skipped');
+  const targets = IG_DM_POLL_TARGETS.map((target) => ({ target, accessToken: getInstagramLoginToken(target) })).filter(
+    ({ accessToken }) => Boolean(accessToken),
+  );
+  if (targets.length === 0) {
+    console.warn('[ig-dm-poll] no Instagram Login tokens configured; polling skipped');
     return;
   }
 
-  try {
-    const conversations = await fetchConversations(accessToken);
-    for (const conversation of conversations) {
-      const messages = conversation.messages?.data ?? [];
-      for (const message of messages.reverse()) {
-        const reserved = await reserveMessage(message);
-        if (!reserved) continue;
-        try {
-          const reply = await generateReply(reserved.text, 'instagram', DOTT_HR_USER_ID, 'message');
-          await replyToInstagramLoginMessage(reserved.senderId, reply, accessToken);
-          await upsertReplyStatus(reserved.docRef, 'sent');
-        } catch (error) {
-          await upsertReplyStatus(reserved.docRef, 'failed', (error as Error).message).catch(() => undefined);
-          console.warn('[ig-dm-poll] reply failed', (error as Error).message);
+  for (const { target, accessToken } of targets) {
+    try {
+      const conversations = await fetchConversations(accessToken);
+      for (const conversation of conversations) {
+        const messages = conversation.messages?.data ?? [];
+        for (const message of messages.reverse()) {
+          const reserved = await reserveMessage(target, message);
+          if (!reserved) continue;
+          try {
+            const reply = await generateReply(reserved.text, 'instagram', target.userId, 'message');
+            await replyToInstagramLoginMessage(reserved.senderId, reply, accessToken);
+            await upsertReplyStatus(reserved.docRef, 'sent');
+          } catch (error) {
+            await upsertReplyStatus(reserved.docRef, 'failed', (error as Error).message).catch(() => undefined);
+            console.warn(`[ig-dm-poll] ${target.key} reply failed`, (error as Error).message);
+          }
         }
       }
+    } catch (error) {
+      console.warn(`[ig-dm-poll] ${target.key} poll failed`, (error as Error).message);
     }
-  } catch (error) {
-    console.warn('[ig-dm-poll] poll failed', (error as Error).message);
   }
 };
 
@@ -144,7 +205,7 @@ export function scheduleInstagramDmPollJob() {
   cron.schedule(scheduleExpression, async () => {
     await pollInstagramDmsOnce();
   });
-  console.info(`[ig-dm-poll] job scheduled (${scheduleExpression}).`);
+  console.info(`[ig-dm-poll] job scheduled (${scheduleExpression}) for ${IG_DM_POLL_TARGETS.length} accounts.`);
 
   if (process.env.IG_DM_POLL_ON_STARTUP === 'true') {
     void pollInstagramDmsOnce();
