@@ -4,11 +4,11 @@ import { Platform } from '../types/bot';
 import { withRetry } from '../utils/retry';
 
 export class OutboundMessenger {
-  async send(platform: Platform, recipientId: string, text: string) {
-    await withRetry(() => this.dispatch(platform, recipientId, text));
+  async send(platform: Platform, recipientId: string, text: string, options: { userId?: string } = {}) {
+    await withRetry(() => this.dispatch(platform, recipientId, text, options));
   }
 
-  private async dispatch(platform: Platform, recipientId: string, text: string) {
+  private async dispatch(platform: Platform, recipientId: string, text: string, options: { userId?: string }) {
     switch (platform) {
       case 'whatsapp':
         if (!config.whatsapp.token || !config.whatsapp.phoneNumberId) {
@@ -43,14 +43,40 @@ export class OutboundMessenger {
         );
         return;
       case 'instagram':
-        await axios.post(
-          `https://graph.facebook.com/v19.0/${config.channels.instagram.businessId}/messages`,
-          {
-            recipient: { id: recipientId },
-            message: { text },
-          },
-          { params: { access_token: config.channels.instagram.accessToken } },
-        );
+        {
+          const { getInstagramLoginToken, resolveInstagramLoginAccount } = await import('./instagramAccountRegistry.js');
+          const account = resolveInstagramLoginAccount({ userId: options.userId });
+          const loginToken = account ? getInstagramLoginToken(account) : '';
+          if (account && loginToken && /^\d+$/.test(recipientId)) {
+            await axios.post(
+              'https://graph.instagram.com/me/messages',
+              {
+                recipient: { id: recipientId },
+                message: { text },
+              },
+              {
+                params: { access_token: loginToken },
+                headers: { 'Content-Type': 'application/json' },
+              },
+            );
+            return;
+          }
+          if (account && loginToken && !config.channels.instagram.businessId) {
+            throw new Error('Instagram Login outbound requires a numeric Instagram recipient ID from an existing conversation.');
+          }
+          if (!config.channels.instagram.businessId || !config.channels.instagram.accessToken) {
+            console.info('[outbound] Instagram disabled; skipping send');
+            return;
+          }
+          await axios.post(
+            `https://graph.facebook.com/v19.0/${config.channels.instagram.businessId}/messages`,
+            {
+              recipient: { id: recipientId },
+              message: { text },
+            },
+            { params: { access_token: config.channels.instagram.accessToken } },
+          );
+        }
         return;
       case 'threads':
         if (!config.channels.threads.profileId || !config.channels.threads.accessToken) {

@@ -21,6 +21,10 @@ export class OutreachController {
 
   send = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const authUser = (req as AuthedRequest).authUser;
+      if (!authUser) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
       const { platform, profileId, name, headline, goal } = req.body as {
         platform: 'linkedin' | 'instagram';
         profileId: string;
@@ -31,7 +35,7 @@ export class OutreachController {
       if (!platform || !profileId || !name) {
         return res.status(400).json({ message: 'platform, profileId, and name are required' });
       }
-      const result = await outreach.sendOutreach({ platform, profileId, name, headline, goal });
+      const result = await outreach.sendOutreach({ platform, profileId, name, headline, goal, userId: authUser.uid });
       res.status(202).json({ outreach: result });
     } catch (error) {
       next(error);

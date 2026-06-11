@@ -385,7 +385,7 @@ Max 3 sentences. Add natural emoji if suitable.
           console.warn('Instagram like/comment failed', error);
         }
       }
-      await sendInstagramMessage(username, text);
+      await sendInstagramMessage(username, text, { userId: context.userId });
       return 'instagram';
     }
     if (prospect.channel === 'whatsapp') {

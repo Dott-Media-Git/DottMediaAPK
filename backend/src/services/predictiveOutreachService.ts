@@ -24,6 +24,7 @@ type OutreachRequest = {
   name: string;
   headline?: string;
   goal?: string;
+  userId?: string;
 };
 
 const outreachCollection = firestore.collection('outreach_logs');
@@ -74,7 +75,7 @@ export class PredictiveOutreachService {
 
     try {
       if (request.platform !== 'web') {
-        await this.messenger.send(request.platform, request.profileId, prompt.reply);
+        await this.messenger.send(request.platform, request.profileId, prompt.reply, { userId: request.userId });
       }
       await logRef.update({ status: 'sent', sentAt: new Date().toISOString() });
     } catch (error) {
