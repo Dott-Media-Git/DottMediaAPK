@@ -24,6 +24,25 @@ const CLIENT_PROFILES: Record<string, string> = {
   '1zvy9nnyxmcfxdpqeyx0bidk7r53': 'bwinbetug',
 };
 
+const USERNAME_PROFILES: Record<string, string> = {
+  shecaredoctor: 'shecare',
+  dott_human_resource: 'dotthr',
+  dottenergy100: 'dottenergy',
+  carmarketplace999: 'carmarketplace',
+  staysphere93: 'staysphere',
+  gamers44life: 'gamers44life',
+  ball_analytics: 'bwinbetug',
+};
+
+const FACEBOOK_PAGE_PROFILES: Record<string, string> = {
+  '1114686181730831': 'shecare',
+  '1154065791120794': 'dotthr',
+  '1201086759745632': 'dottenergy',
+  '1033657279841186': 'carmarketplace',
+  '1191303874068642': 'staysphere',
+  '1121885391014110': 'gamers44life',
+};
+
 const parseKeywords = () => {
   const configured = process.env.COMMENT_TO_DM_KEYWORDS?.split(/[,\n]/).map(value => value.trim()).filter(Boolean) ?? [];
   return (configured.length ? configured : DEFAULT_TRIGGER_KEYWORDS).map(value => value.toLowerCase());
@@ -40,7 +59,35 @@ export const isCommentToDmTrigger = (text?: string | null) => {
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const profileFor = (userId?: string) => CLIENT_PROFILES[userId?.trim().toLowerCase() ?? ''] ?? 'default';
+const profileFor = (userId?: string, username?: string, pageId?: string) =>
+  CLIENT_PROFILES[userId?.trim().toLowerCase() ?? ''] ??
+  USERNAME_PROFILES[username?.trim().toLowerCase() ?? ''] ??
+  FACEBOOK_PAGE_PROFILES[pageId?.trim() ?? ''] ??
+  'default';
+
+export const buildCommentToDmCaptionCta = (options: { userId?: string; username?: string; pageId?: string }) => {
+  const profile = profileFor(options.userId, options.username, options.pageId);
+  if (profile === 'shecare') return 'Comment HELP and we will send private details in your DM.';
+  if (profile === 'dotthr') return 'Comment GUIDE and we will send the details in your DM.';
+  if (profile === 'dottenergy') return 'Comment PRICE and we will send product details in your DM.';
+  if (profile === 'carmarketplace') return 'Comment CAR and we will send available options in your DM.';
+  if (profile === 'staysphere') return 'Comment BOOK and we will send availability details in your DM.';
+  if (profile === 'gamers44life') return 'Comment INFO and we will send the details in your DM.';
+  if (profile === 'bwinbetug') return 'Comment GUIDE and we will send sports details in your DM.';
+  return 'Comment INFO and we will send the details in your DM.';
+};
+
+export const appendCommentToDmCaptionCta = (
+  caption: string,
+  options: { userId?: string; username?: string; pageId?: string } = {},
+) => {
+  const cleanCaption = String(caption ?? '').trim();
+  if (!cleanCaption) return cleanCaption;
+  if (/comment\s+(guide|info|details|help|price|pricing|book|demo|whatsapp|contact|interested|car)\b/i.test(cleanCaption)) {
+    return cleanCaption;
+  }
+  return `${cleanCaption}\n\n${buildCommentToDmCaptionCta(options)}`.trim();
+};
 
 export const buildCommentToDmPublicReply = (options: { platform: Platform; userId?: string }) => {
   const profile = profileFor(options.userId);

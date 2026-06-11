@@ -5,6 +5,7 @@ import https from 'https';
 import path from 'path';
 import sharp from 'sharp';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
+import { appendCommentToDmCaptionCta } from './commentToDmService.js';
 
 export type DottEnergyProduct = {
   id: string;
@@ -364,7 +365,7 @@ export function shouldUseDottEnergyFallbackPoster(date = new Date()) {
 }
 
 export function buildDottEnergyFallbackCaption() {
-  return [
+  return appendCommentToDmCaptionCta([
     'Dott Energy clean power solutions',
     '',
     'Explore wind turbines, generators and controllers for homes, farms, lodges and off-grid businesses.',
@@ -373,7 +374,7 @@ export function buildDottEnergyFallbackCaption() {
     'DM Dott Energy with your site, location and power needs so we can recommend the right setup.',
     '',
     '#DottEnergy #WindPower #CleanEnergy #RenewableEnergy #OffGridPower #UgandaBusiness',
-  ].join('\n');
+  ].join('\n'), { username: 'dottenergy100' });
 }
 
 export function pickDottEnergyEducationTopic(options: { recentKeys?: Set<string> } = {}) {
@@ -384,7 +385,7 @@ export function pickDottEnergyEducationTopic(options: { recentKeys?: Set<string>
 }
 
 export function buildDottEnergyEducationCaption(topic: DottEnergyEducationTopic) {
-  return [
+  return appendCommentToDmCaptionCta([
     `Did you know? ${topic.headline}`,
     '',
     topic.body,
@@ -395,7 +396,7 @@ export function buildDottEnergyEducationCaption(topic: DottEnergyEducationTopic)
     'DM Dott Energy with your site, location and power needs so we can recommend the right wind setup.',
     '',
     '#DottEnergy #WindPower #CleanEnergy #RenewableEnergy #OffGridPower #UgandaBusiness',
-  ].join('\n');
+  ].join('\n'), { username: 'dottenergy100' });
 }
 
 const buildEducationCardSvg = (topic: DottEnergyEducationTopic, width: number, height: number) => {
@@ -530,7 +531,7 @@ export function buildDottEnergyProductCaption(product: DottEnergyProduct) {
     '',
     '#DottEnergy #WindPower #CleanEnergy #RenewableEnergy #OffGridPower #UgandaBusiness',
   ].filter((line): line is string => line !== null);
-  return lines.join('\n');
+  return appendCommentToDmCaptionCta(lines.join('\n'), { username: 'dottenergy100' });
 }
 
 export async function renderDottEnergyProductImage(

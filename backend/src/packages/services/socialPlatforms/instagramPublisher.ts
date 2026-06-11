@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { SocialAccounts } from '../socialPostingService';
+import { appendCommentToDmCaptionCta } from '../../../services/commentToDmService';
 
 type PublishInput = {
   caption: string;
@@ -75,6 +76,7 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
   }
 
   const { accessToken, accountId } = credentials.instagram;
+  const caption = appendCommentToDmCaptionCta(input.caption, { username: credentials.instagram.username });
   const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
 
   if (!input.imageUrls || input.imageUrls.length === 0) {
@@ -104,7 +106,7 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
       const carouselResponse = await axios.post(`${baseUrl}/media`, {
         media_type: 'CAROUSEL',
         children: childContainers.join(','),
-        caption: input.caption,
+        caption,
         access_token: accessToken,
       });
       creationId = carouselResponse.data?.id;
@@ -112,7 +114,7 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
       // Step 1: Create Media Container
       const createMediaResponse = await axios.post(`${baseUrl}/media`, {
         image_url: input.imageUrls[0],
-        caption: input.caption,
+        caption,
         access_token: accessToken,
       });
       creationId = createMediaResponse.data.id;
@@ -157,13 +159,14 @@ export async function publishToInstagramReel(input: ReelPublishInput): Promise<{
   }
 
   const { accessToken, accountId } = credentials.instagram;
+  const caption = appendCommentToDmCaptionCta(input.caption, { username: credentials.instagram.username });
   const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
 
   try {
     const createMediaResponse = await axios.post(`${baseUrl}/media`, {
       media_type: 'REELS',
       video_url: input.videoUrl,
-      caption: input.caption,
+      caption,
       access_token: accessToken,
     });
 

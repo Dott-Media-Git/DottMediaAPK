@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { SocialAccounts } from '../socialPostingService';
+import { appendCommentToDmCaptionCta } from '../../../services/commentToDmService';
 
 type PublishInput = {
   caption: string;
@@ -46,11 +47,12 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
   }
 
   const { accessToken, pageId } = credentials.facebook;
+  const caption = appendCommentToDmCaptionCta(input.caption, { pageId });
   const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${pageId}`;
   const publishSinglePhoto = () =>
     axios.post(`${baseUrl}/photos`, {
       url: input.imageUrls[0],
-      message: input.caption,
+      message: caption,
       access_token: accessToken,
     });
 
@@ -59,7 +61,7 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
     if (input.videoUrl) {
       response = await axios.post(`${baseUrl}/videos`, {
         file_url: input.videoUrl,
-        description: input.caption,
+        description: caption,
         access_token: accessToken,
       });
     } else if (input.imageUrls && input.imageUrls.length > 1 && FACEBOOK_ALBUM_MAX_IMAGES > 1) {
@@ -81,7 +83,7 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
           throw new Error('No Facebook photo IDs returned for multi-photo post');
         }
         response = await axios.post(`${baseUrl}/feed`, {
-          message: input.caption,
+          message: caption,
           attached_media,
           access_token: accessToken,
         });
@@ -96,7 +98,7 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
     } else {
       // Post text only
       response = await axios.post(`${baseUrl}/feed`, {
-        message: input.caption,
+        message: caption,
         access_token: accessToken,
       });
     }
