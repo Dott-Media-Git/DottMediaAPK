@@ -292,6 +292,23 @@ export async function replyToInstagramMessage(
   }
 }
 
+export async function replyToInstagramLoginMessage(userId: string, message: string, accessToken?: string) {
+  const token = accessToken?.trim();
+  if (!token) throw new Error('Instagram Login access token missing');
+  try {
+    await axios.post(
+      'https://graph.instagram.com/me/messages',
+      {
+        recipient: { id: userId },
+        message: { text: message },
+      },
+      { params: { access_token: token } },
+    );
+  } catch (error) {
+    throw formatAxiosError(error, 'IG Login DM reply');
+  }
+}
+
 export async function replyToFacebookMessage(userId: string, message: string, pageToken?: string) {
   const url = `https://graph.facebook.com/v19.0/me/messages`;
   const token = pageToken ?? process.env.FACEBOOK_PAGE_TOKEN;

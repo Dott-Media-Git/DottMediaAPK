@@ -60,6 +60,7 @@ const initializeAutomation = async () => {
       import('./jobs/autopostComplianceJob.js'),
       import('./jobs/socialQueueJob.js'),
       import('./jobs/instagramCommentPollJob.js'),
+      import('./jobs/instagramDmPollJob.js'),
       import('./jobs/facebookCommentPollJob.js'),
       import('./jobs/threadsCommentPollJob.js'),
       import('./workers/youtubeWorker.js'),
