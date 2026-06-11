@@ -9,6 +9,7 @@ import { sendWhatsAppMessage } from './senders/whatsappSender';
 import { XDmCredentials, sendXDirectMessage } from './senders/xSender';
 import { incrementMetric } from '../../../services/analyticsService';
 import { canUsePrimarySocialDefaults } from '../../../utils/socialAccess';
+import { loadWarmOutreachState, normalizeOutreachRecipient } from '../../../services/outreachConsentService';
 
 const prospectsCollection = firestore.collection('prospects');
 const outreachCollection = firestore.collection('outreach');
@@ -35,6 +36,8 @@ type RunContext = {
   userId?: string;
   xCredentials: XDmCredentials | null;
   xSuppressedHandles: Set<string>;
+  optedInRecipients: Set<string>;
+  suppressedRecipients: Set<string>;
   xPolicy: XPolicyConfig;
   isSportsBrand: boolean;
 };
@@ -111,7 +114,7 @@ export class OutreachAgent {
       x: [],
     };
     for (const prospect of candidates) {
-      const reason = this.skipReason(prospect, runContext);
+      const reason = await this.skipReason(prospect, runContext);
       if (reason) {
         skipped.push({ prospectId: prospect.id, reason });
         continue;
@@ -292,10 +295,10 @@ Max 3 sentences. Add natural emoji if suitable.
         ],
       });
       const base = completion.choices?.[0]?.message?.content?.trim() ?? this.fallbackMessage(prospect);
-      return this.appendComplianceFooter(base, context.userId);
+      return this.appendComplianceFooter(this.appendXComplianceLine(base), context.userId);
     } catch (error) {
       console.error('Failed to generate outreach copy', error);
-      return this.appendComplianceFooter(this.fallbackMessage(prospect), context.userId);
+      return this.appendComplianceFooter(this.appendXComplianceLine(this.fallbackMessage(prospect)), context.userId);
     }
   }
 
@@ -439,7 +442,7 @@ Max 3 sentences. Add natural emoji if suitable.
     return `${base} | Grab the Dott Media AI Sales Agent for more demos.`;
   }
 
-  private skipReason(prospect: Prospect, context: RunContext) {
+  private async skipReason(prospect: Prospect, context: RunContext) {
     if (!['linkedin', 'instagram', 'whatsapp', 'x'].includes(prospect.channel)) {
       return 'unsupported_channel';
     }
@@ -451,6 +454,23 @@ Max 3 sentences. Add natural emoji if suitable.
     }
     if (prospect.channel === 'whatsapp' && !prospect.phone) {
       return 'missing_whatsapp_phone';
+    }
+    if (prospect.channel === 'instagram') {
+      const recipient = this.resolveInstagramRecipient(prospect.profileUrl);
+      const normalized = normalizeOutreachRecipient('instagram', recipient);
+      const key = `instagram:${normalized}`;
+      if (context.suppressedRecipients.has(key)) return 'recipient_opted_out';
+      if (process.env.OUTBOUND_REQUIRE_WARM_OPT_IN !== 'false' && !context.optedInRecipients.has(key)) {
+        return 'warm_opt_in_required';
+      }
+    }
+    if (prospect.channel === 'whatsapp') {
+      const normalized = normalizeOutreachRecipient('whatsapp', prospect.phone);
+      const key = `whatsapp:${normalized}`;
+      if (context.suppressedRecipients.has(key)) return 'recipient_opted_out';
+      if (process.env.OUTBOUND_REQUIRE_WARM_OPT_IN !== 'false' && !context.optedInRecipients.has(key)) {
+        return 'warm_opt_in_required';
+      }
     }
     if (prospect.channel === 'x') {
       const recipient = this.resolveXRecipient(prospect.profileUrl);
@@ -511,15 +531,18 @@ Max 3 sentences. Add natural emoji if suitable.
 
   private async buildRunContext(userId: string | undefined, perChannelCap: number): Promise<RunContext> {
     const xPolicy = this.resolveXPolicy(perChannelCap);
-    const [xCredentials, xSuppressedHandles, isSportsBrand] = await Promise.all([
+    const [xCredentials, xSuppressedHandles, isSportsBrand, warmState] = await Promise.all([
       this.resolveXCredentials(userId),
       this.loadSuppressedXHandles(userId),
       this.resolveSportsBrandContext(userId),
+      loadWarmOutreachState(userId),
     ]);
     return {
       userId,
       xCredentials,
       xSuppressedHandles,
+      optedInRecipients: warmState.optedIn,
+      suppressedRecipients: warmState.suppressed,
       xPolicy,
       isSportsBrand,
     };

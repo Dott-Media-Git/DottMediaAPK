@@ -19,6 +19,10 @@ import {
 import fs from 'fs';
 import path from 'path';
 import { firestore } from '../db/firestore.js';
+import {
+  recordOptOutIfRequested,
+  recordOutreachOptIn,
+} from '../services/outreachConsentService.js';
 
 const router = Router();
 const verifyToken = process.env.META_VERIFY_TOKEN ?? process.env.VERIFY_TOKEN;
@@ -288,6 +292,20 @@ const saveInbound = async (event: {
   raw?: unknown;
 }) => {
   try {
+    await recordOutreachOptIn({
+      platform: event.platform,
+      recipientId: event.senderId,
+      ownerId: event.ownerId,
+      source: event.type,
+      text: event.text,
+      metadata: event.commentId ? { commentId: event.commentId } : undefined,
+    }).catch(error => console.warn('Failed to record outreach opt-in', (error as Error).message));
+    await recordOptOutIfRequested({
+      platform: event.platform,
+      recipientId: event.senderId,
+      ownerId: event.ownerId,
+      text: event.text,
+    }).catch(error => console.warn('Failed to record outreach opt-out', (error as Error).message));
     const docRef = await firestore.collection('messages').add({
       ...event,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -328,6 +346,20 @@ const reserveInbound = async (event: {
   }
   try {
     const ref = firestore.collection('messages').doc(dedupeKey);
+    await recordOutreachOptIn({
+      platform: event.platform,
+      recipientId: event.senderId,
+      ownerId: event.ownerId,
+      source: event.type,
+      text: event.text,
+      metadata: event.commentId ? { commentId: event.commentId } : undefined,
+    }).catch(error => console.warn('Failed to record outreach opt-in', (error as Error).message));
+    await recordOptOutIfRequested({
+      platform: event.platform,
+      recipientId: event.senderId,
+      ownerId: event.ownerId,
+      text: event.text,
+    }).catch(error => console.warn('Failed to record outreach opt-out', (error as Error).message));
     const payload = {
       ...event,
       replyStatus: 'pending',
@@ -546,6 +578,20 @@ router.post('/meta/webhook', async (req, res) => {
             } catch (err) {
               await updateReplyStatus(inbound.ref, 'failed', (err as Error).message);
               logEvent('FB comment handler error', { commentId, error: (err as Error).message });
+            }
+          }
+          if (item === 'leadgen') {
+            const leadgenId = change.value?.leadgen_id as string | undefined;
+            const formId = change.value?.form_id as string | undefined;
+            const facebookUserId = change.value?.user_id as string | undefined;
+            if (leadgenId || facebookUserId) {
+              await recordOutreachOptIn({
+                platform: 'facebook',
+                recipientId: facebookUserId ?? leadgenId,
+                ownerId: facebookContext?.userId,
+                source: 'lead_form',
+                metadata: { leadgenId, formId, pageId: facebookContext?.pageId ?? pageId },
+              }).catch(error => console.warn('Failed to record Facebook lead opt-in', (error as Error).message));
             }
           }
         }

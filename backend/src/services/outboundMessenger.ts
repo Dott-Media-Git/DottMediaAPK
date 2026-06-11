@@ -32,15 +32,24 @@ export class OutboundMessenger {
         );
         return;
       case 'facebook':
-        await axios.post(
-          'https://graph.facebook.com/v19.0/me/messages',
-          {
-            recipient: { id: recipientId },
-            messaging_type: 'RESPONSE',
-            message: { text },
-          },
-          { params: { access_token: config.channels.facebook.pageToken } },
-        );
+        {
+          const { getFacebookPageToken, resolveFacebookPageAccount } = await import('./facebookAccountRegistry.js');
+          const account = resolveFacebookPageAccount({ userId: options.userId });
+          const pageToken = (account ? getFacebookPageToken(account) : '') || config.channels.facebook.pageToken;
+          if (!pageToken) {
+            console.info('[outbound] Facebook disabled; skipping send');
+            return;
+          }
+          await axios.post(
+            'https://graph.facebook.com/v19.0/me/messages',
+            {
+              recipient: { id: recipientId },
+              messaging_type: 'RESPONSE',
+              message: { text },
+            },
+            { params: { access_token: pageToken } },
+          );
+        }
         return;
       case 'instagram':
         {
@@ -79,18 +88,7 @@ export class OutboundMessenger {
         }
         return;
       case 'threads':
-        if (!config.channels.threads.profileId || !config.channels.threads.accessToken) {
-          console.info('[outbound] Threads disabled; skipping send');
-          return;
-        }
-        await axios.post(
-          `https://graph.facebook.com/v19.0/${config.channels.threads.profileId}/messages`,
-          {
-            recipient: { id: recipientId },
-            message: { text },
-          },
-          { params: { access_token: config.channels.threads.accessToken } },
-        );
+        console.info('[outbound] Threads private messaging is not supported by the official Threads API; skipping send');
         return;
       case 'linkedin':
         await axios.post(

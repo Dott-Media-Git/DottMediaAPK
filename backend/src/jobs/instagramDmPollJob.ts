@@ -8,6 +8,7 @@ import {
   getInstagramLoginToken,
   InstagramLoginAccount,
 } from '../services/instagramAccountRegistry';
+import { recordOptOutIfRequested, recordOutreachOptIn } from '../services/outreachConsentService';
 
 const enabled = process.env.IG_DM_POLL_ENABLED !== 'false';
 const scheduleExpression = process.env.IG_DM_POLL_CRON ?? '*/1 * * * *';
@@ -82,6 +83,20 @@ const reserveMessage = async (
   const senderUsername = String(message.from?.username ?? '').trim().toLowerCase();
   if (!senderId || senderUsername === target.username.toLowerCase()) return null;
   if (!withinWindow(message.created_time)) return null;
+  await recordOutreachOptIn({
+    platform: 'instagram',
+    recipientId: senderId,
+    ownerId: target.userId,
+    source: 'dm',
+    text,
+    metadata: { accountKey: target.key, senderUsername },
+  }).catch(error => console.warn('[ig-dm-poll] opt-in record failed', (error as Error).message));
+  await recordOptOutIfRequested({
+    platform: 'instagram',
+    recipientId: senderId,
+    ownerId: target.userId,
+    text,
+  }).catch(error => console.warn('[ig-dm-poll] opt-out record failed', (error as Error).message));
 
   const docRef = firestore.collection('messages').doc(`instagram_dm_${target.key}_${messageId}`);
   const payload = {
