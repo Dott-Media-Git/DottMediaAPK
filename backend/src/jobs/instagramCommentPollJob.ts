@@ -3,7 +3,12 @@ import axios from 'axios';
 import admin from 'firebase-admin';
 import { config } from '../config';
 import { firestore } from '../db/firestore';
-import { generateReply, likeInstagramComment, replyToInstagramComment } from '../services/autoReplyService';
+import { generateReply, likeInstagramComment, replyToInstagramComment, replyToInstagramMessage } from '../services/autoReplyService';
+import {
+  buildCommentToDmMessage,
+  buildCommentToDmPublicReply,
+  isCommentToDmTrigger,
+} from '../services/commentToDmService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
@@ -152,12 +157,21 @@ const processComment = async (comment: CommentItem, target: PollTarget) => {
   }
 
   try {
-    const reply = await generateReply(text, 'instagram', target.userId, 'comment');
+    const commentToDm = isCommentToDmTrigger(text);
+    const reply = commentToDm
+      ? buildCommentToDmPublicReply({ platform: 'instagram', userId: target.userId })
+      : await generateReply(text, 'instagram', target.userId, 'comment');
     await replyToInstagramComment(commentId, reply, target.accessToken);
     await upsertReplyStatus(docRef, 'sent');
     await likeInstagramComment(commentId, target.accessToken).catch(err =>
       console.warn('[ig-comment-poll] like failed', (err as Error).message)
     );
+    if (commentToDm && fromId) {
+      await replyToInstagramMessage(fromId, buildCommentToDmMessage({ platform: 'instagram', userId: target.userId, commentText: text }), {
+        accessToken: target.accessToken,
+        igBusinessId: target.igBusinessId,
+      }).catch(err => console.warn('[ig-comment-poll] DM follow-up failed', (err as Error).message));
+    }
   } catch (error) {
     await upsertReplyStatus(docRef, 'failed', (error as Error).message);
     console.warn('[ig-comment-poll] reply failed', (error as Error).message);

@@ -3,7 +3,12 @@ import axios from 'axios';
 import admin from 'firebase-admin';
 import { config } from '../config';
 import { firestore } from '../db/firestore';
-import { generateReply, likeFacebookComment, replyToFacebookComment } from '../services/autoReplyService';
+import { generateReply, likeFacebookComment, replyToFacebookComment, replyToFacebookMessage } from '../services/autoReplyService';
+import {
+  buildCommentToDmMessage,
+  buildCommentToDmPublicReply,
+  isCommentToDmTrigger,
+} from '../services/commentToDmService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
@@ -118,7 +123,7 @@ const reserveComment = async (comment: CommentItem, target: PollTarget) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    return { docRef, text, commentId };
+    return { docRef, text, commentId, fromId };
   } catch (error) {
     if (!isAlreadyExistsError(error)) throw error;
     const snap = await docRef.get();
@@ -138,7 +143,7 @@ const reserveComment = async (comment: CommentItem, target: PollTarget) => {
       },
       { merge: true },
     );
-    return { docRef, text, commentId };
+    return { docRef, text, commentId, fromId };
   }
 };
 
@@ -147,12 +152,22 @@ const processComment = async (comment: CommentItem, target: PollTarget) => {
   if (!reserved) return;
 
   try {
-    const reply = await generateReply(reserved.text, 'facebook', target.userId, 'comment');
+    const commentToDm = isCommentToDmTrigger(reserved.text);
+    const reply = commentToDm
+      ? buildCommentToDmPublicReply({ platform: 'facebook', userId: target.userId })
+      : await generateReply(reserved.text, 'facebook', target.userId, 'comment');
     await replyToFacebookComment(reserved.commentId, reply, target.accessToken);
     await upsertReplyStatus(reserved.docRef, 'sent');
     await likeFacebookComment(reserved.commentId, target.accessToken).catch(err =>
       console.warn('[fb-comment-poll] like failed', (err as Error).message),
     );
+    if (commentToDm && reserved.fromId) {
+      await replyToFacebookMessage(
+        reserved.fromId,
+        buildCommentToDmMessage({ platform: 'facebook', userId: target.userId, commentText: reserved.text }),
+        target.accessToken,
+      ).catch(err => console.warn('[fb-comment-poll] DM follow-up failed', (err as Error).message));
+    }
   } catch (error) {
     await upsertReplyStatus(reserved.docRef, 'failed', (error as Error).message);
     console.warn('[fb-comment-poll] reply failed', (error as Error).message);

@@ -23,6 +23,11 @@ import {
   recordOptOutIfRequested,
   recordOutreachOptIn,
 } from '../services/outreachConsentService.js';
+import {
+  buildCommentToDmMessage,
+  buildCommentToDmPublicReply,
+  isCommentToDmTrigger,
+} from '../services/commentToDmService.js';
 
 const router = Router();
 const verifyToken = process.env.META_VERIFY_TOKEN ?? process.env.VERIFY_TOKEN;
@@ -470,15 +475,22 @@ router.post('/meta/webhook', async (req, res) => {
             continue;
           }
           try {
-            const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'comment');
+            const commentToDm = isCommentToDmTrigger(text);
+            const reply = commentToDm
+              ? buildCommentToDmPublicReply({ platform: 'instagram', userId: instagramContext?.userId })
+              : await generateReply(text, 'instagram', instagramContext?.userId, 'comment');
             await likeInstagramComment(commentId, instagramContext?.accessToken).catch(err => console.warn('IG comment like failed', err));
             await replyToInstagramComment(commentId, reply, instagramContext?.accessToken);
             await updateReplyStatus(inbound.ref, 'sent');
             if (analyticsScopeId) {
               await incrementEngagementAnalytics({ repliesSent: 1 }, { scopeId: analyticsScopeId });
             }
-            if (fromId) {
-              const dmFollowUp = `${reply}\n\nWant a quick demo? I can send the link.`;
+            if (commentToDm && fromId) {
+              const dmFollowUp = buildCommentToDmMessage({
+                platform: 'instagram',
+                userId: instagramContext?.userId,
+                commentText: text,
+              });
               await replyToInstagramMessage(fromId, dmFollowUp, {
                 accessToken: instagramContext?.accessToken,
                 igBusinessId: igAccountId ?? undefined,
@@ -560,7 +572,10 @@ router.post('/meta/webhook', async (req, res) => {
               continue;
             }
             try {
-              const reply = await generateReply(message, 'facebook', facebookContext?.userId, 'comment');
+              const commentToDm = isCommentToDmTrigger(message);
+              const reply = commentToDm
+                ? buildCommentToDmPublicReply({ platform: 'facebook', userId: facebookContext?.userId })
+                : await generateReply(message, 'facebook', facebookContext?.userId, 'comment');
               await likeFacebookComment(commentId, facebookContext?.accessToken).catch(err =>
                 console.warn('FB comment like failed', err)
               );
@@ -569,8 +584,12 @@ router.post('/meta/webhook', async (req, res) => {
               if (analyticsScopeId) {
                 await incrementEngagementAnalytics({ repliesSent: 1 }, { scopeId: analyticsScopeId });
               }
-              if (fromId) {
-                const dmFollowUp = `${reply}\n\nHappy to send a quick AI Sales Agent demo link — want it?`;
+              if (commentToDm && fromId) {
+                const dmFollowUp = buildCommentToDmMessage({
+                  platform: 'facebook',
+                  userId: facebookContext?.userId,
+                  commentText: message,
+                });
                 await replyToFacebookMessage(fromId, dmFollowUp, facebookContext?.accessToken).catch(err =>
                   console.warn('FB DM follow-up failed', err)
                 );
