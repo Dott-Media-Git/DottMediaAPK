@@ -18,7 +18,14 @@ export const adminFetch = async (path: string, options: RequestInit = {}, orgId?
   });
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(body || `Request failed (${response.status})`);
+    let message = body;
+    try {
+      const parsed = JSON.parse(body);
+      message = parsed?.message || parsed?.error || body;
+    } catch {
+      message = body;
+    }
+    throw new Error(message || `Request failed (${response.status})`);
   }
   return response.json();
 };

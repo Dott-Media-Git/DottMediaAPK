@@ -117,17 +117,21 @@ export const AdminDashboardScreen: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [payload, compliancePayload] = await Promise.all([
-        fetchAdminMetrics(),
-        fetchComplianceReports(),
-      ]);
+      const payload = await fetchAdminMetrics();
       setMetrics(payload);
-      setComplianceReports(compliancePayload.reports);
-      setComplianceState(compliancePayload.state);
     } catch (err: any) {
       setError(err?.message ?? t('Unable to load admin metrics.'));
     } finally {
       setLoading(false);
+    }
+
+    try {
+      setComplianceError(null);
+      const compliancePayload = await fetchComplianceReports();
+      setComplianceReports(compliancePayload.reports);
+      setComplianceState(compliancePayload.state);
+    } catch (err: any) {
+      setComplianceError(err?.message ?? t('Unable to load compliance reports.'));
     }
   }, [t]);
 
