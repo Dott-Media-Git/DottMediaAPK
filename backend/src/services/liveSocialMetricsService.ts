@@ -614,7 +614,18 @@ const resolveLiveMetricOwners = async (
       accountLevelMetaOnly = true;
     }
     const profileId = profile.id?.trim();
-    if (profileId && !profilesById.has(profileId)) {
+    if (profileId && profilesById.has(profileId)) {
+      const existing = profilesById.get(profileId);
+      const merged = mergeSocialProfiles([existing, profile]);
+      if (!merged) return;
+      profilesById.set(profileId, merged);
+      const index = orderedProfiles.findIndex(entry => entry.id === profileId);
+      if (index >= 0) {
+        orderedProfiles[index] = merged;
+      } else {
+        orderedProfiles.push(merged);
+      }
+    } else if (profileId) {
       profilesById.set(profileId, profile);
       orderedProfiles.push(profile);
     } else if (!profileId) {
