@@ -238,13 +238,10 @@ export const AdminDashboardScreen: React.FC = () => {
       acc.views += Number(row.stats?.summary.views ?? 0);
       acc.interactions += Number(row.stats?.summary.interactions ?? 0);
       acc.conversions += Number(row.stats?.summary.conversions ?? 0);
-      acc.accounts += row.status === 'ok' ? 1 : 0;
       return acc;
     },
-    { views: 0, interactions: 0, conversions: 0, accounts: 0 },
+    { views: 0, interactions: 0, conversions: 0 },
   );
-  const liveSocialEngagement =
-    liveSocialTotals.views > 0 ? Number(((liveSocialTotals.interactions / liveSocialTotals.views) * 100).toFixed(2)) : 0;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -257,16 +254,16 @@ export const AdminDashboardScreen: React.FC = () => {
           </Text>
           <View style={styles.heroStats}>
             <View style={styles.heroStat}>
-              <Text style={styles.heroStatLabel}>{t('Live views')}</Text>
-              <Text style={styles.heroStatValue}>{formatNumber(liveSocialTotals.views)}</Text>
+              <Text style={styles.heroStatLabel}>{t('Total clients')}</Text>
+              <Text style={styles.heroStatValue}>{metrics.summary.totalClients}</Text>
             </View>
             <View style={styles.heroStat}>
-              <Text style={styles.heroStatLabel}>{t('Interactions')}</Text>
-              <Text style={styles.heroStatValue}>{formatNumber(liveSocialTotals.interactions)}</Text>
+              <Text style={styles.heroStatLabel}>{t('Active sessions')}</Text>
+              <Text style={styles.heroStatValue}>{metrics.summary.activeSessions}</Text>
             </View>
             <View style={styles.heroStat}>
-              <Text style={styles.heroStatLabel}>{t('Live accounts')}</Text>
-              <Text style={styles.heroStatValue}>{liveSocialTotals.accounts || metrics.summary.connectedClients}</Text>
+              <Text style={styles.heroStatLabel}>{t('AI responses')}</Text>
+              <Text style={styles.heroStatValue}>{metrics.aiResponsesSent}</Text>
             </View>
             <View style={styles.heroStat}>
               <Text style={styles.heroStatLabel}>{t('Weekly posts')}</Text>
@@ -359,7 +356,7 @@ export const AdminDashboardScreen: React.FC = () => {
         <View style={styles.statGrid}>
           <StatCard label={t('Total clients')} value={metrics.summary.totalClients} />
           <StatCard label={t('Active in 24h')} value={metrics.summary.activeSessions} />
-          <StatCard label={t('Live views')} value={formatNumber(liveSocialTotals.views)} />
+          <StatCard label={t('New this week')} value={metrics.summary.newSignupsThisWeek} />
           <StatCard
             label={t('Connected accounts')}
             value={metrics.summary.connectedClients}
@@ -565,15 +562,15 @@ export const AdminDashboardScreen: React.FC = () => {
       </DMCard>
 
       <DMCard
-        title={t('Live Social KPIs')}
-        subtitle={t('Current Meta performance across connected client accounts')}
+        title={t('Company KPIs')}
+        subtitle={t('AI usage and CRM pipeline signals')}
         style={styles.cardShadow}
       >
         <View style={styles.statGrid}>
-          <StatCard label={t('Views')} value={formatNumber(liveSocialTotals.views)} />
-          <StatCard label={t('Interactions')} value={formatNumber(liveSocialTotals.interactions)} />
-          <StatCard label={t('Engagement rate')} value={`${liveSocialEngagement.toFixed(2)}%`} />
-          <StatCard label={t('Live accounts')} value={liveSocialTotals.accounts || liveSocialRows.length} />
+          <StatCard label={t('AI messages sent')} value={metrics.companyKpis.totalAiMessages} />
+          <StatCard label={t('Image generations')} value={metrics.companyKpis.imageGenerations} />
+          <StatCard label={t('CRM campaigns')} value={metrics.companyKpis.crmCampaigns} />
+          <StatCard label={t('Lead conversions')} value={metrics.companyKpis.leadConversions} />
         </View>
       </DMCard>
 

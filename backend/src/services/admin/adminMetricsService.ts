@@ -36,6 +36,8 @@ const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const notificationsCollection = firestore.collection('notifications');
 const integrationsCollection = firestore.collection('socialIntegrations');
 
+const knownClientIds = () => KNOWN_CONNECTED_CLIENTS.map(client => client.userId).filter(Boolean);
+
 const toMillis = (value: any) => {
   if (!value) return 0;
   if (typeof value === 'number') return value > 1e12 ? value : value * 1000;
@@ -84,6 +86,55 @@ const timeout = <T>(promise: Promise<T>, ms: number, label: string) =>
 
 const hasConnectedAccount = (account: any) =>
   Boolean(account?.accessToken || account?.accountId || account?.pageId || account?.urn || account?.phoneId || account?.token);
+
+const fetchAuthUserMetadata = async () => {
+  const byUid = new Map<string, { createdAt?: string; lastLoginAt?: string; email?: string; name?: string }>();
+  let pageToken: string | undefined;
+  do {
+    const page = await admin.auth().listUsers(1000, pageToken);
+    page.users.forEach(user => {
+      byUid.set(user.uid, {
+        createdAt: user.metadata.creationTime,
+        lastLoginAt: user.metadata.lastSignInTime,
+        email: user.email,
+        name: user.displayName,
+      });
+    });
+    pageToken = page.pageToken;
+  } while (pageToken);
+  return byUid;
+};
+
+const fetchSummaryDoc = async (scopeKey: string, docId: 'engagement' | 'outbound') => {
+  try {
+    const snap = await firestore.collection('analytics').doc(scopeKey).collection('summaries').doc(docId).get();
+    return snap.data() ?? {};
+  } catch {
+    return {};
+  }
+};
+
+const aggregateAnalyticsSummaries = async (scopeKeys: string[]) => {
+  const uniqueKeys = Array.from(new Set(scopeKeys.map(key => key.trim()).filter(Boolean)));
+  const rows = await Promise.all(
+    uniqueKeys.map(async scopeKey => {
+      const [engagement, outbound] = await Promise.all([
+        fetchSummaryDoc(scopeKey, 'engagement'),
+        fetchSummaryDoc(scopeKey, 'outbound'),
+      ]);
+      return { engagement, outbound };
+    }),
+  );
+  return rows.reduce(
+    (acc, row) => {
+      acc.aiResponsesSent += Number(row.engagement.repliesSent ?? row.engagement.replies ?? 0);
+      acc.outboundMessages += Number(row.outbound.messagesSent ?? row.outbound.prospectsFound ?? row.outbound.prospectsContacted ?? 0);
+      acc.leadConversions += Number(row.outbound.conversions ?? 0) + Number(row.engagement.conversions ?? 0);
+      return acc;
+    },
+    { aiResponsesSent: 0, outboundMessages: 0, leadConversions: 0 },
+  );
+};
 
 const KNOWN_CONNECTED_CLIENTS = [
   {
@@ -264,18 +315,37 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
   weekStart.setDate(weekStart.getDate() - 6);
   const weekStartTimestamp = admin.firestore.Timestamp.fromDate(weekStart);
 
-  const usersSnap = await usersCollection.get();
+  const [usersSnap, authMetadata] = await Promise.all([
+    usersCollection.get(),
+    fetchAuthUserMetadata().catch(error => {
+      console.warn('[admin-metrics] Firebase Auth metadata unavailable', (error as Error).message);
+      return new Map<string, { createdAt?: string; lastLoginAt?: string; email?: string; name?: string }>();
+    }),
+  ]);
   const users = usersSnap.docs.map(doc => {
     const data = doc.data() as Record<string, any>;
+    const authData = authMetadata.get(doc.id) ?? authMetadata.get(data.uid ?? '');
     return {
       id: doc.id,
       uid: data.uid ?? doc.id,
-      email: data.email as string | undefined,
-      name: data.name as string | undefined,
+      email: (data.email as string | undefined) ?? authData?.email,
+      name: (data.name as string | undefined) ?? authData?.name,
       socialAccounts: (data.socialAccounts ?? {}) as Record<string, any>,
-      createdAt: data.createdAt,
-      lastLoginAt: data.lastLoginAt,
+      createdAt: data.createdAt ?? authData?.createdAt,
+      lastLoginAt: data.lastLoginAt ?? authData?.lastLoginAt,
     };
+  });
+  authMetadata.forEach((authData, uid) => {
+    if (users.some(user => user.uid === uid || user.id === uid)) return;
+    users.push({
+      id: uid,
+      uid,
+      email: authData.email,
+      name: authData.name,
+      socialAccounts: {},
+      createdAt: authData.createdAt,
+      lastLoginAt: authData.lastLoginAt,
+    });
   });
 
   const connectedPlatforms: Record<string, number> = {
@@ -348,11 +418,33 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
     ...(doc.data() as Record<string, any>),
   }));
   const postedPosts = recentPosts.filter(post => post.status === 'posted');
+  const liveMetaPostRows = await timeout(fetchLiveMetaPostRows(weekStart.getTime()), 22000, 'admin live Meta posts').catch(error => {
+    console.warn('[admin-metrics] live Meta posts unavailable', (error as Error).message);
+    return [] as LivePostRow[];
+  });
 
   const weeklyCounts = new Map<string, number>();
   weekDates.forEach(date => weeklyCounts.set(date, 0));
-  postedPosts.forEach(post => {
-    const dateKey = new Date(toMillis(post.postedAt || post.createdAt)).toISOString().slice(0, 10);
+  const postLikeRows: LivePostRow[] = [
+    ...postedPosts.map(post => ({
+      id: post.id,
+      userId: post.userId as string | undefined,
+      platform: String(post.platform ?? 'social'),
+      status: String(post.status ?? 'posted'),
+      source: String(post.source ?? ''),
+      timestamp: toMillis(post.postedAt || post.createdAt),
+    })),
+    ...liveMetaPostRows,
+  ];
+  const uniquePostLikeRows = Array.from(
+    postLikeRows
+      .filter(row => row.status === 'posted' && row.timestamp >= weekStart.getTime())
+      .reduce((map, row) => map.set(row.id, row), new Map<string, LivePostRow>())
+      .values(),
+  );
+
+  uniquePostLikeRows.forEach(post => {
+    const dateKey = new Date(post.timestamp).toISOString().slice(0, 10);
     if (weeklyCounts.has(dateKey)) {
       weeklyCounts.set(dateKey, (weeklyCounts.get(dateKey) ?? 0) + 1);
     }
@@ -364,8 +456,8 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
   }));
 
   const userPostCounts = new Map<string, number>();
-  postedPosts.forEach(post => {
-    const userId = post.userId as string | undefined;
+  uniquePostLikeRows.forEach(post => {
+    const userId = post.userId;
     if (!userId) return;
     userPostCounts.set(userId, (userPostCounts.get(userId) ?? 0) + 1);
   });
@@ -408,19 +500,20 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
     autopostSuccessRate[platform] = { posted, failed, attempted, rate };
   });
 
-  const scopeKey = resolveAnalyticsScopeKey();
-  const summaries = firestore.collection('analytics').doc(scopeKey).collection('summaries');
-  const [engagementDoc, outboundDoc] = await Promise.all([
-    summaries.doc('engagement').get(),
-    summaries.doc('outbound').get(),
-  ]);
-
-  const engagement = engagementDoc.data() ?? {};
-  const outbound = outboundDoc.data() ?? {};
-  const aiResponsesSent = Number(engagement.repliesSent ?? engagement.replies ?? 0);
-  const outboundMessages = Number(outbound.messagesSent ?? outbound.prospectsFound ?? 0);
-  const leadConversions = Number(outbound.conversions ?? 0) + Number(engagement.conversions ?? 0);
+  const scopeKeys = [resolveAnalyticsScopeKey(), ...users.map(user => user.uid), ...knownClientIds()];
+  const summaryTotals = await aggregateAnalyticsSummaries(scopeKeys);
+  const aiResponsesSent = summaryTotals.aiResponsesSent;
+  const outboundMessages = summaryTotals.outboundMessages;
+  const leadConversions = summaryTotals.leadConversions;
   const totalAiMessages = outboundMessages + aiResponsesSent;
+
+  const [outboundRunsSnap, leadsSnap] = await Promise.all([
+    firestore.collection('logs').doc('outbound').collection('runs').limit(500).get().catch(() => null),
+    firestore.collection('leads').limit(1000).get().catch(() => null),
+  ]);
+  const crmCampaigns = outboundRunsSnap?.size ?? 0;
+  const leadCount = leadsSnap?.size ?? 0;
+  const imageGenerations = uniquePostLikeRows.filter(row => ['instagram', 'facebook', 'instagram_story', 'facebook_story'].includes(row.platform)).length;
 
   const liveLogins = users
     .map(user => ({
@@ -433,12 +526,12 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
     .sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1))
     .slice(0, 8);
 
-  const livePosts = postedPosts
+  const livePosts = uniquePostLikeRows
     .map(post => ({
       id: `post_${post.id}`,
       type: 'post' as const,
       label: `${post.platform ?? 'social'} post published`,
-      timestamp: toIso(post.postedAt),
+      timestamp: new Date(post.timestamp).toISOString(),
     }))
     .filter(item => item.timestamp)
     .sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1))
@@ -471,7 +564,7 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
 
   return {
     summary: {
-      totalClients: usersSnap.size,
+      totalClients: users.length,
       activeSessions,
       newSignupsThisWeek: weekDates.reduce((sum, date) => sum + (signupsByDay.get(date) ?? 0), 0),
       connectedClients: connectedClients.size,
@@ -484,9 +577,9 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
     aiResponsesSent,
     companyKpis: {
       totalAiMessages,
-      imageGenerations: 0,
-      crmCampaigns: 0,
-      leadConversions,
+      imageGenerations,
+      crmCampaigns,
+      leadConversions: leadConversions || leadCount,
     },
     liveFeed,
     updatedAt: now.toISOString(),
