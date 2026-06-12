@@ -523,7 +523,7 @@ export const resolveKnownLiveSocialProfile = (scopeId?: string | null): UserSoci
   if (!known) return null;
 
   const facebookToken = rootFacebookToken() || knownAccountToken(known.facebookTokenEnv ?? [], rootFacebookToken);
-  const instagramToken = knownAccountToken(known.instagramTokenEnv ?? [], rootInstagramToken);
+  const instagramToken = rootInstagramToken() || knownAccountToken(known.instagramTokenEnv ?? [], rootInstagramToken);
   const threadsToken = knownAccountToken(known.threadsTokenEnv ?? [], rootThreadsToken);
   const socialAccounts: UserSocialAccounts = {};
   if (known.facebookPageId && facebookToken) {
