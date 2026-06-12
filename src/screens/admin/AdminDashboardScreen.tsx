@@ -92,6 +92,16 @@ const formatTime = (value: string) => {
 
 const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
 
+const knownAccountNames: Record<string, string> = {
+  '1zvY9nNyXMcfxdPQEyx0bIdK7r53': 'Bwin / Ball Analytics',
+  tCE1FQ1cOFgdupOXP23mPUMQRAz1: 'SheCare Doctor',
+  '80bYIeiuukNFtUvXTUobXmfC7pu1': 'Dott HR',
+  LVR7p3WzdFM51ds92Kacf6S40og2: 'Dott Energy',
+  acmVetCcOiTHeGk5D7eDYieamDF3: 'Car Marketplace',
+  D1iNgjLKNRaQhH35M0NmGfw1LVD2: 'Staysphere',
+  vzdH1DnfFLVjlY8bBgC26WACmmw2: 'Gamers 4 Life',
+};
+
 export const AdminDashboardScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
@@ -511,7 +521,9 @@ export const AdminDashboardScreen: React.FC = () => {
             ) : (
               topAccounts.map(account => (
                 <View key={account.userId} style={styles.accountRow}>
-                  <Text style={styles.accountName}>{account.name ?? account.email ?? account.userId}</Text>
+                  <Text style={styles.accountName}>
+                    {account.name ?? knownAccountNames[account.userId] ?? account.email ?? account.userId}
+                  </Text>
                   <Text style={styles.accountCount}>{t('{{count}} posts', { count: account.posts })}</Text>
                 </View>
               ))
