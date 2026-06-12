@@ -866,8 +866,8 @@ const fetchInstagramAccountMetric = async (
   const accessToken = instagramAccount.accessToken?.trim();
   if (!accountId || !accessToken) return { views: 0, interactions: 0 };
 
-  const since = Math.floor(cutoffMs / 1000);
   const until = Math.floor(Date.now() / 1000);
+  const since = Math.max(Math.floor(cutoffMs / 1000), until - (30 * 24 * 60 * 60 - 1));
   try {
     const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${accountId}/insights`, {
       params: {
@@ -897,11 +897,13 @@ const fetchInstagramAccountMetric = async (
   }
 
   try {
-    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${accountId}/insights`, {
+    const response = await axios.get(`https://graph.facebook.com/v24.0/${accountId}/insights`, {
       params: {
         metric: 'views,reach,total_interactions',
         period: 'day',
         metric_type: 'total_value',
+        since,
+        until,
         access_token: accessToken,
       },
       timeout: 30000,
@@ -912,31 +914,12 @@ const fetchInstagramAccountMetric = async (
       views: metricTotal('views') || metricTotal('reach'),
       interactions: metricTotal('total_interactions'),
     };
-  } catch (error) {
-    try {
-      const response = await axios.get(`https://graph.facebook.com/v24.0/${accountId}/insights`, {
-        params: {
-          metric: 'views,reach,total_interactions',
-          period: 'day',
-          metric_type: 'total_value',
-          access_token: accessToken,
-        },
-        timeout: 30000,
-      });
-      const rows = Array.isArray(response.data?.data) ? response.data.data : [];
-      const metricTotal = (metric: string) => toNumber(rows.find((entry: any) => entry?.name === metric)?.total_value?.value);
-      return {
-        views: metricTotal('views') || metricTotal('reach'),
-        interactions: metricTotal('total_interactions'),
-      };
-    } catch (fallbackError) {
-      console.warn('[socialLive] direct Instagram account insights fetch failed', {
-        primary: error instanceof Error ? error.message : String(error),
-        fallback: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-      });
-    }
-    return { views: 0, interactions: 0 };
+  } catch (fallbackError) {
+    console.warn('[socialLive] direct Instagram account insights fetch failed', {
+      fallback: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+    });
   }
+  return { views: 0, interactions: 0 };
 };
 
 const fetchInstagramMetric = async (mediaId: string, accessToken: string) => {
