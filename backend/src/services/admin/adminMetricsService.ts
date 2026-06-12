@@ -87,6 +87,14 @@ const hasConnectedAccount = (account: any) =>
 
 const KNOWN_CONNECTED_CLIENTS = [
   {
+    userId: process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53',
+    email: 'ball_analytics',
+    socialAccounts: {
+      facebook: { pageId: process.env.BWIN_FACEBOOK_PAGE_ID || '' },
+      instagram: { accountId: process.env.BWIN_INSTAGRAM_ACCOUNT_ID || '' },
+    },
+  },
+  {
     userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
     email: 'shecaredoctor@gmail.com',
     socialAccounts: {

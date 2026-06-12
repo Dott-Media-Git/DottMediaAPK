@@ -228,17 +228,21 @@ const getTwitterCredential = (accounts: UserSocialAccounts) => {
 const resolveBwinScopeId = () =>
   (process.env.BWIN_SCOPE_ID ?? process.env.BWIN_TRACK_OWNER_ID ?? '').trim();
 
+const BWIN_USER_ID = (process.env.BWIN_USER_ID ?? '1zvY9nNyXMcfxdPQEyx0bIdK7r53').trim();
+const BWIN_KNOWN_SCOPE_IDS = ['bwinbetug', BWIN_USER_ID].filter(Boolean);
+
 const isBwinScopeRequest = (scope: AnalyticsScope | undefined, userId: string) => {
   const bwinScopeId = resolveBwinScopeId();
-  if (!bwinScopeId) return false;
   const candidates = [
     scope?.scopeId,
     scope?.userId,
+    scope?.email,
     userId,
   ]
     .map(value => String(value ?? '').trim())
     .filter(Boolean);
-  return candidates.includes(bwinScopeId);
+  const bwinCandidates = new Set([...BWIN_KNOWN_SCOPE_IDS, bwinScopeId].filter(Boolean));
+  return candidates.some(candidate => bwinCandidates.has(candidate) || candidate.toLowerCase().includes('ball_analytics'));
 };
 
 const getBwinEnvTwitterCredential = () => {
@@ -340,6 +344,68 @@ const mergePostedRows = (...sources: ScheduledPost[][]) => {
     }
   });
   return Array.from(merged.values());
+};
+
+export const fetchBwinMetaSocialProfile = async (): Promise<UserSocialProfile | null> => {
+  const envFacebook = {
+    pageId: (process.env.BWIN_FACEBOOK_PAGE_ID ?? '').trim(),
+    accessToken: (process.env.BWIN_FACEBOOK_PAGE_TOKEN ?? '').trim(),
+  };
+  const envInstagram = {
+    accountId: (process.env.BWIN_INSTAGRAM_ACCOUNT_ID ?? '').trim(),
+    accessToken: (process.env.BWIN_INSTAGRAM_ACCESS_TOKEN ?? '').trim(),
+  };
+  let facebook = envFacebook;
+  let instagram = envInstagram;
+
+  const supabaseUrl = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
+  const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
+  const configObject = (process.env.FOOTBALL_ANALYTICS_META_CONFIG_OBJECT ?? process.env.BWIN_META_CONFIG_OBJECT ?? 'bwin-meta-accounts.json').trim();
+  if (supabaseUrl && supabaseKey && configObject) {
+    try {
+      const response = await axios.get(
+        `${supabaseUrl}/storage/v1/object/authenticated/worker-config/${configObject}`,
+        {
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+          },
+          timeout: 30000,
+        },
+      );
+      const payload = response.data ?? {};
+      facebook = {
+        pageId: String(payload.facebook?.pageId ?? payload.facebook?.page_id ?? facebook.pageId ?? '').trim(),
+        accessToken: String(payload.facebook?.accessToken ?? payload.facebook?.access_token ?? facebook.accessToken ?? '').trim(),
+      };
+      instagram = {
+        accountId: String(payload.instagram?.accountId ?? payload.instagram?.account_id ?? instagram.accountId ?? '').trim(),
+        accessToken: String(payload.instagram?.accessToken ?? payload.instagram?.access_token ?? instagram.accessToken ?? '').trim(),
+      };
+    } catch (error) {
+      console.warn('[live-social] Bwin Meta worker config unavailable', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  const socialAccounts: UserSocialAccounts = {};
+  if (facebook.pageId && facebook.accessToken) {
+    socialAccounts.facebook = {
+      pageId: facebook.pageId,
+      accessToken: facebook.accessToken,
+    };
+  }
+  if (instagram.accountId && instagram.accessToken) {
+    socialAccounts.instagram = {
+      accountId: instagram.accountId,
+      accessToken: instagram.accessToken,
+    };
+  }
+  if (!Object.keys(socialAccounts).length) return null;
+  return {
+    id: BWIN_USER_ID,
+    email: 'ball_analytics',
+    socialAccounts,
+  };
 };
 
 const resolveFacebookPageAccessToken = async (
@@ -1280,21 +1346,12 @@ export async function getLiveSocialMetrics(
       }
     }
     if (isBwinScopeRequest(options?.scope, userId)) {
-      if (!accounts.facebook?.accessToken && process.env.BWIN_FACEBOOK_PAGE_TOKEN && process.env.BWIN_FACEBOOK_PAGE_ID) {
-        accounts.facebook = {
-          accessToken: process.env.BWIN_FACEBOOK_PAGE_TOKEN,
-          pageId: process.env.BWIN_FACEBOOK_PAGE_ID,
-        };
+      const bwinProfile = await fetchBwinMetaSocialProfile();
+      if (bwinProfile?.socialAccounts?.facebook) {
+        accounts.facebook = bwinProfile.socialAccounts.facebook;
       }
-      if (
-        !accounts.instagram?.accessToken &&
-        process.env.BWIN_INSTAGRAM_ACCESS_TOKEN &&
-        process.env.BWIN_INSTAGRAM_ACCOUNT_ID
-      ) {
-        accounts.instagram = {
-          accessToken: process.env.BWIN_INSTAGRAM_ACCESS_TOKEN,
-          accountId: process.env.BWIN_INSTAGRAM_ACCOUNT_ID,
-        };
+      if (bwinProfile?.socialAccounts?.instagram) {
+        accounts.instagram = bwinProfile.socialAccounts.instagram;
       }
     }
 

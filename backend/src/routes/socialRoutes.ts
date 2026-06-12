@@ -15,7 +15,7 @@ import { firestore } from '../db/firestore';
 import { config } from '../config';
 import { getTikTokIntegration, getYouTubeIntegration } from '../services/socialIntegrationService';
 import { resolveFacebookPageId, resolveInstagramAccountId, resolveThreadsAccountId } from '../services/socialAccountResolver';
-import { resolveKnownLiveSocialProfile } from '../services/liveSocialMetricsService';
+import { fetchBwinMetaSocialProfile, resolveKnownLiveSocialProfile } from '../services/liveSocialMetricsService';
 import { canUsePrimarySocialDefaults } from '../utils/socialAccess';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
 
@@ -36,6 +36,15 @@ type MetaSignedRequestPayload = {
 };
 
 let renderEnvCache: RenderEnv | null | undefined;
+
+const BWIN_USER_ID = (process.env.BWIN_USER_ID ?? '1zvY9nNyXMcfxdPQEyx0bIdK7r53').trim();
+const BWIN_SCOPE_ALIASES = new Set(['bwinbetug', BWIN_USER_ID, process.env.BWIN_SCOPE_ID, process.env.BWIN_TRACK_OWNER_ID].filter(Boolean));
+
+const isBwinHistoryRequest = (...values: Array<string | null | undefined>) =>
+  values.some(value => {
+    const normalized = String(value ?? '').trim();
+    return normalized ? BWIN_SCOPE_ALIASES.has(normalized) || normalized.toLowerCase().includes('ball_analytics') : false;
+  });
 
 const toHistoryTimestamp = (value: string | number | Date) => {
   const millis = value instanceof Date ? value.getTime() : typeof value === 'number' ? value : Date.parse(value);
@@ -731,9 +740,12 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
       resolveKnownLiveSocialProfile(authUser.uid) ||
       resolveKnownLiveSocialProfile(authUser.email) ||
       resolveKnownLiveSocialProfile(storedEmail);
-    const userId = requestedUserId || historyUserId || knownProfile?.id || authUser.uid;
+    const bwinProfile = isBwinHistoryRequest(requestedUserId, historyUserId, authUser.uid, authUser.email, storedEmail)
+      ? await fetchBwinMetaSocialProfile()
+      : null;
+    const userId = requestedUserId || historyUserId || knownProfile?.id || bwinProfile?.id || authUser.uid;
     const history = await socialPostingService.getHistory(userId);
-    const liveMetaPosts = await fetchKnownMetaHistoryPosts(knownProfile);
+    const liveMetaPosts = await fetchKnownMetaHistoryPosts(knownProfile ?? bwinProfile);
     const storedPosts = [...(history.posts ?? []), ...(history.todayPosts ?? [])];
     const posts = mergeHistoryPosts(storedPosts, liveMetaPosts).slice(0, 400);
     const { todayPosts, todaySummary } = buildTodayHistory(posts);

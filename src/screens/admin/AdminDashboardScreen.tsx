@@ -1,18 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { VictoryAxis, VictoryBar, VictoryChart, VictoryLine, VictoryTheme } from 'victory-native';
+import * as VictoryNative from 'victory-native';
 import { colors } from '@constants/colors';
 import { DMCard } from '@components/DMCard';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
-import { fetchAdminMetrics, type AdminMetrics } from '@services/admin/metricsService';
+import {
+  fetchAdminLiveSocial,
+  fetchAdminMetrics,
+  type AdminLiveSocialAccount,
+  type AdminMetrics,
+} from '@services/admin/metricsService';
 import {
   fetchComplianceReports,
   runComplianceCheck,
   type ComplianceReport,
   type ComplianceState,
 } from '@services/admin/complianceService';
+
+const VictoryAxis = (VictoryNative as any).VictoryAxis as React.ComponentType<any>;
+const VictoryBar = (VictoryNative as any).VictoryBar as React.ComponentType<any>;
+const VictoryChart = (VictoryNative as any).VictoryChart as React.ComponentType<any>;
+const VictoryLine = (VictoryNative as any).VictoryLine as React.ComponentType<any>;
+const VictoryTheme = (VictoryNative as any).VictoryTheme;
 
 const ADMIN_EMAILS = ['brasioxirin@gmail.com'];
 
@@ -88,9 +99,13 @@ export const AdminDashboardScreen: React.FC = () => {
   const [metrics, setMetrics] = useState<AdminMetrics>(emptyMetrics);
   const [complianceReports, setComplianceReports] = useState<ComplianceReport[]>([]);
   const [complianceState, setComplianceState] = useState<ComplianceState>(emptyComplianceState);
+  const [liveSocialRows, setLiveSocialRows] = useState<AdminLiveSocialAccount[]>([]);
+  const [liveSocialUpdatedAt, setLiveSocialUpdatedAt] = useState('');
   const [loading, setLoading] = useState(false);
+  const [liveSocialLoading, setLiveSocialLoading] = useState(false);
   const [complianceLoading, setComplianceLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [liveSocialError, setLiveSocialError] = useState<string | null>(null);
   const [complianceError, setComplianceError] = useState<string | null>(null);
 
   const isAdminUser = useMemo(() => {
@@ -131,12 +146,33 @@ export const AdminDashboardScreen: React.FC = () => {
     }
   }, [t]);
 
+  const refreshLiveSocial = useCallback(async () => {
+    setLiveSocialLoading(true);
+    setLiveSocialError(null);
+    try {
+      const payload = await fetchAdminLiveSocial(720);
+      setLiveSocialRows(payload.rows ?? []);
+      setLiveSocialUpdatedAt(payload.generatedAt ?? '');
+    } catch (err: any) {
+      setLiveSocialError(err?.message ?? t('Unable to load live social stats.'));
+    } finally {
+      setLiveSocialLoading(false);
+    }
+  }, [t]);
+
   useEffect(() => {
     if (!isAdminUser) return;
     void refresh();
     const interval = setInterval(refresh, 30000);
     return () => clearInterval(interval);
   }, [isAdminUser, refresh]);
+
+  useEffect(() => {
+    if (!isAdminUser) return;
+    void refreshLiveSocial();
+    const interval = setInterval(refreshLiveSocial, 120000);
+    return () => clearInterval(interval);
+  }, [isAdminUser, refreshLiveSocial]);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -193,6 +229,19 @@ export const AdminDashboardScreen: React.FC = () => {
   const criticalIssues = latestCompliance?.issues.filter(issue => issue.severity === 'critical').length ?? 0;
   const warningIssues = latestCompliance?.issues.filter(issue => issue.severity !== 'critical').length ?? 0;
   const latestIssues = latestCompliance?.issues.slice(0, 8) ?? [];
+  const formatNumber = (value: unknown) => {
+    const numeric = Number(value ?? 0);
+    return Number.isFinite(numeric) ? numeric.toLocaleString() : '0';
+  };
+  const liveSocialTotals = liveSocialRows.reduce(
+    (acc, row) => {
+      acc.views += Number(row.stats?.summary.views ?? 0);
+      acc.interactions += Number(row.stats?.summary.interactions ?? 0);
+      acc.conversions += Number(row.stats?.summary.conversions ?? 0);
+      return acc;
+    },
+    { views: 0, interactions: 0, conversions: 0 },
+  );
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -364,12 +413,85 @@ export const AdminDashboardScreen: React.FC = () => {
             data={platformSeries}
             style={{
               data: {
-                fill: ({ datum }) => datum.color ?? colors.accent,
+                fill: ({ datum }: { datum: any }) => datum.color ?? colors.accent,
               },
             }}
             barWidth={16}
           />
         </VictoryChart>
+      </DMCard>
+
+      <DMCard
+        title={t('Live Account Social Stats')}
+        subtitle={liveSocialLoading && !liveSocialRows.length ? t('Pulling live Meta stats...') : t('Last 30 days from connected accounts')}
+        style={styles.cardShadow}
+      >
+        {liveSocialError ? <Text style={styles.errorText}>{liveSocialError}</Text> : null}
+        <View style={styles.statGrid}>
+          <StatCard label={t('Total views')} value={formatNumber(liveSocialTotals.views)} />
+          <StatCard label={t('Interactions')} value={formatNumber(liveSocialTotals.interactions)} />
+          <StatCard label={t('Conversions')} value={formatNumber(liveSocialTotals.conversions)} />
+          <StatCard label={t('Accounts loaded')} value={liveSocialRows.filter(row => row.status === 'ok').length} />
+        </View>
+        {liveSocialRows.length === 0 ? (
+          <Text style={styles.emptyText}>{t('No live account stats loaded yet.')}</Text>
+        ) : (
+          liveSocialRows.map(row => {
+            const stats = row.stats;
+            const platforms = stats?.platforms;
+            const channelParts = [
+              platforms?.facebook?.connected
+                ? `FB ${formatNumber(platforms.facebook.views)} views / ${formatNumber(platforms.facebook.interactions)} int.`
+                : '',
+              platforms?.instagram?.connected
+                ? `IG ${formatNumber(platforms.instagram.views)} views / ${formatNumber(platforms.instagram.interactions)} int.`
+                : '',
+              platforms?.threads?.connected
+                ? `Threads ${formatNumber(platforms.threads.views)} views / ${formatNumber(platforms.threads.interactions)} int.`
+                : '',
+              platforms?.x?.connected
+                ? `X ${formatNumber(platforms.x.views)} views / ${formatNumber(platforms.x.interactions)} int.`
+                : '',
+            ].filter(Boolean);
+            return (
+              <View key={row.userId} style={styles.liveSocialAccountRow}>
+                <View style={styles.liveSocialAccountHeader}>
+                  <View style={styles.liveSocialAccountNameWrap}>
+                    <Text style={styles.accountName}>{row.label}</Text>
+                    <Text style={styles.feedTime}>{row.email ?? row.scopeId ?? row.userId}</Text>
+                  </View>
+                  <Text style={[styles.liveSocialStatus, row.status === 'ok' ? styles.liveSocialStatusOk : styles.liveSocialStatusError]}>
+                    {row.status === 'ok' ? t('Live') : t('Error')}
+                  </Text>
+                </View>
+                {stats ? (
+                  <>
+                    <View style={styles.liveSocialMetricGrid}>
+                      <View style={styles.liveSocialMetric}>
+                        <Text style={styles.statLabel}>{t('Views')}</Text>
+                        <Text style={styles.liveSocialMetricValue}>{formatNumber(stats.summary.views)}</Text>
+                      </View>
+                      <View style={styles.liveSocialMetric}>
+                        <Text style={styles.statLabel}>{t('Interactions')}</Text>
+                        <Text style={styles.liveSocialMetricValue}>{formatNumber(stats.summary.interactions)}</Text>
+                      </View>
+                      <View style={styles.liveSocialMetric}>
+                        <Text style={styles.statLabel}>{t('Engagement')}</Text>
+                        <Text style={styles.liveSocialMetricValue}>{Number(stats.summary.engagementRate ?? 0).toFixed(2)}%</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.liveSocialChannels}>{channelParts.length ? channelParts.join(' | ') : t('No connected live channels reported.')}</Text>
+                  </>
+                ) : (
+                  <Text style={styles.errorText}>{row.error ?? t('Unable to load this account.')}</Text>
+                )}
+              </View>
+            );
+          })
+        )}
+        <Text style={styles.feedTime}>
+          {liveSocialUpdatedAt ? `${t('Updated')} ${formatTime(liveSocialUpdatedAt)}` : t('Waiting for live refresh')}
+        </Text>
       </DMCard>
 
       <DMCard
@@ -607,6 +729,66 @@ const styles = StyleSheet.create({
     color: colors.subtext,
     marginTop: 4,
     fontSize: 12,
+  },
+  liveSocialAccountRow: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
+    backgroundColor: colors.background,
+  },
+  liveSocialAccountHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  liveSocialAccountNameWrap: {
+    flex: 1,
+  },
+  liveSocialStatus: {
+    fontSize: 11,
+    fontWeight: '700',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  liveSocialStatusOk: {
+    color: colors.success,
+    backgroundColor: 'rgba(34,197,94,0.12)',
+  },
+  liveSocialStatusError: {
+    color: colors.danger,
+    backgroundColor: 'rgba(239,68,68,0.12)',
+  },
+  liveSocialMetricGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  liveSocialMetric: {
+    flex: 1,
+    minWidth: 110,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    padding: 10,
+    backgroundColor: colors.backgroundAlt,
+  },
+  liveSocialMetricValue: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  liveSocialChannels: {
+    color: colors.subtext,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 10,
   },
   autopostRow: {
     marginBottom: 12,

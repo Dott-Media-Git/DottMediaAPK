@@ -28,8 +28,25 @@ import { getAdminMetrics } from '../services/admin/adminMetricsService';
 import { getSecret } from '../services/secretVaultService';
 import { autopostComplianceService } from '../services/autopostComplianceService';
 import { firestore } from '../db/firestore';
+import { getLiveSocialMetrics } from '../services/liveSocialMetricsService';
 
 const router = Router();
+
+const ADMIN_LIVE_SOCIAL_CLIENTS = [
+  { label: 'SheCare Doctor', userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1', email: 'shecaredoctor@gmail.com' },
+  { label: 'Dott HR', userId: '80bYIeiuukNFtUvXTUobXmfC7pu1', email: 'kingbrasio100@gmail.com' },
+  { label: 'Dott Energy', userId: 'LVR7p3WzdFM51ds92Kacf6S40og2' },
+  { label: 'Car Marketplace', userId: 'acmVetCcOiTHeGk5D7eDYieamDF3' },
+  { label: 'Staysphere', userId: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2' },
+  { label: 'Gamers 4 Life', userId: 'vzdH1DnfFLVjlY8bBgC26WACmmw2' },
+  { label: 'Bwin / Ball Analytics', userId: process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53', scopeId: process.env.BWIN_SCOPE_ID || 'bwinbetug', email: 'ball_analytics' },
+];
+
+const withTimeout = <T>(promise: Promise<T>, ms: number, label: string) =>
+  Promise.race<T>([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms)),
+  ]);
 
 router.get('/admin/metrics', requireFirebase, requireAdmin, async (_req, res, next) => {
   try {
@@ -40,6 +57,57 @@ router.get('/admin/metrics', requireFirebase, requireAdmin, async (_req, res, ne
       Expires: '0',
     });
     res.json({ metrics });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/admin/live-social', requireFirebase, requireAdmin, async (req, res, next) => {
+  try {
+    const lookbackRaw = typeof req.query.lookbackHours === 'string' ? Number(req.query.lookbackHours) : 720;
+    const lookbackHours = Number.isFinite(lookbackRaw) && lookbackRaw > 0 ? lookbackRaw : 720;
+    const rows = await Promise.all(
+      ADMIN_LIVE_SOCIAL_CLIENTS.map(async client => {
+        try {
+          const stats = await withTimeout(
+            getLiveSocialMetrics(client.userId, {
+              lookbackHours,
+              scope: {
+                userId: client.userId,
+                scopeId: client.scopeId ?? client.userId,
+                email: client.email,
+              },
+            }),
+            45000,
+            `live social ${client.label}`,
+          );
+          return {
+            label: client.label,
+            userId: client.userId,
+            scopeId: client.scopeId ?? client.userId,
+            email: client.email ?? null,
+            status: 'ok',
+            stats,
+          };
+        } catch (error) {
+          return {
+            label: client.label,
+            userId: client.userId,
+            scopeId: client.scopeId ?? client.userId,
+            email: client.email ?? null,
+            status: 'error',
+            error: error instanceof Error ? error.message : String(error),
+            stats: null,
+          };
+        }
+      }),
+    );
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    res.json({ generatedAt: new Date().toISOString(), lookbackHours, rows });
   } catch (error) {
     next(error);
   }
