@@ -588,11 +588,16 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
 
 async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
   const now = new Date();
+  const last24h = Date.now() - 24 * 60 * 60 * 1000;
   let weekDates = buildDateRange(7);
   const weekStart = new Date();
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - 6);
   const weekStartMs = weekStart.getTime();
+  const authMetadata = await fetchAuthUserMetadata().catch(error => {
+    console.warn('[admin-metrics] fallback Firebase Auth metadata unavailable', (error as Error).message);
+    return new Map<string, { createdAt?: string; lastLoginAt?: string; email?: string; name?: string }>();
+  });
 
   const [socialRows, posts, socialLogs, engagement, outbound] = await Promise.all([
     timeout(supabaseFallbackService.getAllSocialAccounts(1000), 12000, 'admin social accounts fallback').catch(() => []),
@@ -613,6 +618,18 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
   };
   const connectedClients = new Set<string>();
   const clientEmails = new Map<string, string | undefined>();
+  const signupsByDay = new Map<string, number>();
+  weekDates.forEach(date => signupsByDay.set(date, 0));
+  let authActiveSessions = 0;
+  authMetadata.forEach((authData, uid) => {
+    if (toMillis(authData.lastLoginAt) >= last24h) authActiveSessions += 1;
+    const createdAtMs = toMillis(authData.createdAt);
+    const dateKey = createdAtMs ? new Date(createdAtMs).toISOString().slice(0, 10) : '';
+    if (dateKey && signupsByDay.has(dateKey)) {
+      signupsByDay.set(dateKey, (signupsByDay.get(dateKey) ?? 0) + 1);
+    }
+    if (!clientEmails.has(uid) && authData.email) clientEmails.set(uid, authData.email);
+  });
 
   const accountRows = socialRows.length ? socialRows : KNOWN_CONNECTED_CLIENTS;
 
@@ -721,6 +738,9 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
   const outboundMessages = Number(outboundCounters.messagesSent ?? outboundCounters.prospectsFound ?? 0);
   const leadConversions = Number(outboundCounters.conversions ?? 0) + Number(engagementCounters.conversions ?? 0);
   const totalAiMessages = outboundMessages + aiResponsesSent;
+  const imageGenerations = postLikeRows.filter(row =>
+    ['instagram', 'facebook', 'instagram_story', 'facebook_story'].includes(row.platform),
+  ).length;
   const liveActiveClients = new Set(
     postLikeRows
       .filter(row => row.userId && Date.now() - row.timestamp <= 24 * 60 * 60 * 1000)
@@ -740,12 +760,12 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
 
   return {
     summary: {
-      totalClients: allKnownClients.size,
-      activeSessions: liveActiveClients.size,
-      newSignupsThisWeek: 0,
+      totalClients: Math.max(allKnownClients.size, authMetadata.size),
+      activeSessions: Math.max(liveActiveClients.size, authActiveSessions),
+      newSignupsThisWeek: weekDates.reduce((sum, date) => sum + (signupsByDay.get(date) ?? 0), 0),
       connectedClients: connectedClients.size,
     },
-    signupsByDay: weekDates.map(date => ({ date, count: 0 })),
+    signupsByDay: weekDates.map(date => ({ date, count: signupsByDay.get(date) ?? 0 })),
     connectedPlatforms,
     topActiveAccounts,
     autopostSuccessRate,
@@ -753,8 +773,8 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
     aiResponsesSent,
     companyKpis: {
       totalAiMessages,
-      imageGenerations: 0,
-      crmCampaigns: 0,
+      imageGenerations,
+      crmCampaigns: socialLogs.length,
       leadConversions,
     },
     liveFeed,
