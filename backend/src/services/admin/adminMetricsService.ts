@@ -138,6 +138,7 @@ const aggregateAnalyticsSummaries = async (scopeKeys: string[]) => {
 
 const KNOWN_CONNECTED_CLIENTS = [
   {
+    name: 'Bwin / Ball Analytics',
     userId: process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53',
     email: 'ball_analytics',
     socialAccounts: {
@@ -146,6 +147,7 @@ const KNOWN_CONNECTED_CLIENTS = [
     },
   },
   {
+    name: 'SheCare Doctor',
     userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
     email: 'shecaredoctor@gmail.com',
     socialAccounts: {
@@ -154,6 +156,7 @@ const KNOWN_CONNECTED_CLIENTS = [
     },
   },
   {
+    name: 'Dott HR',
     userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
     email: 'kingbrasio100@gmail.com',
     socialAccounts: {
@@ -162,6 +165,7 @@ const KNOWN_CONNECTED_CLIENTS = [
     },
   },
   {
+    name: 'Dott Energy',
     userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
     socialAccounts: {
       facebook: { pageId: '1201086759745632' },
@@ -169,6 +173,7 @@ const KNOWN_CONNECTED_CLIENTS = [
     },
   },
   {
+    name: 'Car Marketplace',
     userId: 'acmVetCcOiTHeGk5D7eDYieamDF3',
     socialAccounts: {
       facebook: { pageId: '1033657279841186' },
@@ -176,6 +181,7 @@ const KNOWN_CONNECTED_CLIENTS = [
     },
   },
   {
+    name: 'Staysphere',
     userId: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
     socialAccounts: {
       facebook: { pageId: '1191303874068642' },
@@ -183,6 +189,7 @@ const KNOWN_CONNECTED_CLIENTS = [
     },
   },
   {
+    name: 'Gamers 4 Life',
     userId: 'vzdH1DnfFLVjlY8bBgC26WACmmw2',
     socialAccounts: {
       facebook: { pageId: '1121885391014110' },
@@ -190,6 +197,16 @@ const KNOWN_CONNECTED_CLIENTS = [
     },
   },
 ];
+
+const knownClientLookup = new Map(
+  KNOWN_CONNECTED_CLIENTS.map(client => [
+    client.userId,
+    {
+      email: client.email,
+      name: client.name,
+    },
+  ]),
+);
 
 type LivePostRow = {
   id: string;
@@ -465,6 +482,13 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
   const userLookup = new Map<string, { email?: string; name?: string }>(
     users.map(user => [user.uid, { email: user.email, name: user.name }]),
   );
+  knownClientLookup.forEach((client, userId) => {
+    const existing = userLookup.get(userId);
+    userLookup.set(userId, {
+      email: existing?.email ?? client.email,
+      name: client.name ?? existing?.name,
+    });
+  });
 
   const topActiveAccounts = Array.from(userPostCounts.entries())
     .sort((a, b) => b[1] - a[1])
@@ -618,6 +642,7 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
   };
   const connectedClients = new Set<string>();
   const clientEmails = new Map<string, string | undefined>();
+  const clientNames = new Map<string, string | undefined>();
   const signupsByDay = new Map<string, number>();
   weekDates.forEach(date => signupsByDay.set(date, 0));
   let authActiveSessions = 0;
@@ -629,6 +654,7 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
       signupsByDay.set(dateKey, (signupsByDay.get(dateKey) ?? 0) + 1);
     }
     if (!clientEmails.has(uid) && authData.email) clientEmails.set(uid, authData.email);
+    if (authData.name) clientNames.set(uid, authData.name);
   });
 
   const accountRows = socialRows.length ? socialRows : KNOWN_CONNECTED_CLIENTS;
@@ -636,6 +662,7 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
   accountRows.forEach(row => {
     if (!row.userId) return;
     clientEmails.set(row.userId, row.email ?? undefined);
+    if (row.name) clientNames.set(row.userId, row.name);
     const accounts = row.socialAccounts ?? {};
     Object.entries(connectedPlatforms).forEach(([platform]) => {
       if (hasConnectedAccount((accounts as Record<string, unknown>)[platform])) {
@@ -715,6 +742,7 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
       userId,
       posts,
       email: clientEmails.get(userId),
+      name: clientNames.get(userId) ?? knownClientLookup.get(userId)?.name,
     }));
 
   const autopostPlatforms = ['instagram', 'instagram_story', 'facebook', 'facebook_story', 'linkedin'];
