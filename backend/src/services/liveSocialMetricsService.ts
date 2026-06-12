@@ -830,8 +830,8 @@ const fetchFacebookPageMetric = async (
   const pageId = facebookAccount.pageId?.trim();
   const accessToken = await resolveFacebookPageAccessToken(facebookAccount);
   if (!pageId || !accessToken) return { views: 0, interactions: 0 };
-  const since = Math.floor(cutoffMs / 1000);
   const until = Math.floor(Date.now() / 1000);
+  const since = Math.max(Math.floor(cutoffMs / 1000), until - 30 * 24 * 60 * 60);
   try {
     const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/insights`, {
       params: {
