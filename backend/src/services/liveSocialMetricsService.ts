@@ -15,6 +15,9 @@ const MAX_POSTS_PER_PLATFORM = Math.max(Number(process.env.LIVE_SOCIAL_MAX_POSTS
 const LOOKBACK_HOURS_DEFAULT = Math.max(Number(process.env.LIVE_SOCIAL_LOOKBACK_HOURS ?? 72), 1);
 const CACHE_TTL_MS = Math.max(Number(process.env.LIVE_SOCIAL_CACHE_MS ?? 120000), 10000);
 const POST_METRIC_CACHE_TTL_MS = Math.max(Number(process.env.LIVE_SOCIAL_POST_CACHE_MS ?? 300000), 30000);
+const SHECARE_USER_ID = 'tCE1FQ1cOFgdupOXP23mPUMQRAz1';
+const SHECARE_FACEBOOK_PAGE_ID = '1114686181730831';
+const SHECARE_INSTAGRAM_ACCOUNT_ID = '17841437471047291';
 const liveMetricsCache = new Map<string, { expiresAt: number; data: LiveSocialMetrics }>();
 const postMetricCache = new Map<string, { expiresAt: number; data: { views: number; interactions: number } }>();
 const postMetricInFlight = new Map<string, Promise<{ views: number; interactions: number }>>();
@@ -467,10 +470,10 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
   threadsTokenEnv?: string[];
 }> = [
   {
-    userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
+    userId: SHECARE_USER_ID,
     email: 'shecaredoctor@gmail.com',
-    facebookPageId: '1114686181730831',
-    instagramAccountId: '17841437471047291',
+    facebookPageId: SHECARE_FACEBOOK_PAGE_ID,
+    instagramAccountId: SHECARE_INSTAGRAM_ACCOUNT_ID,
     facebookTokenEnv: ['SHECARE_FACEBOOK_PAGE_TOKEN', 'SHECARE_FACEBOOK_ACCESS_TOKEN'],
     instagramTokenEnv: ['SHECARE_INSTAGRAM_ACCESS_TOKEN'],
   },
@@ -1233,6 +1236,23 @@ export async function getLiveSocialMetrics(
       resolveKnownLiveSocialProfile(userData?.email);
     if (knownRuntimeProfile?.socialAccounts) {
       Object.assign(accounts, knownRuntimeProfile.socialAccounts);
+    }
+    if ([userId, options?.scope?.scopeId, primaryOwnerId].includes(SHECARE_USER_ID)) {
+      const shecareMetaToken =
+        process.env.SHECARE_INSTAGRAM_ACCESS_TOKEN?.trim() ||
+        process.env.META_GRAPH_TOKEN?.trim() ||
+        process.env.CLIENT_META_USER_TOKEN?.trim() ||
+        '';
+      if (shecareMetaToken) {
+        accounts.facebook = {
+          accessToken: shecareMetaToken,
+          pageId: SHECARE_FACEBOOK_PAGE_ID,
+        };
+        accounts.instagram = {
+          accessToken: shecareMetaToken,
+          accountId: SHECARE_INSTAGRAM_ACCOUNT_ID,
+        };
+      }
     }
     if (isBwinScopeRequest(options?.scope, userId)) {
       if (!accounts.facebook?.accessToken && process.env.BWIN_FACEBOOK_PAGE_TOKEN && process.env.BWIN_FACEBOOK_PAGE_ID) {
