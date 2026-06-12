@@ -260,7 +260,7 @@ router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
     const lookbackHours = Number.isFinite(lookbackRaw) && (lookbackRaw as number) > 0 ? Number(lookbackRaw) : undefined;
     const stats = await getLiveSocialMetrics(authUser.uid, {
       lookbackHours,
-      scope: { userId: authUser.uid, scopeId },
+      scope: { userId: authUser.uid, scopeId, email: authUser.email },
     });
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',

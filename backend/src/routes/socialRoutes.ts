@@ -15,6 +15,7 @@ import { firestore } from '../db/firestore';
 import { config } from '../config';
 import { getTikTokIntegration, getYouTubeIntegration } from '../services/socialIntegrationService';
 import { resolveFacebookPageId, resolveInstagramAccountId, resolveThreadsAccountId } from '../services/socialAccountResolver';
+import { resolveKnownLiveSocialProfile } from '../services/liveSocialMetricsService';
 import { canUsePrimarySocialDefaults } from '../utils/socialAccess';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
 
@@ -543,9 +544,12 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
 
     const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
     let historyUserId = '';
+    let storedEmail = '';
     try {
       const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-      historyUserId = ((userDoc.data()?.historyUserId as string | undefined) ?? '').trim();
+      const userData = userDoc.data() ?? {};
+      historyUserId = ((userData.historyUserId as string | undefined) ?? '').trim();
+      storedEmail = ((userData.email as string | undefined) ?? '').trim();
     } catch (error) {
       console.warn('[social-history-route] user lookup failed; using direct auth user id', {
         userId: authUser.uid,
@@ -557,7 +561,13 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
       return res.status(403).json({ message: 'Forbidden' });
     }
 
-    const userId = requestedUserId || historyUserId || authUser.uid;
+    const knownProfile =
+      resolveKnownLiveSocialProfile(requestedUserId) ||
+      resolveKnownLiveSocialProfile(historyUserId) ||
+      resolveKnownLiveSocialProfile(authUser.uid) ||
+      resolveKnownLiveSocialProfile(authUser.email) ||
+      resolveKnownLiveSocialProfile(storedEmail);
+    const userId = requestedUserId || historyUserId || knownProfile?.id || authUser.uid;
     const history = await socialPostingService.getHistory(userId);
     const daily = await socialAnalyticsService.getDailySummary(userId);
     res.set({

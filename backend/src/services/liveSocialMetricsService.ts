@@ -18,6 +18,7 @@ const POST_METRIC_CACHE_TTL_MS = Math.max(Number(process.env.LIVE_SOCIAL_POST_CA
 const liveMetricsCache = new Map<string, { expiresAt: number; data: LiveSocialMetrics }>();
 const postMetricCache = new Map<string, { expiresAt: number; data: { views: number; interactions: number } }>();
 const postMetricInFlight = new Map<string, Promise<{ views: number; interactions: number }>>();
+const facebookPageTokenCache = new Map<string, { expiresAt: number; token: string }>();
 
 type RawTimestamp =
   | { seconds?: number; _seconds?: number; nanoseconds?: number; _nanoseconds?: number; toDate?: () => Date }
@@ -338,6 +339,43 @@ const mergePostedRows = (...sources: ScheduledPost[][]) => {
   return Array.from(merged.values());
 };
 
+const resolveFacebookPageAccessToken = async (
+  facebookAccount: NonNullable<UserSocialAccounts['facebook']>,
+) => {
+  const pageId = facebookAccount.pageId?.trim();
+  const accessToken = facebookAccount.accessToken?.trim();
+  if (!pageId || !accessToken) return '';
+
+  const cacheKey = `${pageId}:${accessToken.slice(-12)}`;
+  const cached = facebookPageTokenCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.token;
+
+  try {
+    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/me/accounts`, {
+      params: {
+        fields: 'id,access_token',
+        access_token: accessToken,
+      },
+      timeout: 30000,
+    });
+    const page = (Array.isArray(response.data?.data) ? response.data.data : []).find(
+      (entry: any) => String(entry?.id ?? '') === pageId,
+    );
+    const pageToken = String(page?.access_token ?? '').trim();
+    if (pageToken) {
+      facebookPageTokenCache.set(cacheKey, {
+        expiresAt: Date.now() + POST_METRIC_CACHE_TTL_MS,
+        token: pageToken,
+      });
+      return pageToken;
+    }
+  } catch {
+    // If this is already a page token, /me/accounts may fail; try it directly below.
+  }
+
+  return accessToken;
+};
+
 const asPostedRow = (platform: string, remoteId: string, postedAtMs: number): ScheduledPost => ({
   platform,
   status: 'posted',
@@ -367,6 +405,16 @@ const normalizeSocialLogPost = (entry: {
 const hasSocialAccounts = (profile?: UserSocialProfile | null) =>
   Boolean(profile?.socialAccounts && Object.keys(profile.socialAccounts).length > 0);
 
+const isKnownLiveSocialProfile = (profile?: UserSocialProfile | null) =>
+  Boolean(
+    profile?.id &&
+      KNOWN_LIVE_SOCIAL_PROFILES.some(
+        known =>
+          known.userId === profile.id ||
+          (!!profile.email && known.email?.toLowerCase() === profile.email.toLowerCase()),
+      ),
+  );
+
 const rootMetaToken = () =>
   (
     process.env.META_GRAPH_TOKEN ??
@@ -378,9 +426,9 @@ const rootMetaToken = () =>
 
 const rootFacebookToken = () =>
   (
-    process.env.FACEBOOK_PAGE_TOKEN ??
     process.env.META_GRAPH_TOKEN ??
     process.env.CLIENT_META_USER_TOKEN ??
+    process.env.FACEBOOK_PAGE_TOKEN ??
     ''
   ).trim();
 
@@ -466,7 +514,7 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
   },
 ];
 
-const resolveKnownLiveSocialProfile = (scopeId?: string | null): UserSocialProfile | null => {
+export const resolveKnownLiveSocialProfile = (scopeId?: string | null): UserSocialProfile | null => {
   const key = String(scopeId ?? '').trim();
   if (!key) return null;
   const known = KNOWN_LIVE_SOCIAL_PROFILES.find(
@@ -474,7 +522,7 @@ const resolveKnownLiveSocialProfile = (scopeId?: string | null): UserSocialProfi
   );
   if (!known) return null;
 
-  const facebookToken = knownAccountToken(known.facebookTokenEnv ?? [], rootFacebookToken);
+  const facebookToken = rootFacebookToken() || knownAccountToken(known.facebookTokenEnv ?? [], rootFacebookToken);
   const instagramToken = knownAccountToken(known.instagramTokenEnv ?? [], rootInstagramToken);
   const threadsToken = knownAccountToken(known.threadsTokenEnv ?? [], rootThreadsToken);
   const socialAccounts: UserSocialAccounts = {};
@@ -524,8 +572,8 @@ const mergeSocialProfiles = (profiles: Array<UserSocialProfile | null | undefine
         return;
       }
       mergedAccounts[platform] = {
-        ...(account as Record<string, unknown>),
         ...(current as Record<string, unknown>),
+        ...(account as Record<string, unknown>),
       };
     });
   });
@@ -552,14 +600,19 @@ const fetchSupabaseSocialProfile = async (userId: string): Promise<UserSocialPro
 const resolveLiveMetricOwners = async (
   userId: string,
   scope?: AnalyticsScope,
-): Promise<{ ownerIds: string[]; userProfile?: UserSocialProfile }> => {
+): Promise<{ ownerIds: string[]; userProfile?: UserSocialProfile; accountLevelMetaOnly?: boolean }> => {
   const rawScopeId = scope?.scopeId?.trim();
+  const rawEmail = scope?.email?.trim();
   const candidateIds = Array.from(new Set([rawScopeId, userId].filter(Boolean) as string[]));
   const profilesById = new Map<string, UserSocialProfile>();
   const orderedProfiles: UserSocialProfile[] = [];
+  let accountLevelMetaOnly = false;
 
   const addProfile = (profile?: UserSocialProfile | null) => {
     if (!profile) return;
+    if (isKnownLiveSocialProfile(profile)) {
+      accountLevelMetaOnly = true;
+    }
     const profileId = profile.id?.trim();
     if (profileId && !profilesById.has(profileId)) {
       profilesById.set(profileId, profile);
@@ -588,6 +641,12 @@ const resolveLiveMetricOwners = async (
     }),
   );
 
+  [...orderedProfiles].forEach(profile => {
+    addProfile(resolveKnownLiveSocialProfile(profile.email));
+    addProfile(resolveKnownLiveSocialProfile(profile.orgId));
+  });
+  addProfile(resolveKnownLiveSocialProfile(rawEmail));
+
   if (rawScopeId) {
     try {
       const snap = await firestore.collection('users').where('orgId', '==', rawScopeId).limit(5).get();
@@ -607,6 +666,7 @@ const resolveLiveMetricOwners = async (
 
   await Promise.all(
     candidateIds.map(async candidateId => {
+      addProfile(resolveKnownLiveSocialProfile(candidateId));
       if (hasSocialAccounts(profilesById.get(candidateId))) return;
       const fallback = await fetchSupabaseSocialProfile(candidateId);
       addProfile(fallback);
@@ -626,6 +686,7 @@ const resolveLiveMetricOwners = async (
   return {
     ownerIds: ownerIds.length ? ownerIds : [userId],
     userProfile: mergeSocialProfiles(orderedProfiles),
+    accountLevelMetaOnly,
   };
 };
 
@@ -664,8 +725,8 @@ const fetchFacebookMetric = async (
   facebookAccount: NonNullable<UserSocialAccounts['facebook']>,
 ) => {
   return withPostMetricCache(`facebook:${facebookAccount.pageId ?? 'page'}:${postId}`, async () => {
-    const publishToken = facebookAccount.accessToken ?? '';
-    const metricsToken = facebookAccount.userAccessToken?.trim() || publishToken;
+    const publishToken = await resolveFacebookPageAccessToken(facebookAccount);
+    const metricsToken = publishToken || facebookAccount.userAccessToken?.trim() || facebookAccount.accessToken?.trim() || '';
     if (!publishToken) {
       return { views: 0, interactions: 0 };
     }
@@ -723,7 +784,7 @@ const fetchRecentFacebookPosts = async (
   cutoffMs: number,
 ) => {
   const pageId = facebookAccount.pageId?.trim();
-  const accessToken = facebookAccount.accessToken?.trim();
+  const accessToken = await resolveFacebookPageAccessToken(facebookAccount);
   if (!pageId || !accessToken) return [];
   try {
     const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/posts`, {
@@ -753,7 +814,7 @@ const fetchFacebookPageMetric = async (
   cutoffMs: number,
 ) => {
   const pageId = facebookAccount.pageId?.trim();
-  const accessToken = facebookAccount.accessToken?.trim();
+  const accessToken = await resolveFacebookPageAccessToken(facebookAccount);
   if (!pageId || !accessToken) return { views: 0, interactions: 0 };
   const since = Math.floor(cutoffMs / 1000);
   const until = Math.floor(Date.now() / 1000);
@@ -779,6 +840,45 @@ const fetchFacebookPageMetric = async (
     };
   } catch (error) {
     console.warn('[socialLive] direct Facebook page insights fetch failed', error);
+    return { views: 0, interactions: 0 };
+  }
+};
+
+const fetchInstagramAccountMetric = async (
+  instagramAccount: NonNullable<UserSocialAccounts['instagram']>,
+  cutoffMs: number,
+) => {
+  const accountId = instagramAccount.accountId?.trim();
+  const accessToken = instagramAccount.accessToken?.trim();
+  if (!accountId || !accessToken) return { views: 0, interactions: 0 };
+
+  const since = Math.floor(cutoffMs / 1000);
+  const until = Math.floor(Date.now() / 1000);
+  try {
+    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${accountId}/insights`, {
+      params: {
+        metric: 'views,reach,total_interactions',
+        period: 'day',
+        metric_type: 'total_value',
+        since,
+        until,
+        access_token: accessToken,
+      },
+      timeout: 30000,
+    });
+    const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+    const metricTotal = (metric: string) => {
+      const row = rows.find((entry: any) => entry?.name === metric);
+      const totalValue = toNumber(row?.total_value?.value);
+      if (totalValue > 0) return totalValue;
+      return row?.values?.reduce((acc: number, entry: any) => acc + toNumber(entry?.value), 0) ?? 0;
+    };
+    return {
+      views: metricTotal('views') || metricTotal('reach'),
+      interactions: metricTotal('total_interactions'),
+    };
+  } catch (error) {
+    console.warn('[socialLive] direct Instagram account insights fetch failed', error);
     return { views: 0, interactions: 0 };
   }
 };
@@ -1134,21 +1234,21 @@ export async function getLiveSocialMetrics(
       }
     }
 
-    let metricPostedRows = recentPosted;
+    let metricPostedRows = ownerContext.accountLevelMetaOnly ? [] : recentPosted;
     const directFacebookRows =
-      accounts.facebook?.accessToken && accounts.facebook?.pageId
+      !ownerContext.accountLevelMetaOnly && accounts.facebook?.accessToken && accounts.facebook?.pageId
         ? await fetchRecentFacebookPosts(accounts.facebook, cutoffMs)
         : [];
     const directInstagramRows =
-      accounts.instagram?.accessToken && accounts.instagram?.accountId
+      !ownerContext.accountLevelMetaOnly && accounts.instagram?.accessToken && accounts.instagram?.accountId
         ? await fetchRecentInstagramMedia(accounts.instagram, cutoffMs)
         : [];
 
-    if (accounts.facebook?.accessToken && accounts.facebook?.pageId) {
+    if (!ownerContext.accountLevelMetaOnly && accounts.facebook?.accessToken && accounts.facebook?.pageId) {
       metricPostedRows = metricPostedRows.filter(post => !['facebook', 'facebook_story'].includes(post.platform));
       metricPostedRows = mergePostedRows(metricPostedRows, directFacebookRows);
     }
-    if (accounts.instagram?.accessToken && accounts.instagram?.accountId) {
+    if (!ownerContext.accountLevelMetaOnly && accounts.instagram?.accessToken && accounts.instagram?.accountId) {
       metricPostedRows = metricPostedRows.filter(
         post => !['instagram', 'instagram_reels', 'instagram_story'].includes(post.platform),
       );
@@ -1221,9 +1321,11 @@ export async function getLiveSocialMetrics(
       },
     };
 
-    if (accounts.facebook?.accessToken && facebookIds.length > 0) {
+    if (accounts.facebook?.accessToken && accounts.facebook?.pageId) {
       const [rows, pageMetric] = await Promise.all([
-        Promise.all(facebookIds.map(id => fetchFacebookMetric(id, accounts.facebook!))),
+        facebookIds.length > 0
+          ? Promise.all(facebookIds.map(id => fetchFacebookMetric(id, accounts.facebook!)))
+          : Promise.resolve([]),
         fetchFacebookPageMetric(accounts.facebook, cutoffMs),
       ]);
       output.platforms.facebook.views = Math.max(sum(rows.map(row => row.views)), pageMetric.views);
@@ -1237,12 +1339,18 @@ export async function getLiveSocialMetrics(
       );
     }
 
-    if (accounts.instagram?.accessToken && instagramIds.length > 0) {
-      const rows = await Promise.all(
-        instagramIds.map(id => fetchInstagramMetric(id, accounts.instagram?.accessToken ?? '')),
+    if (accounts.instagram?.accessToken && accounts.instagram?.accountId) {
+      const [rows, accountMetric] = await Promise.all([
+        instagramIds.length > 0
+          ? Promise.all(instagramIds.map(id => fetchInstagramMetric(id, accounts.instagram?.accessToken ?? '')))
+          : Promise.resolve([]),
+        fetchInstagramAccountMetric(accounts.instagram, cutoffMs),
+      ]);
+      output.platforms.instagram.views = Math.max(sum(rows.map(row => row.views)), accountMetric.views);
+      output.platforms.instagram.interactions = Math.max(
+        sum(rows.map(row => row.interactions)),
+        accountMetric.interactions,
       );
-      output.platforms.instagram.views = sum(rows.map(row => row.views));
-      output.platforms.instagram.interactions = sum(rows.map(row => row.interactions));
       output.platforms.instagram.engagementRate = formatRate(
         output.platforms.instagram.interactions,
         output.platforms.instagram.views,

@@ -2,6 +2,7 @@ export type AnalyticsScope = {
   orgId?: string;
   userId?: string;
   scopeId?: string;
+  email?: string;
 };
 
 const sanitizeScopeId = (value?: string) => {
