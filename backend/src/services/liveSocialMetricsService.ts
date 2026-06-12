@@ -887,12 +887,54 @@ const fetchInstagramAccountMetric = async (
       if (totalValue > 0) return totalValue;
       return row?.values?.reduce((acc: number, entry: any) => acc + toNumber(entry?.value), 0) ?? 0;
     };
+    const result = {
+      views: metricTotal('views') || metricTotal('reach'),
+      interactions: metricTotal('total_interactions'),
+    };
+    if (result.views > 0 || result.interactions > 0) return result;
+  } catch (error) {
+    console.warn('[socialLive] direct Instagram account insights window fetch failed', error instanceof Error ? error.message : String(error));
+  }
+
+  try {
+    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${accountId}/insights`, {
+      params: {
+        metric: 'views,reach,total_interactions',
+        period: 'day',
+        metric_type: 'total_value',
+        access_token: accessToken,
+      },
+      timeout: 30000,
+    });
+    const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+    const metricTotal = (metric: string) => toNumber(rows.find((entry: any) => entry?.name === metric)?.total_value?.value);
     return {
       views: metricTotal('views') || metricTotal('reach'),
       interactions: metricTotal('total_interactions'),
     };
   } catch (error) {
-    console.warn('[socialLive] direct Instagram account insights fetch failed', error);
+    try {
+      const response = await axios.get(`https://graph.facebook.com/v24.0/${accountId}/insights`, {
+        params: {
+          metric: 'views,reach,total_interactions',
+          period: 'day',
+          metric_type: 'total_value',
+          access_token: accessToken,
+        },
+        timeout: 30000,
+      });
+      const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+      const metricTotal = (metric: string) => toNumber(rows.find((entry: any) => entry?.name === metric)?.total_value?.value);
+      return {
+        views: metricTotal('views') || metricTotal('reach'),
+        interactions: metricTotal('total_interactions'),
+      };
+    } catch (fallbackError) {
+      console.warn('[socialLive] direct Instagram account insights fetch failed', {
+        primary: error instanceof Error ? error.message : String(error),
+        fallback: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+      });
+    }
     return { views: 0, interactions: 0 };
   }
 };
