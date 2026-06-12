@@ -1226,6 +1226,14 @@ export async function getLiveSocialMetrics(
     const userData = ownerContext.userProfile;
     const primaryOwnerId = userData?.id ?? ownerIds[0] ?? userId;
     const accounts = buildWithDefaults(userData, primaryOwnerId);
+    const knownRuntimeProfile =
+      resolveKnownLiveSocialProfile(options?.scope?.scopeId) ||
+      resolveKnownLiveSocialProfile(userId) ||
+      resolveKnownLiveSocialProfile(options?.scope?.email) ||
+      resolveKnownLiveSocialProfile(userData?.email);
+    if (knownRuntimeProfile?.socialAccounts) {
+      Object.assign(accounts, knownRuntimeProfile.socialAccounts);
+    }
     if (isBwinScopeRequest(options?.scope, userId)) {
       if (!accounts.facebook?.accessToken && process.env.BWIN_FACEBOOK_PAGE_TOKEN && process.env.BWIN_FACEBOOK_PAGE_ID) {
         accounts.facebook = {
