@@ -20,6 +20,8 @@ import { canUsePrimarySocialDefaults } from '../utils/socialAccess';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
 
 const CRON_SECRET = process.env.CRON_SECRET;
+const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
+const META_GRAPH_BASE = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
 const THREADS_GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const THREADS_GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
 
@@ -34,6 +36,168 @@ type MetaSignedRequestPayload = {
 };
 
 let renderEnvCache: RenderEnv | null | undefined;
+
+const toHistoryTimestamp = (value: string | number | Date) => {
+  const millis = value instanceof Date ? value.getTime() : typeof value === 'number' ? value : Date.parse(value);
+  return Number.isFinite(millis) ? { seconds: Math.floor(millis / 1000) } : undefined;
+};
+
+const deriveFacebookPageToken = async (pageId: string, accessToken: string) => {
+  try {
+    const response = await axios.get(`${META_GRAPH_BASE}/me/accounts`, {
+      params: { fields: 'id,access_token', access_token: accessToken },
+      timeout: 30000,
+    });
+    const page = (Array.isArray(response.data?.data) ? response.data.data : []).find(
+      (entry: any) => String(entry?.id ?? '') === pageId,
+    );
+    return String(page?.access_token ?? accessToken).trim();
+  } catch {
+    return accessToken;
+  }
+};
+
+const fetchKnownMetaHistoryPosts = async (knownProfile: ReturnType<typeof resolveKnownLiveSocialProfile> | null) => {
+  if (!knownProfile?.socialAccounts) return [];
+  const posts: any[] = [];
+  const facebook = knownProfile.socialAccounts.facebook;
+  if (facebook?.pageId && facebook?.accessToken) {
+    try {
+      const pageToken = await deriveFacebookPageToken(String(facebook.pageId), String(facebook.accessToken));
+      const response = await axios.get(`${META_GRAPH_BASE}/${facebook.pageId}/posts`, {
+        params: {
+          fields: 'id,created_time,message,permalink_url,full_picture',
+          limit: 50,
+          access_token: pageToken,
+        },
+        timeout: 30000,
+      });
+      (Array.isArray(response.data?.data) ? response.data.data : []).forEach((post: any) => {
+        const createdAt = toHistoryTimestamp(String(post?.created_time ?? ''));
+        if (!post?.id || !createdAt) return;
+        posts.push({
+          id: `meta-facebook-${post.id}`,
+          platform: 'facebook',
+          status: 'posted',
+          caption: String(post.message ?? ''),
+          remoteId: String(post.id),
+          postedAt: createdAt,
+          createdAt,
+          imageUrls: post.full_picture ? [String(post.full_picture)] : [],
+          permalink: post.permalink_url ?? null,
+          source: 'meta_live',
+        });
+      });
+    } catch (error) {
+      console.warn('[social-history-route] live Facebook history fetch failed', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  const instagram = knownProfile.socialAccounts.instagram;
+  if (instagram?.accountId && instagram?.accessToken) {
+    try {
+      const response = await axios.get(`${META_GRAPH_BASE}/${instagram.accountId}/media`, {
+        params: {
+          fields: 'id,timestamp,caption,media_type,media_product_type,media_url,permalink,thumbnail_url',
+          limit: 50,
+          access_token: instagram.accessToken,
+        },
+        timeout: 30000,
+      });
+      (Array.isArray(response.data?.data) ? response.data.data : []).forEach((post: any) => {
+        const createdAt = toHistoryTimestamp(String(post?.timestamp ?? ''));
+        if (!post?.id || !createdAt) return;
+        const productType = String(post.media_product_type ?? '').toUpperCase();
+        const mediaType = String(post.media_type ?? '').toUpperCase();
+        const platform =
+          productType === 'STORY'
+            ? 'instagram_story'
+            : productType === 'REELS' || mediaType === 'VIDEO'
+              ? 'instagram_reels'
+              : 'instagram';
+        const mediaUrl = post.media_url || post.thumbnail_url;
+        posts.push({
+          id: `meta-instagram-${post.id}`,
+          platform,
+          status: 'posted',
+          caption: String(post.caption ?? ''),
+          remoteId: String(post.id),
+          postedAt: createdAt,
+          createdAt,
+          imageUrls: mediaUrl ? [String(mediaUrl)] : [],
+          videoUrl: mediaType === 'VIDEO' && post.media_url ? String(post.media_url) : undefined,
+          permalink: post.permalink ?? null,
+          source: 'meta_live',
+        });
+      });
+    } catch (error) {
+      console.warn('[social-history-route] live Instagram history fetch failed', error instanceof Error ? error.message : String(error));
+    }
+  }
+  return posts;
+};
+
+const timestampSeconds = (value: any) => {
+  if (!value) return 0;
+  if (typeof value.seconds === 'number') return value.seconds;
+  if (typeof value._seconds === 'number') return value._seconds;
+  return 0;
+};
+
+const mergeHistoryPosts = (basePosts: any[], livePosts: any[]) => {
+  const byKey = new Map<string, any>();
+  [...basePosts, ...livePosts].forEach(post => {
+    const key = String(post.remoteId || post.id || `${post.platform}-${timestampSeconds(post.postedAt ?? post.createdAt)}`);
+    const existing = byKey.get(key);
+    if (!existing || timestampSeconds(post.postedAt ?? post.createdAt) > timestampSeconds(existing.postedAt ?? existing.createdAt)) {
+      byKey.set(key, post);
+    }
+  });
+  return Array.from(byKey.values()).sort(
+    (a, b) => timestampSeconds(b.postedAt ?? b.createdAt) - timestampSeconds(a.postedAt ?? a.createdAt),
+  );
+};
+
+const buildHistorySummary = (posts: any[]) =>
+  posts.reduce(
+    (acc, post) => {
+      const platform = String(post.platform ?? 'unknown');
+      const status = String(post.status ?? 'unknown');
+      acc.perPlatform[platform] = (acc.perPlatform[platform] ?? 0) + 1;
+      acc.byStatus[status] = (acc.byStatus[status] ?? 0) + 1;
+      return acc;
+    },
+    { perPlatform: {} as Record<string, number>, byStatus: {} as Record<string, number> },
+  );
+
+const normalizePostedPlatformForSummary = (platform?: string) => {
+  const raw = String(platform ?? '').toLowerCase();
+  if (raw === 'instagram_story' || raw === 'instagram_reels') return 'instagram';
+  if (raw === 'facebook_story') return 'facebook';
+  if (raw === 'twitter') return 'x';
+  return raw;
+};
+
+const buildTodayHistory = (posts: any[]) => {
+  const todayDate = new Date().toISOString().slice(0, 10);
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todaySeconds = Math.floor(todayStart.getTime() / 1000);
+  const todayPosts = posts.filter(post => post.status === 'posted' && timestampSeconds(post.postedAt ?? post.createdAt) >= todaySeconds);
+  const todaySummary = todayPosts.reduce(
+    (acc, post) => {
+      acc.totalPosted += 1;
+      const platform = normalizePostedPlatformForSummary(post.platform);
+      if (platform) acc.perPlatform[platform] = (acc.perPlatform[platform] ?? 0) + 1;
+      if (post.videoUrl || ['instagram_reels', 'youtube', 'tiktok'].includes(String(post.platform ?? '').toLowerCase())) {
+        acc.videoPosts += 1;
+      }
+      return acc;
+    },
+    { date: todayDate, totalPosted: 0, videoPosts: 0, perPlatform: {} as Record<string, number> },
+  );
+  return { todayPosts, todaySummary };
+};
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '');
 
@@ -569,13 +733,18 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
       resolveKnownLiveSocialProfile(storedEmail);
     const userId = requestedUserId || historyUserId || knownProfile?.id || authUser.uid;
     const history = await socialPostingService.getHistory(userId);
+    const liveMetaPosts = await fetchKnownMetaHistoryPosts(knownProfile);
+    const storedPosts = [...(history.posts ?? []), ...(history.todayPosts ?? [])];
+    const posts = mergeHistoryPosts(storedPosts, liveMetaPosts).slice(0, 400);
+    const { todayPosts, todaySummary } = buildTodayHistory(posts);
+    const summary = buildHistorySummary(posts);
     const daily = await socialAnalyticsService.getDailySummary(userId);
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
       Pragma: 'no-cache',
       Expires: '0',
     });
-    res.json({ ...history, daily, userId });
+    res.json({ ...history, posts, summary, todayPosts, todaySummary, daily, userId });
   } catch (error) {
     next(error);
   }
