@@ -434,9 +434,9 @@ const rootFacebookToken = () =>
 
 const rootInstagramToken = () =>
   (
-    process.env.INSTAGRAM_ACCESS_TOKEN ??
     process.env.META_GRAPH_TOKEN ??
     process.env.CLIENT_META_USER_TOKEN ??
+    process.env.INSTAGRAM_ACCESS_TOKEN ??
     ''
   ).trim();
 
