@@ -1093,6 +1093,50 @@ const fetchThreadsMetric = async (mediaId: string, accessToken: string) => {
   });
 };
 
+const fetchThreadsAccountMetric = async (
+  threadsAccount: NonNullable<UserSocialAccounts['threads']>,
+  cutoffMs: number,
+) => {
+  const accountId = threadsAccount.accountId?.trim();
+  const accessToken = threadsAccount.accessToken?.trim();
+  if (!accountId || !accessToken) return { views: 0, interactions: 0, followers: 0 };
+  const until = Math.floor(Date.now() / 1000);
+  const since = Math.max(Math.floor(cutoffMs / 1000), until - (30 * 24 * 60 * 60 - 1));
+  try {
+    const response = await axios.get(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/${accountId}/threads_insights`, {
+      params: {
+        metric: 'views,likes,replies,reposts,quotes,followers_count',
+        period: 'day',
+        since,
+        until,
+        access_token: accessToken,
+      },
+      timeout: 30000,
+    });
+    const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+    const metricTotal = (metric: string) => {
+      const row = rows.find((entry: any) => entry?.name === metric);
+      const totalValue = toNumber(row?.total_value?.value);
+      if (totalValue > 0) return totalValue;
+      return Array.isArray(row?.values)
+        ? row.values.reduce((acc: number, entry: any) => acc + toNumber(entry?.value), 0)
+        : 0;
+    };
+    return {
+      views: metricTotal('views'),
+      interactions:
+        metricTotal('likes') +
+        metricTotal('replies') +
+        metricTotal('reposts') +
+        metricTotal('quotes'),
+      followers: metricTotal('followers_count'),
+    };
+  } catch (error) {
+    console.warn('[socialLive] direct Threads account insights fetch failed', error instanceof Error ? error.message : String(error));
+    return { views: 0, interactions: 0, followers: 0 };
+  }
+};
+
 const fetchRecentInstagramMedia = async (
   instagramAccount: NonNullable<UserSocialAccounts['instagram']>,
   cutoffMs: number,
@@ -1514,12 +1558,16 @@ export async function getLiveSocialMetrics(
       );
     }
 
-    if (accounts.threads?.accessToken && threadsIds.length > 0) {
+    if (accounts.threads?.accessToken && accounts.threads?.accountId) {
+      const accountMetric = await fetchThreadsAccountMetric(accounts.threads, cutoffMs);
       const rows = await Promise.all(
-        threadsIds.map(id => fetchThreadsMetric(id, accounts.threads?.accessToken ?? '')),
+        accountMetric.views > 0 || accountMetric.interactions > 0 || threadsIds.length === 0
+          ? []
+          : threadsIds.map(id => fetchThreadsMetric(id, accounts.threads?.accessToken ?? '')),
       );
-      output.platforms.threads.views = sum(rows.map(row => row.views));
-      output.platforms.threads.interactions = sum(rows.map(row => row.interactions));
+      output.platforms.threads.views = accountMetric.views || sum(rows.map(row => row.views));
+      output.platforms.threads.interactions = accountMetric.interactions || sum(rows.map(row => row.interactions));
+      output.platforms.threads.followers = accountMetric.followers;
       output.platforms.threads.engagementRate = formatRate(
         output.platforms.threads.interactions,
         output.platforms.threads.views,
