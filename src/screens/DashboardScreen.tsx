@@ -74,7 +74,7 @@ const emptyOutboundStats: OutboundStats = {
 
 const emptyLiveSocialStats: LiveSocialStats = {
   generatedAt: new Date(0).toISOString(),
-  lookbackHours: 72,
+  lookbackHours: LIVE_SOCIAL_ROLLING_HOURS,
   summary: {
     views: 0,
     interactions: 0,
@@ -487,7 +487,7 @@ export const DashboardScreen: React.FC = () => {
       }
       try {
         const [rollingStats, todayStats] = await Promise.all([
-          fetchLiveSocialStats(state.user.uid, analyticsScopeId, 72),
+          fetchLiveSocialStats(state.user.uid, analyticsScopeId, LIVE_SOCIAL_ROLLING_HOURS),
           fetchLiveSocialStats(state.user.uid, analyticsScopeId, getHoursSinceMidnight()),
         ]);
         if (mounted && rollingStats) {
@@ -1085,12 +1085,17 @@ export const DashboardScreen: React.FC = () => {
                   <Text style={styles.livePlatformPosts}>
                     {row.key === 'web'
                       ? t('{{count}} visits', { count: row.views })
+                      : row.key === 'threads'
+                        ? t('Account stats')
                       : t('{{count}} posts', { count: row.postsAnalyzed })}
                   </Text>
                 </View>
                 <Text style={styles.livePlatformMetrics}>
                   {t('Views')}: {formatCount(row.views)} | {t('Interactions')}: {formatCount(row.interactions)} | {t('Engagement')}:{' '}
                   {row.engagementRate.toFixed(2)}% | {t('Conversions')}: {formatCount(row.conversions)}
+                  {row.key === 'threads' && Number(row.followers ?? 0) > 0
+                    ? ` | ${t('Followers')}: ${formatCount(Number(row.followers ?? 0))}`
+                    : ''}
                 </Text>
               </View>
             ))}

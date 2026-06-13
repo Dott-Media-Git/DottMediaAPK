@@ -4,7 +4,7 @@ import type {
   LiveSocialStats,
   OutboundStats,
 } from '@services/analytics';
-import { readCachedValue, writeCachedValue } from '@services/localCache';
+import { peekCachedValue, readCachedValue, writeCachedValue } from '@services/localCache';
 
 export type DashboardCacheSnapshot = {
   analytics: DashboardAnalytics;
@@ -14,15 +14,19 @@ export type DashboardCacheSnapshot = {
   activityHeatmapRows: ActivityHeatmapDaily[];
   activityHeatmapRestRows: ActivityHeatmapDaily[];
   rollingPerformanceRows: ActivityHeatmapDaily[];
+  dailyLiveSocialRows?: ActivityHeatmapDaily[];
 };
 
 const DASHBOARD_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 
 export const buildDashboardCacheKey = (userId?: string, scopeId?: string) =>
-  `dott.dashboard.snapshot.v1:${scopeId ?? userId ?? 'guest'}`;
+  `dott.dashboard.snapshot.v2:${scopeId ?? userId ?? 'guest'}`;
 
 export const readDashboardCache = async (cacheKey: string) =>
   readCachedValue<DashboardCacheSnapshot>(cacheKey, DASHBOARD_CACHE_TTL_MS);
+
+export const peekDashboardCache = (cacheKey: string) =>
+  peekCachedValue<DashboardCacheSnapshot>(cacheKey, DASHBOARD_CACHE_TTL_MS);
 
 export const writeDashboardCache = async (cacheKey: string, snapshot: DashboardCacheSnapshot) =>
   writeCachedValue(cacheKey, snapshot);
