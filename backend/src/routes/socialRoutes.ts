@@ -66,7 +66,24 @@ const deriveFacebookPageToken = async (pageId: string, accessToken: string) => {
   }
 };
 
-const fetchKnownMetaHistoryPosts = async (knownProfile: ReturnType<typeof resolveKnownLiveSocialProfile> | null) => {
+type LiveHistoryProfile = NonNullable<ReturnType<typeof resolveKnownLiveSocialProfile>>;
+
+const mergeLiveHistoryProfiles = (...profiles: Array<LiveHistoryProfile | null | undefined>): LiveHistoryProfile | null => {
+  const merged = profiles.reduce<LiveHistoryProfile | null>((acc, profile) => {
+    if (!profile) return acc;
+    return {
+      id: acc?.id ?? profile.id,
+      email: acc?.email ?? profile.email,
+      socialAccounts: {
+        ...(acc?.socialAccounts ?? {}),
+        ...(profile.socialAccounts ?? {}),
+      },
+    };
+  }, null);
+  return merged?.socialAccounts ? merged : null;
+};
+
+const fetchKnownMetaHistoryPosts = async (knownProfile: LiveHistoryProfile | null) => {
   if (!knownProfile?.socialAccounts) return [];
   const posts: any[] = [];
   const facebook = knownProfile.socialAccounts.facebook;
@@ -786,7 +803,8 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
           socialAccounts: storedSocialAccounts as NonNullable<ReturnType<typeof resolveKnownLiveSocialProfile>>['socialAccounts'],
         }
       : null;
-    const liveMetaPosts = await fetchKnownMetaHistoryPosts(knownProfile ?? bwinProfile ?? storedProfile);
+    const liveHistoryProfile = mergeLiveHistoryProfiles(knownProfile, bwinProfile, storedProfile);
+    const liveMetaPosts = await fetchKnownMetaHistoryPosts(liveHistoryProfile);
     const storedPosts = [...(history.posts ?? []), ...(history.todayPosts ?? [])];
     const posts = mergeHistoryPosts(storedPosts, liveMetaPosts).slice(0, 400);
     const { todayPosts, todaySummary } = buildTodayHistory(posts);
