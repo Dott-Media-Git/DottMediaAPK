@@ -34,8 +34,8 @@ export type DottEnergyEducationTopic = {
   buyerReason: string;
 };
 
-const SHOP_URL = (process.env.DOTT_ENERGY_SHOP_URL ?? 'https://dott-energy-2.myshopify.com').replace(/\/$/, '');
-const PRODUCTS_URL = `${SHOP_URL}/products.json?limit=60`;
+const SHOP_URL = (process.env.DOTT_ENERGY_SHOP_URL ?? 'https://smaraad.net').replace(/\/$/, '');
+const PRODUCTS_URL = `${SHOP_URL}/collections/all/products.json?limit=250`;
 const USER_AGENT =
   process.env.DOTT_ENERGY_USER_AGENT ??
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
@@ -118,6 +118,8 @@ const EDUCATION_TOPICS: DottEnergyEducationTopic[] = [
 
 const EDUCATION_BACKGROUND_ASSETS = ['wind-turbine-clean-02.png'];
 const EDUCATION_BACKGROUND_NAMES = ['poster-08.jpg', 'poster-11.jpg'];
+const DOTT_ENERGY_MARKET_HASHTAGS =
+  '#DottEnergy #Smaraad #SmaraadEnergy #CanadaEnergy #CanadaSolar #CanadaRenewables #DubaiEnergy #DubaiSolar #UAEInnovation #RenewableEnergy #CleanEnergy #OffGridPower';
 
 
 type ShopifyProduct = {
@@ -369,11 +371,12 @@ export function buildDottEnergyFallbackCaption() {
     'Dott Energy clean power solutions',
     '',
     'Explore wind turbines, generators and controllers for homes, farms, lodges and off-grid businesses.',
+    'Dott Energy is working in partnership with Smaraad to support customers looking for practical renewable-energy solutions.',
     '',
     `Shop Dott Energy: ${SHOP_URL}`,
     'DM Dott Energy with your site, location and power needs so we can recommend the right setup.',
     '',
-    '#DottEnergy #WindPower #CleanEnergy #RenewableEnergy #OffGridPower #UgandaBusiness',
+    DOTT_ENERGY_MARKET_HASHTAGS,
   ].join('\n'), { username: 'dottenergy100' });
 }
 
@@ -392,10 +395,12 @@ export function buildDottEnergyEducationCaption(topic: DottEnergyEducationTopic)
     '',
     topic.buyerReason,
     '',
+    'Dott Energy is working in partnership with Smaraad to support customers looking for practical renewable-energy solutions.',
+    '',
     `Shop Dott Energy: ${SHOP_URL}`,
     'DM Dott Energy with your site, location and power needs so we can recommend the right wind setup.',
     '',
-    '#DottEnergy #WindPower #CleanEnergy #RenewableEnergy #OffGridPower #UgandaBusiness',
+    DOTT_ENERGY_MARKET_HASHTAGS,
   ].join('\n'), { username: 'dottenergy100' });
 }
 
@@ -517,10 +522,15 @@ export function buildDottEnergyProductCaption(product: DottEnergyProduct) {
   const price = formatUsd(product.priceUsd);
   const power = product.powerOptions.length ? product.powerOptions.slice(0, 4).join(', ') : 'multiple power options';
   const voltage = product.voltageOptions.length ? product.voltageOptions.slice(0, 3).join(', ') : '12V / 24V options';
+  const description = product.description
+    ? wrapWords(product.description, 140, 2).join(' ')
+    : 'A practical Smaraad clean-energy product for backup power, outdoor energy needs and off-grid sites.';
   const lines = [
     `${product.title}`,
     '',
-    `Clean wind power for homes, farms, lodges and off-grid sites that need reliable backup energy.`,
+    description,
+    '',
+    'Dott Energy is working in partnership with Smaraad to connect customers with practical wind, solar and backup-energy solutions.',
     '',
     `Power options: ${power}`,
     `Voltage: ${voltage}`,
@@ -529,7 +539,7 @@ export function buildDottEnergyProductCaption(product: DottEnergyProduct) {
     `Shop Dott Energy: ${SHOP_URL}`,
     'DM Dott Energy with your site, location and power needs so we can help you choose the right turbine, generator or controller.',
     '',
-    '#DottEnergy #WindPower #CleanEnergy #RenewableEnergy #OffGridPower #UgandaBusiness',
+    DOTT_ENERGY_MARKET_HASHTAGS,
   ].filter((line): line is string => line !== null);
   return appendCommentToDmCaptionCta(lines.join('\n'), { username: 'dottenergy100' });
 }
