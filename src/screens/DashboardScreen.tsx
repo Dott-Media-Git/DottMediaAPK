@@ -12,15 +12,12 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import * as VictoryNative from 'victory-native';
+import { VictoryAxis, VictoryBar, VictoryChart, VictoryLabel, VictoryTheme } from 'victory-native';
 import { DMCard } from '@components/DMCard';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { buildDashboardCacheKey, peekDashboardCache, readDashboardCache, writeDashboardCache } from '@services/dashboardCache';
-import { realtimeDb } from '@services/firebase';
-import { AdPerformance, fetchAdPerformance } from '@services/metaAds';
+import { buildDashboardCacheKey, readDashboardCache, writeDashboardCache } from '@services/dashboardCache';
 import {
   ActivityHeatmapDaily,
   fetchAnalytics,
@@ -38,26 +35,11 @@ import {
   resolveAnalyticsScopeId
 } from '@services/analytics';
 
-const VictoryAxis = (VictoryNative as any).VictoryAxis as React.ComponentType<any>;
-const VictoryBar = (VictoryNative as any).VictoryBar as React.ComponentType<any>;
-const VictoryChart = (VictoryNative as any).VictoryChart as React.ComponentType<any>;
-const VictoryLabel = (VictoryNative as any).VictoryLabel as React.ComponentType<any>;
-const VictoryTheme = (VictoryNative as any).VictoryTheme;
-
 type ChartMetric = 'views' | 'interactions' | 'outbound' | 'conversions';
 type ReviewRangeKey = '7d' | '14d' | '30d' | '365d';
 type HeatmapGrouping = 'day' | 'month' | 'year';
 const LIVE_SOCIAL_ROLLING_DAYS = 30;
 const LIVE_SOCIAL_ROLLING_HOURS = LIVE_SOCIAL_ROLLING_DAYS * 24;
-const BWIN_ACCOUNT_CLOSURE_AT = '2026-05-08T08:00:00+03:00';
-
-type AccountClosureState = {
-  enabled?: boolean;
-  visibleToClient?: boolean;
-  shutdownAt?: string;
-  message?: string;
-  status?: string;
-};
 
 const REVIEW_RANGE_OPTIONS: Array<{ key: ReviewRangeKey; label: string; shortLabel: string; days: number }> = [
   { key: '7d', label: 'Last 7 days', shortLabel: '7 days', days: 7 },
@@ -92,7 +74,7 @@ const emptyOutboundStats: OutboundStats = {
 
 const emptyLiveSocialStats: LiveSocialStats = {
   generatedAt: new Date(0).toISOString(),
-  lookbackHours: LIVE_SOCIAL_ROLLING_HOURS,
+  lookbackHours: 72,
   summary: {
     views: 0,
     interactions: 0,
@@ -147,58 +129,6 @@ const getHoursSinceMidnight = () => {
   return Math.max(1, now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600);
 };
 
-const emptyAdPerformance: AdPerformance = {
-  generatedAt: new Date(0).toISOString(),
-  lookbackDays: 30,
-  currency: 'USD',
-  summary: {
-    spend: 0,
-    impressions: 0,
-    reach: 0,
-    clicks: 0,
-    inlineLinkClicks: 0,
-    messages: 0,
-    leads: 0,
-    active: 0,
-    paused: 0,
-    failed: 0,
-    other: 0,
-    ctr: 0,
-  },
-  rows: [],
-};
-
-const getHoursSinceDateStart = (dateKey: string) => {
-  const parsed = parseChartDate(dateKey);
-  if (Number.isNaN(parsed.getTime())) return 1;
-  parsed.setHours(0, 0, 0, 0);
-  return Math.max(1, (Date.now() - parsed.getTime()) / (60 * 60 * 1000));
-};
-
-const buildLiveSocialDayRows = (dates: string[], snapshots: LiveSocialStats[]): ActivityHeatmapDaily[] =>
-  dates.map((date, index) => {
-    const current = snapshots[index] ?? emptyLiveSocialStats;
-    const next = snapshots[index + 1] ?? emptyLiveSocialStats;
-    return {
-      date,
-      views: Math.max(0, Number(current.summary.views ?? 0) - Number(next.summary.views ?? 0)),
-      interactions: Math.max(
-        0,
-        Number(current.summary.interactions ?? 0) - Number(next.summary.interactions ?? 0),
-      ),
-      outbound: 0,
-      conversions: Math.max(
-        0,
-        Number(current.web.redirectClicks ?? current.summary.conversions ?? 0) -
-          Number(next.web.redirectClicks ?? next.summary.conversions ?? 0),
-      ),
-      redirectClicks: Math.max(
-        0,
-        Number(current.web.redirectClicks ?? 0) - Number(next.web.redirectClicks ?? 0),
-      ),
-    };
-  });
-
 const formatDateLabel = (date: string) => {
   const parsed = parseChartDate(date);
   if (!Number.isNaN(parsed.getTime())) {
@@ -237,47 +167,7 @@ const buildChartScale = (values: number[]) => {
   return { top, ticks };
 };
 
-const scoreHeatmapRows = (rows: ActivityHeatmapDaily[]) =>
-  rows.reduce(
-    (acc, row) =>
-      acc +
-      Number(row.views ?? 0) +
-      Number(row.interactions ?? 0) +
-      Number(row.outbound ?? 0) +
-      Number(row.conversions ?? 0) +
-      Number(row.redirectClicks ?? 0),
-    0,
-  );
-
 const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
-
-const isBwinAccount = (
-  email?: string | null,
-  company?: string | null,
-  uid?: string | null,
-  crmEmail?: string | null,
-) => {
-  const normalizedEmail = normalizeLower(email);
-  const normalizedCompany = normalizeLower(company);
-  const normalizedCrmEmail = normalizeLower(crmEmail);
-  return (
-    uid === '1zvY9nNyXMcfxdPQEyx0bIdK7r53' ||
-    normalizedEmail.includes('bwinbet') ||
-    normalizedCrmEmail.includes('bwinbet') ||
-    normalizedCompany.includes('bwinbet')
-  );
-};
-
-const formatClosureCountdown = (remainingMs: number) => {
-  if (remainingMs <= 0) return 'Account closed';
-  const totalSeconds = Math.floor(remainingMs / 1000);
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (days > 0) return `${days}d ${hours}h ${minutes}m ${seconds}s`;
-  return `${hours}h ${minutes}m ${seconds}s`;
-};
 
 const hasLiveDashboardSignal = (
   analytics: DashboardAnalytics,
@@ -310,13 +200,10 @@ export const DashboardScreen: React.FC = () => {
   const { width: viewportWidth } = useWindowDimensions();
   const orgId = (state.user as any)?.orgId ?? state.crmData?.orgId;
   const isBwinbetAccount = useMemo(() => {
-    return isBwinAccount(
-      state.user?.email,
-      state.crmData?.companyName,
-      state.user?.uid,
-      state.crmData?.email,
-    );
-  }, [state.crmData?.companyName, state.crmData?.email, state.user?.email, state.user?.uid]);
+    const primary = normalizeLower(state.user?.email);
+    const crmEmail = normalizeLower(state.crmData?.email);
+    return primary.includes('bwinbet') || crmEmail.includes('bwinbet');
+  }, [state.crmData?.email, state.user?.email]);
   const analyticsScopeId = useMemo(
     () => resolveAnalyticsScopeId(state.user?.uid, orgId),
     [state.user?.uid, orgId]
@@ -325,77 +212,26 @@ export const DashboardScreen: React.FC = () => {
     () => buildDashboardCacheKey(state.user?.uid, analyticsScopeId),
     [state.user?.uid, analyticsScopeId],
   );
-  const initialDashboardSnapshot = useMemo(
-    () => (dashboardCacheKey ? peekDashboardCache(dashboardCacheKey) : null),
-    [dashboardCacheKey],
-  );
-  const initialHasCachedSnapshot = useMemo(
-    () =>
-      Boolean(
-        initialDashboardSnapshot &&
-          hasLiveDashboardSignal(
-            createEmptyAnalytics(initialDashboardSnapshot.analytics),
-            initialDashboardSnapshot.outboundStats,
-            initialDashboardSnapshot.liveSocialStats,
-            initialDashboardSnapshot.todayLiveSocialStats,
-            initialDashboardSnapshot.activityHeatmapRows,
-            initialDashboardSnapshot.activityHeatmapRestRows,
-          ),
-      ),
-    [initialDashboardSnapshot],
-  );
   const [analytics, setAnalytics] = useState<DashboardAnalytics>(() =>
-    createEmptyAnalytics(initialDashboardSnapshot?.analytics ?? state.crmData?.analytics)
+    createEmptyAnalytics(state.crmData?.analytics)
   );
   const [loading, setLoading] = useState(false);
   const [chartMetric, setChartMetric] = useState<ChartMetric>('views');
-  const [outboundStats, setOutboundStats] = useState<OutboundStats>(() => initialDashboardSnapshot?.outboundStats ?? emptyOutboundStats);
-  const [liveSocialStats, setLiveSocialStats] = useState<LiveSocialStats>(() => initialDashboardSnapshot?.liveSocialStats ?? emptyLiveSocialStats);
-  const [todayLiveSocialStats, setTodayLiveSocialStats] = useState<LiveSocialStats>(() => initialDashboardSnapshot?.todayLiveSocialStats ?? emptyLiveSocialStats);
-  const [activityHeatmapRows, setActivityHeatmapRows] = useState<ActivityHeatmapDaily[]>(() => initialDashboardSnapshot?.activityHeatmapRows ?? []);
-  const [activityHeatmapRestRows, setActivityHeatmapRestRows] = useState<ActivityHeatmapDaily[]>(() => initialDashboardSnapshot?.activityHeatmapRestRows ?? []);
-  const [rollingPerformanceRows, setRollingPerformanceRows] = useState<ActivityHeatmapDaily[]>(() => initialDashboardSnapshot?.rollingPerformanceRows ?? initialDashboardSnapshot?.activityHeatmapRestRows ?? []);
-  const [dailyLiveSocialRows, setDailyLiveSocialRows] = useState<ActivityHeatmapDaily[]>(() => initialDashboardSnapshot?.dailyLiveSocialRows ?? []);
+  const [outboundStats, setOutboundStats] = useState<OutboundStats>(() => emptyOutboundStats);
+  const [liveSocialStats, setLiveSocialStats] = useState<LiveSocialStats>(() => emptyLiveSocialStats);
+  const [todayLiveSocialStats, setTodayLiveSocialStats] = useState<LiveSocialStats>(() => emptyLiveSocialStats);
+  const [activityHeatmapRows, setActivityHeatmapRows] = useState<ActivityHeatmapDaily[]>([]);
+  const [activityHeatmapRestRows, setActivityHeatmapRestRows] = useState<ActivityHeatmapDaily[]>([]);
+  const [rollingPerformanceRows, setRollingPerformanceRows] = useState<ActivityHeatmapDaily[]>([]);
   const [liveSocialLoading, setLiveSocialLoading] = useState(false);
-  const [adPerformance, setAdPerformance] = useState<AdPerformance>(emptyAdPerformance);
-  const [adPerformanceLoading, setAdPerformanceLoading] = useState(false);
   const [selectedRangeKey, setSelectedRangeKey] = useState<ReviewRangeKey>('7d');
   const [rangeMenuOpen, setRangeMenuOpen] = useState(false);
   const [cacheReady, setCacheReady] = useState(false);
-  const [hasCachedSnapshot, setHasCachedSnapshot] = useState(initialHasCachedSnapshot);
-  const [closureState, setClosureState] = useState<AccountClosureState | null>(null);
-  const [closureNow, setClosureNow] = useState(() => Date.now());
+  const [hasCachedSnapshot, setHasCachedSnapshot] = useState(false);
   const selectedRange = useMemo(
     () => REVIEW_RANGE_OPTIONS.find(option => option.key === selectedRangeKey) ?? REVIEW_RANGE_OPTIONS[0],
     [selectedRangeKey],
   );
-  const heatmapGrouping = useMemo<HeatmapGrouping>(
-    () => getHeatmapGrouping(selectedRange.days),
-    [selectedRange.days],
-  );
-
-  useEffect(() => {
-    if (!isBwinbetAccount || !state.user?.uid || !realtimeDb) {
-      setClosureState(null);
-      return;
-    }
-    const ref = doc(realtimeDb, 'users', state.user.uid);
-    return onSnapshot(
-      ref,
-      (snap: any) => {
-        setClosureState((snap.data()?.accountClosure ?? null) as AccountClosureState | null);
-      },
-      () => {
-        setClosureState(null);
-      },
-    );
-  }, [isBwinbetAccount, state.user?.uid]);
-
-  useEffect(() => {
-    if (!isBwinbetAccount) return;
-    const timer = setInterval(() => setClosureNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [isBwinbetAccount]);
 
   useEffect(() => {
     let active = true;
@@ -412,7 +248,6 @@ export const DashboardScreen: React.FC = () => {
           const cachedHeatmapRows = snapshot.activityHeatmapRows;
           const cachedHeatmapRestRows = snapshot.activityHeatmapRestRows;
           const cachedRollingPerformanceRows = snapshot.rollingPerformanceRows ?? cachedHeatmapRestRows;
-          const cachedDailyLiveSocialRows = snapshot.dailyLiveSocialRows ?? [];
           if (
             hasLiveDashboardSignal(
               cachedAnalytics,
@@ -430,7 +265,6 @@ export const DashboardScreen: React.FC = () => {
             setActivityHeatmapRows(cachedHeatmapRows);
             setActivityHeatmapRestRows(cachedHeatmapRestRows);
             setRollingPerformanceRows(cachedRollingPerformanceRows);
-            setDailyLiveSocialRows(cachedDailyLiveSocialRows);
             setHasCachedSnapshot(true);
           }
         }
@@ -455,14 +289,12 @@ export const DashboardScreen: React.FC = () => {
       activityHeatmapRows,
       activityHeatmapRestRows,
       rollingPerformanceRows,
-      dailyLiveSocialRows,
     });
   }, [
     activityHeatmapRestRows,
     activityHeatmapRows,
     analytics,
     cacheReady,
-    dailyLiveSocialRows,
     dashboardCacheKey,
     liveSocialStats,
     outboundStats,
@@ -470,36 +302,6 @@ export const DashboardScreen: React.FC = () => {
     state.user?.uid,
     todayLiveSocialStats,
   ]);
-
-  useEffect(() => {
-    if (!state.user?.uid || heatmapGrouping !== 'day') {
-      setDailyLiveSocialRows(prev => (prev.length ? [] : prev));
-      return;
-    }
-
-    let active = true;
-    const targetDays = Math.max(Math.min(selectedRange.days, 14), 7);
-    const dateWindow = buildDateWindow(targetDays);
-    const timer = setTimeout(() => {
-      void Promise.all(
-        dateWindow.map(date =>
-          fetchLiveSocialStats(state.user?.uid, analyticsScopeId, getHoursSinceDateStart(date)),
-        ),
-      )
-        .then(snapshots => {
-          if (!active) return;
-          setDailyLiveSocialRows(buildLiveSocialDayRows(dateWindow, snapshots));
-        })
-        .catch(error => {
-          console.warn('Daily live social heatmap fetch failed', error);
-        });
-    }, 150);
-
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [analyticsScopeId, heatmapGrouping, selectedRange.days, state.user?.uid]);
 
   useEffect(() => {
     let isMounted = true;
@@ -685,7 +487,7 @@ export const DashboardScreen: React.FC = () => {
       }
       try {
         const [rollingStats, todayStats] = await Promise.all([
-          fetchLiveSocialStats(state.user.uid, analyticsScopeId, LIVE_SOCIAL_ROLLING_HOURS),
+          fetchLiveSocialStats(state.user.uid, analyticsScopeId, 72),
           fetchLiveSocialStats(state.user.uid, analyticsScopeId, getHoursSinceMidnight()),
         ]);
         if (mounted && rollingStats) {
@@ -712,60 +514,15 @@ export const DashboardScreen: React.FC = () => {
     };
   }, [analyticsScopeId, hasCachedSnapshot, state.user?.uid]);
 
-  useEffect(() => {
-    if (!state.user?.uid) {
-      setAdPerformance(emptyAdPerformance);
-      return;
-    }
-    let mounted = true;
-    let timer: ReturnType<typeof setInterval> | null = null;
-
-    const refreshAdPerformance = async () => {
-      setAdPerformanceLoading(true);
-      try {
-        const response = await fetchAdPerformance(12);
-        if (mounted && response.performance) {
-          setAdPerformance(response.performance);
-        }
-      } catch (error) {
-        console.warn('Failed to refresh ad performance', error);
-      } finally {
-        if (mounted) setAdPerformanceLoading(false);
-      }
-    };
-
-    void refreshAdPerformance();
-    timer = setInterval(() => {
-      void refreshAdPerformance();
-    }, 120000);
-
-    return () => {
-      mounted = false;
-      if (timer) clearInterval(timer);
-    };
-  }, [state.user?.uid]);
-
   const historySeries = useMemo(
     () => analytics.history ?? [],
     [analytics]
   );
 
-  const safeNumber = (value: unknown) => {
-    const numeric = Number(value ?? 0);
-    return Number.isFinite(numeric) ? numeric : 0;
-  };
-
-  const formatCount = (value: unknown) => {
-    const rounded = Math.round(safeNumber(value));
+  const formatCount = (value: number) => {
+    const rounded = Number.isFinite(value) ? Math.round(value) : 0;
     return rounded.toLocaleString();
   };
-
-  const formatMoney = (value: unknown, currency = 'USD') =>
-    new Intl.NumberFormat(locale ?? undefined, {
-      style: 'currency',
-      currency: currency || 'USD',
-      maximumFractionDigits: 2,
-    }).format(safeNumber(value));
 
   const formatAxisCount = (value: number) => {
     if (value >= 1000000) return `${(value / 1000000).toFixed(value % 1000000 === 0 ? 0 : 1)}M`;
@@ -853,66 +610,21 @@ export const DashboardScreen: React.FC = () => {
     if (liveSocialLoading && rollingPerformanceSummary.availableDays === 0) {
       return t('Pulling latest social metrics...');
     }
+    if (rollingPerformanceSummary.availableDays > 0 && rollingPerformanceSummary.availableDays < LIVE_SOCIAL_ROLLING_DAYS) {
+      return t('All available live data so far since the account started');
+    }
     return t('Rolling live total across the last {{days}} days', { days: LIVE_SOCIAL_ROLLING_DAYS });
   }, [liveSocialLoading, rollingPerformanceSummary.availableDays, t]);
 
-  const liveSocialSummaryCard = useMemo(() => {
-    const apiViews = Number(liveSocialStats.summary.views ?? 0);
-    const apiInteractions = Number(liveSocialStats.summary.interactions ?? 0);
-    const apiConversions = Number(liveSocialStats.summary.conversions ?? 0);
-    const apiRedirectClicks = Number(liveSocialStats.web.redirectClicks ?? 0);
-    const apiEngagementRate = Number(liveSocialStats.summary.engagementRate ?? 0);
-    const hasApiSignal =
-      apiViews > 0 || apiInteractions > 0 || apiConversions > 0 || apiRedirectClicks > 0;
-
-    if (hasApiSignal) {
-      return {
-        views: apiViews,
-        interactions: apiInteractions,
-        conversions: apiConversions,
-        redirectClicks: apiRedirectClicks,
-        engagementRate: apiEngagementRate,
-      };
-    }
-
-    return {
-      views: rollingPerformanceSummary.views,
-      interactions: rollingPerformanceSummary.interactions,
-      conversions: rollingPerformanceSummary.conversions,
-      redirectClicks: rollingPerformanceSummary.redirectClicks,
-      engagementRate: rollingPerformanceSummary.engagementRate,
-    };
-  }, [liveSocialStats, rollingPerformanceSummary]);
-
-  const effectiveClosureState = useMemo<AccountClosureState | null>(() => {
-    if (!isBwinbetAccount) return null;
-    return closureState ?? {
-      enabled: true,
-      visibleToClient: true,
-      shutdownAt: BWIN_ACCOUNT_CLOSURE_AT,
-      message:
-        'All Bwin social posting, reels, stories, and automated replies will pause on Friday, May 8, 2026 at 8:00 AM Africa/Kampala unless reopened.',
-      status: 'scheduled',
-    };
-  }, [closureState, isBwinbetAccount]);
-
-  const closureShutdownAt = effectiveClosureState?.shutdownAt ? new Date(effectiveClosureState.shutdownAt) : null;
-  const closureRemainingMs = closureShutdownAt ? closureShutdownAt.getTime() - closureNow : 0;
-  const showClosureCard = Boolean(
-    isBwinbetAccount &&
-      effectiveClosureState?.enabled !== false &&
-      effectiveClosureState?.visibleToClient !== false,
-  );
-
   const heroStats = [
-    { label: t('Interactions'), value: formatCount(liveSocialSummaryCard.interactions) },
+    { label: t('Interactions'), value: formatCount(rollingPerformanceSummary.interactions) },
     { label: t('Outbound'), value: formatCount(outboundStats.prospectsContacted) },
-    { label: t('Views'), value: formatCount(liveSocialSummaryCard.views) },
+    { label: t('Views'), value: formatCount(rollingPerformanceSummary.views) },
     {
       label: isBwinbetAccount ? t('Bet button clicks') : t('Conversions'),
       value: isBwinbetAccount
-        ? formatCount(liveSocialSummaryCard.redirectClicks)
-        : formatCount(liveSocialSummaryCard.conversions),
+        ? formatCount(rollingPerformanceSummary.redirectClicks)
+        : formatCount(rollingPerformanceSummary.conversions),
     }
   ];
 
@@ -1065,95 +777,6 @@ export const DashboardScreen: React.FC = () => {
     [liveSocialStats],
   );
 
-  const recentAdRows = useMemo(
-    () => adPerformance.rows.slice(0, 5),
-    [adPerformance.rows],
-  );
-
-  const displayAdSummary = useMemo(() => {
-    const summary = adPerformance.summary;
-    const normalizedSummary = {
-      spend: safeNumber(summary.spend),
-      impressions: safeNumber(summary.impressions),
-      reach: safeNumber(summary.reach),
-      clicks: safeNumber(summary.clicks),
-      inlineLinkClicks: safeNumber(summary.inlineLinkClicks),
-      messages: safeNumber(summary.messages),
-      leads: safeNumber(summary.leads),
-      active: safeNumber(summary.active),
-      paused: safeNumber(summary.paused),
-      failed: safeNumber(summary.failed),
-      other: safeNumber(summary.other),
-      ctr: safeNumber(summary.ctr),
-    };
-    const hasSummarySignal =
-      normalizedSummary.spend > 0 ||
-      normalizedSummary.impressions > 0 ||
-      normalizedSummary.reach > 0 ||
-      normalizedSummary.clicks > 0 ||
-      normalizedSummary.inlineLinkClicks > 0 ||
-      normalizedSummary.messages > 0 ||
-      normalizedSummary.leads > 0;
-    if (hasSummarySignal || !adPerformance.rows.length) return normalizedSummary;
-
-    const derived = adPerformance.rows.reduce(
-      (acc, row) => {
-        acc.spend += safeNumber(row.spend);
-        acc.impressions += safeNumber(row.impressions);
-        acc.reach += safeNumber(row.reach);
-        acc.clicks += safeNumber(row.clicks);
-        acc.inlineLinkClicks += safeNumber(row.inlineLinkClicks);
-        acc.messages += safeNumber(row.messages);
-        acc.leads += safeNumber(row.leads);
-        const status = String(row.effectiveStatus || row.status || '').toUpperCase();
-        if (status === 'ACTIVE') acc.active += 1;
-        else if (status.includes('PAUSED')) acc.paused += 1;
-        else if (status === 'FAILED' || row.errorMessage) acc.failed += 1;
-        else acc.other += 1;
-        return acc;
-      },
-      {
-        spend: 0,
-        impressions: 0,
-        reach: 0,
-        clicks: 0,
-        inlineLinkClicks: 0,
-        messages: 0,
-        leads: 0,
-        active: 0,
-        paused: 0,
-        failed: 0,
-        other: 0,
-        ctr: 0,
-      },
-    );
-    derived.ctr = derived.impressions > 0 ? Number(((derived.clicks / derived.impressions) * 100).toFixed(2)) : 0;
-    return derived;
-  }, [adPerformance.rows, adPerformance.summary]);
-
-  const adPerformanceResults = useMemo(
-    () => displayAdSummary.messages || displayAdSummary.leads,
-    [displayAdSummary.leads, displayAdSummary.messages],
-  );
-
-  const adMessagingConversations = useMemo(
-    () => displayAdSummary.messages,
-    [displayAdSummary.messages],
-  );
-
-  const adPerformanceSubtitle = useMemo(() => {
-    if (adPerformanceLoading && !adPerformance.rows.length) {
-      return t('Pulling Meta ad insights...');
-    }
-    return t('Last {{days}} days from connected Meta ads', { days: adPerformance.lookbackDays || 30 });
-  }, [adPerformance.lookbackDays, adPerformance.rows.length, adPerformanceLoading, t]);
-
-  const adPerformanceUpdatedAt = useMemo(() => {
-    const parsed = new Date(adPerformance.generatedAt);
-    if (Number.isNaN(parsed.getTime())) return t('Live data');
-    return `${t('Updated')} ${parsed.toLocaleString(locale ?? undefined)}`;
-  }, [adPerformance.generatedAt, locale, t]);
-
   const channelPerformanceRows = useMemo(
     () =>
       livePlatformRows.map(row => ({
@@ -1172,13 +795,15 @@ export const DashboardScreen: React.FC = () => {
     return `${t('Updated')}: ${parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   }, [liveSocialStats.generatedAt, t]);
 
+  const heatmapGrouping = useMemo<HeatmapGrouping>(
+    () => getHeatmapGrouping(selectedRange.days),
+    [selectedRange.days],
+  );
+
   const heatmapSeries = useMemo(
     () => {
-      const primaryHeatmapRows =
-        scoreHeatmapRows(activityHeatmapRestRows) > 0 ? activityHeatmapRestRows : activityHeatmapRows;
-
-      const baseByDate = new Map(
-        primaryHeatmapRows.map(day => [
+      const liveByDate = new Map(
+        activityHeatmapRows.map(day => [
           day.date,
           {
             views: Number(day.views ?? 0),
@@ -1189,21 +814,34 @@ export const DashboardScreen: React.FC = () => {
         ]),
       );
 
-      const socialByDate = new Map(
-        dailyLiveSocialRows.map(day => [
+      const restByDate = new Map(
+        activityHeatmapRestRows.map(day => [
           day.date,
           {
             views: Number(day.views ?? 0),
             interactions: Number(day.interactions ?? 0),
             outbound: Number(day.outbound ?? 0),
+            conversions: Number(day.conversions ?? 0),
+          },
+        ]),
+      );
+
+      const historyByDate = new Map(
+        historySeries.map(day => [
+          day.date,
+          {
+            views: Number(day.leads ?? 0),
+            interactions: Number(day.engagement ?? 0),
+            outbound: Number(day.conversions ?? 0),
             conversions: Number(day.conversions ?? 0),
           },
         ]),
       );
 
       const dailySeries = buildDateWindow(selectedRange.days).map((date, index, arr) => {
-        const base = baseByDate.get(date);
-        const social = socialByDate.get(date);
+        const live = liveByDate.get(date);
+        const rest = restByDate.get(date);
+        const fallback = historyByDate.get(date);
         const isToday = index === arr.length - 1;
         const todayLive = isToday
           ? {
@@ -1213,14 +851,29 @@ export const DashboardScreen: React.FC = () => {
             }
           : null;
         const merged = {
-          views: Math.max(Number(base?.views ?? 0), Number(social?.views ?? 0), Number(todayLive?.views ?? 0)),
+          views: Math.max(
+            Number(live?.views ?? 0),
+            Number(rest?.views ?? 0),
+            Number(fallback?.views ?? 0),
+            Number(todayLive?.views ?? 0),
+          ),
           interactions: Math.max(
-            Number(base?.interactions ?? 0),
-            Number(social?.interactions ?? 0),
+            Number(live?.interactions ?? 0),
+            Number(rest?.interactions ?? 0),
+            Number(fallback?.interactions ?? 0),
             Number(todayLive?.interactions ?? 0),
           ),
-          outbound: Number(base?.outbound ?? 0),
-          conversions: Math.max(Number(base?.conversions ?? 0), Number(todayLive?.conversions ?? 0)),
+          outbound: Math.max(
+            Number(live?.outbound ?? 0),
+            Number(rest?.outbound ?? 0),
+            Number(fallback?.outbound ?? 0),
+          ),
+          conversions: Math.max(
+            Number(live?.conversions ?? 0),
+            Number(rest?.conversions ?? 0),
+            Number(fallback?.conversions ?? 0),
+            Number(todayLive?.conversions ?? 0),
+          ),
         };
 
         return {
@@ -1287,8 +940,8 @@ export const DashboardScreen: React.FC = () => {
       activityHeatmapRestRows,
       activityHeatmapRows,
       chartMetric,
-      dailyLiveSocialRows,
       heatmapGrouping,
+      historySeries,
       locale,
       selectedRange.days,
       t,
@@ -1297,12 +950,15 @@ export const DashboardScreen: React.FC = () => {
   );
 
   const heatmapChartData = useMemo(
-    () => heatmapSeries.map((item, index) => ({ ...item, index, xPosition: index + 1 })),
+    () => heatmapSeries.map((item, index) => ({ ...item, index })),
     [heatmapSeries],
   );
 
   const heatmapTickValues = useMemo(() => {
-    return heatmapChartData.map(item => item.xPosition);
+    if (heatmapGrouping !== 'day') {
+      return heatmapChartData.map(item => item.index);
+    }
+    return heatmapChartData.map(item => item.index);
   }, [heatmapChartData, heatmapGrouping]);
 
   const chartWidth = useMemo(() => {
@@ -1318,7 +974,7 @@ export const DashboardScreen: React.FC = () => {
   }, [heatmapChartData.length, heatmapGrouping, selectedRange.days, viewportWidth]);
 
   const barWidth =
-    heatmapGrouping === 'year' ? 52 : heatmapGrouping === 'month' ? 40 : selectedRange.days <= 7 ? 24 : 20;
+    heatmapGrouping === 'year' ? 56 : heatmapGrouping === 'month' ? 44 : selectedRange.days <= 7 ? 30 : 24;
   const showHeatmapValueLabels = heatmapGrouping !== 'day' || selectedRange.days <= 14;
 
   const heatmapScale = useMemo(
@@ -1326,8 +982,8 @@ export const DashboardScreen: React.FC = () => {
     [heatmapSeries]
   );
 
-  const formatHeatmapTick = (tickValue: number) => {
-    const item = heatmapChartData.find(entry => entry.xPosition === tickValue);
+  const formatHeatmapTick = (index: number) => {
+    const item = heatmapChartData[index];
     if (!item) return '';
     if (heatmapGrouping === 'year') return item.label;
     if (heatmapGrouping === 'month') return item.label;
@@ -1367,28 +1023,6 @@ export const DashboardScreen: React.FC = () => {
           ))}
         </View>
       </LinearGradient>
-      {showClosureCard ? (
-        <DMCard title="Bwin Account Closure" subtitle="Countdown to automation shutdown">
-          <View style={styles.closureCountdownWrap}>
-            <Text style={styles.closureCountdownValue}>{formatClosureCountdown(closureRemainingMs)}</Text>
-            <Text style={styles.closureCountdownLabel}>
-              {closureRemainingMs > 0
-                ? 'Time remaining until all Bwin posting, reels, stories, and replies pause.'
-                : 'Bwin posting, reels, stories, and replies are now paused.'}
-            </Text>
-          </View>
-          <View style={styles.closureMetaRow}>
-            <Text style={styles.closureMetaLabel}>Shutdown time</Text>
-            <Text style={styles.closureMetaValue}>
-              {closureShutdownAt ? closureShutdownAt.toLocaleString() : 'Friday, May 8, 2026 8:00 AM'}
-            </Text>
-          </View>
-          <Text style={styles.closureMessage}>
-            {effectiveClosureState?.message ??
-              'All Bwin social posting, reels, stories, and automated replies will pause at the scheduled shutdown time.'}
-          </Text>
-        </DMCard>
-      ) : null}
       <DMCard title={t('Outbound Pipeline')} subtitle={t('Prospecting + booking overview')}>
         <View style={styles.outboundGrid}>
           {outboundMetrics.map((metric, index) => (
@@ -1410,25 +1044,25 @@ export const DashboardScreen: React.FC = () => {
         <View style={styles.liveSummaryRow}>
           <View style={styles.liveSummaryItem}>
             <Text style={styles.liveSummaryLabel}>{t('Views')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(liveSocialSummaryCard.views)}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(rollingPerformanceSummary.views)}</Text>
           </View>
           <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
             <Text style={styles.liveSummaryLabel}>{t('Interactions')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(liveSocialSummaryCard.interactions)}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(rollingPerformanceSummary.interactions)}</Text>
           </View>
         </View>
         <View style={styles.liveSummaryRow}>
           <View style={styles.liveSummaryItem}>
             <Text style={styles.liveSummaryLabel}>{t('Engagement')}</Text>
-            <Text style={styles.liveSummaryValue}>{liveSocialSummaryCard.engagementRate.toFixed(2)}%</Text>
+            <Text style={styles.liveSummaryValue}>{rollingPerformanceSummary.engagementRate.toFixed(2)}%</Text>
           </View>
           <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
             <Text style={styles.liveSummaryLabel}>{t('Conversions')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(liveSocialSummaryCard.conversions)}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(rollingPerformanceSummary.conversions)}</Text>
           </View>
         </View>
         <Text style={styles.liveSnapshotHint}>
-          {t('Channel rows below reflect the rolling last {{days}} days of connected-channel performance.', { days: LIVE_SOCIAL_ROLLING_DAYS })}
+          {t('Channel rows below reflect the latest connected-channel snapshot.')}
         </Text>
         {isBwinbetAccount ? (
           <View style={styles.liveSummaryRow}>
@@ -1451,17 +1085,12 @@ export const DashboardScreen: React.FC = () => {
                   <Text style={styles.livePlatformPosts}>
                     {row.key === 'web'
                       ? t('{{count}} visits', { count: row.views })
-                      : row.key === 'threads'
-                        ? t('Account stats')
                       : t('{{count}} posts', { count: row.postsAnalyzed })}
                   </Text>
                 </View>
                 <Text style={styles.livePlatformMetrics}>
                   {t('Views')}: {formatCount(row.views)} | {t('Interactions')}: {formatCount(row.interactions)} | {t('Engagement')}:{' '}
                   {row.engagementRate.toFixed(2)}% | {t('Conversions')}: {formatCount(row.conversions)}
-                  {row.key === 'threads' && Number((row as any).followers ?? 0) > 0
-                    ? ` | ${t('Followers')}: ${formatCount(Number((row as any).followers ?? 0))}`
-                    : ''}
                 </Text>
               </View>
             ))}
@@ -1484,83 +1113,6 @@ export const DashboardScreen: React.FC = () => {
           </View>
         ) : null}
         <Text style={styles.liveUpdatedAt}>{liveUpdatedLabel}</Text>
-      </DMCard>
-      <DMCard title={t('Ads Performance')} subtitle={adPerformanceSubtitle}>
-        <View style={styles.liveSummaryRow}>
-          <View style={styles.liveSummaryItem}>
-            <Text style={styles.liveSummaryLabel}>{t('Spend')}</Text>
-            <Text style={styles.liveSummaryValue}>
-              {formatMoney(displayAdSummary.spend, adPerformance.currency)}
-            </Text>
-          </View>
-          <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
-            <Text style={styles.liveSummaryLabel}>{t('Impressions')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(displayAdSummary.impressions)}</Text>
-          </View>
-        </View>
-        <View style={styles.liveSummaryRow}>
-          <View style={styles.liveSummaryItem}>
-            <Text style={styles.liveSummaryLabel}>{t('Clicks')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(displayAdSummary.clicks)}</Text>
-          </View>
-          <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
-            <Text style={styles.liveSummaryLabel}>{t('CTR')}</Text>
-            <Text style={styles.liveSummaryValue}>{safeNumber(displayAdSummary.ctr).toFixed(2)}%</Text>
-          </View>
-        </View>
-        <View style={styles.liveSummaryRow}>
-          <View style={styles.liveSummaryItem}>
-            <Text style={styles.liveSummaryLabel}>{t('Reach')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(displayAdSummary.reach)}</Text>
-          </View>
-          <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
-            <Text style={styles.liveSummaryLabel}>{t('Results')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(adPerformanceResults)}</Text>
-          </View>
-        </View>
-        <View style={styles.liveSummaryRow}>
-          <View style={styles.liveSummaryItem}>
-            <Text style={styles.liveSummaryLabel}>{t('Messaging conversations')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(adMessagingConversations)}</Text>
-          </View>
-          <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
-            <Text style={styles.liveSummaryLabel}>{t('Link clicks')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(displayAdSummary.inlineLinkClicks)}</Text>
-          </View>
-        </View>
-        <View style={styles.adStatusRow}>
-          <Text style={styles.adStatusPill}>{t('Active')}: {formatCount(displayAdSummary.active)}</Text>
-          <Text style={styles.adStatusPill}>{t('Paused')}: {formatCount(displayAdSummary.paused)}</Text>
-          <Text style={styles.adStatusPill}>{t('Failed')}: {formatCount(displayAdSummary.failed)}</Text>
-        </View>
-        {recentAdRows.length ? (
-          <View style={styles.livePlatformList}>
-            {recentAdRows.map(row => {
-              const status = row.effectiveStatus || row.status || 'UNKNOWN';
-              const platform = String(row.platform ?? 'meta').replace(/_/g, ' ');
-              const results = row.messages || row.leads;
-              return (
-                <View key={row.id} style={styles.livePlatformRow}>
-                  <View style={styles.livePlatformHeader}>
-                    <Text style={styles.livePlatformName}>{platform}</Text>
-                    <Text style={styles.livePlatformPosts}>{status}</Text>
-                  </View>
-                  <Text style={styles.livePlatformMetrics}>
-                    {t('Spend')}: {formatMoney(row.spend, adPerformance.currency)} | {t('Impressions')}: {formatCount(row.impressions)} |{' '}
-                    {t('Clicks')}: {formatCount(row.clicks)} | {t('Messaging conversations')}: {formatCount(row.messages)} |{' '}
-                    {t('Results')}: {formatCount(results)} | {t('CTR')}: {safeNumber(row.ctr).toFixed(2)}%
-                  </Text>
-                  {row.errorMessage ? <Text style={styles.adErrorText}>{row.errorMessage}</Text> : null}
-                </View>
-              );
-            })}
-          </View>
-        ) : (
-          <Text style={styles.emptyState}>{t('No boosted ad performance has been recorded yet.')}</Text>
-        )}
-        <Text style={styles.liveUpdatedAt}>
-          {adPerformanceUpdatedAt}
-        </Text>
       </DMCard>
       <DMCard title={t('Daily Reviews')} subtitle={loading ? t('Refreshing data...') : t('Live statistics for today so far')}>
         <View style={styles.kpiRow}>
@@ -1636,15 +1188,16 @@ export const DashboardScreen: React.FC = () => {
           <View style={[styles.chartFrame, { width: chartWidth }]}>
             <VictoryChart
               width={chartWidth}
+              animate={{ duration: 500 }}
               theme={VictoryTheme.material}
               height={300}
               domain={{ y: [0, heatmapScale.top * 1.12] }}
-              domainPadding={{ x: heatmapGrouping === 'day' ? 28 : 34, y: 18 }}
-              padding={{ top: 42, bottom: 52, left: 68, right: 28 }}
+              domainPadding={{ x: heatmapGrouping === 'day' ? 18 : 28, y: 18 }}
+              padding={{ top: 42, bottom: 52, left: 54, right: 22 }}
             >
               <VictoryAxis
                 tickValues={heatmapTickValues}
-                tickFormat={(tick: number | string) => formatHeatmapTick(Number(tick))}
+                tickFormat={tick => formatHeatmapTick(Number(tick))}
                 style={{
                   axis: { stroke: colors.border },
                   tickLabels: { fill: colors.subtext, fontSize: selectedRange.days > 30 ? 10 : 11, padding: 10 },
@@ -1654,7 +1207,7 @@ export const DashboardScreen: React.FC = () => {
               <VictoryAxis
                 dependentAxis
                 tickValues={heatmapScale.ticks}
-                tickFormat={(tick: number | string) => formatAxisCount(Number(tick))}
+                tickFormat={tick => formatAxisCount(Number(tick))}
                 style={{
                   axis: { stroke: colors.border },
                   tickLabels: { fill: colors.subtext, fontSize: 11, padding: 6 },
@@ -1662,15 +1215,11 @@ export const DashboardScreen: React.FC = () => {
                 }}
               />
               <VictoryBar
-                cornerRadius={{ top: 12, bottom: 6 }}
+                cornerRadius={{ top: 10, bottom: 4 }}
                 style={{
                   data: {
-                    fill: ({ datum }: { datum: any }) =>
+                    fill: ({ datum }) =>
                       datum.isToday ? colors.accentSecondary : colors.accent,
-                    stroke: ({ datum }: { datum: any }) =>
-                      datum.isToday ? 'rgba(255,255,255,0.42)' : 'rgba(255,255,255,0.24)',
-                    strokeWidth: 1.5,
-                    opacity: 0.96,
                   },
                   labels: {
                     fill: colors.text,
@@ -1679,9 +1228,9 @@ export const DashboardScreen: React.FC = () => {
                   },
                 }}
                 data={heatmapChartData}
-                x="xPosition"
+                x="index"
                 y="value"
-                labels={({ datum }: { datum: any }) =>
+                labels={({ datum }) =>
                   datum.value > 0 && (showHeatmapValueLabels || datum.isToday) ? formatCount(datum.value) : ''
                 }
                 labelComponent={<VictoryLabel dy={-10} />}
@@ -1789,44 +1338,6 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     marginTop: 4
-  },
-  closureCountdownWrap: {
-    backgroundColor: colors.backgroundAlt,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
-    marginTop: 4,
-    marginBottom: 12,
-  },
-  closureCountdownValue: {
-    color: colors.accent,
-    fontSize: 30,
-    fontWeight: '800',
-  },
-  closureCountdownLabel: {
-    color: colors.subtext,
-    lineHeight: 20,
-    marginTop: 6,
-  },
-  closureMetaRow: {
-    marginBottom: 8,
-  },
-  closureMetaLabel: {
-    color: colors.subtext,
-    fontSize: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  closureMetaValue: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: '700',
-    marginTop: 4,
-  },
-  closureMessage: {
-    color: colors.text,
-    lineHeight: 20,
   },
   kpiRow: {
     flexDirection: 'row',
@@ -2076,29 +1587,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginBottom: 10,
     lineHeight: 17,
-  },
-  adStatusRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 10,
-  },
-  adStatusPill: {
-    color: colors.subtext,
-    backgroundColor: colors.backgroundAlt,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  adErrorText: {
-    color: colors.danger,
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 6,
   },
   channelMatrix: {
     marginTop: 10,
