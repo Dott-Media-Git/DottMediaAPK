@@ -595,8 +595,8 @@ export const resolveKnownLiveSocialProfile = (scopeId?: string | null): UserSoci
   );
   if (!known) return null;
 
-  const facebookToken = rootFacebookToken() || knownAccountToken(known.facebookTokenEnv ?? [], rootFacebookToken);
-  const instagramToken = rootInstagramToken() || knownAccountToken(known.instagramTokenEnv ?? [], rootInstagramToken);
+  const facebookToken = knownAccountToken(known.facebookTokenEnv ?? [], rootFacebookToken);
+  const instagramToken = knownAccountToken(known.instagramTokenEnv ?? [], rootInstagramToken);
   const threadsToken = knownAccountToken(known.threadsTokenEnv ?? [], rootThreadsToken);
   const socialAccounts: UserSocialAccounts = {};
   if (known.facebookPageId && facebookToken) {
@@ -644,10 +644,17 @@ const mergeSocialProfiles = (profiles: Array<UserSocialProfile | null | undefine
         mergedAccounts[platform] = account;
         return;
       }
-      mergedAccounts[platform] = {
+      const mergedAccount = {
         ...(current as Record<string, unknown>),
         ...(account as Record<string, unknown>),
       };
+      ['accessToken', 'userAccessToken', 'pageToken'].forEach(tokenKey => {
+        const currentToken = (current as Record<string, unknown>)[tokenKey];
+        if (typeof currentToken === 'string' && currentToken.trim()) {
+          mergedAccount[tokenKey] = currentToken;
+        }
+      });
+      mergedAccounts[platform] = mergedAccount;
     });
   });
 
