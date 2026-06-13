@@ -50,6 +50,7 @@ export type LiveSocialPlatformStats = {
   engagementRate: number;
   conversions: number;
   postsAnalyzed: number;
+  followers?: number;
 };
 
 export type LiveSocialStats = {
@@ -92,6 +93,7 @@ const emptyLiveSocialPlatformStats: LiveSocialPlatformStats = {
   engagementRate: 0,
   conversions: 0,
   postsAnalyzed: 0,
+  followers: 0,
 };
 
 const emptyLiveSocialStats: LiveSocialStats = {
@@ -130,6 +132,7 @@ const normalizePlatform = (value: any): LiveSocialPlatformStats => ({
   engagementRate: toFiniteNumber(value?.engagementRate),
   conversions: toFiniteNumber(value?.conversions),
   postsAnalyzed: toFiniteNumber(value?.postsAnalyzed),
+  followers: toFiniteNumber(value?.followers),
 });
 
 const normalizeLiveSocialStats = (value: any, requestedLookbackHours?: number): LiveSocialStats => ({
