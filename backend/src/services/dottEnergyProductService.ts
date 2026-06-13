@@ -363,7 +363,8 @@ export function pickDottEnergyFallbackPoster(options: { recentKeys?: Set<string>
 }
 
 export function shouldUseDottEnergyFallbackPoster(date = new Date()) {
-  return date.getUTCHours() % 4 === 1;
+  const intervalHours = Math.max(Number(process.env.DOTT_ENERGY_POSTER_INTERVAL_HOURS ?? 12), 1);
+  return date.getUTCHours() % intervalHours === 1;
 }
 
 export function buildDottEnergyFallbackCaption() {
