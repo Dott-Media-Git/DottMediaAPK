@@ -662,6 +662,32 @@ const mergeSocialProfiles = (profiles: Array<UserSocialProfile | null | undefine
   return { id, email, orgId, socialAccounts: mergedAccounts };
 };
 
+const mergeSocialAccountsPreservingTokens = (
+  base: UserSocialAccounts,
+  overlay?: UserSocialAccounts,
+): UserSocialAccounts => {
+  if (!overlay) return base;
+  Object.entries(overlay).forEach(([platform, account]) => {
+    const current = base[platform];
+    if (!current || !Object.keys(current as Record<string, unknown>).length) {
+      base[platform] = account;
+      return;
+    }
+    const mergedAccount = {
+      ...(current as Record<string, unknown>),
+      ...(account as Record<string, unknown>),
+    };
+    ['accessToken', 'userAccessToken', 'pageToken'].forEach(tokenKey => {
+      const currentToken = (current as Record<string, unknown>)[tokenKey];
+      if (typeof currentToken === 'string' && currentToken.trim()) {
+        mergedAccount[tokenKey] = currentToken;
+      }
+    });
+    base[platform] = mergedAccount;
+  });
+  return base;
+};
+
 const fetchSupabaseSocialProfile = async (userId: string): Promise<UserSocialProfile | null> => {
   try {
     const fallback = await supabaseFallbackService.getSocialAccounts(userId);
@@ -758,7 +784,6 @@ const resolveLiveMetricOwners = async (
   await Promise.all(
     candidateIds.map(async candidateId => {
       addProfile(resolveKnownLiveSocialProfile(candidateId));
-      if (hasSocialAccounts(profilesById.get(candidateId))) return;
       const fallback = await fetchSupabaseSocialProfile(candidateId);
       addProfile(fallback);
       if (!hasSocialAccounts(fallback)) {
@@ -1337,7 +1362,7 @@ export async function getLiveSocialMetrics(
       resolveKnownLiveSocialProfile(options?.scope?.email) ||
       resolveKnownLiveSocialProfile(userData?.email);
     if (knownRuntimeProfile?.socialAccounts) {
-      Object.assign(accounts, knownRuntimeProfile.socialAccounts);
+      mergeSocialAccountsPreservingTokens(accounts, knownRuntimeProfile.socialAccounts);
     }
     if ([userId, options?.scope?.scopeId, primaryOwnerId].includes(SHECARE_USER_ID)) {
       const shecareMetaToken =
