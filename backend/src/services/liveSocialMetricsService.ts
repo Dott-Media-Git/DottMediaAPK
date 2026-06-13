@@ -512,6 +512,8 @@ const rootInstagramToken = () =>
 const rootThreadsToken = () =>
   (
     process.env.THREADS_ACCESS_TOKEN ??
+    process.env.DOTT_ENERGY_THREADS_ACCESS_TOKEN ??
+    process.env.DOTTENERGY_THREADS_ACCESS_TOKEN ??
     process.env.DOTT_HR_THREADS_ACCESS_TOKEN ??
     process.env.DOTTHR_THREADS_ACCESS_TOKEN ??
     ''
@@ -557,8 +559,10 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
     userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
     facebookPageId: '1201086759745632',
     instagramAccountId: '17841433799368009',
+    threadsAccountId: '27610824738535971',
     facebookTokenEnv: ['DOTTENERGY_FACEBOOK_PAGE_TOKEN', 'DOTTENERGY_FACEBOOK_ACCESS_TOKEN'],
     instagramTokenEnv: ['DOTTENERGY_INSTAGRAM_ACCESS_TOKEN'],
+    threadsTokenEnv: ['DOTT_ENERGY_THREADS_ACCESS_TOKEN', 'DOTTENERGY_THREADS_ACCESS_TOKEN', 'DOTT_ENERGY_THREADS_TOKEN'],
   },
   {
     userId: 'acmVetCcOiTHeGk5D7eDYieamDF3',

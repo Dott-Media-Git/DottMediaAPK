@@ -143,6 +143,38 @@ const fetchKnownMetaHistoryPosts = async (knownProfile: ReturnType<typeof resolv
       console.warn('[social-history-route] live Instagram history fetch failed', error instanceof Error ? error.message : String(error));
     }
   }
+
+  const threads = knownProfile.socialAccounts.threads;
+  if (threads?.accountId && threads?.accessToken) {
+    try {
+      const response = await axios.get(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/${threads.accountId}/threads`, {
+        params: {
+          fields: 'id,timestamp,text,media_product_type,permalink',
+          limit: 50,
+          access_token: threads.accessToken,
+        },
+        timeout: 30000,
+      });
+      (Array.isArray(response.data?.data) ? response.data.data : []).forEach((post: any) => {
+        const createdAt = toHistoryTimestamp(String(post?.timestamp ?? ''));
+        if (!post?.id || !createdAt) return;
+        posts.push({
+          id: `threads-${post.id}`,
+          platform: 'threads',
+          status: 'posted',
+          caption: String(post.text ?? ''),
+          remoteId: String(post.id),
+          postedAt: createdAt,
+          createdAt,
+          imageUrls: [],
+          permalink: post.permalink ?? null,
+          source: 'threads_live',
+        });
+      });
+    } catch (error) {
+      console.warn('[social-history-route] live Threads history fetch failed', error instanceof Error ? error.message : String(error));
+    }
+  }
   return posts;
 };
 
@@ -718,11 +750,13 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
     const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
     let historyUserId = '';
     let storedEmail = '';
+    let storedSocialAccounts: Record<string, unknown> | undefined;
     try {
       const userDoc = await firestore.collection('users').doc(authUser.uid).get();
       const userData = userDoc.data() ?? {};
       historyUserId = ((userData.historyUserId as string | undefined) ?? '').trim();
       storedEmail = ((userData.email as string | undefined) ?? '').trim();
+      storedSocialAccounts = userData.socialAccounts as Record<string, unknown> | undefined;
     } catch (error) {
       console.warn('[social-history-route] user lookup failed; using direct auth user id', {
         userId: authUser.uid,
@@ -745,7 +779,14 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
       : null;
     const userId = requestedUserId || historyUserId || knownProfile?.id || bwinProfile?.id || authUser.uid;
     const history = await socialPostingService.getHistory(userId);
-    const liveMetaPosts = await fetchKnownMetaHistoryPosts(knownProfile ?? bwinProfile);
+    const storedProfile = storedSocialAccounts
+      ? {
+          id: userId,
+          email: storedEmail || authUser.email || null,
+          socialAccounts: storedSocialAccounts as NonNullable<ReturnType<typeof resolveKnownLiveSocialProfile>>['socialAccounts'],
+        }
+      : null;
+    const liveMetaPosts = await fetchKnownMetaHistoryPosts(knownProfile ?? bwinProfile ?? storedProfile);
     const storedPosts = [...(history.posts ?? []), ...(history.todayPosts ?? [])];
     const posts = mergeHistoryPosts(storedPosts, liveMetaPosts).slice(0, 400);
     const { todayPosts, todaySummary } = buildTodayHistory(posts);
