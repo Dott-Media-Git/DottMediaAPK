@@ -53,6 +53,32 @@ const modeArg = process.argv.find(arg => arg.startsWith('--mode='))?.split('=')[
 const mode = modeArg === 'story' ? 'story' : 'feed';
 const forceQuote = process.argv.includes('--quote');
 
+function addThreadsFallback(accounts) {
+  if (accounts?.threads?.accountId && accounts?.threads?.accessToken) return accounts;
+  const accessToken = (
+    process.env.DOTT_HR_THREADS_ACCESS_TOKEN ||
+    process.env.DOTTHR_THREADS_ACCESS_TOKEN ||
+    process.env.DOTT_HR_THREADS_TOKEN ||
+    process.env.THREADS_ACCESS_TOKEN ||
+    ''
+  ).trim();
+  const accountId = (
+    process.env.DOTT_HR_THREADS_PROFILE_ID ||
+    process.env.DOTTHR_THREADS_PROFILE_ID ||
+    process.env.THREADS_PROFILE_ID ||
+    '27456972033906662'
+  ).trim();
+  if (!accessToken || !accountId) return accounts;
+  return {
+    ...accounts,
+    threads: {
+      accessToken,
+      accountId,
+      username: accounts?.threads?.username || 'dott_human_resource',
+    },
+  };
+}
+
 const QUOTE_TEMPLATES = [
   {
     key: 'drucker-leadership',
@@ -235,8 +261,8 @@ async function loadUserSocialAccounts(serviceAccount) {
   }
   const doc = await response.json();
   const socialAccounts = fromFields(doc.fields || {}).socialAccounts || {};
-  if (!socialAccounts.facebook?.accessToken && tokenFallback) return tokenFallback;
-  return socialAccounts;
+  if (!socialAccounts.facebook?.accessToken && tokenFallback) return addThreadsFallback(tokenFallback);
+  return addThreadsFallback(socialAccounts);
 }
 
 async function loadMetaTokenFallback() {
@@ -259,7 +285,7 @@ async function loadMetaTokenFallback() {
     if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
     const page = await response.json();
     if (!page?.access_token) return null;
-    return {
+    return addThreadsFallback({
       facebook: {
         pageId: String(page.id || DOTTHR_PAGE_ID),
         pageName: page.name || 'Dott Human Resource',
@@ -270,7 +296,7 @@ async function loadMetaTokenFallback() {
         username: page.instagram_business_account?.username || 'dott_human_resource',
         accessToken: page.access_token,
       },
-    };
+    });
   } catch (error) {
     console.warn('Dott HR Meta token fallback failed', error?.message || String(error));
     return null;
