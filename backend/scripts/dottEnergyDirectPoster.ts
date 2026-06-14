@@ -36,7 +36,7 @@ const targetPlatforms: DottEnergyPlatform[] =
     : ['facebook', 'instagram', 'threads'];
 const POSTER_DOMINANCE_CHECK_LIMIT = Number(process.env.DOTT_ENERGY_POSTER_DOMINANCE_CHECK_LIMIT ?? 6);
 const POSTER_DOMINANCE_TOP_WINDOW = Number(process.env.DOTT_ENERGY_POSTER_DOMINANCE_TOP_WINDOW ?? 3);
-const POSTER_DOMINANCE_MAX_TOP_POSTERS = Number(process.env.DOTT_ENERGY_POSTER_DOMINANCE_MAX_TOP_POSTERS ?? 1);
+const POSTER_DOMINANCE_MAX_TOP_POSTERS = Number(process.env.DOTT_ENERGY_POSTER_DOMINANCE_MAX_TOP_POSTERS ?? 0);
 
 function isPosterCaption(caption: unknown) {
   const normalized = String(caption ?? '').toLowerCase();
@@ -44,6 +44,18 @@ function isPosterCaption(caption: unknown) {
     normalized.includes('dott energy clean power solutions') ||
     normalized.includes('explore wind turbines, generators and controllers') ||
     normalized.includes('dott-energy-poster:')
+  );
+}
+
+function isProductCaption(caption: unknown) {
+  const normalized = String(caption ?? '').toLowerCase();
+  if (isPosterCaption(normalized)) return false;
+  return (
+    normalized.includes('dott energy is working in partnership with smaraad') &&
+    (normalized.includes('power options:') ||
+      normalized.includes('voltage options:') ||
+      normalized.includes('voltage:') ||
+      normalized.includes('starting from'))
   );
 }
 
@@ -435,19 +447,22 @@ async function shouldSkipPosterBecauseProductsNeedTopFeed(credentials: SocialAcc
     const payload = await response.json();
     if (!response.ok) {
       console.warn('[dott-energy-direct] poster dominance check failed', payload?.error?.message || response.status);
-      return false;
+      return true;
     }
     const posts = Array.isArray(payload?.data) ? payload.data : [];
     const topPosts = posts.slice(0, POSTER_DOMINANCE_TOP_WINDOW);
     const topPosterCount = topPosts.filter((post: any) => isPosterCaption(post?.caption)).length;
+    const topProductCount = topPosts.filter((post: any) => isProductCaption(post?.caption)).length;
     const recentPosterCount = posts.filter((post: any) => isPosterCaption(post?.caption)).length;
     console.log(
-      `[dott-energy-direct] poster dominance check top=${topPosterCount}/${topPosts.length} recent=${recentPosterCount}/${posts.length}`,
+      `[dott-energy-direct] poster dominance check topPosters=${topPosterCount}/${topPosts.length} topProducts=${topProductCount}/${topPosts.length} recentPosters=${recentPosterCount}/${posts.length}`,
     );
-    return topPosterCount > POSTER_DOMINANCE_MAX_TOP_POSTERS;
+    if (!topPosts.length) return true;
+    const requiredTopProducts = Math.max(1, topPosts.length - POSTER_DOMINANCE_MAX_TOP_POSTERS);
+    return topPosterCount > POSTER_DOMINANCE_MAX_TOP_POSTERS || topProductCount < requiredTopProducts;
   } catch (error) {
     console.warn('[dott-energy-direct] poster dominance check error', error instanceof Error ? error.message : String(error));
-    return false;
+    return true;
   }
 }
 
