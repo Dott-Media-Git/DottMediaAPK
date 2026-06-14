@@ -587,7 +587,12 @@ export const fetchOutboundStats = async (userId?: string, scopeId?: string): Pro
   if (!endpoint) return null;
   try {
     const headers = await buildAuthHeader(userId ?? '');
-    const response = await fetch(endpoint, { headers });
+    const response = await fetch(endpoint, {
+      headers: {
+        ...headers,
+        'Cache-Control': 'no-cache',
+      },
+    });
     if (!response.ok) {
       console.warn('Failed to fetch outbound stats', response.status);
       return null;
@@ -705,7 +710,12 @@ const simpleFetch = async <T>(path: string, userId?: string, scopeId?: string): 
   if (!endpoint) return null;
   try {
     const headers = await buildAuthHeader(userId ?? '');
-    const response = await fetch(endpoint, { headers });
+    const response = await fetch(endpoint, {
+      headers: {
+        ...headers,
+        'Cache-Control': 'no-cache',
+      },
+    });
     if (!response.ok) {
       console.warn(`Failed to fetch ${path}`, response.status);
       return null;

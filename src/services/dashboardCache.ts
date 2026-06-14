@@ -20,7 +20,7 @@ export type DashboardCacheSnapshot = {
 const DASHBOARD_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 
 export const buildDashboardCacheKey = (userId?: string, scopeId?: string) =>
-  `dott.dashboard.snapshot.v2:${scopeId ?? userId ?? 'guest'}`;
+  `dott.dashboard.snapshot.v3:${scopeId ?? userId ?? 'guest'}`;
 
 export const readDashboardCache = async (cacheKey: string) =>
   readCachedValue<DashboardCacheSnapshot>(cacheKey, DASHBOARD_CACHE_TTL_MS);

@@ -34,6 +34,7 @@ import {
   subscribeAnalytics,
   resolveAnalyticsScopeId
 } from '@services/analytics';
+import { fetchAdPerformance, type AdPerformance } from '@services/metaAds';
 
 type ChartMetric = 'views' | 'interactions' | 'outbound' | 'conversions';
 type ReviewRangeKey = '7d' | '14d' | '30d' | '365d';
@@ -94,6 +95,27 @@ const emptyLiveSocialStats: LiveSocialStats = {
     x: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
     web: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
   },
+};
+
+const emptyAdPerformance: AdPerformance = {
+  generatedAt: new Date(0).toISOString(),
+  lookbackDays: 30,
+  currency: 'USD',
+  summary: {
+    spend: 0,
+    impressions: 0,
+    reach: 0,
+    clicks: 0,
+    inlineLinkClicks: 0,
+    messages: 0,
+    leads: 0,
+    active: 0,
+    paused: 0,
+    failed: 0,
+    other: 0,
+    ctr: 0,
+  },
+  rows: [],
 };
 
 const parseChartDate = (date: string) => {
@@ -223,6 +245,8 @@ export const DashboardScreen: React.FC = () => {
   const [activityHeatmapRows, setActivityHeatmapRows] = useState<ActivityHeatmapDaily[]>([]);
   const [activityHeatmapRestRows, setActivityHeatmapRestRows] = useState<ActivityHeatmapDaily[]>([]);
   const [rollingPerformanceRows, setRollingPerformanceRows] = useState<ActivityHeatmapDaily[]>([]);
+  const [adPerformance, setAdPerformance] = useState<AdPerformance>(() => emptyAdPerformance);
+  const [adPerformanceLoading, setAdPerformanceLoading] = useState(false);
   const [liveSocialLoading, setLiveSocialLoading] = useState(false);
   const [selectedRangeKey, setSelectedRangeKey] = useState<ReviewRangeKey>('7d');
   const [rangeMenuOpen, setRangeMenuOpen] = useState(false);
@@ -514,6 +538,42 @@ export const DashboardScreen: React.FC = () => {
     };
   }, [analyticsScopeId, hasCachedSnapshot, state.user?.uid]);
 
+  useEffect(() => {
+    if (!state.user?.uid) {
+      setAdPerformance(emptyAdPerformance);
+      return;
+    }
+    let mounted = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const refreshAdPerformance = async () => {
+      setAdPerformanceLoading(true);
+      try {
+        const response = await fetchAdPerformance(12);
+        if (mounted) {
+          setAdPerformance(response.performance ?? emptyAdPerformance);
+        }
+      } catch (error) {
+        console.warn('Failed to refresh ad performance', error);
+        if (mounted) {
+          setAdPerformance(emptyAdPerformance);
+        }
+      } finally {
+        if (mounted) setAdPerformanceLoading(false);
+      }
+    };
+
+    void refreshAdPerformance();
+    timer = setInterval(() => {
+      void refreshAdPerformance();
+    }, 120000);
+
+    return () => {
+      mounted = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [state.user?.uid]);
+
   const historySeries = useMemo(
     () => analytics.history ?? [],
     [analytics]
@@ -582,11 +642,12 @@ export const DashboardScreen: React.FC = () => {
       { views: 0, interactions: 0, outbound: 0, conversions: 0, redirectClicks: 0 },
     );
 
-    const summaryViews = totals.views > 0 ? totals.views : Number(liveSocialStats.summary.views ?? 0);
-    const summaryInteractions =
-      totals.interactions > 0 ? totals.interactions : Number(liveSocialStats.summary.interactions ?? 0);
-    const summaryRedirectClicks =
-      totals.redirectClicks > 0 ? totals.redirectClicks : Number(liveSocialStats.web.redirectClicks ?? 0);
+    const liveSummaryViews = Number(liveSocialStats.summary.views ?? 0);
+    const liveSummaryInteractions = Number(liveSocialStats.summary.interactions ?? 0);
+    const liveSummaryRedirectClicks = Number(liveSocialStats.web.redirectClicks ?? 0);
+    const summaryViews = liveSummaryViews > 0 ? liveSummaryViews : totals.views;
+    const summaryInteractions = liveSummaryInteractions > 0 ? liveSummaryInteractions : totals.interactions;
+    const summaryRedirectClicks = liveSummaryRedirectClicks > 0 ? liveSummaryRedirectClicks : totals.redirectClicks;
     const summaryConversions =
       summaryRedirectClicks > 0
         ? summaryRedirectClicks
@@ -627,6 +688,10 @@ export const DashboardScreen: React.FC = () => {
         : formatCount(rollingPerformanceSummary.conversions),
     }
   ];
+
+  const adSummary = adPerformance.summary;
+  const formatCurrency = (value: number, currency = adPerformance.currency || 'USD') =>
+    `${currency} ${formatCount(Number(value ?? 0))}`;
 
   const logItems =
     analytics.recentJobs && analytics.recentJobs.length > 0
@@ -1119,6 +1184,69 @@ export const DashboardScreen: React.FC = () => {
         ) : null}
         <Text style={styles.liveUpdatedAt}>{liveUpdatedLabel}</Text>
       </DMCard>
+      <DMCard
+        title={t('Ads Performance')}
+        subtitle={
+          adPerformanceLoading
+            ? t('Refreshing live Meta ads data...')
+            : t('Live Meta ads performance for this account')
+        }
+      >
+        <View style={styles.liveSummaryRow}>
+          <View style={styles.liveSummaryItem}>
+            <Text style={styles.liveSummaryLabel}>{t('Spend')}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCurrency(adSummary.spend)}</Text>
+          </View>
+          <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
+            <Text style={styles.liveSummaryLabel}>{t('Reach')}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(adSummary.reach)}</Text>
+          </View>
+        </View>
+        <View style={styles.liveSummaryRow}>
+          <View style={styles.liveSummaryItem}>
+            <Text style={styles.liveSummaryLabel}>{t('Impressions')}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(adSummary.impressions)}</Text>
+          </View>
+          <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
+            <Text style={styles.liveSummaryLabel}>{t('Messages')}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(adSummary.messages)}</Text>
+          </View>
+        </View>
+        <View style={styles.liveSummaryRow}>
+          <View style={styles.liveSummaryItem}>
+            <Text style={styles.liveSummaryLabel}>{t('Clicks')}</Text>
+            <Text style={styles.liveSummaryValue}>{formatCount(adSummary.clicks || adSummary.inlineLinkClicks)}</Text>
+          </View>
+          <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
+            <Text style={styles.liveSummaryLabel}>{t('CTR')}</Text>
+            <Text style={styles.liveSummaryValue}>{Number(adSummary.ctr ?? 0).toFixed(2)}%</Text>
+          </View>
+        </View>
+        <View style={styles.adStatusRow}>
+          <Text style={styles.adStatusText}>
+            {t('Active')}: {formatCount(adSummary.active)} | {t('Paused')}: {formatCount(adSummary.paused)} | {t('Failed')}:{' '}
+            {formatCount(adSummary.failed)}
+          </Text>
+        </View>
+        {adPerformance.rows.length ? (
+          <View style={styles.livePlatformList}>
+            {adPerformance.rows.slice(0, 4).map(row => (
+              <View key={row.id || row.adId || row.sourcePostId || `${row.platform}-${row.createdAt}`} style={styles.livePlatformRow}>
+                <View style={styles.livePlatformHeader}>
+                  <Text style={styles.livePlatformName}>{row.platform || t('Meta ad')}</Text>
+                  <Text style={styles.livePlatformPosts}>{row.effectiveStatus || row.status || t('Live')}</Text>
+                </View>
+                <Text style={styles.livePlatformMetrics}>
+                  {t('Reach')}: {formatCount(row.reach)} | {t('Messages')}: {formatCount(row.messages)} | {t('Spend')}:{' '}
+                  {formatCurrency(row.spend)}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.emptyState}>{t('No ad performance rows returned yet.')}</Text>
+        )}
+      </DMCard>
       <DMCard title={t('Daily Reviews')} subtitle={loading ? t('Refreshing data...') : t('Live statistics for today so far')}>
         <View style={styles.kpiRow}>
           <View style={styles.kpiItem}>
@@ -1550,6 +1678,19 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     marginTop: 6,
+  },
+  adStatusRow: {
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 12,
+    marginBottom: 10,
+  },
+  adStatusText: {
+    color: colors.subtext,
+    fontSize: 12,
+    lineHeight: 18,
   },
   livePlatformList: {
     marginTop: 4,
