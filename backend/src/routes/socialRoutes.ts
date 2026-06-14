@@ -422,6 +422,32 @@ const loadStoredSocialAccounts = async (userId: string) => {
   return userData;
 };
 
+const loadStatusSocialAccounts = async (userId: string, email?: string | null) => {
+  const stored = await loadStoredSocialAccounts(userId);
+  const knownProfile =
+    resolveKnownLiveSocialProfile(userId) ||
+    resolveKnownLiveSocialProfile(email) ||
+    resolveKnownLiveSocialProfile(stored.email);
+  const bwinProfile = isBwinHistoryRequest(userId, email, stored.email)
+    ? await fetchBwinMetaSocialProfile()
+    : null;
+  const merged = mergeLiveHistoryProfiles(
+    knownProfile,
+    bwinProfile,
+    stored.socialAccounts
+      ? {
+          id: userId,
+          email: stored.email ?? email ?? null,
+          socialAccounts: stored.socialAccounts,
+        }
+      : null,
+  );
+  return {
+    email: stored.email ?? email ?? null,
+    socialAccounts: merged?.socialAccounts ?? stored.socialAccounts ?? {},
+  };
+};
+
 const persistSocialAccounts = async (
   userId: string,
   payload: { email?: string | null; socialAccounts: Record<string, any> },
@@ -826,7 +852,7 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
 
-    const userData = await loadStoredSocialAccounts(authUser.uid);
+    const userData = await loadStatusSocialAccounts(authUser.uid, authUser.email);
     const accounts = userData?.socialAccounts ?? {};
     const allowDefaults = canUsePrimarySocialDefaults(userData, authUser.uid);
     let youtube: Awaited<ReturnType<typeof getYouTubeIntegration>> | null = null;
