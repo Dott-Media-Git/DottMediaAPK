@@ -103,39 +103,6 @@ async function loadRecentKeys() {
 }
 
 async function loadStoredCredentials(): Promise<SocialAccounts> {
-  const token = (
-    process.env.META_GRAPH_TOKEN ??
-    process.env.DOTT_ENERGY_META_USER_TOKEN ??
-    process.env.DOTTENERGY_META_USER_TOKEN ??
-    process.env.CLIENT_META_USER_TOKEN ??
-    ''
-  ).trim();
-  if (token) {
-    const url = new URL(`https://graph.facebook.com/${GRAPH_VERSION}/${DOTT_ENERGY_PAGE_ID}`);
-    url.searchParams.set('fields', 'name,access_token,instagram_business_account{id,username}');
-    url.searchParams.set('access_token', token);
-    const response = await fetch(url, { signal: AbortSignal.timeout(90000) });
-    const page = await response.json();
-    if (!response.ok) {
-      throw new Error(page?.error?.message || `Dott Energy page token lookup failed: ${response.status}`);
-    }
-    const pageToken = String(page?.access_token || '').trim();
-    if (!pageToken) throw new Error('Dott Energy page token lookup returned no page token');
-    const instagramAccount = page?.instagram_business_account;
-    return addThreadsCredentials({
-      facebook: {
-        accessToken: pageToken,
-        pageId: DOTT_ENERGY_PAGE_ID,
-        ...(page?.name ? { pageName: String(page.name) } : {}),
-      },
-      instagram: {
-        accessToken: pageToken,
-        accountId: String(instagramAccount?.id || DOTT_ENERGY_IG_ID),
-        username: String(instagramAccount?.username || 'dottenergy100'),
-      },
-    });
-  }
-
   try {
     const snap = await firestore.collection('users').doc(DOTT_ENERGY_USER_ID).get();
     const accounts = (snap.data()?.socialAccounts ?? {}) as SocialAccounts;
@@ -144,6 +111,43 @@ async function loadStoredCredentials(): Promise<SocialAccounts> {
     }
   } catch (error) {
     console.warn('[dott-energy-direct] Firestore credentials lookup failed', error instanceof Error ? error.message : String(error));
+  }
+
+  const token = (
+    process.env.META_GRAPH_TOKEN ??
+    process.env.DOTT_ENERGY_META_USER_TOKEN ??
+    process.env.DOTTENERGY_META_USER_TOKEN ??
+    process.env.CLIENT_META_USER_TOKEN ??
+    ''
+  ).trim();
+  if (token) {
+    try {
+      const url = new URL(`https://graph.facebook.com/${GRAPH_VERSION}/${DOTT_ENERGY_PAGE_ID}`);
+      url.searchParams.set('fields', 'name,access_token,instagram_business_account{id,username}');
+      url.searchParams.set('access_token', token);
+      const response = await fetch(url, { signal: AbortSignal.timeout(90000) });
+      const page = await response.json();
+      if (!response.ok) {
+        throw new Error(page?.error?.message || `Dott Energy page token lookup failed: ${response.status}`);
+      }
+      const pageToken = String(page?.access_token || '').trim();
+      if (!pageToken) throw new Error('Dott Energy page token lookup returned no page token');
+      const instagramAccount = page?.instagram_business_account;
+      return addThreadsCredentials({
+        facebook: {
+          accessToken: pageToken,
+          pageId: DOTT_ENERGY_PAGE_ID,
+          ...(page?.name ? { pageName: String(page.name) } : {}),
+        },
+        instagram: {
+          accessToken: pageToken,
+          accountId: String(instagramAccount?.id || DOTT_ENERGY_IG_ID),
+          username: String(instagramAccount?.username || 'dottenergy100'),
+        },
+      });
+    } catch (error) {
+      console.warn('[dott-energy-direct] Meta page-token lookup failed; trying stored fallback', error instanceof Error ? error.message : String(error));
+    }
   }
 
   const fallback = await supabaseFallbackService.getSocialAccounts(DOTT_ENERGY_USER_ID);

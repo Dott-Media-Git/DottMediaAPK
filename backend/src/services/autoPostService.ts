@@ -52,19 +52,14 @@ import {
   pickGamersSteamVideo,
 } from './gamersContentService.js';
 import {
-  buildDottEnergyFallbackCaption,
   buildDottEnergyEducationCaption,
   buildDottEnergyProductCaption,
   dottEnergyEducationHistoryKey,
-  dottEnergyFallbackPosterHistoryKey,
   dottEnergyProductHistoryKey,
   pickDottEnergyEducationTopic,
-  pickDottEnergyFallbackPoster,
   pickDottEnergyProduct,
   renderDottEnergyEducationCard,
-  renderDottEnergyFallbackPoster,
   renderDottEnergyProductImage,
-  shouldUseDottEnergyFallbackPoster,
 } from './dottEnergyProductService.js';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 import { isBwinScopeUser as isKnownBwinScopeUser, validateBwinSportsContent } from './bwinContentGuard.js';
@@ -169,8 +164,7 @@ type HistoryEntry = {
   videoTitle?: string;
 };
 
-const DOTT_ENERGY_PRODUCT_INTERVAL_HOURS = 2;
-const DOTT_ENERGY_POSTER_INTERVAL_HOURS = 4;
+const DOTT_ENERGY_PRODUCT_INTERVAL_HOURS = 1;
 type ScheduledPostContentHistory = {
   imageUrls: string[];
   videoUrls: string[];
@@ -4652,7 +4646,6 @@ export class AutoPostService {
     let dottEnergyProductCaption: string | null = null;
     let usedDottEnergyProductKey: string | null = null;
     let dottEnergyPostedStoreProduct = false;
-    let dottEnergyPostedProvidedPoster = false;
     let clientInstagramSourceImageUrls: string[] = [];
 
     if (clientPhotoProfile?.key === 'carmarketplace' && needsImages) {
@@ -4786,35 +4779,12 @@ export class AutoPostService {
           .map(value => String(value).match(/dott-energy-(?:product|poster|education):[^\s,]+/i)?.[0]?.toLowerCase())
           .filter((value): value is string => Boolean(value)),
       );
-      const usePoster = shouldUseDottEnergyFallbackPoster();
       try {
         const productDueAt = this.timestampToMillis(job.dottEnergyProductNextRun);
-        const posterDueAt = this.timestampToMillis(job.dottEnergyPosterNextRun);
-        const shouldPostProvidedPoster =
-          !isStoryRun &&
-          (!posterDueAt || posterDueAt <= Date.now());
         const shouldPostStoreProduct =
-          !isStoryRun &&
+          isStoryRun ||
           (!productDueAt || productDueAt <= Date.now());
-        if (shouldPostProvidedPoster) {
-          const poster = pickDottEnergyFallbackPoster({ recentKeys: recentDottEnergyKeys });
-          if (!poster) throw new Error('No Dott Energy fallback posters found');
-          imageUrls = [await renderDottEnergyFallbackPoster(poster, 'feed')];
-          dottEnergyProductCaption = buildDottEnergyFallbackCaption();
-          usedDottEnergyProductKey = dottEnergyFallbackPosterHistoryKey(poster);
-          dottEnergyPostedProvidedPoster = true;
-        } else if (!isStoryRun && !shouldPostStoreProduct) {
-          const topic = pickDottEnergyEducationTopic({ recentKeys: recentDottEnergyKeys });
-          imageUrls = [await renderDottEnergyEducationCard(topic)];
-          dottEnergyProductCaption = buildDottEnergyEducationCaption(topic);
-          usedDottEnergyProductKey = dottEnergyEducationHistoryKey(topic);
-        } else if (isStoryRun && usePoster) {
-          const poster = pickDottEnergyFallbackPoster({ recentKeys: recentDottEnergyKeys });
-          if (!poster) throw new Error('No Dott Energy fallback posters found');
-          imageUrls = [await renderDottEnergyFallbackPoster(poster, isStoryRun ? 'story' : 'feed')];
-          dottEnergyProductCaption = buildDottEnergyFallbackCaption();
-          usedDottEnergyProductKey = dottEnergyFallbackPosterHistoryKey(poster);
-        } else {
+        if (shouldPostStoreProduct) {
           const product = await pickDottEnergyProduct({ recentKeys: recentDottEnergyKeys });
           const coverImageUrl = await renderDottEnergyProductImage(
             product,
@@ -4825,25 +4795,18 @@ export class AutoPostService {
           clientInstagramSourceImageUrls = product.images.slice(0, 1);
           dottEnergyProductCaption = buildDottEnergyProductCaption(product);
           usedDottEnergyProductKey = dottEnergyProductHistoryKey(product);
-          dottEnergyPostedStoreProduct = !isStoryRun;
+          dottEnergyPostedStoreProduct = true;
+        } else if (!isStoryRun) {
+          const topic = pickDottEnergyEducationTopic({ recentKeys: recentDottEnergyKeys });
+          imageUrls = [await renderDottEnergyEducationCard(topic)];
+          dottEnergyProductCaption = buildDottEnergyEducationCaption(topic);
+          usedDottEnergyProductKey = dottEnergyEducationHistoryKey(topic);
         }
       } catch (error) {
-        console.warn('[autopost] Dott Energy primary source failed; trying fallback poster', {
+        console.warn('[autopost] Dott Energy product source failed; skipping poster fallback', {
           userId,
           error: error instanceof Error ? error.message : String(error),
         });
-        try {
-          const poster = pickDottEnergyFallbackPoster({ recentKeys: recentDottEnergyKeys });
-          if (!poster) throw new Error('No Dott Energy fallback posters found');
-          imageUrls = [await renderDottEnergyFallbackPoster(poster, isStoryRun ? 'story' : 'feed')];
-          dottEnergyProductCaption = buildDottEnergyFallbackCaption();
-          usedDottEnergyProductKey = dottEnergyFallbackPosterHistoryKey(poster);
-        } catch (fallbackError) {
-          console.warn('[autopost] Dott Energy fallback poster failed; source-only post will fail instead of using unrelated fallback', {
-            userId,
-            error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-          });
-        }
       }
     }
 
@@ -5207,12 +5170,6 @@ export class AutoPostService {
       if (dottEnergyPostedStoreProduct) {
         updatePayload.dottEnergyProductLastRunAt = admin.firestore.FieldValue.serverTimestamp();
       }
-      if (dottEnergyPostedProvidedPoster) {
-        updatePayload.dottEnergyPosterNextRun = admin.firestore.Timestamp.fromDate(
-          new Date(Date.now() + DOTT_ENERGY_POSTER_INTERVAL_HOURS * 60 * 60 * 1000),
-        );
-        updatePayload.dottEnergyPosterLastRunAt = admin.firestore.FieldValue.serverTimestamp();
-      }
     }
     if (!isReelsRun && !isStoryRun) {
       updatePayload.intervalHours = effectiveIntervalHours;
@@ -5258,12 +5215,6 @@ export class AutoPostService {
       );
       if (dottEnergyPostedStoreProduct) {
         nextRecord.dottEnergyProductLastRunAt = admin.firestore.Timestamp.now();
-      }
-      if (dottEnergyPostedProvidedPoster) {
-        nextRecord.dottEnergyPosterNextRun = admin.firestore.Timestamp.fromDate(
-          new Date(Date.now() + DOTT_ENERGY_POSTER_INTERVAL_HOURS * 60 * 60 * 1000),
-        );
-        nextRecord.dottEnergyPosterLastRunAt = admin.firestore.Timestamp.now();
       }
     }
     if (!isReelsRun && !isStoryRun) {
