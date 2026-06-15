@@ -4373,13 +4373,14 @@ export class AutoPostService {
         for (const platform of publishPlatforms) {
             const publisher = platformPublishers[platform] ?? publishToTwitter;
             const isFeedCaptionPlatform = platform === 'facebook' || platform === 'instagram' || platform === 'threads';
+            const isDottEnergyCaptionPlatform = isFeedCaptionPlatform || platform === 'facebook_story' || platform === 'instagram_story';
             const rawCaption = carmarketVehicleCaption && isFeedCaptionPlatform
                 ? carmarketVehicleCaption
                 : staysphereListingCaption && isFeedCaptionPlatform
                     ? staysphereListingCaption
                     : gamersSteamCaption && isFeedCaptionPlatform
                         ? gamersSteamCaption
-                        : dottEnergyProductCaption && isFeedCaptionPlatform
+                        : dottEnergyProductCaption && isDottEnergyCaptionPlatform
                             ? dottEnergyProductCaption
                             : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
             const shortsCaption = platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
