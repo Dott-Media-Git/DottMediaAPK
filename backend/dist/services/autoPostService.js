@@ -4245,7 +4245,7 @@ export class AutoPostService {
                 });
             }
         }
-        if (clientPhotoProfile?.key === 'dottenergy' && needsImages) {
+        if (clientPhotoProfile?.key === 'dottenergy') {
             const recentDottEnergyKeys = new Set([...recentImages, ...recentCaptions]
                 .map(value => String(value).match(/dott-energy-(?:product|poster|education):[^\s,]+/i)?.[0]?.toLowerCase())
                 .filter((value) => Boolean(value)));
