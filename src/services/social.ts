@@ -179,6 +179,14 @@ export const fetchThreadsConnectUrl = async (): Promise<{ url?: string }> => {
   return authedFetch('/integrations/threads/connect-url');
 };
 
+export const fetchLinkedInConnectUrl = async (): Promise<{ url?: string }> => {
+  return authedFetch('/integrations/linkedin/connect-url');
+};
+
+export const fetchTwitterConnectUrl = async (): Promise<{ url?: string }> => {
+  return authedFetch('/integrations/twitter/connect-url');
+};
+
 export const saveSocialCredentials = async (userId: string, credentials: any) => {
   const body = JSON.stringify({ userId, credentials });
   return authedFetch('/api/social/credentials', { method: 'POST', body });

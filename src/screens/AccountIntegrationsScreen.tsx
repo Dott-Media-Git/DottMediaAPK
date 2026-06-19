@@ -8,8 +8,10 @@ import { useAuth } from '@context/AuthContext';
 import { isFirebaseEnabled, realtimeDb } from '@services/firebase';
 import {
   fetchMetaConnectUrl,
+  fetchLinkedInConnectUrl,
   fetchSocialStatus,
   fetchThreadsConnectUrl,
+  fetchTwitterConnectUrl,
   saveSocialCredentials,
   type SocialConnectionStatus
 } from '@services/social';
@@ -170,12 +172,24 @@ export const AccountIntegrationsScreen: React.FC = () => {
     await Promise.all([loadSocialAccounts(), loadSocialStatus()]);
   };
 
+  const refreshPlatformConnection = async (platform: PlatformKey) => {
+    if (platform === 'youtube') {
+      await loadYouTube();
+      return;
+    }
+    if (platform === 'tiktok') {
+      await loadTikTok();
+      return;
+    }
+    await refreshSocialConnections();
+  };
+
   const refreshAfterOAuth = (platform: PlatformKey) => {
     setPendingOAuthPlatform(platform);
     const delays = [2500, 6000, 12000, 25000, 45000];
     delays.forEach(delay => {
       setTimeout(() => {
-        void refreshSocialConnections();
+        void refreshPlatformConnection(platform);
       }, delay);
     });
   };
@@ -193,7 +207,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextState => {
       if (nextState === 'active' && pendingOAuthPlatform) {
-        void refreshSocialConnections().finally(() => setPendingOAuthPlatform(null));
+        void refreshPlatformConnection(pendingOAuthPlatform).finally(() => setPendingOAuthPlatform(null));
       }
     });
     return () => subscription.remove();
@@ -216,17 +230,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
   const handleConnect = async () => {
     try {
       const response = await fetchYouTubeConnectUrl(orgId);
-      const url = response?.url as string | undefined;
-      if (!url) {
-        Alert.alert(t('Error'), t('Missing connect URL'));
-        return;
-      }
-      const canOpen = await Linking.canOpenURL(url);
-      if (!canOpen) {
-        Alert.alert(t('Error'), t('Unable to open the YouTube connect URL.'));
-        return;
-      }
-      await Linking.openURL(url);
+      await openOAuthUrl(response?.url as string | undefined, 'YouTube', 'youtube');
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Unable to open the YouTube connect URL.'));
     }
@@ -301,17 +305,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
   const handleTikTokConnect = async () => {
     try {
       const response = await fetchTikTokConnectUrl(orgId);
-      const url = response?.url as string | undefined;
-      if (!url) {
-        Alert.alert(t('Error'), t('Missing connect URL'));
-        return;
-      }
-      const canOpen = await Linking.canOpenURL(url);
-      if (!canOpen) {
-        Alert.alert(t('Error'), t('Unable to open the TikTok connect URL.'));
-        return;
-      }
-      await Linking.openURL(url);
+      await openOAuthUrl(response?.url as string | undefined, 'TikTok', 'tiktok');
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Unable to open the TikTok connect URL.'));
     }
@@ -389,6 +383,30 @@ export const AccountIntegrationsScreen: React.FC = () => {
       await openOAuthUrl(response?.url, 'Threads', 'threads');
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Unable to open the Threads connect URL.'));
+    } finally {
+      setSavingPlatform(null);
+    }
+  };
+
+  const handleLinkedInConnect = async () => {
+    setSavingPlatform('linkedin');
+    try {
+      const response = await fetchLinkedInConnectUrl();
+      await openOAuthUrl(response?.url, 'LinkedIn', 'linkedin');
+    } catch (error: any) {
+      Alert.alert(t('Error'), error.message ?? t('Unable to open the LinkedIn connect URL.'));
+    } finally {
+      setSavingPlatform(null);
+    }
+  };
+
+  const handleTwitterConnect = async () => {
+    setSavingPlatform('twitter');
+    try {
+      const response = await fetchTwitterConnectUrl();
+      await openOAuthUrl(response?.url, 'X', 'twitter');
+    } catch (error: any) {
+      Alert.alert(t('Error'), error.message ?? t('Unable to open the X connect URL.'));
     } finally {
       setSavingPlatform(null);
     }
@@ -537,11 +555,21 @@ export const AccountIntegrationsScreen: React.FC = () => {
     if (platform === 'facebook') return t('Connect Facebook');
     if (platform === 'instagram') return t('Connect Instagram');
     if (platform === 'threads') return t('Connect Threads');
+    if (platform === 'linkedin') return t('Connect LinkedIn');
+    if (platform === 'twitter') return t('Connect X');
+    if (platform === 'youtube') return t('Connect YouTube');
+    if (platform === 'tiktok') return t('Connect TikTok');
     return t('Connect');
   };
 
   const isOAuthFirstPlatform = (platform: PlatformKey) =>
-    platform === 'facebook' || platform === 'instagram' || platform === 'threads';
+    platform === 'facebook' ||
+    platform === 'instagram' ||
+    platform === 'threads' ||
+    platform === 'linkedin' ||
+    platform === 'twitter' ||
+    platform === 'youtube' ||
+    platform === 'tiktok';
 
   const handleConnectPress = (platform: PlatformKey) => {
     if (platform === 'facebook' || platform === 'instagram') {
@@ -550,6 +578,22 @@ export const AccountIntegrationsScreen: React.FC = () => {
     }
     if (platform === 'threads') {
       void handleThreadsConnect();
+      return;
+    }
+    if (platform === 'linkedin') {
+      void handleLinkedInConnect();
+      return;
+    }
+    if (platform === 'twitter') {
+      void handleTwitterConnect();
+      return;
+    }
+    if (platform === 'youtube') {
+      void handleConnect();
+      return;
+    }
+    if (platform === 'tiktok') {
+      void handleTikTokConnect();
       return;
     }
     togglePlatform(platform);
@@ -642,6 +686,78 @@ export const AccountIntegrationsScreen: React.FC = () => {
                         disabled={tiktokLoading}
                       />
                     </View>
+                  ) : platform === 'linkedin' ? (
+                    <>
+                      <View style={styles.oauthPanel}>
+                        <Text style={styles.oauthTitle}>{t('Connect through LinkedIn')}</Text>
+                        <Text style={styles.oauthText}>
+                          {t('Sign in with LinkedIn to grant Dott Media posting access to your LinkedIn account.')}
+                        </Text>
+                        <DMButton
+                          title={isSaving ? t('Opening...') : t('Connect LinkedIn')}
+                          onPress={handleLinkedInConnect}
+                          disabled={isSaving}
+                        />
+                      </View>
+                      <View style={styles.manualPanel}>
+                        <Text style={styles.manualTitle}>{t('Manual fallback')}</Text>
+                        {MANUAL_FIELDS[manualPlatform].map(field => (
+                          <View key={field.key} style={styles.fieldBlock}>
+                            <Text style={styles.label}>{field.label}</Text>
+                            <TextInput
+                              value={drafts[manualPlatform]?.[field.key] ?? ''}
+                              onChangeText={value => updateDraft(manualPlatform, field.key, value)}
+                              placeholder={field.placeholder}
+                              placeholderTextColor={colors.subtext}
+                              style={styles.input}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                            />
+                          </View>
+                        ))}
+                        <DMButton
+                          title={isSaving ? t('Saving...') : t('Save manually')}
+                          onPress={() => handleManualSave(manualPlatform)}
+                          disabled={isSaving}
+                        />
+                      </View>
+                    </>
+                  ) : platform === 'twitter' ? (
+                    <>
+                      <View style={styles.oauthPanel}>
+                        <Text style={styles.oauthTitle}>{t('Connect through X')}</Text>
+                        <Text style={styles.oauthText}>
+                          {t('Sign in with X to grant Dott Media posting access to your X account.')}
+                        </Text>
+                        <DMButton
+                          title={isSaving ? t('Opening...') : t('Connect X')}
+                          onPress={handleTwitterConnect}
+                          disabled={isSaving}
+                        />
+                      </View>
+                      <View style={styles.manualPanel}>
+                        <Text style={styles.manualTitle}>{t('Manual fallback')}</Text>
+                        {MANUAL_FIELDS[manualPlatform].map(field => (
+                          <View key={field.key} style={styles.fieldBlock}>
+                            <Text style={styles.label}>{field.label}</Text>
+                            <TextInput
+                              value={drafts[manualPlatform]?.[field.key] ?? ''}
+                              onChangeText={value => updateDraft(manualPlatform, field.key, value)}
+                              placeholder={field.placeholder}
+                              placeholderTextColor={colors.subtext}
+                              style={styles.input}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                            />
+                          </View>
+                        ))}
+                        <DMButton
+                          title={isSaving ? t('Saving...') : t('Save manually')}
+                          onPress={() => handleManualSave(manualPlatform)}
+                          disabled={isSaving}
+                        />
+                      </View>
+                    </>
                   ) : platform === 'facebook' || platform === 'instagram' ? (
                     <>
                       <View style={styles.oauthPanel}>

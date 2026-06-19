@@ -37,6 +37,21 @@ const getScopes = () => {
   return raw ? raw.split(',').map(scope => scope.trim()).filter(Boolean) : ['user.info.basic', 'video.upload', 'video.publish'];
 };
 
+const splitScopes = (value: unknown) =>
+  String(value ?? '')
+    .split(/[,\s]+/)
+    .map(scope => scope.trim())
+    .filter(Boolean);
+
+const assertRequiredScopes = (required: string[], value: unknown) => {
+  const granted = new Set(splitScopes(value));
+  if (granted.size === 0) return;
+  const missing = required.filter(scope => !granted.has(scope));
+  if (missing.length) {
+    throw new Error(`Missing required TikTok permissions: ${missing.join(', ')}`);
+  }
+};
+
 const ensureTikTokClientConfig = (req: Request) => {
   const clientKey = config.tiktok.clientKey;
   const clientSecret = config.tiktok.clientSecret;
@@ -49,7 +64,7 @@ const ensureTikTokClientConfig = (req: Request) => {
 
 const buildOAuthUrl = (req: Request, userId: string) => {
   const { clientKey, redirectUri, scopes } = ensureTikTokClientConfig(req);
-  const state = createSignedState(userId);
+  const state = createSignedState(userId, { platform: 'tiktok' });
   const oauthUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
   oauthUrl.searchParams.set('client_key', clientKey);
   oauthUrl.searchParams.set('redirect_uri', redirectUri);
@@ -171,6 +186,13 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
 
   if (!accessToken) {
     res.status(400).send(renderCallbackHtml('TikTok connection failed', 'Missing access token.'));
+    return;
+  }
+
+  try {
+    assertRequiredScopes(getScopes(), scope);
+  } catch (error) {
+    res.status(400).send(renderCallbackHtml('TikTok connection failed', (error as Error).message));
     return;
   }
 

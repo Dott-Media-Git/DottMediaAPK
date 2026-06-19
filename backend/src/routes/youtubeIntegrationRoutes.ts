@@ -20,6 +20,7 @@ import { firestore } from '../db/firestore';
 const router = Router();
 
 const CALLBACK_PATH = '/integrations/youtube/callback';
+const REQUIRED_SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '');
 
@@ -49,17 +50,30 @@ const ensureYouTubeClientConfig = (req: Request) => {
 
 const buildOAuthUrl = (req: Request, userId: string) => {
   const { clientId, redirectUri } = ensureYouTubeClientConfig(req);
-  const state = createSignedState(userId);
+  const state = createSignedState(userId, { platform: 'youtube' });
   const oauthUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   oauthUrl.searchParams.set('client_id', clientId);
   oauthUrl.searchParams.set('redirect_uri', redirectUri);
   oauthUrl.searchParams.set('response_type', 'code');
-  oauthUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/youtube.upload');
+  oauthUrl.searchParams.set('scope', REQUIRED_SCOPE);
   oauthUrl.searchParams.set('access_type', 'offline');
   oauthUrl.searchParams.set('prompt', 'consent');
   oauthUrl.searchParams.set('include_granted_scopes', 'true');
   oauthUrl.searchParams.set('state', state);
   return oauthUrl.toString();
+};
+
+const splitScopes = (value: unknown) =>
+  String(value ?? '')
+    .split(/[,\s]+/)
+    .map(scope => scope.trim())
+    .filter(Boolean);
+
+const assertRequiredScope = (value: unknown) => {
+  const granted = new Set(splitScopes(value));
+  if (granted.size > 0 && !granted.has(REQUIRED_SCOPE)) {
+    throw new Error(`Missing required YouTube permission: ${REQUIRED_SCOPE}`);
+  }
 };
 
 const requireOrgAdminIfPresent = async (req: Request, _res: unknown, next: (err?: unknown) => void) => {
@@ -198,6 +212,7 @@ router.get('/integrations/youtube/callback', async (req, res) => {
   const refreshToken = tokenResponse?.data?.refresh_token as string | undefined;
   const accessToken = tokenResponse?.data?.access_token as string | undefined;
   const expiresIn = Number(tokenResponse?.data?.expires_in ?? 0);
+  const grantedScope = tokenResponse?.data?.scope;
 
   if (!refreshToken) {
     res
@@ -208,6 +223,13 @@ router.get('/integrations/youtube/callback', async (req, res) => {
           'Google did not return a refresh token. Please reconnect with prompt=consent or revoke access in Google and try again.',
         ),
       );
+    return;
+  }
+
+  try {
+    assertRequiredScope(grantedScope);
+  } catch (error) {
+    res.status(400).send(renderCallbackHtml('YouTube connection failed', (error as Error).message));
     return;
   }
 
