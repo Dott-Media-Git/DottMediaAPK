@@ -31,6 +31,7 @@
     "expo-splash-screen": "~31.0.10",
     "expo-status-bar": "~3.0.8",
     "expo-updates": "~29.0.12",
+    "expo-web-browser": "~15.0.9",
     "fbjs": "^1.0.0",
     "firebase": "^11.0.2",
     "react": "^18.2.0",

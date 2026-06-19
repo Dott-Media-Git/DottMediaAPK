@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, AppState, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
+import { Alert, AppState, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { doc, getDoc } from 'firebase/firestore';
 import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
@@ -224,7 +225,11 @@ export const AccountIntegrationsScreen: React.FC = () => {
       return;
     }
     refreshAfterOAuth(platform);
-    await Linking.openURL(url);
+    if (Platform.OS === 'web') {
+      await Linking.openURL(url);
+      return;
+    }
+    await WebBrowser.openBrowserAsync(url);
   };
 
   const handleConnect = async () => {
