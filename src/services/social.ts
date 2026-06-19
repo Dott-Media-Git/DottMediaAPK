@@ -88,9 +88,16 @@ export const runAutoPostNow = async (payload: {
   return authedFetch('/api/autopost/runNow', { method: 'POST', body });
 };
 
+export type SchedulePostResponse = {
+  scheduled?: number | unknown[];
+  trimmed?: boolean;
+  reason?: string;
+  remaining?: number;
+};
+
 export const schedulePost = async (payload: any) => {
   const body = JSON.stringify(payload);
-  return authedFetch('/api/posts/schedule', { method: 'POST', body });
+  return authedFetch('/api/posts/schedule', { method: 'POST', body }) as Promise<SchedulePostResponse>;
 };
 
 export type UploadedMediaFile = {
@@ -163,8 +170,13 @@ export const fetchSocialStatus = async (): Promise<{ status: SocialConnectionSta
   return authedFetch('/api/social/status');
 };
 
+export const fetchMetaConnectUrl = async (platform?: 'facebook' | 'instagram'): Promise<{ url?: string }> => {
+  const query = platform ? `?platform=${encodeURIComponent(platform)}` : '';
+  return authedFetch(`/integrations/meta/connect-url${query}`);
+};
+
 export const fetchThreadsConnectUrl = async (): Promise<{ url?: string }> => {
-  return authedFetch('/api/social/threads/connect-url');
+  return authedFetch('/integrations/threads/connect-url');
 };
 
 export const saveSocialCredentials = async (userId: string, credentials: any) => {

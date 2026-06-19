@@ -7,6 +7,7 @@ type StatePayload = {
   userId: string;
   nonce: string;
   ts: number;
+  [key: string]: unknown;
 };
 
 const base64UrlEncode = (value: string) =>
@@ -21,8 +22,9 @@ const base64UrlDecode = (value: string) => {
 const sign = (payload: string) =>
   createHmac('sha256', config.widget.sharedSecret).update(payload).digest('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 
-export const createSignedState = (userId: string) => {
+export const createSignedState = (userId: string, extra: Record<string, unknown> = {}) => {
   const payload: StatePayload = {
+    ...extra,
     userId,
     nonce: randomBytes(16).toString('hex'),
     ts: Date.now(),

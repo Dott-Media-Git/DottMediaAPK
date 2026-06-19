@@ -1,12 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, AppState, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { doc, getDoc } from 'firebase/firestore';
 import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
 
 import { useAuth } from '@context/AuthContext';
 import { isFirebaseEnabled, realtimeDb } from '@services/firebase';
-import { fetchSocialStatus, fetchThreadsConnectUrl, saveSocialCredentials, type SocialConnectionStatus } from '@services/social';
+import {
+  fetchMetaConnectUrl,
+  fetchSocialStatus,
+  fetchThreadsConnectUrl,
+  saveSocialCredentials,
+  type SocialConnectionStatus
+} from '@services/social';
 import { useI18n } from '@context/I18nContext';
 import {
   fetchYouTubeConfig,
@@ -96,6 +102,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
   const [tiktokTokenInput, setTikTokTokenInput] = useState('');
   const [tiktokRevealToken, setTikTokRevealToken] = useState<string | null>(null);
   const [showTikTokRevealModal, setShowTikTokRevealModal] = useState(false);
+  const [pendingOAuthPlatform, setPendingOAuthPlatform] = useState<PlatformKey | null>(null);
 
   const loadYouTube = async () => {
     setYouTubeLoading(true);
@@ -159,6 +166,20 @@ export const AccountIntegrationsScreen: React.FC = () => {
     }
   };
 
+  const refreshSocialConnections = async () => {
+    await Promise.all([loadSocialAccounts(), loadSocialStatus()]);
+  };
+
+  const refreshAfterOAuth = (platform: PlatformKey) => {
+    setPendingOAuthPlatform(platform);
+    const delays = [2500, 6000, 12000, 25000, 45000];
+    delays.forEach(delay => {
+      setTimeout(() => {
+        void refreshSocialConnections();
+      }, delay);
+    });
+  };
+
   useEffect(() => {
     void loadYouTube();
     void loadTikTok();
@@ -168,6 +189,29 @@ export const AccountIntegrationsScreen: React.FC = () => {
     void loadSocialAccounts();
     void loadSocialStatus();
   }, [state.user?.uid]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active' && pendingOAuthPlatform) {
+        void refreshSocialConnections().finally(() => setPendingOAuthPlatform(null));
+      }
+    });
+    return () => subscription.remove();
+  }, [pendingOAuthPlatform, state.user?.uid]);
+
+  const openOAuthUrl = async (url: string | undefined, label: string, platform: PlatformKey) => {
+    if (!url) {
+      Alert.alert(t('Error'), t('Missing connect URL'));
+      return;
+    }
+    const canOpen = await Linking.canOpenURL(url);
+    if (!canOpen) {
+      Alert.alert(t('Error'), t('Unable to open the {{label}} connect URL.', { label }));
+      return;
+    }
+    refreshAfterOAuth(platform);
+    await Linking.openURL(url);
+  };
 
   const handleConnect = async () => {
     try {
@@ -326,22 +370,27 @@ export const AccountIntegrationsScreen: React.FC = () => {
     }
   };
 
+  const handleMetaConnect = async (platform: 'facebook' | 'instagram') => {
+    setSavingPlatform(platform);
+    try {
+      const response = await fetchMetaConnectUrl(platform);
+      await openOAuthUrl(response?.url, 'Meta', platform);
+    } catch (error: any) {
+      Alert.alert(t('Error'), error.message ?? t('Unable to open the Meta connect URL.'));
+    } finally {
+      setSavingPlatform(null);
+    }
+  };
+
   const handleThreadsConnect = async () => {
+    setSavingPlatform('threads');
     try {
       const response = await fetchThreadsConnectUrl();
-      const url = response?.url;
-      if (!url) {
-        Alert.alert(t('Error'), t('Missing connect URL'));
-        return;
-      }
-      const canOpen = await Linking.canOpenURL(url);
-      if (!canOpen) {
-        Alert.alert(t('Error'), t('Unable to open the Threads connect URL.'));
-        return;
-      }
-      await Linking.openURL(url);
+      await openOAuthUrl(response?.url, 'Threads', 'threads');
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Unable to open the Threads connect URL.'));
+    } finally {
+      setSavingPlatform(null);
     }
   };
 
@@ -484,6 +533,28 @@ export const AccountIntegrationsScreen: React.FC = () => {
     confirmDisconnect(platform, () => void handleManualDisconnect(platform as ManualPlatform));
   };
 
+  const getConnectTitle = (platform: PlatformKey) => {
+    if (platform === 'facebook') return t('Connect Facebook');
+    if (platform === 'instagram') return t('Connect Instagram');
+    if (platform === 'threads') return t('Connect Threads');
+    return t('Connect');
+  };
+
+  const isOAuthFirstPlatform = (platform: PlatformKey) =>
+    platform === 'facebook' || platform === 'instagram' || platform === 'threads';
+
+  const handleConnectPress = (platform: PlatformKey) => {
+    if (platform === 'facebook' || platform === 'instagram') {
+      void handleMetaConnect(platform);
+      return;
+    }
+    if (platform === 'threads') {
+      void handleThreadsConnect();
+      return;
+    }
+    togglePlatform(platform);
+  };
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.card}>
@@ -537,17 +608,18 @@ export const AccountIntegrationsScreen: React.FC = () => {
                   />
                 ) : (
                   <DMButton
-                    title={t('Connect')}
-                    onPress={() => togglePlatform(platform)}
+                    title={getConnectTitle(platform)}
+                    onPress={() => handleConnectPress(platform)}
                     style={styles.headerButton}
                     size="compact"
+                    disabled={isSaving}
                   />
                 )}
               </View>
 
               {!connected && isExpanded ? (
                 <View style={styles.integrationBody}>
-                  {missing.length ? (
+                  {missing.length && !isOAuthFirstPlatform(platform) ? (
                     <View style={styles.missingPanel}>
                       <Text style={styles.missingLabel}>{t('Missing')}</Text>
                       <Text style={styles.missingText}>{missing.join(', ')}</Text>
@@ -570,34 +642,79 @@ export const AccountIntegrationsScreen: React.FC = () => {
                         disabled={tiktokLoading}
                       />
                     </View>
+                  ) : platform === 'facebook' || platform === 'instagram' ? (
+                    <>
+                      <View style={styles.oauthPanel}>
+                        <Text style={styles.oauthTitle}>{t('Connect through Meta')}</Text>
+                        <Text style={styles.oauthText}>
+                          {platform === 'facebook'
+                            ? t('Sign in with Meta to choose a Facebook Page and grant Dott Media posting access.')
+                            : t('Sign in with Meta to connect the Instagram Business account linked to your Facebook Page.')}
+                        </Text>
+                        <DMButton
+                          title={isSaving ? t('Opening...') : getConnectTitle(platform)}
+                          onPress={() => void handleMetaConnect(platform)}
+                          disabled={isSaving}
+                        />
+                      </View>
+                      <View style={styles.manualPanel}>
+                        <Text style={styles.manualTitle}>{t('Manual fallback')}</Text>
+                        {MANUAL_FIELDS[manualPlatform].map(field => (
+                          <View key={field.key} style={styles.fieldBlock}>
+                            <Text style={styles.label}>{field.label}</Text>
+                            <TextInput
+                              value={drafts[manualPlatform]?.[field.key] ?? ''}
+                              onChangeText={value => updateDraft(manualPlatform, field.key, value)}
+                              placeholder={field.placeholder}
+                              placeholderTextColor={colors.subtext}
+                              style={styles.input}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                            />
+                          </View>
+                        ))}
+                        <DMButton
+                          title={isSaving ? t('Saving...') : t('Save manually')}
+                          onPress={() => handleManualSave(manualPlatform)}
+                          disabled={isSaving}
+                        />
+                      </View>
+                    </>
                   ) : platform === 'threads' ? (
                     <>
-                      <View style={styles.inlineActions}>
+                      <View style={styles.oauthPanel}>
+                        <Text style={styles.oauthTitle}>{t('Connect through Threads')}</Text>
+                        <Text style={styles.oauthText}>
+                          {t('Sign in with Threads to grant Dott Media access to publish to your Threads profile.')}
+                        </Text>
                         <DMButton
-                          title={t('Connect Threads')}
+                          title={isSaving ? t('Opening...') : t('Connect Threads')}
                           onPress={handleThreadsConnect}
                           disabled={isSaving}
                         />
                       </View>
-                      {MANUAL_FIELDS[manualPlatform].map(field => (
-                        <View key={field.key} style={styles.fieldBlock}>
-                          <Text style={styles.label}>{field.label}</Text>
-                          <TextInput
-                            value={drafts[manualPlatform]?.[field.key] ?? ''}
-                            onChangeText={value => updateDraft(manualPlatform, field.key, value)}
-                            placeholder={field.placeholder}
-                            placeholderTextColor={colors.subtext}
-                            style={styles.input}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                          />
-                        </View>
-                      ))}
-                      <DMButton
-                        title={isSaving ? t('Saving...') : t('Save manually')}
-                        onPress={() => handleManualSave(manualPlatform)}
-                        disabled={isSaving}
-                      />
+                      <View style={styles.manualPanel}>
+                        <Text style={styles.manualTitle}>{t('Manual fallback')}</Text>
+                        {MANUAL_FIELDS[manualPlatform].map(field => (
+                          <View key={field.key} style={styles.fieldBlock}>
+                            <Text style={styles.label}>{field.label}</Text>
+                            <TextInput
+                              value={drafts[manualPlatform]?.[field.key] ?? ''}
+                              onChangeText={value => updateDraft(manualPlatform, field.key, value)}
+                              placeholder={field.placeholder}
+                              placeholderTextColor={colors.subtext}
+                              style={styles.input}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                            />
+                          </View>
+                        ))}
+                        <DMButton
+                          title={isSaving ? t('Saving...') : t('Save manually')}
+                          onPress={() => handleManualSave(manualPlatform)}
+                          disabled={isSaving}
+                        />
+                      </View>
                     </>
                   ) : (
                     <>
@@ -949,6 +1066,37 @@ const styles = StyleSheet.create({
   },
   inlineActions: {
     gap: 10,
+  },
+  oauthPanel: {
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 8,
+  },
+  oauthTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  oauthText: {
+    color: colors.subtext,
+    lineHeight: 20,
+  },
+  manualPanel: {
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  manualTitle: {
+    color: colors.subtext,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    marginBottom: 10,
+    textTransform: 'uppercase',
   },
   title: { color: colors.text, fontSize: 20, fontWeight: '700', marginBottom: 12 },
   sectionTitle: { color: colors.text, fontSize: 16, fontWeight: '700', marginBottom: 8 },

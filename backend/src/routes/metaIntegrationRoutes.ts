@@ -34,6 +34,8 @@ type ThreadsProfile = {
   username?: string;
 };
 
+type MetaConnectPlatform = 'facebook' | 'instagram' | 'all';
+
 let renderEnvCache: RenderEnv | null | undefined;
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '');
@@ -125,41 +127,71 @@ const getThreadsAppConfig = (req: Request) => {
   return { appId, appSecret, redirectUri };
 };
 
-const getScopes = () => {
+const splitScopes = (value: string) =>
+  value
+    .split(',')
+    .map(scope => scope.trim())
+    .filter(Boolean);
+
+const uniqueScopes = (...scopeGroups: string[][]) => Array.from(new Set(scopeGroups.flat().filter(Boolean)));
+
+const defaultFacebookScopes = [
+  'pages_show_list',
+  'pages_read_engagement',
+  'pages_manage_posts',
+  'pages_manage_metadata',
+  'publish_video',
+  'business_management',
+];
+
+const defaultInstagramScopes = [
+  'pages_show_list',
+  'pages_read_engagement',
+  'instagram_basic',
+  'instagram_content_publish',
+  'business_management',
+];
+
+const getScopes = (platform: MetaConnectPlatform = 'all') => {
   const renderEnv = resolveRenderEnv();
-  const raw = process.env.META_APP_SCOPES ?? renderEnv.META_APP_SCOPES ?? '';
+  const platformEnvKey =
+    platform === 'facebook'
+      ? 'META_FACEBOOK_SCOPES'
+      : platform === 'instagram'
+        ? 'META_INSTAGRAM_SCOPES'
+        : 'META_APP_SCOPES';
+  const raw =
+    process.env[platformEnvKey] ??
+    renderEnv[platformEnvKey] ??
+    process.env.META_APP_SCOPES ??
+    renderEnv.META_APP_SCOPES ??
+    '';
   if (raw.trim()) {
-    return raw
-      .split(',')
-      .map(scope => scope.trim())
-      .filter(Boolean);
+    return splitScopes(raw);
   }
 
-  return [
-    'pages_show_list',
-    'pages_read_engagement',
-    'pages_manage_posts',
-    'pages_manage_metadata',
-    'publish_video',
-    'ads_read',
-    'ads_management',
-    'instagram_basic',
-    'instagram_content_publish',
-    'threads_basic',
-    'threads_content_publish',
-    'business_management',
-  ];
+  if (platform === 'facebook') return defaultFacebookScopes;
+  if (platform === 'instagram') return defaultInstagramScopes;
+  return uniqueScopes(defaultFacebookScopes, defaultInstagramScopes);
 };
 
-const buildOAuthUrl = (req: Request, userId: string) => {
+const normalizeMetaConnectPlatform = (value: unknown): MetaConnectPlatform => {
+  const platform = String(value ?? '').toLowerCase();
+  if (platform === 'facebook' || platform === 'instagram') return platform;
+  return 'all';
+};
+
+const buildOAuthUrl = (req: Request, userId: string, platform: MetaConnectPlatform = 'all') => {
   const { appId, redirectUri } = getMetaAppConfig(req);
-  const state = createSignedState(userId);
+  const state = createSignedState(userId, { platform });
   const url = new URL(`https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`);
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', getScopes().join(','));
+  url.searchParams.set('scope', getScopes(platform).join(','));
   url.searchParams.set('state', state);
+  url.searchParams.set('auth_type', 'rerequest');
+  url.searchParams.set('return_scopes', 'true');
   return url.toString();
 };
 
@@ -167,10 +199,7 @@ const getThreadsScopes = () => {
   const renderEnv = resolveRenderEnv();
   const raw = process.env.THREADS_APP_SCOPES ?? renderEnv.THREADS_APP_SCOPES ?? '';
   if (raw.trim()) {
-    return raw
-      .split(',')
-      .map(scope => scope.trim())
-      .filter(Boolean);
+    return splitScopes(raw);
   }
 
   return ['threads_basic', 'threads_content_publish'];
@@ -178,13 +207,14 @@ const getThreadsScopes = () => {
 
 const buildThreadsOAuthUrl = (req: Request, userId: string) => {
   const { appId, redirectUri } = getThreadsAppConfig(req);
-  const state = createSignedState(userId);
+  const state = createSignedState(userId, { platform: 'threads' });
   const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://threads.net/oauth/authorize');
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', getThreadsScopes().join(','));
   url.searchParams.set('state', state);
+  url.searchParams.set('return_scopes', 'true');
   return url.toString();
 };
 
@@ -214,6 +244,81 @@ const exchangeLongLivedToken = async (req: Request, shortLivedToken: string) => 
   return (response.data?.access_token as string | undefined) ?? shortLivedToken;
 };
 
+const fetchGrantedPermissions = async (userAccessToken: string) => {
+  const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/me/permissions`, {
+    params: {
+      access_token: userAccessToken,
+    },
+  });
+  return new Set(
+    ((response.data?.data as Array<{ permission?: string; status?: string }> | undefined) ?? [])
+      .filter(entry => entry.status === 'granted' && entry.permission)
+      .map(entry => String(entry.permission)),
+  );
+};
+
+const assertRequiredPermissions = async (userAccessToken: string, platform: MetaConnectPlatform) => {
+  const requiredScopes = getScopes(platform);
+  const grantedScopes = await fetchGrantedPermissions(userAccessToken);
+  const missingScopes = requiredScopes.filter(scope => !grantedScopes.has(scope));
+  if (missingScopes.length) {
+    throw new Error(`Meta did not grant required permissions: ${missingScopes.join(', ')}`);
+  }
+};
+
+const addScopesFromValue = (target: Set<string>, value: unknown) => {
+  if (!value) return;
+  if (Array.isArray(value)) {
+    value.forEach(item => {
+      if (typeof item === 'string') {
+        item
+          .split(/[\s,]+/)
+          .map(scope => scope.trim())
+          .filter(Boolean)
+          .forEach(scope => target.add(scope));
+      } else if (item && typeof item === 'object') {
+        const permission = (item as { permission?: unknown; name?: unknown; scope?: unknown }).permission
+          ?? (item as { permission?: unknown; name?: unknown; scope?: unknown }).name
+          ?? (item as { permission?: unknown; name?: unknown; scope?: unknown }).scope;
+        if (permission) target.add(String(permission));
+      }
+    });
+    return;
+  }
+  if (typeof value === 'string') {
+    value
+      .split(/[\s,]+/)
+      .map(scope => scope.trim())
+      .filter(Boolean)
+      .forEach(scope => target.add(scope));
+  }
+};
+
+const extractScopesFromPayload = (payload: Record<string, unknown> | null | undefined) => {
+  const scopes = new Set<string>();
+  if (!payload) return scopes;
+  ['scope', 'scopes', 'permissions', 'granted_scopes', 'grantedScopes'].forEach(key => {
+    addScopesFromValue(scopes, payload[key]);
+  });
+  return scopes;
+};
+
+const assertRequiredThreadsScopes = (
+  requiredScopes: string[],
+  grantedScopes: Set<string>,
+  deniedScopes: Set<string>,
+) => {
+  const explicitlyDenied = requiredScopes.filter(scope => deniedScopes.has(scope));
+  if (explicitlyDenied.length) {
+    throw new Error(`Threads did not grant required permissions: ${explicitlyDenied.join(', ')}`);
+  }
+  if (!grantedScopes.size) return;
+  const missingScopes = requiredScopes.filter(scope => !grantedScopes.has(scope));
+  if (missingScopes.length) {
+    throw new Error(`Threads did not grant required permissions: ${missingScopes.join(', ')}`);
+  }
+};
+
 const exchangeThreadsCodeForToken = async (req: Request, code: string) => {
   const { appId, appSecret, redirectUri } = getThreadsAppConfig(req);
   const body = new URLSearchParams({
@@ -227,7 +332,10 @@ const exchangeThreadsCodeForToken = async (req: Request, code: string) => {
   const response = await axios.post(`${THREADS_GRAPH_BASE_URL}/oauth/access_token`, body.toString(), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
-  return response.data?.access_token as string | undefined;
+  return {
+    accessToken: response.data?.access_token as string | undefined,
+    grantedScopes: extractScopesFromPayload(response.data as Record<string, unknown> | undefined),
+  };
 };
 
 const exchangeThreadsLongLivedToken = async (req: Request, shortLivedToken: string) => {
@@ -239,7 +347,10 @@ const exchangeThreadsLongLivedToken = async (req: Request, shortLivedToken: stri
       access_token: shortLivedToken,
     },
   });
-  return (response.data?.access_token as string | undefined) ?? shortLivedToken;
+  return {
+    accessToken: (response.data?.access_token as string | undefined) ?? shortLivedToken,
+    grantedScopes: extractScopesFromPayload(response.data as Record<string, unknown> | undefined),
+  };
 };
 
 const fetchManagedPages = async (userAccessToken: string) => {
@@ -409,7 +520,9 @@ router.get('/integrations/meta/config', requireFirebase, async (req, res, next) 
       appIdConfigured: Boolean(appId),
       appSecretConfigured: true,
       redirectUri,
-      scopes: getScopes(),
+      scopes: getScopes('all'),
+      facebookScopes: getScopes('facebook'),
+      instagramScopes: getScopes('instagram'),
       callbackPath: CALLBACK_PATH,
     });
   } catch (error) {
@@ -421,7 +534,8 @@ router.get('/integrations/meta/connect', requireFirebase, async (req, res, next)
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.redirect(buildOAuthUrl(req, userId));
+    const platform = normalizeMetaConnectPlatform(req.query.platform);
+    res.redirect(buildOAuthUrl(req, userId, platform));
   } catch (error) {
     next(error);
   }
@@ -431,7 +545,8 @@ router.get('/integrations/meta/connect-url', requireFirebase, async (req, res, n
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.json({ url: buildOAuthUrl(req, userId) });
+    const platform = normalizeMetaConnectPlatform(req.query.platform);
+    res.json({ url: buildOAuthUrl(req, userId, platform), platform });
   } catch (error) {
     next(error);
   }
@@ -488,60 +603,72 @@ router.get('/integrations/meta/callback', async (req, res) => {
       throw new Error('Missing short-lived user token');
     }
 
+    const userData = await loadStoredSocialAccounts(state.userId);
+    const currentAccounts = { ...(userData.socialAccounts ?? {}) };
+    const requestedPlatform = normalizeMetaConnectPlatform(state.platform);
     const userAccessToken = await exchangeLongLivedToken(req, shortLivedToken);
+    await assertRequiredPermissions(userAccessToken, requestedPlatform);
+
     const pages = await fetchManagedPages(userAccessToken);
     if (!pages.length) {
       throw new Error('No managed Facebook Pages found for this Meta account');
     }
 
-    const userData = await loadStoredSocialAccounts(state.userId);
-    const currentAccounts = { ...(userData.socialAccounts ?? {}) };
     const preferredPageId = String(currentAccounts.facebook?.pageId ?? '').trim();
 
+    const preferredPage = preferredPageId ? pages.find(page => page.id === preferredPageId) : null;
     const selectedPage =
-      (preferredPageId ? pages.find(page => page.id === preferredPageId) : null) ??
+      (requestedPlatform === 'instagram' && preferredPage?.instagram_business_account?.id ? preferredPage : null) ??
+      (requestedPlatform !== 'instagram' ? preferredPage : null) ??
+      (requestedPlatform === 'instagram' ? pages.find(page => page.instagram_business_account?.id) : null) ??
       pages[0];
 
     if (!selectedPage?.id || !selectedPage?.access_token) {
       throw new Error('Unable to resolve a usable Facebook Page token');
     }
 
-    currentAccounts.facebook = {
-      accessToken: selectedPage.access_token,
-      userAccessToken,
-      pageId: selectedPage.id,
-      pageName: selectedPage.name ?? currentAccounts.facebook?.pageName,
-    };
+    const connectedPlatforms: string[] = [];
+
+    if (requestedPlatform === 'facebook' || requestedPlatform === 'all') {
+      currentAccounts.facebook = {
+        accessToken: selectedPage.access_token,
+        userAccessToken,
+        pageId: selectedPage.id,
+        pageName: selectedPage.name ?? currentAccounts.facebook?.pageName,
+      };
+      connectedPlatforms.push('facebook');
+    }
 
     const instagramAccount = selectedPage.instagram_business_account;
-    if (instagramAccount?.id) {
+    if (requestedPlatform === 'instagram' && !instagramAccount?.id) {
+      throw new Error('No Instagram Business account is linked to the selected Facebook Page in Meta Business Suite.');
+    }
+
+    if ((requestedPlatform === 'instagram' || requestedPlatform === 'all') && instagramAccount?.id) {
       currentAccounts.instagram = {
         accessToken: userAccessToken,
         accountId: instagramAccount.id,
         username: instagramAccount.username ?? currentAccounts.instagram?.username,
       };
+      connectedPlatforms.push('instagram');
 
-      const threadsProfile = await fetchThreadsProfile(userAccessToken, instagramAccount.id);
-      if (threadsProfile?.id) {
-        currentAccounts.threads = {
-          accessToken: userAccessToken,
-          accountId: threadsProfile.id,
-          username: threadsProfile.username ?? currentAccounts.threads?.username,
-        };
+      if (requestedPlatform === 'all') {
+        const threadsProfile = await fetchThreadsProfile(userAccessToken, instagramAccount.id);
+        if (threadsProfile?.id) {
+          currentAccounts.threads = {
+            accessToken: userAccessToken,
+            accountId: threadsProfile.id,
+            username: threadsProfile.username ?? currentAccounts.threads?.username,
+          };
+          connectedPlatforms.push('threads');
+        }
       }
     }
 
     await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
 
     try {
-      await mergeAutopostPlatforms(
-        state.userId,
-        [
-          'facebook',
-          currentAccounts.instagram?.accountId ? 'instagram' : null,
-          currentAccounts.threads?.accountId ? 'threads' : null,
-        ].filter(Boolean) as string[],
-      );
+      await mergeAutopostPlatforms(state.userId, connectedPlatforms);
     } catch (error) {
       console.warn('[meta] autopost platform merge failed after successful credential save', {
         userId: state.userId,
@@ -550,9 +677,9 @@ router.get('/integrations/meta/callback', async (req, res) => {
     }
 
     const connectedChannels = [
-      'Facebook',
-      currentAccounts.instagram?.accountId ? 'Instagram' : null,
-      currentAccounts.threads?.accountId ? 'Threads' : null,
+      connectedPlatforms.includes('facebook') ? 'Facebook' : null,
+      connectedPlatforms.includes('instagram') ? 'Instagram' : null,
+      connectedPlatforms.includes('threads') ? 'Threads' : null,
     ]
       .filter(Boolean)
       .join(', ');
@@ -582,6 +709,8 @@ router.get('/integrations/threads/callback', async (req, res) => {
   const code = typeof req.query.code === 'string' ? req.query.code : '';
   const stateParam = typeof req.query.state === 'string' ? req.query.state : '';
   const state = verifySignedState(stateParam);
+  const deniedScopes = extractScopesFromPayload({ denied_scopes: req.query.denied_scopes });
+  const callbackGrantedScopes = extractScopesFromPayload({ granted_scopes: req.query.granted_scopes, scope: req.query.scope });
 
   if (!code || !state) {
     res.status(400).send(renderCallbackHtml('Threads connection failed', 'Invalid OAuth state or missing code.'));
@@ -589,12 +718,23 @@ router.get('/integrations/threads/callback', async (req, res) => {
   }
 
   try {
+    const requiredScopes = getThreadsScopes();
+    assertRequiredThreadsScopes(requiredScopes, callbackGrantedScopes, deniedScopes);
+
     const shortLivedToken = await exchangeThreadsCodeForToken(req, code);
-    if (!shortLivedToken) {
+    if (!shortLivedToken.accessToken) {
       throw new Error('Missing short-lived Threads token');
     }
 
-    const accessToken = await exchangeThreadsLongLivedToken(req, shortLivedToken);
+    const longLivedToken = await exchangeThreadsLongLivedToken(req, shortLivedToken.accessToken);
+    const grantedScopes = new Set([
+      ...Array.from(callbackGrantedScopes),
+      ...Array.from(shortLivedToken.grantedScopes),
+      ...Array.from(longLivedToken.grantedScopes),
+    ]);
+    assertRequiredThreadsScopes(requiredScopes, grantedScopes, deniedScopes);
+
+    const accessToken = longLivedToken.accessToken;
     const profile = await fetchThreadsMe(accessToken);
     if (!profile.id) {
       throw new Error('Unable to resolve Threads profile');
