@@ -36,6 +36,15 @@ type ThreadsProfile = {
 
 type MetaConnectPlatform = 'facebook' | 'instagram' | 'all';
 
+type ConnectedMetaAsset = {
+  id: string;
+  name?: string;
+  instagramBusinessAccount?: {
+    id: string;
+    username?: string;
+  };
+};
+
 let renderEnvCache: RenderEnv | null | undefined;
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '');
@@ -363,6 +372,24 @@ const fetchManagedPages = async (userAccessToken: string) => {
   return ((response.data?.data as MetaPage[] | undefined) ?? []).filter(page => page.id);
 };
 
+const buildConnectedMetaAssets = (pages: MetaPage[]): ConnectedMetaAsset[] =>
+  pages
+    .filter(page => page.id)
+    .map(page => ({
+      id: String(page.id),
+      ...(page.name ? { name: page.name } : {}),
+      ...(page.instagram_business_account?.id
+        ? {
+            instagramBusinessAccount: {
+              id: String(page.instagram_business_account.id),
+              ...(page.instagram_business_account.username
+                ? { username: page.instagram_business_account.username }
+                : {}),
+            },
+          }
+        : {}),
+    }));
+
 const fetchThreadsProfile = async (userAccessToken: string, instagramAccountId?: string) => {
   if (!instagramAccountId) return null;
   try {
@@ -613,6 +640,12 @@ router.get('/integrations/meta/callback', async (req, res) => {
     if (!pages.length) {
       throw new Error('No managed Facebook Pages found for this Meta account');
     }
+
+    currentAccounts.meta = {
+      ...(currentAccounts.meta ?? {}),
+      connectedAt: new Date().toISOString(),
+      pages: buildConnectedMetaAssets(pages),
+    };
 
     const preferredPageId = String(currentAccounts.facebook?.pageId ?? '').trim();
 
