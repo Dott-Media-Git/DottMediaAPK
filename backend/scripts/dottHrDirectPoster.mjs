@@ -251,7 +251,19 @@ async function loadUserSocialAccounts(serviceAccount) {
   const token = (await client.getAccessToken()).token;
   const projectId = serviceAccount.project_id || serviceAccount.projectId;
   const docUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/users/${UID}`;
-  const response = await fetch(docUrl, { headers: { Authorization: `Bearer ${token}` } });
+  let response;
+  try {
+    response = await fetch(docUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (error) {
+    if (tokenFallback) {
+      console.warn(`Firestore user lookup failed: ${error?.message || String(error)}; using Dott HR Meta token fallback`);
+      return tokenFallback;
+    }
+    throw error;
+  }
   if (!response.ok) {
     if (tokenFallback) {
       console.warn(`Firestore user lookup failed: ${response.status}; using Dott HR Meta token fallback`);
