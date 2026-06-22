@@ -184,6 +184,28 @@ const getScopes = (platform: MetaConnectPlatform = 'all') => {
   return uniqueScopes(defaultFacebookScopes, defaultInstagramScopes);
 };
 
+const getBusinessLoginConfigId = (platform: MetaConnectPlatform = 'all') => {
+  const renderEnv = resolveRenderEnv();
+  const platformEnvKey =
+    platform === 'facebook'
+      ? 'META_FACEBOOK_CONFIG_ID'
+      : platform === 'instagram'
+        ? 'META_INSTAGRAM_CONFIG_ID'
+        : 'META_BUSINESS_LOGIN_CONFIG_ID';
+  return (
+    process.env[platformEnvKey] ??
+    renderEnv[platformEnvKey] ??
+    process.env.META_BUSINESS_LOGIN_CONFIG_ID ??
+    renderEnv.META_BUSINESS_LOGIN_CONFIG_ID ??
+    ''
+  ).trim();
+};
+
+const shouldIncludeScopeWithBusinessConfig = () =>
+  String(process.env.META_INCLUDE_SCOPE_WITH_CONFIG_ID ?? resolveRenderEnv().META_INCLUDE_SCOPE_WITH_CONFIG_ID ?? '')
+    .toLowerCase()
+    .trim() === 'true';
+
 const normalizeMetaConnectPlatform = (value: unknown): MetaConnectPlatform => {
   const platform = String(value ?? '').toLowerCase();
   if (platform === 'facebook' || platform === 'instagram') return platform;
@@ -197,10 +219,19 @@ const buildOAuthUrl = (req: Request, userId: string, platform: MetaConnectPlatfo
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', getScopes(platform).join(','));
   url.searchParams.set('state', state);
   url.searchParams.set('auth_type', 'rerequest');
   url.searchParams.set('return_scopes', 'true');
+  const businessLoginConfigId = getBusinessLoginConfigId(platform);
+  if (businessLoginConfigId) {
+    url.searchParams.set('config_id', businessLoginConfigId);
+    url.searchParams.set('override_default_response_type', 'true');
+    if (shouldIncludeScopeWithBusinessConfig()) {
+      url.searchParams.set('scope', getScopes(platform).join(','));
+    }
+  } else {
+    url.searchParams.set('scope', getScopes(platform).join(','));
+  }
   return url.toString();
 };
 
