@@ -51,6 +51,9 @@ import { firestore } from './db/firestore';
 import { ensureGeneratedMediaRoot } from './services/generatedMediaService';
 import { ensureSupabaseFallbackSchema } from './services/supabaseSchemaService';
 import { backfillSupabaseFallback } from './services/supabaseBackfillService';
+import { captureException } from './lib/monitoring';
+import { requestContext, RequestWithContext } from './middleware/requestContext';
+import { createRateLimit } from './middleware/rateLimit';
 
 const initializeAutomation = async () => {
   try {
@@ -100,6 +103,7 @@ const footballTrendsEnabled = process.env.FOOTBALL_TRENDS_ENABLED === 'true';
 
 app.use('/stripe/webhook', express.raw({ type: 'application/json' }), stripeRoutes);
 
+app.use(requestContext);
 app.use(helmet());
 app.use(
   cors({
@@ -107,7 +111,17 @@ app.use(
   }),
 );
 app.use(express.json({ limit: '1mb' }));
-app.use(morgan('combined'));
+app.use(
+  morgan(':remote-addr :method :url :status :res[content-length] - :response-time ms :req[x-request-id]'),
+);
+app.use(
+  createRateLimit({
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS ?? 60_000),
+    max: Number(process.env.RATE_LIMIT_MAX ?? 300),
+    message: 'Too many requests. Please slow down and try again shortly.',
+    skip: req => req.path === '/healthz' || req.path === '/version',
+  }),
+);
 
 const fallbackDir = process.env.AUTOPOST_FALLBACK_DIR?.trim();
 if (fallbackDir) {
@@ -501,9 +515,16 @@ app.use((err: HttpError, req: Request, res: Response, _next: NextFunction) => {
   const debugToken = process.env.DEBUG_ERRORS_TOKEN;
   const debugRequested = ['1', 'true', 'yes'].includes((req.header('x-debug') ?? '').toLowerCase());
   const debugAuthorized = !debugToken || req.header('x-debug-token') === debugToken;
-  const payload: Record<string, unknown> = { message };
+  const requestId = (req as RequestWithContext).requestId;
+  const payload: Record<string, unknown> = { message, requestId };
   if (status === 500) {
     console.error(err);
+    captureException(err, {
+      requestId,
+      method: req.method,
+      path: req.path,
+      userId: (req as AuthedRequest).authUser?.uid,
+    });
     if (debugEnabled && debugRequested && debugAuthorized) {
       payload.details = err.message ?? 'unknown_error';
       payload.name = err.name ?? 'Error';
@@ -511,7 +532,6 @@ app.use((err: HttpError, req: Request, res: Response, _next: NextFunction) => {
   }
   res.status(status).json(payload);
 });
-
 export { app };
 
 import { fileURLToPath } from 'url';
