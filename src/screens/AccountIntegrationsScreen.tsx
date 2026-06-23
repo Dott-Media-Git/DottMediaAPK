@@ -219,17 +219,34 @@ export const AccountIntegrationsScreen: React.FC = () => {
       Alert.alert(t('Error'), t('Missing connect URL'));
       return;
     }
-    const canOpen = await Linking.canOpenURL(url);
-    if (!canOpen) {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
       Alert.alert(t('Error'), t('Unable to open the {{label}} connect URL.', { label }));
       return;
     }
+
     refreshAfterOAuth(platform);
     if (Platform.OS === 'web') {
-      await Linking.openURL(url);
+      if (typeof window !== 'undefined') {
+        window.location.assign(parsedUrl.toString());
+        return;
+      }
+      await Linking.openURL(parsedUrl.toString());
       return;
     }
-    await WebBrowser.openBrowserAsync(url);
+
+    try {
+      await WebBrowser.openBrowserAsync(parsedUrl.toString());
+    } catch (error) {
+      const canOpen = await Linking.canOpenURL(parsedUrl.toString());
+      if (!canOpen) {
+        Alert.alert(t('Error'), t('Unable to open the {{label}} connect URL.', { label }));
+        return;
+      }
+      await Linking.openURL(parsedUrl.toString());
+    }
   };
 
   const handleConnect = async () => {
