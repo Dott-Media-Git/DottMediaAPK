@@ -24,7 +24,12 @@ router.post('/content/generate', requireFirebase, async (req, res, next) => {
     if (payload.generateVideo) {
       await consumeUsage(scope, 'basicVideos', 1);
     }
-    const content = await contentGenerationService.generateContent({ ...payload, userId: authUser.uid });
+    const content = await contentGenerationService.generateContent({
+      ...payload,
+      userId: authUser.uid,
+      orgId: scope.orgId,
+      billingAlreadyConsumed: true,
+    });
     res.json({ content });
   } catch (error) {
     next(error);

@@ -9,6 +9,7 @@ import { createSignedState, verifySignedState } from '../utils/oauthState';
 import { firestore } from '../db/firestore';
 import { autoPostService } from '../services/autoPostService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
+import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 
 const router = Router();
 
@@ -212,9 +213,9 @@ const normalizeMetaConnectPlatform = (value: unknown): MetaConnectPlatform => {
   return 'all';
 };
 
-const buildOAuthUrl = (req: Request, userId: string, platform: MetaConnectPlatform = 'all') => {
+const buildOAuthUrl = (req: Request, userId: string, platform: MetaConnectPlatform = 'all', orgId?: string | null, email?: string | null) => {
   const { appId, redirectUri } = getMetaAppConfig(req);
-  const state = createSignedState(userId, { platform });
+  const state = createSignedState(userId, { platform, orgId: orgId || undefined, email: email || undefined });
   const url = new URL(`https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`);
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
@@ -245,9 +246,9 @@ const getThreadsScopes = () => {
   return ['threads_basic', 'threads_content_publish'];
 };
 
-const buildThreadsOAuthUrl = (req: Request, userId: string) => {
+const buildThreadsOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
   const { appId, redirectUri } = getThreadsAppConfig(req);
-  const state = createSignedState(userId, { platform: 'threads' });
+  const state = createSignedState(userId, { platform: 'threads', orgId: orgId || undefined, email: email || undefined });
   const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://threads.net/oauth/authorize');
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
@@ -590,10 +591,11 @@ router.get('/integrations/meta/config', requireFirebase, async (req, res, next) 
 
 router.get('/integrations/meta/connect', requireFirebase, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
     const platform = normalizeMetaConnectPlatform(req.query.platform);
-    res.redirect(buildOAuthUrl(req, userId, platform));
+    res.redirect(buildOAuthUrl(req, userId, platform, req.header('x-org-id'), authUser?.email));
   } catch (error) {
     next(error);
   }
@@ -601,10 +603,11 @@ router.get('/integrations/meta/connect', requireFirebase, async (req, res, next)
 
 router.get('/integrations/meta/connect-url', requireFirebase, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
     const platform = normalizeMetaConnectPlatform(req.query.platform);
-    res.json({ url: buildOAuthUrl(req, userId, platform), platform });
+    res.json({ url: buildOAuthUrl(req, userId, platform, req.header('x-org-id'), authUser?.email), platform });
   } catch (error) {
     next(error);
   }
@@ -627,9 +630,10 @@ router.get('/integrations/threads/config', requireFirebase, async (req, res, nex
 
 router.get('/integrations/threads/connect', requireFirebase, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.redirect(buildThreadsOAuthUrl(req, userId));
+    res.redirect(buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email));
   } catch (error) {
     next(error);
   }
@@ -637,9 +641,10 @@ router.get('/integrations/threads/connect', requireFirebase, async (req, res, ne
 
 router.get('/integrations/threads/connect-url', requireFirebase, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.json({ url: buildThreadsOAuthUrl(req, userId) });
+    res.json({ url: buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email) });
   } catch (error) {
     next(error);
   }
@@ -663,6 +668,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
 
     const userData = await loadStoredSocialAccounts(state.userId);
     const currentAccounts = { ...(userData.socialAccounts ?? {}) };
+    const previouslyConnectedAccounts = { ...currentAccounts };
     const requestedPlatform = normalizeMetaConnectPlatform(state.platform);
     const userAccessToken = await exchangeLongLivedToken(req, shortLivedToken);
     await assertRequiredPermissions(userAccessToken, requestedPlatform);
@@ -727,6 +733,19 @@ router.get('/integrations/meta/callback', async (req, res) => {
           connectedPlatforms.push('threads');
         }
       }
+    }
+
+    const newlyConnectedPlatforms = connectedPlatforms.filter(platform => !(previouslyConnectedAccounts as Record<string, unknown>)[platform]);
+    if (newlyConnectedPlatforms.length) {
+      await consumeUsage(
+        resolveBillingScope(
+          state.userId,
+          typeof state.orgId === 'string' ? state.orgId : undefined,
+          typeof state.email === 'string' ? state.email : userData.email ?? undefined,
+        ),
+        'connectedSocials',
+        newlyConnectedPlatforms.length,
+      );
     }
 
     await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
@@ -806,12 +825,25 @@ router.get('/integrations/threads/callback', async (req, res) => {
 
     const userData = await loadStoredSocialAccounts(state.userId);
     const currentAccounts = { ...(userData.socialAccounts ?? {}) };
+    const wasThreadsConnected = Boolean(currentAccounts.threads);
 
     currentAccounts.threads = {
       accessToken,
       accountId: profile.id,
       username: profile.username ?? currentAccounts.threads?.username,
     };
+
+    if (!wasThreadsConnected) {
+      await consumeUsage(
+        resolveBillingScope(
+          state.userId,
+          typeof state.orgId === 'string' ? state.orgId : undefined,
+          typeof state.email === 'string' ? state.email : userData.email ?? undefined,
+        ),
+        'connectedSocials',
+        1,
+      );
+    }
 
     await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
     try {

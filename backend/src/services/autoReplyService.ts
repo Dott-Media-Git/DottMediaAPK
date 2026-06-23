@@ -5,6 +5,7 @@ import { firestore } from '../db/firestore.js';
 import { pickFallbackReply, FallbackKind } from './fallbackReplyLibrary.js';
 import { resolveBrandIdForClient } from './brandKitService.js';
 import { OPENAI_REPLY_TIMEOUT_MS } from '../utils/openaiTimeout.js';
+import { consumeUsageForUserId } from './billing/billingService.js';
 
 const GRAPH_VERSION = 'v19.0';
 const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -156,6 +157,9 @@ export async function generateReply(
     return fallback;
   }
   try {
+    if (userId) {
+      await consumeUsageForUserId(userId, 'aiReplies', 1);
+    }
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       temperature: 0.4,

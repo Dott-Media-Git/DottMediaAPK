@@ -4,6 +4,7 @@ import { config } from '../../config';
 import { saveGeneratedImageBuffer, saveGeneratedVideoFile } from '../../services/generatedMediaService';
 import { generateSoraVideoFile } from '../../services/soraVideoService';
 import { cleanupTempFile } from '../../services/videoUrlService';
+import { consumeUsageForUserId } from '../../services/billing/billingService';
 
 export type GeneratedContent = {
   images: string[];
@@ -22,6 +23,9 @@ type GenerationParams = {
   businessType: string;
   imageCount?: number;
   generateVideo?: boolean;
+  userId?: string;
+  orgId?: string;
+  billingAlreadyConsumed?: boolean;
 };
 
 const DEFAULT_OUTPUT: GeneratedContent = {
@@ -41,6 +45,13 @@ export class ContentGenerationService {
   async generateContent(params: GenerationParams): Promise<GeneratedContent> {
     const result: GeneratedContent = { ...DEFAULT_OUTPUT };
     const imageCount = Math.min(Math.max(params.imageCount ?? 2, 1), 4);
+    if (params.userId && !params.billingAlreadyConsumed) {
+      await consumeUsageForUserId(params.userId, 'images', imageCount, params.orgId);
+      await consumeUsageForUserId(params.userId, 'aiReplies', 1, params.orgId);
+      if (params.generateVideo) {
+        await consumeUsageForUserId(params.userId, 'basicVideos', 1, params.orgId);
+      }
+    }
 
     const [images, captions, videoUrl] = await Promise.all([
       this.generateImages(params, imageCount),

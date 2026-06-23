@@ -20,6 +20,7 @@ import {
   getBwinAccountClosureState,
   isBwinAccountClosureActive,
 } from '../../services/bwinAccountClosureService';
+import { consumeUsageForUserId } from '../../services/billing/billingService';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
@@ -73,6 +74,7 @@ type ScheduledPost = {
   targetDate: string;
   scheduledFor?: Date;
   source?: string;
+  billingUsageConsumed?: boolean;
 };
 
 export interface SocialAccounts {
@@ -315,6 +317,7 @@ export class SocialPostingService {
             targetDate: (data.targetDate as string) ?? new Date().toISOString().slice(0, 10),
             scheduledFor: data.scheduledFor?.toDate?.() ?? undefined,
             source: (data.source as string | undefined) ?? undefined,
+            billingUsageConsumed: Boolean(data.billingUsageConsumed),
           });
         });
     } catch (error) {
@@ -335,6 +338,7 @@ export class SocialPostingService {
           targetDate: (post.targetDate as string) ?? new Date().toISOString().slice(0, 10),
           scheduledFor: post.scheduledFor ? new Date(post.scheduledFor as string | Date) : undefined,
           source: (post.source as string | undefined) ?? undefined,
+          billingUsageConsumed: Boolean(post.billingUsageConsumed),
         });
       });
     } catch (error) {
@@ -554,6 +558,25 @@ export class SocialPostingService {
           credentials: socialAccounts,
         };
 
+        if (!post.billingUsageConsumed) {
+          await consumeUsageForUserId(post.userId, 'scheduledPosts', 1);
+          post.billingUsageConsumed = true;
+          try {
+            await scheduledPostsCollection.doc(post.id).set(
+              {
+                billingUsageConsumed: true,
+                billingUsageConsumedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            );
+          } catch (error) {
+            console.warn('[social-posting] firestore billing marker update failed', error);
+          }
+          await supabaseFallbackService.updateScheduledPost(post.id, {
+            billingUsageConsumed: true,
+            updatedAt: new Date(),
+          } as Record<string, unknown>);
+        }
         const response = await this.publishWithRetry(publisher, payload);
         try {
           await scheduledPostsCollection.doc(post.id).update({

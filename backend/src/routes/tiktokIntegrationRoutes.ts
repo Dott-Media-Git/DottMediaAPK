@@ -12,6 +12,7 @@ import {
   upsertTikTokIntegration,
 } from '../services/socialIntegrationService';
 import { firestore } from '../db/firestore';
+import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 
 const router = Router();
 
@@ -62,9 +63,9 @@ const ensureTikTokClientConfig = (req: Request) => {
   return { clientKey, clientSecret, redirectUri, scopes: getScopes() };
 };
 
-const buildOAuthUrl = (req: Request, userId: string) => {
+const buildOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
   const { clientKey, redirectUri, scopes } = ensureTikTokClientConfig(req);
-  const state = createSignedState(userId, { platform: 'tiktok' });
+  const state = createSignedState(userId, { platform: 'tiktok', orgId: orgId || undefined, email: email || undefined });
   const oauthUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
   oauthUrl.searchParams.set('client_key', clientKey);
   oauthUrl.searchParams.set('redirect_uri', redirectUri);
@@ -128,9 +129,10 @@ router.get('/integrations/tiktok/status', ...adminGate, async (req, res, next) =
 
 router.get('/integrations/tiktok/connect', ...adminGate, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    const oauthUrl = buildOAuthUrl(req, userId);
+    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
     res.redirect(oauthUrl);
   } catch (error) {
     next(error);
@@ -139,9 +141,10 @@ router.get('/integrations/tiktok/connect', ...adminGate, async (req, res, next) 
 
 router.get('/integrations/tiktok/connect-url', ...adminGate, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    const oauthUrl = buildOAuthUrl(req, userId);
+    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
     res.json({ url: oauthUrl });
   } catch (error) {
     next(error);
@@ -197,6 +200,20 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
   }
 
   try {
+    const existing = await getTikTokIntegration(state.userId).catch(() => null);
+    if (!existing?.connected) {
+      const userSnap = await firestore.collection('users').doc(state.userId).get().catch(() => null);
+      const userData = userSnap?.exists ? userSnap.data() : {};
+      await consumeUsage(
+        resolveBillingScope(
+          state.userId,
+          typeof state.orgId === 'string' ? state.orgId : undefined,
+          typeof state.email === 'string' ? state.email : typeof userData?.email === 'string' ? userData.email : undefined,
+        ),
+        'connectedSocials',
+        1,
+      );
+    }
     await upsertTikTokIntegration(state.userId, {
       accessToken,
       refreshToken,

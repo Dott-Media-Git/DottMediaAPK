@@ -4,6 +4,7 @@ import createHttpError from 'http-errors';
 import { TwitterApi } from 'twitter-api-v2';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { firestore } from '../db/firestore';
+import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 
 const router = Router();
 
@@ -39,11 +40,13 @@ const getClient = () => {
   return new TwitterApi({ appKey, appSecret });
 };
 
-const buildOAuthUrl = async (req: Request, userId: string) => {
+const buildOAuthUrl = async (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
   const callbackUrl = process.env.TWITTER_REDIRECT_URI ?? process.env.X_REDIRECT_URI ?? computeRedirectUri(req);
   const result = await getClient().generateAuthLink(callbackUrl, { linkMode: 'authorize' });
   await firestore.collection(REQUEST_COLLECTION).doc(result.oauth_token).set({
     userId,
+    orgId: orgId || null,
+    email: email || null,
     oauthToken: result.oauth_token,
     oauthTokenSecret: result.oauth_token_secret,
     callbackUrl,
@@ -71,9 +74,10 @@ router.get('/integrations/twitter/config', requireFirebase, async (req, res, nex
 
 router.get('/integrations/twitter/connect', requireFirebase, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.redirect(await buildOAuthUrl(req, userId));
+    res.redirect(await buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email));
   } catch (error) {
     next(error);
   }
@@ -81,9 +85,10 @@ router.get('/integrations/twitter/connect', requireFirebase, async (req, res, ne
 
 router.get('/integrations/twitter/connect-url', requireFirebase, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.json({ url: await buildOAuthUrl(req, userId) });
+    res.json({ url: await buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email) });
   } catch (error) {
     next(error);
   }
@@ -103,7 +108,7 @@ router.get('/integrations/twitter/callback', async (req, res) => {
     res.status(400).send(renderCallbackHtml('X connection failed', 'OAuth request expired or was not found.'));
     return;
   }
-  const requestData = requestSnap.data() as { userId?: string; oauthTokenSecret?: string } | undefined;
+  const requestData = requestSnap.data() as { userId?: string; orgId?: string | null; email?: string | null; oauthTokenSecret?: string } | undefined;
   if (!requestData?.userId || !requestData.oauthTokenSecret) {
     res.status(400).send(renderCallbackHtml('X connection failed', 'OAuth request is incomplete.'));
     return;
@@ -117,6 +122,19 @@ router.get('/integrations/twitter/callback', async (req, res) => {
     });
     const login = await client.login(oauthVerifier);
     const verified = await login.client.v2.me();
+    const existingSnap = await firestore.collection('users').doc(requestData.userId).get();
+    const existingData = existingSnap.exists ? existingSnap.data() : {};
+    if (!existingData?.socialAccounts?.twitter) {
+      await consumeUsage(
+        resolveBillingScope(
+          requestData.userId,
+          requestData.orgId || undefined,
+          requestData.email || (typeof existingData?.email === 'string' ? existingData.email : undefined),
+        ),
+        'connectedSocials',
+        1,
+      );
+    }
     await firestore.collection('users').doc(requestData.userId).set(
       {
         socialAccounts: {

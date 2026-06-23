@@ -36,6 +36,7 @@ export type SchedulePayload = {
   hashtags?: string;
   scheduledFor: string;
   timesPerDay: number;
+  billingUsageConsumed?: boolean;
 };
 
 export class SocialSchedulingService {
@@ -56,11 +57,12 @@ export class SocialSchedulingService {
     }
     const bwinValidation = validateBwinSportsContent({
       userId: payload.userId,
+      platforms: payload.platforms,
       caption: payload.caption,
       hashtags: payload.hashtags,
       videoTitle: payload.videoTitle,
       imageUrls: payload.images,
-      videoUrl: payload.videoUrl,
+      videoUrl: payload.videoUrl ?? payload.youtubeVideoUrl ?? payload.tiktokVideoUrl ?? payload.instagramReelsVideoUrl,
     });
     if (!bwinValidation.ok) {
       throw new Error(bwinValidation.reason ?? 'Bwinbet scheduled posts must stay sports-only.');
@@ -165,6 +167,7 @@ export class SocialSchedulingService {
         createdAt,
         postedAt: null,
         errorMessage: undefined,
+        billingUsageConsumed: Boolean(payload.billingUsageConsumed),
       };
     });
     docsToCreate.forEach(doc => {
@@ -204,6 +207,7 @@ export class SocialSchedulingService {
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         postedAt: null,
         errorMessage: null,
+        billingUsageConsumed: Boolean(payload.billingUsageConsumed),
       });
     });
 

@@ -193,6 +193,17 @@ export async function consumeUsage(scope: BillingScope, resource: UsageResource,
   return { ok: true, plan, resource, amount };
 }
 
+export async function consumeUsageForUserId(userId: string, resource: UsageResource, amount = 1, orgId?: string | null) {
+  const userSnap = await usersCollection.doc(userId).get().catch(() => null);
+  const userData = userSnap?.exists ? userSnap.data() : {};
+  const email = typeof userData?.email === 'string' ? userData.email : undefined;
+  const resolvedOrgId =
+    orgId?.trim() ||
+    (typeof userData?.orgId === 'string' && userData.orgId.trim() ? userData.orgId.trim() : undefined) ||
+    userId;
+  return consumeUsage(resolveBillingScope(userId, resolvedOrgId, email), resource, amount);
+}
+
 export async function applyStripeCheckoutCompleted(session: Stripe.Checkout.Session) {
   const metadata = session.metadata ?? {};
   if (!metadata.userId || !metadata.plan) return null;

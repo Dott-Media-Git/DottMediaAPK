@@ -5,6 +5,7 @@ import createHttpError from 'http-errors';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
 import { firestore } from '../db/firestore';
+import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 
 const router = Router();
 
@@ -48,9 +49,9 @@ const getClientConfig = (req: Request) => {
   return { clientId, clientSecret, redirectUri };
 };
 
-const buildOAuthUrl = (req: Request, userId: string) => {
+const buildOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
   const { clientId, redirectUri } = getClientConfig(req);
-  const state = createSignedState(userId, { platform: 'linkedin' });
+  const state = createSignedState(userId, { platform: 'linkedin', orgId: orgId || undefined, email: email || undefined });
   const oauthUrl = new URL('https://www.linkedin.com/oauth/v2/authorization');
   oauthUrl.searchParams.set('response_type', 'code');
   oauthUrl.searchParams.set('client_id', clientId);
@@ -107,9 +108,10 @@ router.get('/integrations/linkedin/config', requireFirebase, async (req, res, ne
 
 router.get('/integrations/linkedin/connect', requireFirebase, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.redirect(buildOAuthUrl(req, userId));
+    res.redirect(buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email));
   } catch (error) {
     next(error);
   }
@@ -117,9 +119,10 @@ router.get('/integrations/linkedin/connect', requireFirebase, async (req, res, n
 
 router.get('/integrations/linkedin/connect-url', requireFirebase, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.json({ url: buildOAuthUrl(req, userId) });
+    res.json({ url: buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email) });
   } catch (error) {
     next(error);
   }
@@ -163,6 +166,19 @@ router.get('/integrations/linkedin/callback', async (req, res) => {
   try {
     assertRequiredScopes(tokenResponse?.data?.scope);
     const profile = await fetchLinkedInUrn(accessToken);
+    const existingSnap = await firestore.collection('users').doc(state.userId).get();
+    const existingData = existingSnap.exists ? existingSnap.data() : {};
+    if (!existingData?.socialAccounts?.linkedin) {
+      await consumeUsage(
+        resolveBillingScope(
+          state.userId,
+          typeof state.orgId === 'string' ? state.orgId : undefined,
+          typeof state.email === 'string' ? state.email : typeof existingData?.email === 'string' ? existingData.email : undefined,
+        ),
+        'connectedSocials',
+        1,
+      );
+    }
     await firestore.collection('users').doc(state.userId).set(
       {
         socialAccounts: {

@@ -338,14 +338,14 @@ const getThreadsScopes = () => {
   return ['threads_basic', 'threads_content_publish'];
 };
 
-const buildThreadsConnectUrl = (req: Request, userId: string) => {
+const buildThreadsConnectUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
   const { appId, redirectUri } = getThreadsAppConfig(req);
   const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://threads.net/oauth/authorize');
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', getThreadsScopes().join(','));
-  url.searchParams.set('state', createSignedState(userId));
+  url.searchParams.set('state', createSignedState(userId, { orgId: orgId || undefined, email: email || undefined }));
   return url.toString();
 };
 
@@ -738,7 +738,7 @@ router.post('/posts/schedule', requireFirebase, async (req, res, next) => {
       'scheduledPosts',
       Math.max(payload.platforms.length * payload.timesPerDay, 1),
     );
-    const result = await socialSchedulingService.schedulePosts(payload);
+    const result = await socialSchedulingService.schedulePosts({ ...payload, billingUsageConsumed: true });
     res.json(result);
   } catch (error) {
     next(error);
@@ -904,7 +904,7 @@ router.get('/social/threads/connect-url', requireFirebase, async (req, res, next
   try {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
-    res.json({ url: buildThreadsConnectUrl(req, authUser.uid) });
+    res.json({ url: buildThreadsConnectUrl(req, authUser.uid, req.header('x-org-id'), authUser.email) });
   } catch (error) {
     next(error);
   }
@@ -914,7 +914,7 @@ router.get('/social/threads/connect', requireFirebase, async (req, res, next) =>
   try {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
-    res.redirect(buildThreadsConnectUrl(req, authUser.uid));
+    res.redirect(buildThreadsConnectUrl(req, authUser.uid, req.header('x-org-id'), authUser.email));
   } catch (error) {
     next(error);
   }
@@ -944,12 +944,25 @@ router.get('/social/threads/callback', async (req, res) => {
 
     const userData = await loadStoredSocialAccounts(state.userId);
     const currentAccounts = { ...(userData.socialAccounts ?? {}) };
+    const wasThreadsConnected = Boolean(currentAccounts.threads);
 
     currentAccounts.threads = {
       accessToken,
       accountId: profile.id,
       username: profile.username ?? currentAccounts.threads?.username,
     };
+
+    if (!wasThreadsConnected) {
+      await consumeUsage(
+        resolveBillingScope(
+          state.userId,
+          typeof state.orgId === 'string' ? state.orgId : undefined,
+          typeof state.email === 'string' ? state.email : userData.email ?? undefined,
+        ),
+        'connectedSocials',
+        1,
+      );
+    }
 
     await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
     try {

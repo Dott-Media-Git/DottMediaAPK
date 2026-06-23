@@ -16,6 +16,7 @@ import {
 import { validateVideoUrl } from '../services/videoUrlService';
 import { enqueueYouTubeUpload, enqueueYouTubeSoraUpload, getYouTubeJobStatus } from '../services/youtubeUploadService';
 import { firestore } from '../db/firestore';
+import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 
 const router = Router();
 
@@ -48,9 +49,9 @@ const ensureYouTubeClientConfig = (req: Request) => {
   return { clientId, clientSecret, redirectUri };
 };
 
-const buildOAuthUrl = (req: Request, userId: string) => {
+const buildOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
   const { clientId, redirectUri } = ensureYouTubeClientConfig(req);
-  const state = createSignedState(userId, { platform: 'youtube' });
+  const state = createSignedState(userId, { platform: 'youtube', orgId: orgId || undefined, email: email || undefined });
   const oauthUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   oauthUrl.searchParams.set('client_id', clientId);
   oauthUrl.searchParams.set('redirect_uri', redirectUri);
@@ -161,9 +162,10 @@ router.get('/integrations/youtube/status', ...adminGate, async (req, res, next) 
 
 router.get('/integrations/youtube/connect', ...adminGate, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    const oauthUrl = buildOAuthUrl(req, userId);
+    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
     res.redirect(oauthUrl);
   } catch (error) {
     next(error);
@@ -172,9 +174,10 @@ router.get('/integrations/youtube/connect', ...adminGate, async (req, res, next)
 
 router.get('/integrations/youtube/connect-url', ...adminGate, async (req, res, next) => {
   try {
-    const userId = (req as AuthedRequest).authUser?.uid;
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    const oauthUrl = buildOAuthUrl(req, userId);
+    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
     res.json({ url: oauthUrl });
   } catch (error) {
     next(error);
@@ -249,6 +252,20 @@ router.get('/integrations/youtube/callback', async (req, res) => {
   }
 
   try {
+    const existing = await getYouTubeIntegration(state.userId).catch(() => null);
+    if (!existing?.connected) {
+      const userSnap = await firestore.collection('users').doc(state.userId).get().catch(() => null);
+      const userData = userSnap?.exists ? userSnap.data() : {};
+      await consumeUsage(
+        resolveBillingScope(
+          state.userId,
+          typeof state.orgId === 'string' ? state.orgId : undefined,
+          typeof state.email === 'string' ? state.email : typeof userData?.email === 'string' ? userData.email : undefined,
+        ),
+        'connectedSocials',
+        1,
+      );
+    }
     await upsertYouTubeIntegration(state.userId, {
       refreshToken,
       accessToken,
