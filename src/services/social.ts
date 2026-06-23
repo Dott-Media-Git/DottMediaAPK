@@ -202,6 +202,7 @@ export type SocialConnectionStatus = {
   threads: boolean;
   linkedin: boolean;
   twitter: boolean;
+  whatsapp: boolean;
   tiktok: boolean;
   youtube: boolean;
 };

@@ -30,6 +30,7 @@ const PLATFORM_OPTIONS = [
   'facebook_story',
   'linkedin',
   'twitter',
+  'whatsapp',
   'youtube',
   'tiktok',
 ] as const;
@@ -41,6 +42,7 @@ const formatPlatformLabel = (platform: string) => {
   if (platform === 'facebook_story') return 'Facebook Story';
   if (platform === 'youtube') return 'YouTube';
   if (platform === 'tiktok') return 'TikTok';
+  if (platform === 'whatsapp') return 'WhatsApp Message';
   return platform.charAt(0).toUpperCase() + platform.slice(1);
 };
 
@@ -200,7 +202,8 @@ export const SchedulePostScreen: React.FC = () => {
       platform !== 'facebook' &&
       platform !== 'facebook_story' &&
       platform !== 'instagram_story' &&
-      platform !== 'linkedin',
+      platform !== 'linkedin' &&
+      platform !== 'whatsapp',
   );
   const needsImages = imageOnlyPlatforms.length > 0 || (hasOptionalVideoPlatforms && !hasGenericVideo);
 

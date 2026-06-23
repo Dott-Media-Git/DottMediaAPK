@@ -8,7 +8,6 @@ import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { isFirebaseEnabled, realtimeDb } from '@services/firebase';
 import {
-  fetchInstagramConnectUrl,
   fetchMetaConnectUrl,
   fetchLinkedInConnectUrl,
   fetchSocialStatus,
@@ -40,16 +39,17 @@ import {
   type TikTokStatus
 } from '@services/tiktokIntegration';
 
-type ManualPlatform = 'facebook' | 'linkedin' | 'instagram' | 'threads' | 'twitter';
+type ManualPlatform = 'facebook' | 'linkedin' | 'instagram' | 'threads' | 'twitter' | 'whatsapp';
 type PlatformKey = ManualPlatform | 'tiktok' | 'youtube';
 
-const PLATFORM_ORDER: PlatformKey[] = ['facebook', 'linkedin', 'instagram', 'threads', 'twitter', 'tiktok', 'youtube'];
+const PLATFORM_ORDER: PlatformKey[] = ['facebook', 'linkedin', 'instagram', 'threads', 'twitter', 'whatsapp', 'tiktok', 'youtube'];
 const PLATFORM_LABELS: Record<PlatformKey, string> = {
   facebook: 'Facebook',
   linkedin: 'LinkedIn',
   instagram: 'Instagram',
   threads: 'Threads',
   twitter: 'X / Twitter',
+  whatsapp: 'WhatsApp',
   tiktok: 'TikTok',
   youtube: 'YouTube'
 };
@@ -74,6 +74,11 @@ const MANUAL_FIELDS: Record<ManualPlatform, Array<{ key: string; label: string; 
   twitter: [
     { key: 'accessToken', label: 'Access token', placeholder: 'Paste X access token' },
     { key: 'accessSecret', label: 'Access secret', placeholder: 'Paste X access secret' }
+  ],
+  whatsapp: [
+    { key: 'accessToken', label: 'Cloud API token', placeholder: 'Paste WhatsApp Cloud API token' },
+    { key: 'phoneNumberId', label: 'Phone number ID', placeholder: 'Paste WhatsApp phone number ID' },
+    { key: 'recipientPhoneNumbers', label: 'Recipient numbers', placeholder: '+256..., +1...' }
   ]
 };
 
@@ -82,7 +87,8 @@ const EMPTY_DRAFTS: Record<ManualPlatform, Record<string, string>> = {
   linkedin: { accessToken: '', urn: '' },
   instagram: { accessToken: '', accountId: '' },
   threads: { accessToken: '', accountId: '' },
-  twitter: { accessToken: '', accessSecret: '' }
+  twitter: { accessToken: '', accessSecret: '' },
+  whatsapp: { accessToken: '', phoneNumberId: '', recipientPhoneNumbers: '' }
 };
 
 export const AccountIntegrationsScreen: React.FC = () => {
@@ -399,18 +405,6 @@ export const AccountIntegrationsScreen: React.FC = () => {
     }
   };
 
-  const handleInstagramConnect = async () => {
-    setSavingPlatform('instagram');
-    try {
-      const response = await fetchInstagramConnectUrl();
-      await openOAuthUrl(response?.url, 'Instagram', 'instagram');
-    } catch (error: any) {
-      Alert.alert(t('Error'), error.message ?? t('Unable to open the Instagram connect URL.'));
-    } finally {
-      setSavingPlatform(null);
-    }
-  };
-
   const handleThreadsConnect = async () => {
     setSavingPlatform('threads');
     try {
@@ -592,6 +586,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
     if (platform === 'threads') return t('Connect Threads');
     if (platform === 'linkedin') return t('Connect LinkedIn');
     if (platform === 'twitter') return t('Connect X');
+    if (platform === 'whatsapp') return t('Connect WhatsApp');
     if (platform === 'youtube') return t('Connect YouTube');
     if (platform === 'tiktok') return t('Connect TikTok');
     return t('Connect');
@@ -612,7 +607,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
       return;
     }
     if (platform === 'instagram') {
-      void handleInstagramConnect();
+      void handleMetaConnect(platform);
       return;
     }
     if (platform === 'threads') {
@@ -800,33 +795,17 @@ export const AccountIntegrationsScreen: React.FC = () => {
                   ) : platform === 'facebook' || platform === 'instagram' ? (
                     <>
                       <View style={styles.oauthPanel}>
-                        <Text style={styles.oauthTitle}>
-                          {platform === 'facebook' ? t('Connect through Meta') : t('Connect directly through Instagram')}
-                        </Text>
+                        <Text style={styles.oauthTitle}>{t('Connect through Meta')}</Text>
                         <Text style={styles.oauthText}>
                           {platform === 'facebook'
                             ? t('Sign in with Meta to choose a Facebook Page and grant Dott Media posting access.')
-                            : t('Sign in with Instagram to grant Dott Media posting access to your professional Instagram account.')}
+                            : t('Sign in with Meta to connect the Instagram Business account linked to your Facebook Page.')}
                         </Text>
                         <DMButton
                           title={isSaving ? t('Opening...') : getConnectTitle(platform)}
-                          onPress={() => {
-                            if (platform === 'instagram') {
-                              void handleInstagramConnect();
-                              return;
-                            }
-                            void handleMetaConnect(platform);
-                          }}
+                          onPress={() => void handleMetaConnect(platform)}
                           disabled={isSaving}
                         />
-                        {platform === 'instagram' ? (
-                          <DMButton
-                            title={isSaving ? t('Opening...') : t('Connect through Meta Business')}
-                            onPress={() => void handleMetaConnect('instagram')}
-                            disabled={isSaving}
-                            style={styles.secondaryAction}
-                          />
-                        ) : null}
                       </View>
                       <View style={styles.manualPanel}>
                         <Text style={styles.manualTitle}>{t('Manual fallback')}</Text>

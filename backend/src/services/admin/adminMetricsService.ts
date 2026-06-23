@@ -397,7 +397,7 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
     const instagramConnected = Boolean(accounts.instagram?.accessToken && accounts.instagram?.accountId);
     const linkedinConnected = Boolean(accounts.linkedin?.accessToken && accounts.linkedin?.urn);
     const twitterConnected = Boolean(accounts.twitter?.accessToken && accounts.twitter?.accessSecret);
-    const whatsappConnected = Boolean(accounts.whatsapp?.accessToken || accounts.whatsapp?.token || accounts.whatsapp?.phoneId);
+    const whatsappConnected = Boolean(accounts.whatsapp?.accessToken || accounts.whatsapp?.token || accounts.whatsapp?.phoneNumberId || accounts.whatsapp?.phoneId);
 
     if (facebookConnected) connectedPlatforms.facebook += 1;
     if (instagramConnected) connectedPlatforms.instagram += 1;

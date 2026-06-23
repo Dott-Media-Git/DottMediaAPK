@@ -8,6 +8,7 @@ import { publishToTwitter } from './socialPlatforms/twitterPublisher';
 import { publishToThreads } from './socialPlatforms/threadsPublisher';
 import { publishToTikTok } from './socialPlatforms/tiktokPublisher';
 import { publishToYouTube } from './socialPlatforms/youtubePublisher';
+import { publishToWhatsApp, publishToWhatsAppStatus } from './socialPlatforms/whatsappPublisher';
 import { socialAnalyticsService } from './socialAnalyticsService';
 import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from '../../services/socialIntegrationService';
 import { canUsePrimarySocialDefaults } from '../../utils/socialAccess';
@@ -117,6 +118,11 @@ export interface SocialAccounts {
     privacyStatus?: 'private' | 'public' | 'unlisted';
     channelId?: string;
   };
+  whatsapp?: {
+    accessToken: string;
+    phoneNumberId: string;
+    recipientPhoneNumbers?: string | string[];
+  };
   [key: string]: any;
 }
 
@@ -142,6 +148,8 @@ const platformPublishers: Record<string, PlatformPublisher> = {
   x: publishToTwitter,
   threads: publishToThreads,
   tiktok: publishToTikTok,
+  whatsapp: publishToWhatsApp,
+  whatsapp_status: publishToWhatsAppStatus,
 };
 
 export class SocialPostingService {
@@ -870,6 +878,13 @@ export class SocialPostingService {
         openId: config.tiktok.openId,
         clientKey: config.tiktok.clientKey || undefined,
         clientSecret: config.tiktok.clientSecret || undefined,
+      };
+    }
+    if (allowDefaults && config.whatsapp.token && config.whatsapp.phoneNumberId) {
+      defaults.whatsapp = {
+        accessToken: config.whatsapp.token,
+        phoneNumberId: config.whatsapp.phoneNumberId,
+        recipientPhoneNumbers: process.env.WHATSAPP_RECIPIENT_PHONE_NUMBERS ?? '',
       };
     }
     return { ...defaults, ...(userAccounts ?? {}) };

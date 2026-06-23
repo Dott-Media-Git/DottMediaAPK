@@ -589,6 +589,7 @@ const scheduleSchema = z
           'threads',
           'tiktok',
           'youtube',
+          'whatsapp',
         ]),
       )
       .min(1),
@@ -610,6 +611,7 @@ const scheduleSchema = z
     const videoCapable = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
     const hasImagePlatform = data.platforms.some(platform => {
       if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels') return false;
+      if (platform === 'whatsapp') return false;
       if (videoCapable.has(platform) && data.videoUrl) return false;
       return true;
     });
@@ -659,6 +661,7 @@ const autoPostSchema = z
           'threads',
           'tiktok',
           'youtube',
+          'whatsapp',
         ]),
       )
       .min(1)
@@ -888,6 +891,9 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
         Boolean(accounts.linkedin?.accessToken && accounts.linkedin?.urn) ||
         (allowDefaults && Boolean(config.linkedin.accessToken && config.linkedin.organizationId)),
       twitter: Boolean(accounts.twitter?.accessToken && accounts.twitter?.accessSecret),
+      whatsapp:
+        Boolean(accounts.whatsapp?.accessToken && accounts.whatsapp?.phoneNumberId) ||
+        (allowDefaults && Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId)),
       youtube: Boolean(youtube?.connected),
       tiktok:
         Boolean(tiktok?.connected) ||

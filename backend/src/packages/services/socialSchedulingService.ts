@@ -25,6 +25,7 @@ export type SchedulePayload = {
     | 'threads'
     | 'tiktok'
     | 'youtube'
+    | 'whatsapp'
   >;
   images?: string[];
   videoUrl?: string;
@@ -73,6 +74,7 @@ export class SocialSchedulingService {
     const videoCapable = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
     const hasImagePlatform = payload.platforms.some(platform => {
       if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels') return false;
+      if (platform === 'whatsapp') return false;
       if (videoCapable.has(platform) && payload.videoUrl) return false;
       return true;
     });

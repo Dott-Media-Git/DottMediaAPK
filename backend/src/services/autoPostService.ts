@@ -18,6 +18,7 @@ import { publishToThreads } from '../packages/services/socialPlatforms/threadsPu
 import { publishToTwitter } from '../packages/services/socialPlatforms/twitterPublisher.js';
 import { publishToYouTube } from '../packages/services/socialPlatforms/youtubePublisher.js';
 import { publishToTikTok } from '../packages/services/socialPlatforms/tiktokPublisher.js';
+import { publishToWhatsApp, publishToWhatsAppStatus } from '../packages/services/socialPlatforms/whatsappPublisher.js';
 import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from './socialIntegrationService.js';
 import { canUsePrimarySocialDefaults, isPrimarySocialUserId } from '../utils/socialAccess.js';
 import { getNewsTrendingCandidates } from './newsTrendSources.js';
@@ -320,6 +321,8 @@ const platformPublishers: Record<
   twitter: publishToTwitter,
   youtube: publishToYouTube,
   x: publishToTwitter,
+  whatsapp: publishToWhatsApp,
+  whatsapp_status: publishToWhatsAppStatus,
 };
 
 export class AutoPostService {
@@ -1596,6 +1599,7 @@ export class AutoPostService {
     if (platform === 'threads') return Boolean(credentials.threads);
     if (platform === 'linkedin') return Boolean(credentials.linkedin);
     if (platform === 'twitter' || platform === 'x') return Boolean(credentials.twitter);
+    if (platform === 'whatsapp' || platform === 'whatsapp_status') return Boolean(credentials.whatsapp);
     if (platform === 'tiktok') return Boolean(credentials.tiktok);
     if (platform === 'youtube') return Boolean(credentials.youtube);
     return true;
@@ -5428,6 +5432,13 @@ export class AutoPostService {
         clientSecret: config.tiktok.clientSecret || undefined,
       };
     }
+    if (allowDefaults && config.whatsapp.token && config.whatsapp.phoneNumberId) {
+      defaults.whatsapp = {
+        accessToken: config.whatsapp.token,
+        phoneNumberId: config.whatsapp.phoneNumberId,
+        recipientPhoneNumbers: process.env.WHATSAPP_RECIPIENT_PHONE_NUMBERS ?? '',
+      };
+    }
     return defaults;
   }
 
@@ -5448,6 +5459,8 @@ export class AutoPostService {
       twitter: content.caption_x,
       x: content.caption_x,
       youtube: content.caption_linkedin,
+      whatsapp: content.caption_linkedin,
+      whatsapp_status: content.caption_instagram,
     };
     const chosen = (captions[platform] ?? content.caption_linkedin ?? content.caption_instagram ?? '').trim();
     const fallbackCaption = fallbackCopy.caption.trim();
