@@ -18,7 +18,7 @@ const getScope = (req: AuthedRequest) => {
   return resolveBillingScope(user.uid, req.header('x-org-id'), user.email);
 };
 
-router.get('/billing/plans', requireFirebase, (_req, res) => {
+router.get('/billing/plans', (_req, res) => {
   res.json({ plans: listBillingPlans() });
 });
 
@@ -61,4 +61,3 @@ router.post('/billing/usage/consume', requireFirebase, async (req, res, next) =>
 });
 
 export default router;
-
