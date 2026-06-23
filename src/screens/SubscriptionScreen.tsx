@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DMButton } from '@components/DMButton';
 import { DMCard } from '@components/DMCard';
+import { DMTextInput } from '@components/DMTextInput';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
@@ -83,6 +84,8 @@ export const SubscriptionScreen: React.FC = () => {
   const [overview, setOverview] = useState<BillingOverview | null>(null);
   const [allocations, setAllocations] = useState<FinancialAllocation[]>([]);
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'flutterwave_mobile_money'>('stripe');
+  const [mobileMoneyPhone, setMobileMoneyPhone] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -116,13 +119,25 @@ export const SubscriptionScreen: React.FC = () => {
       Alert.alert(t('Enterprise'), t('Contact Dott Media for a custom contract.'));
       return;
     }
-    if (!plan.stripeConfigured) {
+    const usingMobileMoney = paymentMethod === 'flutterwave_mobile_money';
+    if (usingMobileMoney && !plan.mobileMoneyConfigured) {
+      Alert.alert(t('Checkout not configured'), t('Mobile money is not configured yet.'));
+      return;
+    }
+    if (!usingMobileMoney && !plan.stripeConfigured) {
       Alert.alert(t('Checkout not configured'), t('Stripe price IDs must be added before this plan can accept payment.'));
+      return;
+    }
+    if (usingMobileMoney && !mobileMoneyPhone.trim()) {
+      Alert.alert(t('Phone number required'), t('Enter the mobile money phone number before checkout.'));
       return;
     }
     setLoadingPlan(plan.id);
     try {
-      const session = await startPlanCheckout(plan.id);
+      const session = await startPlanCheckout(plan.id, {
+        provider: paymentMethod,
+        phoneNumber: usingMobileMoney ? mobileMoneyPhone.trim() : undefined,
+      });
       if (!session.checkoutUrl) throw new Error('Checkout URL was not returned');
       if (typeof window !== 'undefined') {
         window.location.assign(session.checkoutUrl);
@@ -157,6 +172,37 @@ export const SubscriptionScreen: React.FC = () => {
         </Text>
       </LinearGradient>
 
+      <DMCard title={t('Payment method')} subtitle={t('Choose how you want to pay for your package.')}>
+        <View style={styles.paymentMethodRow}>
+          <TouchableOpacity
+            style={[styles.paymentMethodOption, paymentMethod === 'stripe' && styles.paymentMethodOptionActive]}
+            onPress={() => setPaymentMethod('stripe')}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.paymentMethodTitle}>{t('Card')}</Text>
+            <Text style={styles.paymentMethodSubtitle}>{t('Stripe checkout')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.paymentMethodOption, paymentMethod === 'flutterwave_mobile_money' && styles.paymentMethodOptionActive]}
+            onPress={() => setPaymentMethod('flutterwave_mobile_money')}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.paymentMethodTitle}>{t('Mobile money')}</Text>
+            <Text style={styles.paymentMethodSubtitle}>{t('MTN or Airtel')}</Text>
+          </TouchableOpacity>
+        </View>
+        {paymentMethod === 'flutterwave_mobile_money' ? (
+          <DMTextInput
+            label={t('Mobile money number')}
+            value={mobileMoneyPhone}
+            onChangeText={setMobileMoneyPhone}
+            keyboardType="phone-pad"
+            placeholder="+256..."
+            helperText={t('Flutterwave will send the mobile money approval prompt.')}
+          />
+        ) : null}
+      </DMCard>
+
       {overview ? (
         <DMCard title={t('Current usage')} subtitle={t('Monthly limits reset automatically.')}>
           <Text style={styles.currentPlan}>{t('Current plan')}: {overview.plan.name}</Text>
@@ -188,14 +234,21 @@ export const SubscriptionScreen: React.FC = () => {
             </View>
             {usageKeys.map(([key, label]) => renderLimit(plan, key, label))}
             <DMButton
-              title={plan.id === currentPlanId ? t('Current plan') : t(plan.priceMonthlyCents === 0 ? 'Start free' : 'Select plan')}
+              title={
+                plan.id === currentPlanId
+                  ? t('Current plan')
+                  : t(plan.priceMonthlyCents === 0 ? 'Start free' : paymentMethod === 'flutterwave_mobile_money' ? 'Pay mobile money' : 'Pay by card')
+              }
               onPress={() => handleCheckout(plan)}
               loading={loadingPlan === plan.id}
               disabled={loadingPlan !== null || plan.id === currentPlanId}
               style={styles.planButton}
             />
-            {!plan.stripeConfigured && plan.priceMonthlyCents ? (
+            {paymentMethod === 'stripe' && !plan.stripeConfigured && plan.priceMonthlyCents ? (
               <Text style={styles.setupNote}>{t('Stripe price not configured yet.')}</Text>
+            ) : null}
+            {paymentMethod === 'flutterwave_mobile_money' && !plan.mobileMoneyConfigured && plan.priceMonthlyCents ? (
+              <Text style={styles.setupNote}>{t('Mobile money not configured yet.')}</Text>
             ) : null}
           </DMCard>
         ))}
@@ -280,6 +333,32 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: '800',
     marginBottom: 12
+  },
+  paymentMethodRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14
+  },
+  paymentMethodOption: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: colors.cardOverlay
+  },
+  paymentMethodOptionActive: {
+    borderColor: colors.accent
+  },
+  paymentMethodTitle: {
+    color: colors.text,
+    fontWeight: '800',
+    marginBottom: 3
+  },
+  paymentMethodSubtitle: {
+    color: colors.subtext,
+    fontSize: 12
   },
   usageRow: {
     flexDirection: 'row',

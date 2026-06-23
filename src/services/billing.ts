@@ -10,6 +10,11 @@ export type BillingPlan = {
   priceMonthlyCents: number | null;
   limits: Record<string, number | boolean | null>;
   stripeConfigured: boolean;
+  mobileMoneyConfigured?: boolean;
+  paymentProviders?: {
+    stripe?: boolean;
+    mobileMoney?: boolean;
+  };
 };
 
 export type BillingOverview = {
@@ -57,11 +62,16 @@ export const fetchBillingOverview = async (): Promise<BillingOverview> => {
   return billingFetch('/api/billing/overview');
 };
 
-export const startPlanCheckout = async (plan: string): Promise<{ checkoutUrl?: string }> => {
+export const startPlanCheckout = async (
+  plan: string,
+  options: { provider?: 'stripe' | 'flutterwave_mobile_money'; phoneNumber?: string } = {},
+): Promise<{ checkoutUrl?: string; provider?: string }> => {
   return billingFetch('/api/billing/checkout', {
     method: 'POST',
     body: JSON.stringify({
       plan,
+      provider: options.provider ?? 'stripe',
+      phoneNumber: options.phoneNumber,
       successUrl: typeof window !== 'undefined' ? `${window.location.origin}/subscription?checkout=success` : undefined,
       cancelUrl: typeof window !== 'undefined' ? `${window.location.origin}/subscription?checkout=cancel` : undefined,
     }),

@@ -1,6 +1,8 @@
 import admin from 'firebase-admin';
 import Stripe from 'stripe';
 import createHttpError from 'http-errors';
+import axios from 'axios';
+import { randomBytes } from 'crypto';
 import { firestore } from '../../db/firestore';
 import { getPlan, getStripePriceId, normalizePlanId, planCatalog, UsageResource } from './planCatalog';
 
@@ -10,8 +12,11 @@ const usersCollection = firestore.collection('users');
 const usageMonthlyCollection = firestore.collection('usageMonthly');
 const creditBalancesCollection = firestore.collection('creditBalances');
 const financialLedgerCollection = firestore.collection('financialLedger');
+const paymentTransactionsCollection = firestore.collection('paymentTransactions');
 
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+
+type CheckoutProvider = 'stripe' | 'flutterwave_mobile_money';
 
 export type BillingScope = {
   userId: string;
@@ -32,10 +37,25 @@ const monthlyUsageId = (scope: BillingScope, month = currentMonthKey()) => `${sc
 export async function getPlanForScope(scope: BillingScope) {
   const orgSnap = await orgsCollection.doc(scope.orgId).get().catch(() => null);
   const orgPlan = orgSnap?.exists ? orgSnap.data()?.plan : null;
-  if (orgPlan) return getPlan(orgPlan);
+  const orgData = orgSnap?.exists ? orgSnap.data() : null;
+  if (orgPlan) {
+    if (isBillingPlanUsable(orgData)) return getPlan(orgPlan);
+    return getPlan('free');
+  }
   const profileSnap = await profilesCollection.doc(scope.userId).get().catch(() => null);
-  return getPlan(profileSnap?.exists ? profileSnap.data()?.plan : 'free');
+  const profileData = profileSnap?.exists ? profileSnap.data() : null;
+  if (!isBillingPlanUsable(profileData)) return getPlan('free');
+  return getPlan(profileData?.plan ?? 'free');
 }
+
+const isBillingPlanUsable = (data: FirebaseFirestore.DocumentData | null | undefined) => {
+  if (!data) return true;
+  const status = String(data.subscriptionStatus ?? '').toLowerCase();
+  if (status === 'canceled' || status === 'past_due' || status === 'unpaid') return false;
+  const endsAt = data.billingCycleEndsAt?.toDate?.() ?? (data.billingCycleEndsAt ? new Date(data.billingCycleEndsAt) : null);
+  if (endsAt && Number.isFinite(endsAt.getTime()) && endsAt.getTime() < Date.now()) return false;
+  return true;
+};
 
 export async function getBillingOverview(scope: BillingScope) {
   const [plan, usageSnap, creditsSnap] = await Promise.all([
@@ -53,9 +73,15 @@ export async function getBillingOverview(scope: BillingScope) {
 }
 
 export function listBillingPlans() {
+  const flutterwaveConfigured = Boolean(process.env.FLUTTERWAVE_SECRET_KEY);
   return planCatalog.map(plan => ({
     ...plan,
     stripeConfigured: Boolean(getStripePriceId(plan)) || plan.id === 'free' || plan.id === 'enterprise',
+    mobileMoneyConfigured: flutterwaveConfigured && plan.id !== 'free' && plan.id !== 'enterprise',
+    paymentProviders: {
+      stripe: Boolean(getStripePriceId(plan)) || plan.id === 'free' || plan.id === 'enterprise',
+      mobileMoney: flutterwaveConfigured && plan.id !== 'free' && plan.id !== 'enterprise',
+    },
   }));
 }
 
@@ -89,10 +115,12 @@ export async function recordFinancialAllocation(input: {
   plan: string;
   amountPaidCents: number;
   currency?: string | null;
+  provider?: 'stripe' | 'flutterwave';
   stripeInvoiceId?: string | null;
   stripeSubscriptionId?: string | null;
   stripeCustomerId?: string | null;
   stripeChargeId?: string | null;
+  providerPayment?: Record<string, unknown> | null;
 }) {
   const allocation = calculateAllocation(input.plan, input.amountPaidCents);
   const docId = input.stripeInvoiceId || `${input.scope.orgId}_${Date.now()}`;
@@ -118,13 +146,126 @@ export async function recordFinancialAllocation(input: {
       customerId: input.stripeCustomerId ?? null,
       chargeId: input.stripeChargeId ?? null,
     },
+    paymentProvider: input.provider ?? 'stripe',
+    providerPayment: input.providerPayment ?? null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   };
   await financialLedgerCollection.doc(docId).set(payload, { merge: true });
   return payload;
 }
 
-export async function createCheckoutSession(scope: BillingScope, requestedPlan: string, successUrl: string, cancelUrl: string) {
+const getFlutterwaveSecretKey = () => process.env.FLUTTERWAVE_SECRET_KEY?.trim() || '';
+
+const getFlutterwaveCurrency = () => (process.env.FLUTTERWAVE_CURRENCY?.trim() || 'UGX').toUpperCase();
+
+const resolveFlutterwaveAmount = (priceMonthlyCents: number) => {
+  const currency = getFlutterwaveCurrency();
+  if (currency === 'USD') {
+    return { currency, amount: Number((priceMonthlyCents / 100).toFixed(2)) };
+  }
+  if (currency === 'UGX') {
+    const rate = Number(process.env.FLUTTERWAVE_USD_TO_UGX_RATE ?? 3800);
+    if (!Number.isFinite(rate) || rate <= 0) {
+      throw createHttpError(500, 'Invalid FLUTTERWAVE_USD_TO_UGX_RATE');
+    }
+    return { currency, amount: Math.ceil((priceMonthlyCents / 100) * rate) };
+  }
+  return { currency, amount: Number((priceMonthlyCents / 100).toFixed(2)) };
+};
+
+const buildFlutterwaveTxRef = (planId: string, orgId: string) =>
+  `dott_${planId}_${orgId}_${Date.now()}_${randomBytes(4).toString('hex')}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+async function createFlutterwaveCheckoutSession(
+  scope: BillingScope,
+  requestedPlan: string,
+  successUrl: string,
+  phoneNumber?: string | null,
+) {
+  const secretKey = getFlutterwaveSecretKey();
+  if (!secretKey) throw createHttpError(500, 'Flutterwave is not configured');
+  const plan = getPlan(requestedPlan);
+  if (plan.id === 'free') throw createHttpError(400, 'Free plan does not need checkout');
+  if (plan.id === 'enterprise' || plan.priceMonthlyCents === null) {
+    throw createHttpError(400, 'Enterprise requires a custom contract');
+  }
+
+  const { currency, amount } = resolveFlutterwaveAmount(plan.priceMonthlyCents);
+  const txRef = buildFlutterwaveTxRef(plan.id, scope.orgId);
+  const email = scope.email || `${scope.userId}@dottmedia.local`;
+  const payload = {
+    tx_ref: txRef,
+    amount,
+    currency,
+    redirect_url: successUrl,
+    payment_options: currency === 'UGX' ? 'mobilemoneyuganda' : 'card,mobilemoneyuganda,banktransfer',
+    customer: {
+      email,
+      phonenumber: phoneNumber || undefined,
+      name: email.split('@')[0],
+    },
+    customizations: {
+      title: 'Dott Media',
+      description: `${plan.name} monthly package`,
+      logo: process.env.DOTT_PAYMENT_LOGO_URL || undefined,
+    },
+    meta: {
+      userId: scope.userId,
+      orgId: scope.orgId,
+      plan: plan.id,
+      provider: 'flutterwave_mobile_money',
+      expectedAmount: amount,
+      expectedCurrency: currency,
+    },
+  };
+
+  await paymentTransactionsCollection.doc(txRef).set({
+    txRef,
+    provider: 'flutterwave',
+    providerMethod: 'mobile_money',
+    status: 'pending',
+    orgId: scope.orgId,
+    userId: scope.userId,
+    email,
+    planId: plan.id,
+    planName: plan.name,
+    expectedAmount: amount,
+    expectedCurrency: currency,
+    expectedUsdCents: plan.priceMonthlyCents,
+    phoneNumber: phoneNumber || null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  const response = await axios.post('https://api.flutterwave.com/v3/payments', payload, {
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      'Content-Type': 'application/json',
+    },
+    timeout: 30000,
+  });
+  const checkoutUrl = response.data?.data?.link;
+  if (!checkoutUrl) {
+    throw createHttpError(502, response.data?.message || 'Flutterwave did not return a checkout link');
+  }
+  await paymentTransactionsCollection.doc(txRef).set({
+    checkoutUrl,
+    providerResponse: response.data,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+  return { checkoutUrl, sessionId: txRef, provider: 'flutterwave_mobile_money' };
+}
+
+export async function createCheckoutSession(
+  scope: BillingScope,
+  requestedPlan: string,
+  successUrl: string,
+  cancelUrl: string,
+  options: { provider?: CheckoutProvider; phoneNumber?: string | null } = {},
+) {
+  if (options.provider === 'flutterwave_mobile_money') {
+    return createFlutterwaveCheckoutSession(scope, requestedPlan, successUrl, options.phoneNumber);
+  }
   if (!stripe) throw createHttpError(500, 'Stripe is not configured');
   const plan = getPlan(requestedPlan);
   if (plan.id === 'free') throw createHttpError(400, 'Free plan does not need checkout');
@@ -150,10 +291,16 @@ export async function createCheckoutSession(scope: BillingScope, requestedPlan: 
       },
     },
   });
-  return { checkoutUrl: session.url, sessionId: session.id };
+  return { checkoutUrl: session.url, sessionId: session.id, provider: 'stripe' };
 }
 
-export async function applyPlan(scope: BillingScope, planValue: string, status: 'active' | 'past_due' | 'canceled' = 'active', stripeMeta?: Record<string, unknown>) {
+export async function applyPlan(
+  scope: BillingScope,
+  planValue: string,
+  status: 'active' | 'past_due' | 'canceled' = 'active',
+  stripeMeta?: Record<string, unknown>,
+  extraMeta?: Record<string, unknown>,
+) {
   const plan = getPlan(planValue);
   const payload = {
     plan: plan.orgPlan,
@@ -161,6 +308,7 @@ export async function applyPlan(scope: BillingScope, planValue: string, status: 
     subscriptionStatus: status,
     billingUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
     ...(stripeMeta ? { stripe: stripeMeta } : {}),
+    ...(extraMeta ?? {}),
   };
   await Promise.all([
     orgsCollection.doc(scope.orgId).set(payload, { merge: true }),
@@ -255,6 +403,109 @@ export async function applyStripeInvoicePaid(invoice: Stripe.Invoice) {
         ? (invoice as any).charge
         : (invoice as any).charge?.id,
   });
+}
+
+async function verifyFlutterwaveTransaction(transactionId: string | number) {
+  const secretKey = getFlutterwaveSecretKey();
+  if (!secretKey) throw createHttpError(500, 'Flutterwave is not configured');
+  const response = await axios.get(`https://api.flutterwave.com/v3/transactions/${transactionId}/verify`, {
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      'Content-Type': 'application/json',
+    },
+    timeout: 30000,
+  });
+  return response.data?.data ?? null;
+}
+
+export async function applyFlutterwavePayment(input: { txRef?: string | null; transactionId?: string | number | null }) {
+  const txRef = input.txRef?.trim();
+  const transactionId = input.transactionId;
+  if (!txRef && !transactionId) return null;
+
+  let paymentSnap = txRef ? await paymentTransactionsCollection.doc(txRef).get() : null;
+  let paymentData = paymentSnap?.exists ? paymentSnap.data() : null;
+  if (!paymentData && txRef) {
+    return null;
+  }
+  if (!paymentData && transactionId) {
+    const snap = await paymentTransactionsCollection.where('providerTransactionId', '==', String(transactionId)).limit(1).get();
+    paymentSnap = snap.docs[0] ?? null;
+    paymentData = paymentSnap?.exists ? paymentSnap.data() : null;
+  }
+  if (!paymentSnap?.ref || !paymentData) return null;
+  if (paymentData.status === 'successful' || paymentData.status === 'completed') {
+    return { ok: true, status: paymentData.status, duplicate: true };
+  }
+
+  if (!transactionId) {
+    await paymentSnap.ref.set({ status: 'pending_verification', updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    return { ok: false, status: 'pending_verification' };
+  }
+
+  const verified = await verifyFlutterwaveTransaction(transactionId);
+  const verifiedTxRef = String(verified?.tx_ref ?? '');
+  const expectedAmount = Number(paymentData.expectedAmount ?? 0);
+  const expectedCurrency = String(paymentData.expectedCurrency ?? '').toUpperCase();
+  const amount = Number(verified?.amount ?? verified?.charged_amount ?? 0);
+  const currency = String(verified?.currency ?? '').toUpperCase();
+  const status = String(verified?.status ?? '').toLowerCase();
+
+  if (verifiedTxRef !== paymentData.txRef || status !== 'successful' || currency !== expectedCurrency || amount < expectedAmount) {
+    await paymentSnap.ref.set({
+      status: status || 'failed',
+      providerTransactionId: String(transactionId),
+      verified,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return { ok: false, status: status || 'failed' };
+  }
+
+  const scope = resolveBillingScope(String(paymentData.userId), String(paymentData.orgId), String(paymentData.email ?? ''));
+  const billingCycleEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  await applyPlan(
+    scope,
+    String(paymentData.planId),
+    'active',
+    undefined,
+    {
+      billingProvider: 'flutterwave',
+      billingCycleEndsAt: admin.firestore.Timestamp.fromDate(billingCycleEndsAt),
+      flutterwave: {
+        txRef: paymentData.txRef,
+        transactionId: String(transactionId),
+        currency,
+        amount,
+        paymentType: verified?.payment_type ?? null,
+      },
+    },
+  );
+  await recordFinancialAllocation({
+    scope,
+    plan: String(paymentData.planId),
+    amountPaidCents: Number(paymentData.expectedUsdCents ?? getPlan(paymentData.planId).priceMonthlyCents ?? 0),
+    currency: 'usd',
+    provider: 'flutterwave',
+    providerPayment: {
+      txRef: paymentData.txRef,
+      transactionId: String(transactionId),
+      currency,
+      amount,
+      amountSettled: verified?.amount_settled ?? null,
+      chargedAmount: verified?.charged_amount ?? null,
+      appFee: verified?.app_fee ?? null,
+      paymentType: verified?.payment_type ?? null,
+    },
+  });
+
+  await paymentSnap.ref.set({
+    status: 'successful',
+    providerTransactionId: String(transactionId),
+    verified,
+    billingCycleEndsAt,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+  return { ok: true, status: 'successful' };
 }
 
 export async function listFinancialAllocations(scope: BillingScope, limit = 12) {

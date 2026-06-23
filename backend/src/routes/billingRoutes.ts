@@ -8,6 +8,7 @@ import {
   resolveBillingScope,
   consumeUsage,
   listFinancialAllocations,
+  applyFlutterwavePayment,
 } from '../services/billing/billingService';
 import { UsageResource } from '../services/billing/planCatalog';
 
@@ -34,7 +35,7 @@ router.get('/billing/overview', requireFirebase, async (req, res, next) => {
 
 router.post('/billing/checkout', requireFirebase, async (req, res, next) => {
   try {
-    const { plan, successUrl, cancelUrl } = req.body ?? {};
+    const { plan, successUrl, cancelUrl, provider, phoneNumber } = req.body ?? {};
     if (!plan) throw createHttpError(400, 'Missing plan');
     const fallbackBase = process.env.FRONTEND_URL || process.env.PUBLIC_APP_URL || 'https://dottmediaapk.web.app';
     const session = await createCheckoutSession(
@@ -42,6 +43,7 @@ router.post('/billing/checkout', requireFirebase, async (req, res, next) => {
       plan,
       successUrl || `${fallbackBase}/subscription?checkout=success`,
       cancelUrl || `${fallbackBase}/subscription?checkout=cancel`,
+      { provider, phoneNumber },
     );
     res.json(session);
   } catch (error) {
@@ -68,6 +70,16 @@ router.get('/billing/financial-ledger', requireFirebase, async (req, res, next) 
       Number(req.query.limit ?? 12),
     );
     res.json({ allocations });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/billing/payments/flutterwave/verify', requireFirebase, async (req, res, next) => {
+  try {
+    const { txRef, transactionId } = req.body ?? {};
+    const result = await applyFlutterwavePayment({ txRef, transactionId });
+    res.json({ result });
   } catch (error) {
     next(error);
   }

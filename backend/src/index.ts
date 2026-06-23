@@ -45,6 +45,7 @@ import redirectRoutes from './routes/redirectRoutes';
 import mediaRoutes from './routes/mediaRoutes';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher';
 import stripeRoutes from './routes/stripeRoutes';
+import flutterwaveRoutes from './routes/flutterwaveRoutes';
 import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
 import { autoPostService } from './services/autoPostService';
 import { autopostComplianceService } from './services/autopostComplianceService';
@@ -112,6 +113,7 @@ app.use(
   }),
 );
 app.use(express.json({ limit: '1mb' }));
+app.use('/flutterwave/webhook', flutterwaveRoutes);
 app.use(
   morgan(':remote-addr :method :url :status :res[content-length] - :response-time ms :req[x-request-id]'),
 );
