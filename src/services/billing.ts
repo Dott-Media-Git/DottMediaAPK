@@ -19,6 +19,18 @@ export type BillingOverview = {
   credits: Record<string, number>;
 };
 
+export type FinancialAllocation = {
+  id: string;
+  planName: string;
+  currency: string;
+  grossRevenueCents: number;
+  directCostReserveCents: number;
+  grossProfitCents: number;
+  operatingReserveCents: number;
+  netProfitCents: number;
+  providerCostReserveCents?: Record<string, number>;
+};
+
 async function billingFetch(path: string, options: RequestInit = {}) {
   if (!API_BASE) throw new Error('Missing API URL');
   const token = await getIdToken();
@@ -56,3 +68,7 @@ export const startPlanCheckout = async (plan: string): Promise<{ checkoutUrl?: s
   });
 };
 
+export const fetchFinancialLedger = async (): Promise<FinancialAllocation[]> => {
+  const payload = await billingFetch('/api/billing/financial-ledger');
+  return payload.allocations ?? [];
+};

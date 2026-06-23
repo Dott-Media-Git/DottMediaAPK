@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import Stripe from 'stripe';
 import createHttpError from 'http-errors';
-import { applyStripeCheckoutCompleted, applyStripeSubscription } from '../services/billing/billingService';
+import { applyStripeCheckoutCompleted, applyStripeInvoicePaid, applyStripeSubscription } from '../services/billing/billingService';
 
 const router = Router();
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
@@ -16,11 +16,13 @@ router.post('/', async (req, res, next) => {
     if (event.type === 'checkout.session.completed') {
       await applyStripeCheckoutCompleted(event.data.object as Stripe.Checkout.Session);
     }
+    if (event.type === 'invoice.payment_succeeded') {
+      await applyStripeInvoicePaid(event.data.object as Stripe.Invoice);
+    }
     if (
       event.type === 'customer.subscription.updated' ||
       event.type === 'customer.subscription.deleted' ||
-      event.type === 'invoice.payment_failed' ||
-      event.type === 'invoice.payment_succeeded'
+      event.type === 'invoice.payment_failed'
     ) {
       const payload = event.data.object as any;
       const subscriptionId =

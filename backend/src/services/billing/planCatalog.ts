@@ -20,6 +20,11 @@ export type PlanDefinition = {
   orgPlan: OrgPlan;
   name: string;
   priceMonthlyCents: number | null;
+  estimatedCostsCents?: {
+    openAi: number;
+    backend: number;
+    otherOps: number;
+  };
   stripePriceEnv?: string;
   description: string;
   limits: PlanLimits;
@@ -31,6 +36,7 @@ export const planCatalog: PlanDefinition[] = [
     orgPlan: 'Free',
     name: 'Free',
     priceMonthlyCents: 0,
+    estimatedCostsCents: { openAi: 8, backend: 5, otherOps: 2 },
     description: 'Strict trial plan with limited AI and no video generation.',
     limits: {
       aiReplies: 10,
@@ -48,6 +54,7 @@ export const planCatalog: PlanDefinition[] = [
     orgPlan: 'Starter',
     name: 'Starter',
     priceMonthlyCents: 999,
+    estimatedCostsCents: { openAi: 385, backend: 60, otherOps: 30 },
     stripePriceEnv: 'STRIPE_PRICE_STARTER',
     description: 'Entry plan for creators and small teams.',
     limits: {
@@ -66,6 +73,7 @@ export const planCatalog: PlanDefinition[] = [
     orgPlan: 'Creator',
     name: 'Creator',
     priceMonthlyCents: 4900,
+    estimatedCostsCents: { openAi: 1825, backend: 145, otherOps: 80 },
     stripePriceEnv: 'STRIPE_PRICE_CREATOR',
     description: 'Main creator plan with meaningful AI and media capacity.',
     limits: {
@@ -84,6 +92,7 @@ export const planCatalog: PlanDefinition[] = [
     orgPlan: 'Business',
     name: 'Business',
     priceMonthlyCents: 9900,
+    estimatedCostsCents: { openAi: 4550, backend: 275, otherOps: 175 },
     stripePriceEnv: 'STRIPE_PRICE_BUSINESS',
     description: 'For active brands needing higher posting and content capacity.',
     limits: {
@@ -102,6 +111,7 @@ export const planCatalog: PlanDefinition[] = [
     orgPlan: 'Agency',
     name: 'Agency',
     priceMonthlyCents: 39900,
+    estimatedCostsCents: { openAi: 19000, backend: 900, otherOps: 700 },
     stripePriceEnv: 'STRIPE_PRICE_AGENCY',
     description: 'High-volume plan for agencies managing multiple brands.',
     limits: {
@@ -153,4 +163,3 @@ export const getStripePriceId = (plan: PlanDefinition) => {
   if (!plan.stripePriceEnv) return null;
   return process.env[plan.stripePriceEnv]?.trim() || null;
 };
-

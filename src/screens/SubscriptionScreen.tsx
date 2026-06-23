@@ -8,8 +8,10 @@ import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
 import {
   BillingOverview,
+  FinancialAllocation,
   BillingPlan,
   fetchBillingOverview,
+  fetchFinancialLedger,
   fetchBillingPlans,
   startPlanCheckout,
 } from '@services/billing';
@@ -27,6 +29,9 @@ const usageKeys = [
   ['proVideos', 'Pro videos'],
   ['scheduledPosts', 'Scheduled posts'],
 ] as const;
+
+const formatCents = (cents = 0, currency = 'usd') =>
+  `${currency.toUpperCase()} ${(cents / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
 const fallbackPlans: BillingPlan[] = [
   {
@@ -76,15 +81,17 @@ export const SubscriptionScreen: React.FC = () => {
   const { t } = useI18n();
   const [plans, setPlans] = useState<BillingPlan[]>(fallbackPlans);
   const [overview, setOverview] = useState<BillingOverview | null>(null);
+  const [allocations, setAllocations] = useState<FinancialAllocation[]>([]);
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    void Promise.allSettled([fetchBillingPlans(), fetchBillingOverview()]).then(results => {
+    void Promise.allSettled([fetchBillingPlans(), fetchBillingOverview(), fetchFinancialLedger()]).then(results => {
       if (!active) return;
-      const [plansResult, overviewResult] = results;
+      const [plansResult, overviewResult, ledgerResult] = results;
       if (plansResult.status === 'fulfilled' && plansResult.value.length) setPlans(plansResult.value);
       if (overviewResult.status === 'fulfilled') setOverview(overviewResult.value);
+      if (ledgerResult.status === 'fulfilled') setAllocations(ledgerResult.value);
     });
     return () => {
       active = false;
@@ -208,6 +215,32 @@ export const SubscriptionScreen: React.FC = () => {
           <Text style={styles.creditPrice}>$5</Text>
         </View>
       </DMCard>
+
+      {allocations.length ? (
+        <DMCard title={t('Revenue allocation')} subtitle={t('Estimated provider cost reserves and remaining profit from paid invoices.')}>
+          {allocations.slice(0, 5).map(allocation => (
+            <View key={allocation.id} style={styles.allocationBlock}>
+              <Text style={styles.allocationTitle}>{allocation.planName}</Text>
+              <View style={styles.usageRow}>
+                <Text style={styles.usageLabel}>{t('Revenue')}</Text>
+                <Text style={styles.usageValue}>{formatCents(allocation.grossRevenueCents, allocation.currency)}</Text>
+              </View>
+              <View style={styles.usageRow}>
+                <Text style={styles.usageLabel}>{t('Provider reserve')}</Text>
+                <Text style={styles.usageValue}>{formatCents(allocation.directCostReserveCents, allocation.currency)}</Text>
+              </View>
+              <View style={styles.usageRow}>
+                <Text style={styles.usageLabel}>{t('Operations reserve')}</Text>
+                <Text style={styles.usageValue}>{formatCents(allocation.operatingReserveCents, allocation.currency)}</Text>
+              </View>
+              <View style={styles.usageRow}>
+                <Text style={styles.usageLabel}>{t('Estimated net profit')}</Text>
+                <Text style={styles.usageValue}>{formatCents(allocation.netProfitCents, allocation.currency)}</Text>
+              </View>
+            </View>
+          ))}
+        </DMCard>
+      ) : null}
     </ScrollView>
   );
 };
@@ -323,6 +356,15 @@ const styles = StyleSheet.create({
   creditPrice: {
     color: colors.accent,
     fontWeight: '900'
+  },
+  allocationBlock: {
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border
+  },
+  allocationTitle: {
+    color: colors.text,
+    fontWeight: '800',
+    marginBottom: 8
   }
 });
-

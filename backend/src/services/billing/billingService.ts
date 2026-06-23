@@ -9,6 +9,7 @@ const profilesCollection = firestore.collection('profiles');
 const usersCollection = firestore.collection('users');
 const usageMonthlyCollection = firestore.collection('usageMonthly');
 const creditBalancesCollection = firestore.collection('creditBalances');
+const financialLedgerCollection = firestore.collection('financialLedger');
 
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
@@ -56,6 +57,71 @@ export function listBillingPlans() {
     ...plan,
     stripeConfigured: Boolean(getStripePriceId(plan)) || plan.id === 'free' || plan.id === 'enterprise',
   }));
+}
+
+const calculateAllocation = (planValue: string, grossRevenueCents: number) => {
+  const plan = getPlan(planValue);
+  const baseRevenue = plan.priceMonthlyCents && plan.priceMonthlyCents > 0 ? plan.priceMonthlyCents : grossRevenueCents;
+  const scale = baseRevenue > 0 ? grossRevenueCents / baseRevenue : 1;
+  const estimated = plan.estimatedCostsCents ?? { openAi: 0, backend: 0, otherOps: 0 };
+  const openAiCents = Math.round(estimated.openAi * scale);
+  const backendCents = Math.round(estimated.backend * scale);
+  const otherOpsCents = Math.round(estimated.otherOps * scale);
+  const directCostCents = openAiCents + backendCents + otherOpsCents;
+  const operatingReserveCents = Math.max(Math.round(grossRevenueCents * 0.15), 0);
+  return {
+    plan,
+    grossRevenueCents,
+    providerCostReserveCents: {
+      openAi: openAiCents,
+      backendInfrastructure: backendCents,
+      operationsAndSupport: otherOpsCents,
+    },
+    directCostReserveCents: directCostCents,
+    grossProfitCents: grossRevenueCents - directCostCents,
+    operatingReserveCents,
+    netProfitCents: grossRevenueCents - directCostCents - operatingReserveCents,
+  };
+};
+
+export async function recordFinancialAllocation(input: {
+  scope: BillingScope;
+  plan: string;
+  amountPaidCents: number;
+  currency?: string | null;
+  stripeInvoiceId?: string | null;
+  stripeSubscriptionId?: string | null;
+  stripeCustomerId?: string | null;
+  stripeChargeId?: string | null;
+}) {
+  const allocation = calculateAllocation(input.plan, input.amountPaidCents);
+  const docId = input.stripeInvoiceId || `${input.scope.orgId}_${Date.now()}`;
+  const payload = {
+    orgId: input.scope.orgId,
+    userId: input.scope.userId,
+    planId: allocation.plan.id,
+    planName: allocation.plan.name,
+    currency: (input.currency ?? 'usd').toLowerCase(),
+    grossRevenueCents: allocation.grossRevenueCents,
+    providerCostReserveCents: allocation.providerCostReserveCents,
+    directCostReserveCents: allocation.directCostReserveCents,
+    grossProfitCents: allocation.grossProfitCents,
+    operatingReserveCents: allocation.operatingReserveCents,
+    netProfitCents: allocation.netProfitCents,
+    providerPaymentMode: 'external_provider_billing',
+    providerPaymentNote:
+      'OpenAI, hosting, database, CDN, observability, and queue providers charge their own billing accounts. This ledger records the reserve that should be kept from Stripe revenue for those invoices.',
+    profitDestination: process.env.STRIPE_PROFIT_PAYOUT_LABEL || 'Stripe default payout bank account',
+    stripe: {
+      invoiceId: input.stripeInvoiceId ?? null,
+      subscriptionId: input.stripeSubscriptionId ?? null,
+      customerId: input.stripeCustomerId ?? null,
+      chargeId: input.stripeChargeId ?? null,
+    },
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  await financialLedgerCollection.doc(docId).set(payload, { merge: true });
+  return payload;
 }
 
 export async function createCheckoutSession(scope: BillingScope, requestedPlan: string, successUrl: string, cancelUrl: string) {
@@ -154,3 +220,37 @@ export async function applyStripeSubscription(subscription: Stripe.Subscription)
   });
 }
 
+export async function applyStripeInvoicePaid(invoice: Stripe.Invoice) {
+  const subscriptionId =
+    typeof (invoice as any).subscription === 'string'
+      ? (invoice as any).subscription
+      : (invoice as any).subscription?.id;
+  if (!subscriptionId || !stripe) return null;
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  await applyStripeSubscription(subscription);
+  const metadata = subscription.metadata ?? {};
+  if (!metadata.userId || !metadata.plan) return null;
+  const scope = resolveBillingScope(metadata.userId, metadata.orgId, invoice.customer_email ?? undefined);
+  return recordFinancialAllocation({
+    scope,
+    plan: metadata.plan,
+    amountPaidCents: invoice.amount_paid ?? 0,
+    currency: invoice.currency,
+    stripeInvoiceId: invoice.id,
+    stripeSubscriptionId: subscription.id,
+    stripeCustomerId: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id,
+    stripeChargeId:
+      typeof (invoice as any).charge === 'string'
+        ? (invoice as any).charge
+        : (invoice as any).charge?.id,
+  });
+}
+
+export async function listFinancialAllocations(scope: BillingScope, limit = 12) {
+  const snap = await financialLedgerCollection
+    .where('orgId', '==', scope.orgId)
+    .orderBy('createdAt', 'desc')
+    .limit(Math.min(Math.max(limit, 1), 50))
+    .get();
+  return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}

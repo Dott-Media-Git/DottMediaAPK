@@ -7,6 +7,7 @@ import {
   listBillingPlans,
   resolveBillingScope,
   consumeUsage,
+  listFinancialAllocations,
 } from '../services/billing/billingService';
 import { UsageResource } from '../services/billing/planCatalog';
 
@@ -55,6 +56,18 @@ router.post('/billing/usage/consume', requireFirebase, async (req, res, next) =>
     if (!allowed.includes(resource)) throw createHttpError(400, 'Unsupported usage resource');
     const result = await consumeUsage(getScope(req as AuthedRequest), resource, Number(amount ?? 1));
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/billing/financial-ledger', requireFirebase, async (req, res, next) => {
+  try {
+    const allocations = await listFinancialAllocations(
+      getScope(req as AuthedRequest),
+      Number(req.query.limit ?? 12),
+    );
+    res.json({ allocations });
   } catch (error) {
     next(error);
   }
