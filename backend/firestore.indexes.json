@@ -76,22 +76,6 @@
       ]
     },
     {
-      "collectionGroup": "scheduledPosts",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "postedAt", "order": "ASCENDING" },
-        { "fieldPath": "__name__", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "scheduledPosts",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "createdAt", "order": "ASCENDING" },
-        { "fieldPath": "__name__", "order": "ASCENDING" }
-      ]
-    },
-    {
       "collectionGroup": "follow_ups",
       "queryScope": "COLLECTION",
       "fields": [
