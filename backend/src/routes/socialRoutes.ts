@@ -7,6 +7,7 @@ import admin from 'firebase-admin';
 import { z } from 'zod';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService';
+import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 import { socialPostingService } from '../packages/services/socialPostingService';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService';
 import { autoPostService } from '../services/autoPostService';
@@ -732,6 +733,11 @@ router.post('/posts/schedule', requireFirebase, async (req, res, next) => {
     if (!authUser || authUser.uid !== payload.userId) {
       return res.status(403).json({ message: 'Cannot schedule for another user' });
     }
+    await consumeUsage(
+      resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email),
+      'scheduledPosts',
+      Math.max(payload.platforms.length * payload.timesPerDay, 1),
+    );
     const result = await socialSchedulingService.schedulePosts(payload);
     res.json(result);
   } catch (error) {

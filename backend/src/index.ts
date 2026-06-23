@@ -34,6 +34,7 @@ import metaWebhookRoutes from './routes/metaWebhookRoutes';
 import metaIntegrationRoutes from './routes/metaIntegrationRoutes';
 import metaAdsRoutes from './routes/metaAdsRoutes';
 import authRoutes from './routes/authRoutes';
+import billingRoutes from './routes/billingRoutes';
 import youtubeIntegrationRoutes from './routes/youtubeIntegrationRoutes';
 import tiktokIntegrationRoutes from './routes/tiktokIntegrationRoutes';
 import linkedinIntegrationRoutes from './routes/linkedinIntegrationRoutes';
@@ -197,6 +198,7 @@ if (footballTrendsEnabled) {
 }
 app.use('/api', socialRoutes);
 app.use('/api', metaAdsRoutes);
+app.use('/api', billingRoutes);
 app.use('/', metaIntegrationRoutes);
 app.use('/api', authRoutes);
 app.use('/', youtubeIntegrationRoutes);

@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { contentGenerationService } from '../packages/services/contentGenerationService';
-import { requireFirebase } from '../middleware/firebaseAuth';
+import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
+import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 
 const router = Router();
 
@@ -16,7 +17,14 @@ const generateSchema = z.object({
 router.post('/content/generate', requireFirebase, async (req, res, next) => {
   try {
     const payload = generateSchema.parse(req.body);
-    const content = await contentGenerationService.generateContent(payload);
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const scope = resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email);
+    await consumeUsage(scope, 'images', payload.imageCount ?? 1);
+    if (payload.generateVideo) {
+      await consumeUsage(scope, 'basicVideos', 1);
+    }
+    const content = await contentGenerationService.generateContent({ ...payload, userId: authUser.uid });
     res.json({ content });
   } catch (error) {
     next(error);

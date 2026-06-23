@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { firestore } from '../db/firestore';
 import { AssistantService } from '../services/assistantService';
+import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 
 const router = Router();
 const assistant = new AssistantService();
@@ -19,6 +20,8 @@ const BodySchema = z.object({
       subscriptionStatus: z.string().optional(),
       connectedChannels: z.array(z.string()).optional(),
       locale: z.string().max(16).optional(),
+      assistantTone: z.string().optional(),
+      assistantVoice: z.string().optional(),
       analytics: z
         .object({
           leads: z.number().optional(),
@@ -41,6 +44,7 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
     const userDoc = await firestore.collection('users').doc(authUser.uid).get();
     const historyUserId = (userDoc.data()?.historyUserId as string | undefined)?.trim();
     const effectiveUserId = historyUserId || authUser.uid;
+    await consumeUsage(resolveBillingScope(authUser.uid, parsed.context?.orgId, authUser.email), 'aiReplies', 1);
     const answer = await assistant.answer(parsed.question, {
       ...(parsed.context ?? {}),
       userId: effectiveUserId,

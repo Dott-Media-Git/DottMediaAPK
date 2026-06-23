@@ -5,13 +5,14 @@ import { firestore } from '../../db/firestore';
 import { OrgDocument, OrgLocale, OrgPlan, OrgSettingsDocument, OrgUserDocument } from '../../types/org';
 import { putSecret, getSecret } from '../secretVaultService';
 import { validateSettingsPatch } from './settingsValidator';
+import { listBillingPlans } from '../billing/billingService';
+import { getPlan, getStripePriceId } from '../billing/planCatalog';
 
 const orgsCollection = firestore.collection('orgs');
 const orgUsersCollection = firestore.collection('orgUsers');
 const orgSettingsCollection = firestore.collection('orgSettings');
 const secretsCollection = firestore.collection('secrets');
 const usageCollection = firestore.collection('usageDaily');
-const plansCollection = firestore.collection('plans');
 const auditCollection = firestore.collection('audit');
 const opsJobsCollection = firestore.collection('ops').doc('jobs').collection('queue');
 
@@ -187,25 +188,23 @@ export async function getUsage(orgId: string, from?: string, to?: string) {
 }
 
 export async function listPlans() {
-  const snap = await plansCollection.get();
-  return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  return listBillingPlans();
 }
 
 export async function swapPlan(orgId: string, plan: OrgPlan, successUrl: string, cancelUrl: string) {
   if (!stripe) throw createHttpError(500, 'Stripe is not configured');
-  const priceId =
-    plan === 'Enterprise'
-      ? process.env.STRIPE_PRICE_ENTERPRISE
-      : plan === 'Pro'
-      ? process.env.STRIPE_PRICE_PRO
-      : null;
+  const planDefinition = getPlan(plan);
+  const priceId = getStripePriceId(planDefinition);
   if (!priceId) throw createHttpError(400, 'Unsupported plan for checkout');
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     line_items: [{ price: priceId, quantity: 1 }],
     success_url: successUrl,
     cancel_url: cancelUrl,
-    metadata: { orgId, plan },
+    metadata: { orgId, plan: planDefinition.id },
+    subscription_data: {
+      metadata: { orgId, plan: planDefinition.id },
+    },
   });
   return { checkoutUrl: session.url };
 }
