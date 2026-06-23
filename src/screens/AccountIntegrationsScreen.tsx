@@ -8,6 +8,7 @@ import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { isFirebaseEnabled, realtimeDb } from '@services/firebase';
 import {
+  fetchInstagramConnectUrl,
   fetchMetaConnectUrl,
   fetchLinkedInConnectUrl,
   fetchSocialStatus,
@@ -398,6 +399,18 @@ export const AccountIntegrationsScreen: React.FC = () => {
     }
   };
 
+  const handleInstagramConnect = async () => {
+    setSavingPlatform('instagram');
+    try {
+      const response = await fetchInstagramConnectUrl();
+      await openOAuthUrl(response?.url, 'Instagram', 'instagram');
+    } catch (error: any) {
+      Alert.alert(t('Error'), error.message ?? t('Unable to open the Instagram connect URL.'));
+    } finally {
+      setSavingPlatform(null);
+    }
+  };
+
   const handleThreadsConnect = async () => {
     setSavingPlatform('threads');
     try {
@@ -594,8 +607,12 @@ export const AccountIntegrationsScreen: React.FC = () => {
     platform === 'tiktok';
 
   const handleConnectPress = (platform: PlatformKey) => {
-    if (platform === 'facebook' || platform === 'instagram') {
+    if (platform === 'facebook') {
       void handleMetaConnect(platform);
+      return;
+    }
+    if (platform === 'instagram') {
+      void handleInstagramConnect();
       return;
     }
     if (platform === 'threads') {
@@ -783,17 +800,33 @@ export const AccountIntegrationsScreen: React.FC = () => {
                   ) : platform === 'facebook' || platform === 'instagram' ? (
                     <>
                       <View style={styles.oauthPanel}>
-                        <Text style={styles.oauthTitle}>{t('Connect through Meta')}</Text>
+                        <Text style={styles.oauthTitle}>
+                          {platform === 'facebook' ? t('Connect through Meta') : t('Connect directly through Instagram')}
+                        </Text>
                         <Text style={styles.oauthText}>
                           {platform === 'facebook'
                             ? t('Sign in with Meta to choose a Facebook Page and grant Dott Media posting access.')
-                            : t('Sign in with Meta to connect the Instagram Business account linked to your Facebook Page.')}
+                            : t('Sign in with Instagram to grant Dott Media posting access to your professional Instagram account.')}
                         </Text>
                         <DMButton
                           title={isSaving ? t('Opening...') : getConnectTitle(platform)}
-                          onPress={() => void handleMetaConnect(platform)}
+                          onPress={() => {
+                            if (platform === 'instagram') {
+                              void handleInstagramConnect();
+                              return;
+                            }
+                            void handleMetaConnect(platform);
+                          }}
                           disabled={isSaving}
                         />
+                        {platform === 'instagram' ? (
+                          <DMButton
+                            title={isSaving ? t('Opening...') : t('Connect through Meta Business')}
+                            onPress={() => void handleMetaConnect('instagram')}
+                            disabled={isSaving}
+                            style={styles.secondaryAction}
+                          />
+                        ) : null}
                       </View>
                       <View style={styles.manualPanel}>
                         <Text style={styles.manualTitle}>{t('Manual fallback')}</Text>
@@ -1221,6 +1254,10 @@ const styles = StyleSheet.create({
   oauthText: {
     color: colors.subtext,
     lineHeight: 20,
+  },
+  secondaryAction: {
+    marginTop: 4,
+    opacity: 0.88,
   },
   manualPanel: {
     marginTop: 14,

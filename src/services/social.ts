@@ -229,6 +229,10 @@ export const fetchMetaConnectUrl = async (platform?: 'facebook' | 'instagram'): 
   return authedFetch(`/integrations/meta/connect-url${query}`);
 };
 
+export const fetchInstagramConnectUrl = async (): Promise<{ url?: string }> => {
+  return authedFetch('/integrations/instagram/connect-url');
+};
+
 export const fetchThreadsConnectUrl = async (): Promise<{ url?: string }> => {
   return authedFetch('/integrations/threads/connect-url');
 };

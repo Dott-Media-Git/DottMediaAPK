@@ -79,7 +79,17 @@ type ScheduledPost = {
 
 export interface SocialAccounts {
   facebook?: { accessToken: string; userAccessToken?: string; pageId: string; pageName?: string };
-  instagram?: { accessToken: string; accountId: string; username?: string };
+  instagram?: {
+    accessToken: string;
+    accountId: string;
+    username?: string;
+    provider?: 'facebook_login' | 'instagram_login' | string;
+    graphBaseUrl?: string;
+    userId?: string;
+    accountType?: string;
+    mediaCount?: number;
+    connectedAt?: string;
+  };
   threads?: { accessToken: string; accountId: string; username?: string };
   linkedin?: { accessToken: string; urn: string };
   twitter?: {

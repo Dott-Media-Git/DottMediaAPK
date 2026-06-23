@@ -22,6 +22,8 @@ type StoryPublishInput = {
 };
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
+const FACEBOOK_GRAPH_BASE_URL = 'https://graph.facebook.com';
+const INSTAGRAM_GRAPH_BASE_URL = process.env.INSTAGRAM_GRAPH_BASE_URL ?? 'https://graph.instagram.com';
 const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPTS ?? 15), 3);
 const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_MS ?? 2000), 1000);
 const REELS_READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_REELS_READY_ATTEMPTS ?? 60), READY_ATTEMPTS);
@@ -69,15 +71,35 @@ function logInstagramError(label: string, error: any) {
   console.error(label, String(error ?? 'unknown_error'));
 }
 
+function normalizeGraphBaseUrl(value?: string) {
+  return (value || '').replace(/\/+$/, '');
+}
+
+function getInstagramGraphBaseUrl(credentials: NonNullable<SocialAccounts['instagram']>) {
+  const graphOrigin =
+    credentials.provider === 'instagram_login'
+      ? normalizeGraphBaseUrl(credentials.graphBaseUrl) || INSTAGRAM_GRAPH_BASE_URL
+      : FACEBOOK_GRAPH_BASE_URL;
+  return `${normalizeGraphBaseUrl(graphOrigin)}/${GRAPH_VERSION}/${credentials.accountId}`;
+}
+
+function getInstagramMediaStatusUrl(credentials: NonNullable<SocialAccounts['instagram']>, creationId: string) {
+  const graphOrigin =
+    credentials.provider === 'instagram_login'
+      ? normalizeGraphBaseUrl(credentials.graphBaseUrl) || INSTAGRAM_GRAPH_BASE_URL
+      : FACEBOOK_GRAPH_BASE_URL;
+  return `${normalizeGraphBaseUrl(graphOrigin)}/${GRAPH_VERSION}/${creationId}`;
+}
+
 export async function publishToInstagram(input: PublishInput): Promise<{ remoteId?: string }> {
   const { credentials } = input;
   if (!credentials?.instagram) {
     throw new Error('Missing Instagram credentials');
   }
 
-  const { accessToken, accountId } = credentials.instagram;
+  const { accessToken } = credentials.instagram;
   const caption = appendCommentToDmCaptionCta(input.caption, { username: credentials.instagram.username });
-  const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
+  const baseUrl = getInstagramGraphBaseUrl(credentials.instagram);
 
   if (!input.imageUrls || input.imageUrls.length === 0) {
     throw new Error('Instagram requires an image');
@@ -97,7 +119,7 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
         if (!childId) {
           throw new Error('Failed to create Instagram carousel item');
         }
-        const childReady = await waitForMediaReady(childId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
+        const childReady = await waitForMediaReady(credentials.instagram, childId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
         if (!childReady) {
           throw new Error('Instagram carousel item not ready for publishing');
         }
@@ -125,7 +147,7 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
     }
 
     // Wait for the media container to finish processing before publishing.
-    const isReady = await waitForMediaReady(creationId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
+    const isReady = await waitForMediaReady(credentials.instagram, creationId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
     if (!isReady) {
       throw new Error('Media container not ready for publishing');
     }
@@ -158,9 +180,9 @@ export async function publishToInstagramReel(input: ReelPublishInput): Promise<{
     throw new Error('Instagram Reels requires a video URL');
   }
 
-  const { accessToken, accountId } = credentials.instagram;
+  const { accessToken } = credentials.instagram;
   const caption = appendCommentToDmCaptionCta(input.caption, { username: credentials.instagram.username });
-  const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
+  const baseUrl = getInstagramGraphBaseUrl(credentials.instagram);
 
   try {
     const createMediaResponse = await axios.post(`${baseUrl}/media`, {
@@ -175,7 +197,7 @@ export async function publishToInstagramReel(input: ReelPublishInput): Promise<{
       throw new Error('Failed to create Instagram Reels container');
     }
 
-    const isReady = await waitForMediaReady(creationId, accessToken, REELS_READY_ATTEMPTS, REELS_READY_DELAY_MS);
+    const isReady = await waitForMediaReady(credentials.instagram, creationId, accessToken, REELS_READY_ATTEMPTS, REELS_READY_DELAY_MS);
     if (!isReady) {
       throw new Error('Reels container not ready for publishing');
     }
@@ -204,8 +226,8 @@ export async function publishToInstagramStory(input: StoryPublishInput): Promise
     throw new Error('Missing Instagram credentials');
   }
 
-  const { accessToken, accountId } = credentials.instagram;
-  const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
+  const { accessToken } = credentials.instagram;
+  const baseUrl = getInstagramGraphBaseUrl(credentials.instagram);
   const hasVideo = Boolean(input.videoUrl);
   const mediaUrl = hasVideo ? input.videoUrl : input.imageUrls?.[0];
 
@@ -225,7 +247,7 @@ export async function publishToInstagramStory(input: StoryPublishInput): Promise
       throw new Error('Failed to create Instagram Story container');
     }
 
-    const isReady = await waitForMediaReady(creationId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
+    const isReady = await waitForMediaReady(credentials.instagram, creationId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
     if (!isReady) {
       throw new Error('Story container not ready for publishing');
     }
@@ -249,13 +271,14 @@ export async function publishToInstagramStory(input: StoryPublishInput): Promise
 }
 
 async function waitForMediaReady(
+  credentials: NonNullable<SocialAccounts['instagram']>,
   creationId: string,
   accessToken: string,
   maxAttempts = 5,
   delayMs = 2000,
 ) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const statusResp = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${creationId}`, {
+    const statusResp = await axios.get(getInstagramMediaStatusUrl(credentials, creationId), {
       params: { fields: 'status_code,status', access_token: accessToken },
     });
     const status = statusResp.data?.status_code;

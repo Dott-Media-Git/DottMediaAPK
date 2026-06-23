@@ -14,8 +14,11 @@ import { consumeUsage, resolveBillingScope } from '../services/billing/billingSe
 const router = Router();
 
 const CALLBACK_PATH = '/integrations/meta/callback';
+const INSTAGRAM_CALLBACK_PATH = '/integrations/instagram/callback';
 const THREADS_CALLBACK_PATH = '/integrations/threads/callback';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
+const INSTAGRAM_GRAPH_VERSION = process.env.INSTAGRAM_GRAPH_VERSION ?? GRAPH_VERSION;
+const INSTAGRAM_GRAPH_BASE_URL = process.env.INSTAGRAM_GRAPH_BASE_URL ?? 'https://graph.instagram.com';
 const THREADS_GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const THREADS_GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
 
@@ -33,6 +36,14 @@ type MetaPage = {
 type ThreadsProfile = {
   id?: string;
   username?: string;
+};
+
+type InstagramProfile = {
+  id?: string;
+  user_id?: string;
+  username?: string;
+  account_type?: string;
+  media_count?: number;
 };
 
 type MetaConnectPlatform = 'facebook' | 'instagram' | 'all';
@@ -132,6 +143,33 @@ const getThreadsAppConfig = (req: Request) => {
 
   if (!appId || !appSecret) {
     throw createHttpError(400, 'Missing THREADS_APP_ID or THREADS_APP_SECRET');
+  }
+
+  return { appId, appSecret, redirectUri };
+};
+
+const getInstagramAppConfig = (req: Request) => {
+  const renderEnv = resolveRenderEnv();
+  const appId =
+    process.env.INSTAGRAM_APP_ID ??
+    process.env.META_APP_ID ??
+    process.env.FACEBOOK_APP_ID ??
+    renderEnv.INSTAGRAM_APP_ID ??
+    renderEnv.META_APP_ID ??
+    renderEnv.FACEBOOK_APP_ID ??
+    '';
+  const appSecret =
+    process.env.INSTAGRAM_APP_SECRET ??
+    process.env.META_APP_SECRET ??
+    process.env.FACEBOOK_APP_SECRET ??
+    renderEnv.INSTAGRAM_APP_SECRET ??
+    renderEnv.META_APP_SECRET ??
+    renderEnv.FACEBOOK_APP_SECRET ??
+    '';
+  const redirectUri = process.env.INSTAGRAM_REDIRECT_URI ?? renderEnv.INSTAGRAM_REDIRECT_URI ?? `${getBaseUrl(req)}${INSTAGRAM_CALLBACK_PATH}`;
+
+  if (!appId || !appSecret) {
+    throw createHttpError(400, 'Missing INSTAGRAM_APP_ID or INSTAGRAM_APP_SECRET');
   }
 
   return { appId, appSecret, redirectUri };
@@ -256,6 +294,30 @@ const buildThreadsOAuthUrl = (req: Request, userId: string, orgId?: string | nul
   url.searchParams.set('scope', getThreadsScopes().join(','));
   url.searchParams.set('state', state);
   url.searchParams.set('return_scopes', 'true');
+  return url.toString();
+};
+
+const getInstagramLoginScopes = () => {
+  const renderEnv = resolveRenderEnv();
+  const raw = process.env.INSTAGRAM_LOGIN_SCOPES ?? renderEnv.INSTAGRAM_LOGIN_SCOPES ?? '';
+  if (raw.trim()) {
+    return splitScopes(raw);
+  }
+
+  return ['instagram_business_basic', 'instagram_business_content_publish'];
+};
+
+const buildInstagramOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
+  const { appId, redirectUri } = getInstagramAppConfig(req);
+  const state = createSignedState(userId, { platform: 'instagram', orgId: orgId || undefined, email: email || undefined });
+  const url = new URL(process.env.INSTAGRAM_AUTHORIZE_URL ?? 'https://www.instagram.com/oauth/authorize');
+  url.searchParams.set('client_id', appId);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', getInstagramLoginScopes().join(','));
+  url.searchParams.set('state', state);
+  url.searchParams.set('enable_fb_login', '0');
+  url.searchParams.set('force_authentication', '1');
   return url.toString();
 };
 
@@ -392,6 +454,69 @@ const exchangeThreadsLongLivedToken = async (req: Request, shortLivedToken: stri
     accessToken: (response.data?.access_token as string | undefined) ?? shortLivedToken,
     grantedScopes: extractScopesFromPayload(response.data as Record<string, unknown> | undefined),
   };
+};
+
+const exchangeInstagramCodeForToken = async (req: Request, code: string) => {
+  const { appId, appSecret, redirectUri } = getInstagramAppConfig(req);
+  const body = new URLSearchParams({
+    client_id: appId,
+    client_secret: appSecret,
+    grant_type: 'authorization_code',
+    redirect_uri: redirectUri,
+    code,
+  });
+
+  const response = await axios.post('https://api.instagram.com/oauth/access_token', body.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  });
+
+  return {
+    accessToken: response.data?.access_token as string | undefined,
+    userId: response.data?.user_id ? String(response.data.user_id) : undefined,
+    grantedScopes: extractScopesFromPayload(response.data as Record<string, unknown> | undefined),
+  };
+};
+
+const exchangeInstagramLongLivedToken = async (req: Request, shortLivedToken: string) => {
+  const { appSecret } = getInstagramAppConfig(req);
+  const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/access_token`, {
+    params: {
+      grant_type: 'ig_exchange_token',
+      client_secret: appSecret,
+      access_token: shortLivedToken,
+    },
+  });
+
+  return {
+    accessToken: (response.data?.access_token as string | undefined) ?? shortLivedToken,
+    grantedScopes: extractScopesFromPayload(response.data as Record<string, unknown> | undefined),
+  };
+};
+
+const assertRequiredInstagramScopes = (
+  requiredScopes: string[],
+  grantedScopes: Set<string>,
+  deniedScopes: Set<string>,
+) => {
+  const explicitlyDenied = requiredScopes.filter(scope => deniedScopes.has(scope));
+  if (explicitlyDenied.length) {
+    throw new Error(`Instagram did not grant required permissions: ${explicitlyDenied.join(', ')}`);
+  }
+  if (!grantedScopes.size) return;
+  const missingScopes = requiredScopes.filter(scope => !grantedScopes.has(scope));
+  if (missingScopes.length) {
+    throw new Error(`Instagram did not grant required permissions: ${missingScopes.join(', ')}`);
+  }
+};
+
+const fetchInstagramMe = async (accessToken: string) => {
+  const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/${INSTAGRAM_GRAPH_VERSION}/me`, {
+    params: {
+      fields: 'id,user_id,username,account_type,media_count',
+      access_token: accessToken,
+    },
+  });
+  return response.data as InstagramProfile;
 };
 
 const fetchManagedPages = async (userAccessToken: string) => {
@@ -628,6 +753,43 @@ router.get('/integrations/threads/config', requireFirebase, async (req, res, nex
   }
 });
 
+router.get('/integrations/instagram/config', requireFirebase, async (req, res, next) => {
+  try {
+    const { appId, redirectUri } = getInstagramAppConfig(req);
+    res.json({
+      appIdConfigured: Boolean(appId),
+      appSecretConfigured: true,
+      redirectUri,
+      scopes: getInstagramLoginScopes(),
+      callbackPath: INSTAGRAM_CALLBACK_PATH,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/integrations/instagram/connect', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
+    if (!userId) throw createHttpError(401, 'Unauthorized');
+    res.redirect(buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/integrations/instagram/connect-url', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    const userId = authUser?.uid;
+    if (!userId) throw createHttpError(401, 'Unauthorized');
+    res.json({ url: buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/integrations/threads/connect', requireFirebase, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
@@ -783,6 +945,101 @@ router.get('/integrations/meta/callback', async (req, res) => {
         renderCallbackHtml(
           'Meta connection failed',
           (error as Error).message || 'Unable to complete the Meta connection flow.',
+        ),
+      );
+  }
+});
+
+router.get('/integrations/instagram/callback', async (req, res) => {
+  const code = typeof req.query.code === 'string' ? req.query.code : '';
+  const stateParam = typeof req.query.state === 'string' ? req.query.state : '';
+  const state = verifySignedState(stateParam);
+  const deniedScopes = extractScopesFromPayload({ denied_scopes: req.query.denied_scopes });
+  const callbackGrantedScopes = extractScopesFromPayload({ granted_scopes: req.query.granted_scopes, scope: req.query.scope });
+
+  if (!code || !state) {
+    res.status(400).send(renderCallbackHtml('Instagram connection failed', 'Invalid OAuth state or missing code.'));
+    return;
+  }
+
+  try {
+    const requiredScopes = getInstagramLoginScopes();
+    assertRequiredInstagramScopes(requiredScopes, callbackGrantedScopes, deniedScopes);
+
+    const shortLivedToken = await exchangeInstagramCodeForToken(req, code);
+    if (!shortLivedToken.accessToken) {
+      throw new Error('Missing short-lived Instagram token');
+    }
+
+    const longLivedToken = await exchangeInstagramLongLivedToken(req, shortLivedToken.accessToken);
+    const grantedScopes = new Set([
+      ...Array.from(callbackGrantedScopes),
+      ...Array.from(shortLivedToken.grantedScopes),
+      ...Array.from(longLivedToken.grantedScopes),
+    ]);
+    assertRequiredInstagramScopes(requiredScopes, grantedScopes, deniedScopes);
+
+    const accessToken = longLivedToken.accessToken;
+    const profile = await fetchInstagramMe(accessToken);
+    const accountId = profile.id ?? profile.user_id ?? shortLivedToken.userId;
+    if (!accountId) {
+      throw new Error('Unable to resolve Instagram professional account');
+    }
+
+    const userData = await loadStoredSocialAccounts(state.userId);
+    const currentAccounts = { ...(userData.socialAccounts ?? {}) };
+    const wasInstagramConnected = Boolean(currentAccounts.instagram);
+
+    currentAccounts.instagram = {
+      provider: 'instagram_login',
+      graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL,
+      accessToken,
+      accountId: String(accountId),
+      userId: profile.user_id ?? shortLivedToken.userId,
+      username: profile.username ?? currentAccounts.instagram?.username,
+      accountType: profile.account_type ?? currentAccounts.instagram?.accountType,
+      mediaCount: typeof profile.media_count === 'number' ? profile.media_count : currentAccounts.instagram?.mediaCount,
+      connectedAt: new Date().toISOString(),
+    };
+
+    if (!wasInstagramConnected) {
+      await consumeUsage(
+        resolveBillingScope(
+          state.userId,
+          typeof state.orgId === 'string' ? state.orgId : undefined,
+          typeof state.email === 'string' ? state.email : userData.email ?? undefined,
+        ),
+        'connectedSocials',
+        1,
+      );
+    }
+
+    await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
+    try {
+      await mergeAutopostPlatforms(state.userId, ['instagram']);
+    } catch (error) {
+      console.warn('[instagram] autopost platform merge failed after successful credential save', {
+        userId: state.userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    res
+      .status(200)
+      .send(
+        renderCallbackHtml(
+          'Instagram connected',
+          `Instagram${profile.username ? ` (@${profile.username})` : ''} is now connected. You can close this window and return to Dott Media.`,
+        ),
+      );
+  } catch (error) {
+    console.error('[instagram] connection failed', error);
+    res
+      .status(400)
+      .send(
+        renderCallbackHtml(
+          'Instagram connection failed',
+          (error as Error).message || 'Unable to complete the Instagram connection flow.',
         ),
       );
   }
