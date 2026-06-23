@@ -11,6 +11,21 @@ import {
 } from 'firebase/firestore';
 
 const API_BASE = env.apiUrl?.replace(/\/$/, '') ?? '';
+const REQUEST_TIMEOUT_MS = 30000;
+
+const mergeAbortSignals = (externalSignal: AbortSignal | null | undefined, timeoutMs: number) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  externalSignal?.addEventListener('abort', abort, { once: true });
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeoutId);
+      externalSignal?.removeEventListener('abort', abort);
+    },
+  };
+};
 
 async function authedFetch(path: string, options: RequestInit = {}) {
   if (!API_BASE) throw new Error('Missing API URL');
@@ -20,10 +35,29 @@ async function authedFetch(path: string, options: RequestInit = {}) {
     ...(options.headers as Record<string, string>),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const timeout = mergeAbortSignals(options.signal, REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...options, headers, signal: timeout.signal });
+  } catch (error: any) {
+    if (timeout.signal.aborted) {
+      throw new Error('The server took too long to respond. Please try again.');
+    }
+    throw error;
+  } finally {
+    timeout.cleanup();
+  }
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed with status ${response.status}`);
+    try {
+      const payload = JSON.parse(text);
+      throw new Error(payload.message || payload.error || `Request failed with status ${response.status}`);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(text || `Request failed with status ${response.status}`);
+      }
+      throw error;
+    }
   }
   return response.json();
 }
@@ -33,14 +67,34 @@ async function authedMultipartFetch(path: string, body: FormData) {
   const token = await getIdToken();
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
-    headers,
-    body,
-  });
+  const timeout = mergeAbortSignals(null, REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers,
+      body,
+      signal: timeout.signal,
+    });
+  } catch (error: any) {
+    if (timeout.signal.aborted) {
+      throw new Error('The server took too long to respond. Please try again.');
+    }
+    throw error;
+  } finally {
+    timeout.cleanup();
+  }
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed with status ${response.status}`);
+    try {
+      const payload = JSON.parse(text);
+      throw new Error(payload.message || payload.error || `Request failed with status ${response.status}`);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(text || `Request failed with status ${response.status}`);
+      }
+      throw error;
+    }
   }
   return response.json();
 }
