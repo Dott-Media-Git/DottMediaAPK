@@ -95,8 +95,9 @@ const requireOrgAdminIfPresent = async (req: Request, _res: unknown, next: (err?
 };
 
 const adminGate = [requireFirebase, requireOrgAdminIfPresent];
+const userGate = [requireFirebase];
 
-router.get('/integrations/tiktok/config', ...adminGate, async (req, res, next) => {
+router.get('/integrations/tiktok/config', ...userGate, async (req, res, next) => {
   try {
     const computedRedirectUri = computeRedirectUri(req);
     const configuredRedirectUri = config.tiktok.redirectUri || '';
@@ -116,7 +117,7 @@ router.get('/integrations/tiktok/config', ...adminGate, async (req, res, next) =
   }
 });
 
-router.get('/integrations/tiktok/status', ...adminGate, async (req, res, next) => {
+router.get('/integrations/tiktok/status', ...userGate, async (req, res, next) => {
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
@@ -127,7 +128,7 @@ router.get('/integrations/tiktok/status', ...adminGate, async (req, res, next) =
   }
 });
 
-router.get('/integrations/tiktok/connect', ...adminGate, async (req, res, next) => {
+router.get('/integrations/tiktok/connect', ...userGate, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
@@ -139,7 +140,7 @@ router.get('/integrations/tiktok/connect', ...adminGate, async (req, res, next) 
   }
 });
 
-router.get('/integrations/tiktok/connect-url', ...adminGate, async (req, res, next) => {
+router.get('/integrations/tiktok/connect-url', ...userGate, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
@@ -232,7 +233,7 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
   res.status(200).send(renderCallbackHtml('TikTok connected', 'You can close this window and return to Dott Media.'));
 });
 
-router.post('/integrations/tiktok/token', ...adminGate, async (req, res, next) => {
+router.post('/integrations/tiktok/token', ...userGate, async (req, res, next) => {
   try {
     const payload = z
       .object({
@@ -261,7 +262,7 @@ router.post('/integrations/tiktok/token', ...adminGate, async (req, res, next) =
   }
 });
 
-router.post('/integrations/tiktok/reveal', ...adminGate, async (req, res, next) => {
+router.post('/integrations/tiktok/reveal', ...userGate, async (req, res, next) => {
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
@@ -272,7 +273,7 @@ router.post('/integrations/tiktok/reveal', ...adminGate, async (req, res, next) 
   }
 });
 
-router.post('/integrations/tiktok/disconnect', ...adminGate, async (req, res, next) => {
+router.post('/integrations/tiktok/disconnect', ...userGate, async (req, res, next) => {
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');

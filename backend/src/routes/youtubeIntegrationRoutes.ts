@@ -97,8 +97,9 @@ const requireOrgAdminIfPresent = async (req: Request, _res: unknown, next: (err?
 };
 
 const adminGate = [requireFirebase, requireOrgAdminIfPresent];
+const userGate = [requireFirebase];
 
-router.get('/integrations/youtube/config', ...adminGate, async (req, res, next) => {
+router.get('/integrations/youtube/config', ...userGate, async (req, res, next) => {
   try {
     const computedRedirectUri = computeRedirectUri(req);
     const configuredRedirectUri = config.youtube.redirectUri || '';
@@ -149,7 +150,7 @@ router.get('/integrations/youtube/health', ...adminGate, async (req, res, next) 
   }
 });
 
-router.get('/integrations/youtube/status', ...adminGate, async (req, res, next) => {
+router.get('/integrations/youtube/status', ...userGate, async (req, res, next) => {
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
@@ -160,7 +161,7 @@ router.get('/integrations/youtube/status', ...adminGate, async (req, res, next) 
   }
 });
 
-router.get('/integrations/youtube/connect', ...adminGate, async (req, res, next) => {
+router.get('/integrations/youtube/connect', ...userGate, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
@@ -172,7 +173,7 @@ router.get('/integrations/youtube/connect', ...adminGate, async (req, res, next)
   }
 });
 
-router.get('/integrations/youtube/connect-url', ...adminGate, async (req, res, next) => {
+router.get('/integrations/youtube/connect-url', ...userGate, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
@@ -295,7 +296,7 @@ const pasteSchema = z.object({
   privacyStatus: z.enum(['private', 'public', 'unlisted']).optional(),
 });
 
-router.post('/integrations/youtube/paste-token', ...adminGate, async (req, res, next) => {
+router.post('/integrations/youtube/paste-token', ...userGate, async (req, res, next) => {
   try {
     const payload = pasteSchema.parse(req.body ?? {});
     let refreshToken = payload.refreshToken || payload.token || payload.raw || '';
@@ -344,7 +345,7 @@ router.post('/integrations/youtube/paste-token', ...adminGate, async (req, res, 
   }
 });
 
-router.post('/integrations/youtube/defaults', ...adminGate, async (req, res, next) => {
+router.post('/integrations/youtube/defaults', ...userGate, async (req, res, next) => {
   try {
     const payload = z
       .object({
@@ -360,7 +361,7 @@ router.post('/integrations/youtube/defaults', ...adminGate, async (req, res, nex
   }
 });
 
-router.post('/integrations/youtube/reveal', ...adminGate, async (req, res, next) => {
+router.post('/integrations/youtube/reveal', ...userGate, async (req, res, next) => {
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
@@ -371,7 +372,7 @@ router.post('/integrations/youtube/reveal', ...adminGate, async (req, res, next)
   }
 });
 
-router.post('/integrations/youtube/disconnect', ...adminGate, async (req, res, next) => {
+router.post('/integrations/youtube/disconnect', ...userGate, async (req, res, next) => {
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
