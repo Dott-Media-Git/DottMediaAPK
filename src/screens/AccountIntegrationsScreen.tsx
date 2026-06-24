@@ -6,7 +6,8 @@ import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
 
 import { useAuth } from '@context/AuthContext';
-import { isFirebaseEnabled, realtimeDb } from '@services/firebase';
+import { getIdToken, isFirebaseEnabled, realtimeDb } from '@services/firebase';
+import { env } from '@services/env';
 import {
   fetchMetaConnectUrl,
   fetchLinkedInConnectUrl,
@@ -221,6 +222,35 @@ export const AccountIntegrationsScreen: React.FC = () => {
     return () => subscription.remove();
   }, [pendingOAuthPlatform, state.user?.uid]);
 
+  const submitWebOAuth = async (
+    path: string,
+    platform: PlatformKey,
+    fields: Record<string, string> = {},
+  ) => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return false;
+    const idToken = await getIdToken();
+    if (!idToken) throw new Error('Your login session expired. Sign in again and retry.');
+    const apiBase = env.apiUrl?.replace(/\/$/, '');
+    if (!apiBase) throw new Error('Missing API URL');
+
+    refreshAfterOAuth(platform);
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `${apiBase}${path}`;
+    form.style.display = 'none';
+    const values = { idToken, ...(orgId ? { orgId } : {}), ...fields };
+    Object.entries(values).forEach(([name, value]) => {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    });
+    document.body.appendChild(form);
+    form.submit();
+    return true;
+  };
+
   const reserveOAuthWindow = () => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
     const popup = window.open('', '_blank');
@@ -285,12 +315,12 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleConnect = async () => {
-    const oauthWindow = reserveOAuthWindow();
     try {
+      if (await submitWebOAuth('/integrations/youtube/start', 'youtube')) return;
+      const oauthWindow = reserveOAuthWindow();
       const response = await fetchYouTubeConnectUrl(orgId);
       await openOAuthUrl(response?.url as string | undefined, 'YouTube', 'youtube', oauthWindow);
     } catch (error: any) {
-      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the YouTube connect URL.'));
     }
   };
@@ -362,12 +392,12 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleTikTokConnect = async () => {
-    const oauthWindow = reserveOAuthWindow();
     try {
+      if (await submitWebOAuth('/integrations/tiktok/start', 'tiktok')) return;
+      const oauthWindow = reserveOAuthWindow();
       const response = await fetchTikTokConnectUrl(orgId);
       await openOAuthUrl(response?.url as string | undefined, 'TikTok', 'tiktok', oauthWindow);
     } catch (error: any) {
-      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the TikTok connect URL.'));
     }
   };
@@ -426,13 +456,13 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleMetaConnect = async (platform: 'facebook' | 'instagram') => {
-    const oauthWindow = reserveOAuthWindow();
     setSavingPlatform(platform);
     try {
+      if (await submitWebOAuth('/integrations/meta/start', platform, { platform })) return;
+      const oauthWindow = reserveOAuthWindow();
       const response = await fetchMetaConnectUrl(platform);
       await openOAuthUrl(response?.url, 'Meta', platform, oauthWindow);
     } catch (error: any) {
-      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the Meta connect URL.'));
     } finally {
       setSavingPlatform(null);
@@ -440,13 +470,13 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleThreadsConnect = async () => {
-    const oauthWindow = reserveOAuthWindow();
     setSavingPlatform('threads');
     try {
+      if (await submitWebOAuth('/integrations/threads/start', 'threads')) return;
+      const oauthWindow = reserveOAuthWindow();
       const response = await fetchThreadsConnectUrl();
       await openOAuthUrl(response?.url, 'Threads', 'threads', oauthWindow);
     } catch (error: any) {
-      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the Threads connect URL.'));
     } finally {
       setSavingPlatform(null);
@@ -454,13 +484,13 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleLinkedInConnect = async () => {
-    const oauthWindow = reserveOAuthWindow();
     setSavingPlatform('linkedin');
     try {
+      if (await submitWebOAuth('/integrations/linkedin/start', 'linkedin')) return;
+      const oauthWindow = reserveOAuthWindow();
       const response = await fetchLinkedInConnectUrl();
       await openOAuthUrl(response?.url, 'LinkedIn', 'linkedin', oauthWindow);
     } catch (error: any) {
-      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the LinkedIn connect URL.'));
     } finally {
       setSavingPlatform(null);
@@ -468,13 +498,13 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleTwitterConnect = async () => {
-    const oauthWindow = reserveOAuthWindow();
     setSavingPlatform('twitter');
     try {
+      if (await submitWebOAuth('/integrations/twitter/start', 'twitter')) return;
+      const oauthWindow = reserveOAuthWindow();
       const response = await fetchTwitterConnectUrl();
       await openOAuthUrl(response?.url, 'X', 'twitter', oauthWindow);
     } catch (error: any) {
-      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the X connect URL.'));
     } finally {
       setSavingPlatform(null);
