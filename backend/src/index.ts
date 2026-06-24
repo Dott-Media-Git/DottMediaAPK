@@ -113,6 +113,7 @@ app.use(
   }),
 );
 app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false, limit: '64kb' }));
 app.use('/flutterwave/webhook', flutterwaveRoutes);
 app.use(
   morgan(':remote-addr :method :url :status :res[content-length] - :response-time ms :req[x-request-id]'),
