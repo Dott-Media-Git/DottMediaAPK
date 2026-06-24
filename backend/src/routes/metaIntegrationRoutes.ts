@@ -4,7 +4,7 @@ import path from 'path';
 import axios from 'axios';
 import admin from 'firebase-admin';
 import createHttpError from 'http-errors';
-import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
+import { requireFirebase, requireFirebaseForm, AuthedRequest } from '../middleware/firebaseAuth';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
 import { firestore } from '../db/firestore';
 import { autoPostService } from '../services/autoPostService';
@@ -726,6 +726,18 @@ router.get('/integrations/meta/connect', requireFirebase, async (req, res, next)
   }
 });
 
+router.post('/integrations/meta/start', requireFirebaseForm, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
+    const platform = normalizeMetaConnectPlatform(req.body?.platform);
+    const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
+    res.redirect(303, buildOAuthUrl(req, authUser.uid, platform, orgId, authUser.email));
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/integrations/meta/connect-url', requireFirebase, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
@@ -796,6 +808,17 @@ router.get('/integrations/threads/connect', requireFirebase, async (req, res, ne
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
     res.redirect(buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/integrations/threads/start', requireFirebaseForm, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
+    const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
+    res.redirect(303, buildThreadsOAuthUrl(req, authUser.uid, orgId, authUser.email));
   } catch (error) {
     next(error);
   }
