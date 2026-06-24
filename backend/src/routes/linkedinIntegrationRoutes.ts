@@ -6,6 +6,7 @@ import { requireFirebase, requireFirebaseForm, AuthedRequest } from '../middlewa
 import { createSignedState, verifySignedState } from '../utils/oauthState';
 import { firestore } from '../db/firestore';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
+import { oauthSuccessRedirect } from '../utils/oauthRedirect';
 
 const router = Router();
 
@@ -215,7 +216,7 @@ router.get('/integrations/linkedin/callback', async (req, res) => {
     return;
   }
 
-  res.status(200).send(renderCallbackHtml('LinkedIn connected', 'You can close this window and return to Dott Media.'));
+  res.redirect(303, oauthSuccessRedirect('linkedin'));
 });
 
 const renderCallbackHtml = (title: string, message: string) => `<!doctype html>
