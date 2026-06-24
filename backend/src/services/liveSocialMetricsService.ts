@@ -355,6 +355,7 @@ export const fetchBwinMetaSocialProfile = async (): Promise<UserSocialProfile | 
     accountId: (process.env.BWIN_INSTAGRAM_ACCOUNT_ID ?? '').trim(),
     accessToken: (process.env.BWIN_INSTAGRAM_ACCESS_TOKEN ?? '').trim(),
   };
+  const envTwitter = getBwinEnvTwitterCredential();
   let facebook = envFacebook;
   let instagram = envInstagram;
 
@@ -398,6 +399,14 @@ export const fetchBwinMetaSocialProfile = async (): Promise<UserSocialProfile | 
     socialAccounts.instagram = {
       accountId: instagram.accountId,
       accessToken: instagram.accessToken,
+    };
+  }
+  if (envTwitter) {
+    socialAccounts.twitter = {
+      accessToken: envTwitter.accessToken,
+      accessSecret: envTwitter.accessSecret,
+      appKey: envTwitter.appKey,
+      appSecret: envTwitter.appSecret,
     };
   }
   if (!Object.keys(socialAccounts).length) return null;
