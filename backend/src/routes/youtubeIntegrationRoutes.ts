@@ -17,6 +17,7 @@ import { validateVideoUrl } from '../services/videoUrlService';
 import { enqueueYouTubeUpload, enqueueYouTubeSoraUpload, getYouTubeJobStatus } from '../services/youtubeUploadService';
 import { firestore } from '../db/firestore';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
+import { oauthSuccessRedirect } from '../utils/oauthRedirect';
 
 const router = Router();
 
@@ -293,7 +294,7 @@ router.get('/integrations/youtube/callback', async (req, res) => {
     return;
   }
 
-  res.status(200).send(renderCallbackHtml('YouTube connected', 'You can close this window and return to Dott Media.'));
+  res.redirect(303, oauthSuccessRedirect('youtube'));
 });
 
 const pasteSchema = z.object({
