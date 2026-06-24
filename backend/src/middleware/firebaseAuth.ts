@@ -30,7 +30,19 @@ export async function requireFirebase(req: Request, _res: Response, next: NextFu
     const decoded = await firebaseApp.auth().verifyIdToken(token);
     (req as AuthedRequest).authUser = decoded;
     return next();
-  } catch (err) {
+  } catch {
+    return next(createHttpError(401, 'Invalid or expired token'));
+  }
+}
+
+export async function requireFirebaseForm(req: Request, _res: Response, next: NextFunction) {
+  const token = typeof req.body?.idToken === 'string' ? req.body.idToken.trim() : '';
+  if (!token) return next(createHttpError(401, 'Missing Firebase ID token'));
+  try {
+    if (!firebaseApp) return next(createHttpError(503, 'Firebase auth is not initialized'));
+    (req as AuthedRequest).authUser = await firebaseApp.auth().verifyIdToken(token);
+    return next();
+  } catch {
     return next(createHttpError(401, 'Invalid or expired token'));
   }
 }
