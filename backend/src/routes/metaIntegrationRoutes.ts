@@ -10,6 +10,7 @@ import { firestore } from '../db/firestore';
 import { autoPostService } from '../services/autoPostService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
+import { oauthSuccessRedirect } from '../utils/oauthRedirect';
 
 const router = Router();
 
@@ -125,18 +126,14 @@ const getThreadsAppConfig = (req: Request) => {
   const renderEnv = resolveRenderEnv();
   const appId =
     process.env.THREADS_APP_ID ??
-    process.env.INSTAGRAM_APP_ID ??
     process.env.META_APP_ID ??
     renderEnv.THREADS_APP_ID ??
-    renderEnv.INSTAGRAM_APP_ID ??
     renderEnv.META_APP_ID ??
     '';
   const appSecret =
     process.env.THREADS_APP_SECRET ??
-    process.env.INSTAGRAM_APP_SECRET ??
     process.env.META_APP_SECRET ??
     renderEnv.THREADS_APP_SECRET ??
-    renderEnv.INSTAGRAM_APP_SECRET ??
     renderEnv.META_APP_SECRET ??
     '';
   const redirectUri = process.env.THREADS_REDIRECT_URI ?? renderEnv.THREADS_REDIRECT_URI ?? `${getBaseUrl(req)}${THREADS_CALLBACK_PATH}`;
@@ -952,14 +949,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
       .filter(Boolean)
       .join(', ');
 
-    res
-      .status(200)
-      .send(
-        renderCallbackHtml(
-          'Meta connected',
-          `${connectedChannels || 'Facebook'} is now connected. You can close this window and return to Dott Media.`,
-        ),
-      );
+    res.redirect(303, oauthSuccessRedirect(state.platform === 'instagram' ? 'instagram' : 'facebook'));
   } catch (error) {
     console.error('[meta] connection failed', error);
     res
@@ -1047,14 +1037,7 @@ router.get('/integrations/instagram/callback', async (req, res) => {
       });
     }
 
-    res
-      .status(200)
-      .send(
-        renderCallbackHtml(
-          'Instagram connected',
-          `Instagram${profile.username ? ` (@${profile.username})` : ''} is now connected. You can close this window and return to Dott Media.`,
-        ),
-      );
+    res.redirect(303, oauthSuccessRedirect('instagram'));
   } catch (error) {
     console.error('[instagram] connection failed', error);
     res
@@ -1135,14 +1118,7 @@ router.get('/integrations/threads/callback', async (req, res) => {
       });
     }
 
-    res
-      .status(200)
-      .send(
-        renderCallbackHtml(
-          'Threads connected',
-          `Threads${profile.username ? ` (@${profile.username})` : ''} is now connected. You can close this window and return to Dott Media.`,
-        ),
-      );
+    res.redirect(303, oauthSuccessRedirect('threads'));
   } catch (error) {
     console.error('[threads] connection failed', error);
     res
