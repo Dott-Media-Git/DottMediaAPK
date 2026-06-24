@@ -519,6 +519,8 @@ const rootThreadsToken = () =>
     ''
   ).trim();
 
+const rootLinkedInToken = () => (process.env.LINKEDIN_ACCESS_TOKEN ?? '').trim();
+
 const knownAccountToken = (envKeys: string[], fallback: () => string) => {
   for (const key of envKeys) {
     const value = process.env[key]?.trim();
@@ -533,10 +535,18 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
   facebookPageId?: string;
   instagramAccountId?: string;
   threadsAccountId?: string;
+  linkedinAuthorUrn?: string;
   facebookTokenEnv?: string[];
   instagramTokenEnv?: string[];
   threadsTokenEnv?: string[];
+  linkedinTokenEnv?: string[];
 }> = [
+  {
+    userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
+    email: 'xbrasio@gmail.com',
+    linkedinAuthorUrn: 'urn:li:person:VQV6WSzWDf',
+    linkedinTokenEnv: ['DOTT_MAIN_LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_ACCESS_TOKEN'],
+  },
   {
     userId: SHECARE_USER_ID,
     email: 'shecaredoctor@gmail.com',
@@ -598,6 +608,7 @@ export const resolveKnownLiveSocialProfile = (scopeId?: string | null): UserSoci
   const facebookToken = knownAccountToken(known.facebookTokenEnv ?? [], rootFacebookToken);
   const instagramToken = knownAccountToken(known.instagramTokenEnv ?? [], rootInstagramToken);
   const threadsToken = knownAccountToken(known.threadsTokenEnv ?? [], rootThreadsToken);
+  const linkedinToken = knownAccountToken(known.linkedinTokenEnv ?? [], rootLinkedInToken);
   const socialAccounts: UserSocialAccounts = {};
   if (known.facebookPageId && facebookToken) {
     socialAccounts.facebook = {
@@ -615,6 +626,13 @@ export const resolveKnownLiveSocialProfile = (scopeId?: string | null): UserSoci
     socialAccounts.threads = {
       accessToken: threadsToken,
       accountId: known.threadsAccountId,
+    };
+  }
+  if (known.linkedinAuthorUrn && linkedinToken) {
+    socialAccounts.linkedin = {
+      accessToken: linkedinToken,
+      urn: known.linkedinAuthorUrn,
+      name: 'Dott - Media',
     };
   }
 

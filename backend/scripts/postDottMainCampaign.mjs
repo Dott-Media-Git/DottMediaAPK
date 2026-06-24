@@ -30,6 +30,7 @@ const DEFAULT_VIDEO_INSTAGRAM_CAPTION =
   "Dott Media in motion.\n\nAI-powered systems, smarter marketing, stronger branding, and business automation that keeps working for you.\n\nDM us for a walkthrough.\n\n#DottMedia #AIAutomation #BusinessGrowth #BrandSystems #DigitalMedia #MarketingAutomation";
 const DEFAULT_VIDEO_FACEBOOK_CAPTION =
   "Dott Media in motion.\n\nAI-powered systems, smarter marketing, stronger branding, and business automation that keeps working for you.\n\nVisit: www.dott-media.org\nMessage us for a walkthrough.\n\n#DottMedia #AIAutomation #BusinessGrowth #BrandSystems #DigitalMedia #MarketingAutomation";
+const LINKEDIN_API = 'https://api.linkedin.com/v2';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -483,7 +484,7 @@ async function getMainAccounts() {
       const facebook = payload.facebook || {};
       const instagram = payload.instagram || {};
       if (facebook.pageId && facebook.accessToken && instagram.accountId && instagram.accessToken) {
-        return { facebook, instagram };
+        return { facebook, instagram, linkedin: await getLinkedInAccount() };
       }
     } catch (error) {
       console.warn(
@@ -504,7 +505,118 @@ async function getMainAccounts() {
   if (!instagram.accountId || !instagram.accessToken) {
     throw new Error('Dott main Instagram credentials missing in Firestore');
   }
-  return { facebook, instagram };
+  const linkedin = data.socialAccounts?.linkedin || (await getLinkedInAccount());
+  return { facebook, instagram, linkedin };
+}
+
+async function getLinkedInAccount() {
+  const envToken = (process.env.DOTT_MAIN_LINKEDIN_ACCESS_TOKEN || process.env.LINKEDIN_ACCESS_TOKEN || '').trim();
+  const envUrn = (process.env.DOTT_MAIN_LINKEDIN_AUTHOR_URN || process.env.LINKEDIN_AUTHOR_URN || '').trim();
+  if (envToken && envUrn) return { accessToken: envToken, urn: envUrn };
+
+  if (hasSupabaseConfig()) {
+    try {
+      const response = await axios.get(`${SUPABASE_URL}/rest/v1/dott_social_accounts`, {
+        headers: supabaseHeaders(),
+        params: {
+          select: 'accounts',
+          user_id: `eq.${DOTT_MAIN_USER_ID}`,
+          limit: 1,
+        },
+        timeout: 30000,
+      });
+      const linkedin = response.data?.[0]?.accounts?.linkedin;
+      if (linkedin?.accessToken && linkedin?.urn) return linkedin;
+    } catch (error) {
+      console.warn(
+        '[dott-main-campaign] LinkedIn fallback lookup unavailable',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  initFirebase();
+  const snap = await admin.firestore().collection('users').doc(DOTT_MAIN_USER_ID).get();
+  const linkedin = snap.data()?.socialAccounts?.linkedin;
+  return linkedin?.accessToken && linkedin?.urn ? linkedin : null;
+}
+
+async function publishToLinkedIn({ accessToken, urn, caption, mediaUrl, mediaType }) {
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'X-Restli-Protocol-Version': '2.0.0',
+  };
+  const recipe =
+    mediaType === 'video'
+      ? 'urn:li:digitalmediaRecipe:feedshare-video'
+      : 'urn:li:digitalmediaRecipe:feedshare-image';
+  const registration = await axios.post(
+    `${LINKEDIN_API}/assets?action=registerUpload`,
+    {
+      registerUploadRequest: {
+        owner: urn,
+        recipes: [recipe],
+        serviceRelationships: [
+          {
+            relationshipType: 'OWNER',
+            identifier: 'urn:li:userGeneratedContent',
+          },
+        ],
+      },
+    },
+    {
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      timeout: 30000,
+    },
+  );
+  const value = registration.data?.value || {};
+  const upload =
+    value.uploadMechanism?.['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'] || {};
+  if (!value.asset || !upload.uploadUrl) {
+    throw new Error('LinkedIn upload registration failed');
+  }
+
+  const media = await axios.get(mediaUrl, { responseType: 'arraybuffer', timeout: 60000 });
+  const buffer = Buffer.isBuffer(media.data) ? media.data : Buffer.from(media.data);
+  await axios.put(upload.uploadUrl, buffer, {
+    headers: {
+      'Content-Type': mediaType === 'video' ? 'video/mp4' : 'image/jpeg',
+      'Content-Length': buffer.length,
+    },
+    timeout: 60000,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+  });
+
+  const response = await axios.post(
+    `${LINKEDIN_API}/ugcPosts`,
+    {
+      author: urn,
+      lifecycleState: 'PUBLISHED',
+      specificContent: {
+        'com.linkedin.ugc.ShareContent': {
+          shareCommentary: { text: caption },
+          shareMediaCategory: mediaType === 'video' ? 'VIDEO' : 'IMAGE',
+          media: [
+            {
+              status: 'READY',
+              description: { text: caption },
+              media: value.asset,
+              title: { text: caption.slice(0, 80) || 'Dott Media update' },
+            },
+          ],
+        },
+      },
+      visibility: {
+        'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC',
+      },
+    },
+    {
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      timeout: 30000,
+    },
+  );
+  return { id: response.data?.id || response.headers?.['x-restli-id'] || `li_${Date.now()}` };
 }
 
 async function getCampaignState() {
@@ -937,6 +1049,7 @@ function getPendingRun(data, contentKey) {
     startedAt: typeof pending.startedAt === 'string' ? pending.startedAt : new Date().toISOString(),
     instagramResult: pending.instagramResult && typeof pending.instagramResult === 'object' ? pending.instagramResult : null,
     facebookResult: pending.facebookResult && typeof pending.facebookResult === 'object' ? pending.facebookResult : null,
+    linkedinResult: pending.linkedinResult && typeof pending.linkedinResult === 'object' ? pending.linkedinResult : null,
   };
 }
 
@@ -949,7 +1062,7 @@ async function persistPendingRun(state, previousData, campaignState, pendingRun)
 }
 
 async function main() {
-  const { facebook, instagram } = await getMainAccounts();
+  const { facebook, instagram, linkedin } = await getMainAccounts();
   const { state, data, campaignState, item, forced } = await chooseItem();
   let stateData = data;
   const currentHour = hourBucket();
@@ -980,6 +1093,7 @@ async function main() {
       startedAt: new Date().toISOString(),
       instagramResult: null,
       facebookResult: null,
+      linkedinResult: null,
     };
     await persistPendingRun(state, stateData, campaignState, pendingRun);
     stateData = {
@@ -1039,14 +1153,38 @@ async function main() {
     };
   }
 
+  let linkedinResult = pendingRun.linkedinResult;
+  let linkedinError = null;
+  if (!linkedinResult && linkedin?.accessToken && linkedin?.urn) {
+    try {
+      linkedinResult = await publishToLinkedIn({
+        accessToken: linkedin.accessToken,
+        urn: linkedin.urn,
+        caption: item.facebookCaption,
+        mediaUrl: hostedUrl,
+        mediaType: item.type,
+      });
+      pendingRun = { ...pendingRun, linkedinResult };
+      await persistPendingRun(state, stateData, campaignState, pendingRun);
+      stateData = {
+        ...(stateData && typeof stateData === 'object' ? stateData : {}),
+        dottCampaignPendingRun: pendingRun,
+        dottCampaignPendingRunAt: pendingRun.startedAt,
+      };
+    } catch (error) {
+      linkedinError = error instanceof Error ? error.message : String(error);
+      console.warn('[dott-main-campaign] LinkedIn publish failed; Meta posts remain active', linkedinError);
+    }
+  }
+
   const postedAt = new Date().toISOString();
-  await addSocialLogs([
+  const socialLogs = [
     {
       user_id: DOTT_MAIN_USER_ID,
       platform: WORKER_TAG,
       scheduled_post_id: `external:${contentKey}`,
       status: 'posted',
-      response_id: `${instagramResult.id}|${facebookResult.id}`,
+      response_id: `${instagramResult.id}|${facebookResult.id}${linkedinResult?.id ? `|${linkedinResult.id}` : ''}`,
       posted_at: postedAt,
       payload: {
         slug: item.slug,
@@ -1056,6 +1194,7 @@ async function main() {
         ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
         instagram: instagramResult,
         facebook: facebookResult,
+        ...(linkedinResult ? { linkedin: linkedinResult } : {}),
       },
     },
     {
@@ -1090,8 +1229,46 @@ async function main() {
         facebook: facebookResult,
       },
     },
-  ]);
-  await incrementSocialDaily(item.type === 'video' ? { instagram_reels: 1, facebook: 1 } : { instagram: 1, facebook: 1 });
+  ];
+  if (linkedinResult) {
+    socialLogs.push({
+      user_id: DOTT_MAIN_USER_ID,
+      platform: 'linkedin',
+      scheduled_post_id: `external:${contentKey}`,
+      status: 'posted',
+      response_id: linkedinResult.id,
+      posted_at: postedAt,
+      payload: {
+        slug: item.slug,
+        filename: item.filename,
+        worker: WORKER_TAG,
+        contentType: item.type === 'video' ? 'campaign_video' : 'campaign_image',
+        ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
+        linkedin: linkedinResult,
+      },
+    });
+  } else if (linkedinError) {
+    socialLogs.push({
+      user_id: DOTT_MAIN_USER_ID,
+      platform: 'linkedin',
+      scheduled_post_id: `external:${contentKey}`,
+      status: 'failed',
+      response_id: null,
+      error: linkedinError,
+      posted_at: postedAt,
+      payload: {
+        slug: item.slug,
+        filename: item.filename,
+        worker: WORKER_TAG,
+      },
+    });
+  }
+  await addSocialLogs(socialLogs);
+  await incrementSocialDaily(
+    item.type === 'video'
+      ? { instagram_reels: 1, facebook: 1, ...(linkedinResult ? { linkedin: 1 } : {}) }
+      : { instagram: 1, facebook: 1, ...(linkedinResult ? { linkedin: 1 } : {}) },
+  );
 
   await updateCampaignState(state, stateData, {
     dottCampaignEnabled: true,
