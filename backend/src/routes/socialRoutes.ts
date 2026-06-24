@@ -886,7 +886,9 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
         (allowDefaults && Boolean(config.channels.instagram.accessToken && config.channels.instagram.businessId)),
       threads:
         Boolean(accounts.threads?.accessToken && accounts.threads?.accountId) ||
-        (allowDefaults && Boolean(config.channels.threads.accessToken && config.channels.threads.profileId)),
+        (allowDefaults && Boolean(config.channels.threads.accessToken && config.channels.threads.profileId)) ||
+        (isBwinHistoryRequest(authUser.uid, authUser.email, userData?.email) &&
+          process.env.BWIN_THREADS_CONNECTED === 'true'),
       linkedin:
         Boolean(accounts.linkedin?.accessToken && accounts.linkedin?.urn) ||
         (allowDefaults && Boolean(config.linkedin.accessToken && config.linkedin.organizationId)),
