@@ -92,7 +92,13 @@ export interface SocialAccounts {
     connectedAt?: string;
   };
   threads?: { accessToken: string; accountId: string; username?: string };
-  linkedin?: { accessToken: string; urn: string };
+  linkedin?: {
+    accessToken: string;
+    urn: string;
+    refreshToken?: string;
+    accessTokenExpiresAt?: number | null;
+    refreshTokenExpiresAt?: number | null;
+  };
   twitter?: {
     accessToken: string;
     accessSecret: string;

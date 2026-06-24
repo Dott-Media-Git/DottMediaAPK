@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { SocialAccounts } from '../socialPostingService';
+import { refreshLinkedInAccount } from '../../../services/linkedinTokenService';
 
 type PublishInput = {
   caption: string;
@@ -137,7 +138,8 @@ const createUgcPost = async (accessToken: string, author: string, caption: strin
 };
 
 export async function publishToLinkedIn(input: PublishInput): Promise<{ remoteId?: string }> {
-  const account = input.credentials?.linkedin;
+  const storedAccount = input.credentials?.linkedin;
+  const account = storedAccount ? await refreshLinkedInAccount(storedAccount) : undefined;
   if (!account?.accessToken) {
     throw new Error('Missing LinkedIn credentials');
   }

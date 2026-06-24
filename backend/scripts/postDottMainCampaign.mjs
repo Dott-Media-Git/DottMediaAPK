@@ -511,8 +511,21 @@ async function getMainAccounts() {
 
 async function getLinkedInAccount() {
   const envToken = (process.env.DOTT_MAIN_LINKEDIN_ACCESS_TOKEN || process.env.LINKEDIN_ACCESS_TOKEN || '').trim();
+  const envRefreshToken = (
+    process.env.DOTT_MAIN_LINKEDIN_REFRESH_TOKEN ||
+    process.env.LINKEDIN_REFRESH_TOKEN ||
+    ''
+  ).trim();
   const envUrn = (process.env.DOTT_MAIN_LINKEDIN_AUTHOR_URN || process.env.LINKEDIN_AUTHOR_URN || '').trim();
-  if (envToken && envUrn) return { accessToken: envToken, urn: envUrn };
+  if (envToken && envUrn) {
+    return refreshLinkedInAccount({
+      accessToken: envToken,
+      refreshToken: envRefreshToken || undefined,
+      accessTokenExpiresAt: Number(process.env.DOTT_MAIN_LINKEDIN_ACCESS_TOKEN_EXPIRES_AT || 0) || undefined,
+      refreshTokenExpiresAt: Number(process.env.DOTT_MAIN_LINKEDIN_REFRESH_TOKEN_EXPIRES_AT || 0) || undefined,
+      urn: envUrn,
+    });
+  }
 
   if (hasSupabaseConfig()) {
     try {
@@ -526,7 +539,7 @@ async function getLinkedInAccount() {
         timeout: 30000,
       });
       const linkedin = response.data?.[0]?.accounts?.linkedin;
-      if (linkedin?.accessToken && linkedin?.urn) return linkedin;
+      if (linkedin?.accessToken && linkedin?.urn) return refreshLinkedInAccount(linkedin);
     } catch (error) {
       console.warn(
         '[dott-main-campaign] LinkedIn fallback lookup unavailable',
@@ -538,7 +551,44 @@ async function getLinkedInAccount() {
   initFirebase();
   const snap = await admin.firestore().collection('users').doc(DOTT_MAIN_USER_ID).get();
   const linkedin = snap.data()?.socialAccounts?.linkedin;
-  return linkedin?.accessToken && linkedin?.urn ? linkedin : null;
+  return linkedin?.accessToken && linkedin?.urn ? refreshLinkedInAccount(linkedin) : null;
+}
+
+async function refreshLinkedInAccount(account) {
+  const expiresAt = Number(account.accessTokenExpiresAt || 0);
+  if (!account.refreshToken || !expiresAt || expiresAt > Date.now() + 24 * 60 * 60 * 1000) {
+    return account;
+  }
+  const clientId = (process.env.LINKEDIN_CLIENT_ID || '').trim();
+  const clientSecret = (process.env.LINKEDIN_CLIENT_SECRET || '').trim();
+  if (!clientId || !clientSecret) throw new Error('LinkedIn token refresh is not configured');
+
+  const response = await axios.post(
+    'https://www.linkedin.com/oauth/v2/accessToken',
+    new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: account.refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
+    }),
+    {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 30000,
+    },
+  );
+  const accessToken = response.data?.access_token;
+  if (!accessToken) throw new Error('LinkedIn refresh did not return an access token');
+  return {
+    ...account,
+    accessToken,
+    refreshToken: response.data?.refresh_token || account.refreshToken,
+    accessTokenExpiresAt: response.data?.expires_in
+      ? Date.now() + Number(response.data.expires_in) * 1000
+      : account.accessTokenExpiresAt,
+    refreshTokenExpiresAt: response.data?.refresh_token_expires_in
+      ? Date.now() + Number(response.data.refresh_token_expires_in) * 1000
+      : account.refreshTokenExpiresAt,
+  };
 }
 
 async function publishToLinkedIn({ accessToken, urn, caption, mediaUrl, mediaType }) {

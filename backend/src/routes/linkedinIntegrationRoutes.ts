@@ -179,11 +179,16 @@ router.get('/integrations/linkedin/callback', async (req, res) => {
         1,
       );
     }
+    const expiresIn = Number(tokenResponse?.data?.expires_in ?? 0);
+    const refreshExpiresIn = Number(tokenResponse?.data?.refresh_token_expires_in ?? 0);
     await firestore.collection('users').doc(state.userId).set(
       {
         socialAccounts: {
           linkedin: {
             accessToken,
+            refreshToken: tokenResponse?.data?.refresh_token ?? null,
+            accessTokenExpiresAt: expiresIn ? Date.now() + expiresIn * 1000 : null,
+            refreshTokenExpiresAt: refreshExpiresIn ? Date.now() + refreshExpiresIn * 1000 : null,
             urn: profile.urn,
             name: profile.name,
             scope: tokenResponse?.data?.scope ?? getScopes().join(' '),
