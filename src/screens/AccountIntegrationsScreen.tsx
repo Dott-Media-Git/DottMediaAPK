@@ -221,8 +221,29 @@ export const AccountIntegrationsScreen: React.FC = () => {
     return () => subscription.remove();
   }, [pendingOAuthPlatform, state.user?.uid]);
 
-  const openOAuthUrl = async (url: string | undefined, label: string, platform: PlatformKey) => {
+  const reserveOAuthWindow = () => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+    const popup = window.open('', '_blank');
+    if (popup) {
+      popup.document.title = 'Connecting...';
+      popup.document.body.innerHTML =
+        '<main style="font-family:Arial,sans-serif;padding:32px;color:#111827">Preparing secure connection...</main>';
+    }
+    return popup;
+  };
+
+  const closeReservedOAuthWindow = (popup: Window | null) => {
+    if (popup && !popup.closed) popup.close();
+  };
+
+  const openOAuthUrl = async (
+    url: string | undefined,
+    label: string,
+    platform: PlatformKey,
+    reservedWindow: Window | null = null,
+  ) => {
     if (!url) {
+      closeReservedOAuthWindow(reservedWindow);
       Alert.alert(t('Error'), t('Missing connect URL'));
       return;
     }
@@ -230,6 +251,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
     try {
       parsedUrl = new URL(url);
     } catch {
+      closeReservedOAuthWindow(reservedWindow);
       Alert.alert(t('Error'), t('Unable to open the {{label}} connect URL.', { label }));
       return;
     }
@@ -237,7 +259,13 @@ export const AccountIntegrationsScreen: React.FC = () => {
     refreshAfterOAuth(platform);
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined') {
-        window.location.assign(parsedUrl.toString());
+        if (reservedWindow && !reservedWindow.closed) {
+          reservedWindow.opener = null;
+          reservedWindow.location.href = parsedUrl.toString();
+          reservedWindow.focus();
+        } else {
+          window.location.href = parsedUrl.toString();
+        }
         return;
       }
       await Linking.openURL(parsedUrl.toString());
@@ -257,10 +285,12 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleConnect = async () => {
+    const oauthWindow = reserveOAuthWindow();
     try {
       const response = await fetchYouTubeConnectUrl(orgId);
-      await openOAuthUrl(response?.url as string | undefined, 'YouTube', 'youtube');
+      await openOAuthUrl(response?.url as string | undefined, 'YouTube', 'youtube', oauthWindow);
     } catch (error: any) {
+      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the YouTube connect URL.'));
     }
   };
@@ -332,10 +362,12 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleTikTokConnect = async () => {
+    const oauthWindow = reserveOAuthWindow();
     try {
       const response = await fetchTikTokConnectUrl(orgId);
-      await openOAuthUrl(response?.url as string | undefined, 'TikTok', 'tiktok');
+      await openOAuthUrl(response?.url as string | undefined, 'TikTok', 'tiktok', oauthWindow);
     } catch (error: any) {
+      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the TikTok connect URL.'));
     }
   };
@@ -394,11 +426,13 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleMetaConnect = async (platform: 'facebook' | 'instagram') => {
+    const oauthWindow = reserveOAuthWindow();
     setSavingPlatform(platform);
     try {
       const response = await fetchMetaConnectUrl(platform);
-      await openOAuthUrl(response?.url, 'Meta', platform);
+      await openOAuthUrl(response?.url, 'Meta', platform, oauthWindow);
     } catch (error: any) {
+      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the Meta connect URL.'));
     } finally {
       setSavingPlatform(null);
@@ -406,11 +440,13 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleThreadsConnect = async () => {
+    const oauthWindow = reserveOAuthWindow();
     setSavingPlatform('threads');
     try {
       const response = await fetchThreadsConnectUrl();
-      await openOAuthUrl(response?.url, 'Threads', 'threads');
+      await openOAuthUrl(response?.url, 'Threads', 'threads', oauthWindow);
     } catch (error: any) {
+      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the Threads connect URL.'));
     } finally {
       setSavingPlatform(null);
@@ -418,11 +454,13 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleLinkedInConnect = async () => {
+    const oauthWindow = reserveOAuthWindow();
     setSavingPlatform('linkedin');
     try {
       const response = await fetchLinkedInConnectUrl();
-      await openOAuthUrl(response?.url, 'LinkedIn', 'linkedin');
+      await openOAuthUrl(response?.url, 'LinkedIn', 'linkedin', oauthWindow);
     } catch (error: any) {
+      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the LinkedIn connect URL.'));
     } finally {
       setSavingPlatform(null);
@@ -430,11 +468,13 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const handleTwitterConnect = async () => {
+    const oauthWindow = reserveOAuthWindow();
     setSavingPlatform('twitter');
     try {
       const response = await fetchTwitterConnectUrl();
-      await openOAuthUrl(response?.url, 'X', 'twitter');
+      await openOAuthUrl(response?.url, 'X', 'twitter', oauthWindow);
     } catch (error: any) {
+      closeReservedOAuthWindow(oauthWindow);
       Alert.alert(t('Error'), error.message ?? t('Unable to open the X connect URL.'));
     } finally {
       setSavingPlatform(null);
