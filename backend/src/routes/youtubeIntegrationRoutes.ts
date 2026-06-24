@@ -4,7 +4,7 @@ import createHttpError from 'http-errors';
 import axios from 'axios';
 import { google } from 'googleapis';
 import { config } from '../config';
-import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
+import { requireFirebase, requireFirebaseForm, AuthedRequest } from '../middleware/firebaseAuth';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
 import {
   disconnectYouTube,
@@ -168,6 +168,17 @@ router.get('/integrations/youtube/connect', ...userGate, async (req, res, next) 
     if (!userId) throw createHttpError(401, 'Unauthorized');
     const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
     res.redirect(oauthUrl);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/integrations/youtube/start', requireFirebaseForm, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
+    const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
+    res.redirect(303, buildOAuthUrl(req, authUser.uid, orgId, authUser.email));
   } catch (error) {
     next(error);
   }
