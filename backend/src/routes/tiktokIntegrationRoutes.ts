@@ -13,6 +13,7 @@ import {
 } from '../services/socialIntegrationService';
 import { firestore } from '../db/firestore';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
+import { oauthSuccessRedirect } from '../utils/oauthRedirect';
 
 const router = Router();
 
@@ -241,7 +242,7 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
     return;
   }
 
-  res.status(200).send(renderCallbackHtml('TikTok connected', 'You can close this window and return to Dott Media.'));
+  res.redirect(303, oauthSuccessRedirect('tiktok'));
 });
 
 router.post('/integrations/tiktok/token', ...userGate, async (req, res, next) => {
