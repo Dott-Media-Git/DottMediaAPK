@@ -2,7 +2,7 @@ import { Router, Request } from 'express';
 import admin from 'firebase-admin';
 import createHttpError from 'http-errors';
 import { TwitterApi } from 'twitter-api-v2';
-import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
+import { requireFirebase, requireFirebaseForm, AuthedRequest } from '../middleware/firebaseAuth';
 import { firestore } from '../db/firestore';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 
@@ -78,6 +78,17 @@ router.get('/integrations/twitter/connect', requireFirebase, async (req, res, ne
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
     res.redirect(await buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/integrations/twitter/start', requireFirebaseForm, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
+    const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
+    res.redirect(303, await buildOAuthUrl(req, authUser.uid, orgId, authUser.email));
   } catch (error) {
     next(error);
   }
