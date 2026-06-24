@@ -5,6 +5,7 @@ import { TwitterApi } from 'twitter-api-v2';
 import { requireFirebase, requireFirebaseForm, AuthedRequest } from '../middleware/firebaseAuth';
 import { firestore } from '../db/firestore';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
+import { oauthSuccessRedirect } from '../utils/oauthRedirect';
 
 const router = Router();
 
@@ -167,7 +168,7 @@ router.get('/integrations/twitter/callback', async (req, res) => {
     return;
   }
 
-  res.status(200).send(renderCallbackHtml('X connected', 'You can close this window and return to Dott Media.'));
+  res.redirect(303, oauthSuccessRedirect('twitter'));
 });
 
 const renderCallbackHtml = (title: string, message: string) => `<!doctype html>
