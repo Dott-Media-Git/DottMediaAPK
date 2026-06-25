@@ -5,6 +5,7 @@ import axios from 'axios';
 import { randomBytes } from 'crypto';
 import { firestore } from '../../db/firestore';
 import { getPlan, getStripePriceId, normalizePlanId, planCatalog, UsageResource } from './planCatalog';
+import { assertUsageAllowed, canActivateCheckoutSession, resolveUsablePlan } from './billingPolicy';
 
 const orgsCollection = firestore.collection('orgs');
 const profilesCollection = firestore.collection('profiles');
@@ -24,6 +25,11 @@ export type BillingScope = {
   email?: string;
 };
 
+export type UsageCharge = {
+  resource: UsageResource;
+  amount: number;
+};
+
 export const currentMonthKey = (date = new Date()) => date.toISOString().slice(0, 7).replace('-', '');
 
 export const resolveBillingScope = (userId: string, orgId?: string | null, email?: string): BillingScope => ({
@@ -39,23 +45,12 @@ export async function getPlanForScope(scope: BillingScope) {
   const orgPlan = orgSnap?.exists ? orgSnap.data()?.plan : null;
   const orgData = orgSnap?.exists ? orgSnap.data() : null;
   if (orgPlan) {
-    if (isBillingPlanUsable(orgData)) return getPlan(orgPlan);
-    return getPlan('free');
+    return resolveUsablePlan(orgData);
   }
   const profileSnap = await profilesCollection.doc(scope.userId).get().catch(() => null);
   const profileData = profileSnap?.exists ? profileSnap.data() : null;
-  if (!isBillingPlanUsable(profileData)) return getPlan('free');
-  return getPlan(profileData?.plan ?? 'free');
+  return resolveUsablePlan(profileData);
 }
-
-const isBillingPlanUsable = (data: FirebaseFirestore.DocumentData | null | undefined) => {
-  if (!data) return true;
-  const status = String(data.subscriptionStatus ?? '').toLowerCase();
-  if (status === 'canceled' || status === 'past_due' || status === 'unpaid') return false;
-  const endsAt = data.billingCycleEndsAt?.toDate?.() ?? (data.billingCycleEndsAt ? new Date(data.billingCycleEndsAt) : null);
-  if (endsAt && Number.isFinite(endsAt.getTime()) && endsAt.getTime() < Date.now()) return false;
-  return true;
-};
 
 export async function getBillingOverview(scope: BillingScope) {
   const [plan, usageSnap, creditsSnap] = await Promise.all([
@@ -319,26 +314,60 @@ export async function applyPlan(
 }
 
 export async function consumeUsage(scope: BillingScope, resource: UsageResource, amount = 1) {
-  const overview = await getBillingOverview(scope);
-  const plan = overview.plan;
-  const usage = (overview.usage?.[resource] as number) ?? 0;
-  const credits = (overview.credits?.[resource] as number) ?? 0;
-  const limit = plan.limits[resource];
-  if (limit !== null && usage + amount > limit + credits) {
-    throw createHttpError(402, `${resource} limit reached. Upgrade or buy credits to continue.`);
+  const result = await consumeUsageBatch(scope, [{ resource, amount }]);
+  return { ...result, resource, amount };
+}
+
+export async function consumeUsageBatch(scope: BillingScope, charges: UsageCharge[]) {
+  const normalized = new Map<UsageResource, number>();
+  for (const charge of charges) {
+    const amount = Number(charge.amount);
+    if (!Number.isInteger(amount) || amount <= 0) {
+      throw createHttpError(400, `Invalid usage amount for ${charge.resource}`);
+    }
+    normalized.set(charge.resource, (normalized.get(charge.resource) ?? 0) + amount);
   }
-  const ref = usageMonthlyCollection.doc(monthlyUsageId(scope));
-  await ref.set(
-    {
+  if (!normalized.size) throw createHttpError(400, 'At least one usage charge is required');
+
+  const orgRef = orgsCollection.doc(scope.orgId);
+  const profileRef = profilesCollection.doc(scope.userId);
+  const usageRef = usageMonthlyCollection.doc(monthlyUsageId(scope));
+  const creditsRef = creditBalancesCollection.doc(scope.orgId);
+  const month = currentMonthKey();
+
+  return firestore.runTransaction(async transaction => {
+    const [orgSnap, profileSnap, usageSnap, creditsSnap] = await Promise.all([
+      transaction.get(orgRef),
+      transaction.get(profileRef),
+      transaction.get(usageRef),
+      transaction.get(creditsRef),
+    ]);
+    const orgData = orgSnap.exists ? orgSnap.data() : null;
+    const profileData = profileSnap.exists ? profileSnap.data() : null;
+    const billingData = orgData?.plan || orgData?.planId ? orgData : profileData;
+    const plan = resolveUsablePlan(billingData);
+    const usage = usageSnap.exists ? usageSnap.data() ?? {} : {};
+    const credits = creditsSnap.exists ? creditsSnap.data() ?? {} : {};
+
+    assertUsageAllowed(plan, usage, credits, normalized);
+
+    const increments: Record<string, unknown> = {
       orgId: scope.orgId,
       userId: scope.userId,
-      month: currentMonthKey(),
-      [resource]: admin.firestore.FieldValue.increment(amount),
+      month,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
-  return { ok: true, plan, resource, amount };
+    };
+    for (const [resource, amount] of normalized) {
+      increments[resource] = admin.firestore.FieldValue.increment(amount);
+    }
+    transaction.set(usageRef, increments, { merge: true });
+    return {
+      ok: true,
+      plan,
+      month,
+      charges: [...normalized].map(([resource, amount]) => ({ resource, amount })),
+    };
+  });
 }
 
 export async function consumeUsageForUserId(userId: string, resource: UsageResource, amount = 1, orgId?: string | null) {
@@ -355,6 +384,7 @@ export async function consumeUsageForUserId(userId: string, resource: UsageResou
 export async function applyStripeCheckoutCompleted(session: Stripe.Checkout.Session) {
   const metadata = session.metadata ?? {};
   if (!metadata.userId || !metadata.plan) return null;
+  if (!canActivateCheckoutSession(session.payment_status)) return null;
   const scope = resolveBillingScope(metadata.userId, metadata.orgId, session.customer_details?.email ?? undefined);
   return applyPlan(scope, metadata.plan, 'active', {
     customerId: typeof session.customer === 'string' ? session.customer : session.customer?.id,
@@ -372,10 +402,17 @@ export async function applyStripeSubscription(subscription: Stripe.Subscription)
       ? 'past_due'
       : 'canceled';
   const scope = resolveBillingScope(metadata.userId, metadata.orgId);
+  const currentPeriodEnd = (subscription as any).current_period_end;
   return applyPlan(scope, normalizePlanId(metadata.plan), status, {
     customerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id,
     subscriptionId: subscription.id,
     subscriptionStatus: subscription.status,
+  }, {
+    billingProvider: 'stripe',
+    billingCycleEndsAt:
+      typeof currentPeriodEnd === 'number'
+        ? admin.firestore.Timestamp.fromMillis(currentPeriodEnd * 1000)
+        : null,
   });
 }
 

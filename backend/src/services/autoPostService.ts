@@ -32,6 +32,7 @@ import type { TrendCandidate, TrendItem } from '../types/footballTrends.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
 import { metaAdsService } from './metaAdsService.js';
+import { consumeUsageBatch, resolveBillingScope } from './billing/billingService.js';
 import {
   buildCarmarketVehicleCaption,
   pickCarmarketVehicle,
@@ -2874,12 +2875,13 @@ export class AutoPostService {
     }
   }
 
-  private async generateFootballCardImage(prompt: string, recentSet: Set<string>) {
+  private async generateFootballCardImage(userId: string, prompt: string, recentSet: Set<string>) {
     try {
       const generated = await contentGenerationService.generateContent({
         prompt,
         businessType: 'Football content card',
         imageCount: 1,
+        userId,
       });
       const images = this.selectFreshImages(generated.images ?? [], recentSet);
       if (images.length) return images.slice(0, 1);
@@ -3293,6 +3295,7 @@ export class AutoPostService {
       }
       if (!finalImages.length) {
         finalImages = await this.generateFootballCardImage(
+          userId,
           `Create a vertical football news story image for "${topic}". Clean editorial sports style, no logos.`,
           recentSet,
         );
@@ -3389,7 +3392,7 @@ export class AutoPostService {
       const prompt = `Create a clean, modern news visual related to this AI headline: "${topic}". Context: "${summary || top?.sampleTitles?.[0] || 'AI news update'}". Keep it realistic and editorial, no logos.`;
       let generated: GeneratedContent | null = null;
       try {
-        generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news image', imageCount: 1 });
+        generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news image', imageCount: 1, userId });
       } catch (error) {
         console.warn('[autopost] related story image generation failed', error);
       }
@@ -3419,7 +3422,7 @@ export class AutoPostService {
       let generated: GeneratedContent | null = null;
       if (!finalImages.length) {
         try {
-          generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news update', imageCount: 1 });
+          generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news update', imageCount: 1, userId });
         } catch (error) {
           console.warn('[autopost] trend story generation failed', error);
         }
@@ -3607,6 +3610,10 @@ export class AutoPostService {
           ].filter(Boolean);
           const context = contextLines.join('\n').trim();
 
+          await consumeUsageBatch(resolveBillingScope(userId), [
+            { resource: 'aiReplies', amount: 1 },
+            { resource: 'images', amount: 1 },
+          ]);
           const gen = await footballTrendContentService.generate({
             topic: top.topic,
             context: context.length >= 10 ? context : `topic: ${top.topic}`,
@@ -3672,6 +3679,7 @@ export class AutoPostService {
           prompt: `Create a realistic football news image for this trend: "${trendTopic}". Dynamic stadium energy, editorial sports style, no logos.`,
           businessType: 'Football trend news visual',
           imageCount: 1,
+          userId,
         });
         const resolvedImages = this.resolveImageUrls(generatedImage.images ?? [], new Set<string>(), false);
         if (resolvedImages.length) {
@@ -3745,6 +3753,7 @@ export class AutoPostService {
               imageUrls = [predictionsImageDataUrl];
             } else {
               imageUrls = await this.generateFootballCardImage(
+                userId,
                 `Create a clean football prediction card with readable fixture list and odds style layout. Highlight: "${picks[0]?.fixture || 'Top fixtures'}". No sportsbook logos.`,
                 new Set<string>(this.getRecentImageHistory(job)),
               );
@@ -3807,6 +3816,7 @@ export class AutoPostService {
                 imageUrls = [tableImageDataUrl];
               } else {
                 imageUrls = await this.generateFootballCardImage(
+                  userId,
                   `Design a modern football league table card for ${snapshot.league}. Show top teams and points with strong readability.`,
                   new Set<string>(this.getRecentImageHistory(job)),
                 );
@@ -3863,6 +3873,7 @@ export class AutoPostService {
               imageUrls = [topScorersImageDataUrl];
             } else {
               imageUrls = await this.generateFootballCardImage(
+                userId,
                 `Design a modern ${snapshot.league} top scorers card with player names, clubs, and goals.`,
                 new Set<string>(this.getRecentImageHistory(job)),
               );
@@ -3905,6 +3916,7 @@ export class AutoPostService {
           );
           if (!allowThirdPartyHighlightVideoRepublish) {
             imageUrls = await this.generateFootballCardImage(
+              userId,
               `Create a premium football highlight alert card. Headline: "${title}". Secondary line: "Official source: ${source}". Sharp sports editorial design, clean typography, dynamic football energy, no sportsbook logos, no watermarks, no club crests.`,
               new Set<string>(this.getRecentImageHistory(job)),
             );
@@ -3912,6 +3924,7 @@ export class AutoPostService {
             imageUrls = [resolvedImage];
           } else if (!imageUrls.length) {
             imageUrls = await this.generateFootballCardImage(
+              userId,
               `Create a football highlight poster image for "${title}". High-energy action style with clean headline space.`,
               new Set<string>(this.getRecentImageHistory(job)),
             );
@@ -3955,6 +3968,7 @@ export class AutoPostService {
           );
           if (!allowThirdPartyHighlightVideoRepublish) {
             imageUrls = await this.generateFootballCardImage(
+              userId,
               `Create a premium football highlight alert card. Headline: "${title}". Secondary line: "Official source: ${source}". Sharp sports editorial design, clean typography, dynamic football energy, no sportsbook logos, no watermarks, no club crests.`,
               new Set<string>(this.getRecentImageHistory(job)),
             );
@@ -3962,6 +3976,7 @@ export class AutoPostService {
             imageUrls = [resolvedImage];
           } else if (!imageUrls.length) {
             imageUrls = await this.generateFootballCardImage(
+              userId,
               `Create a football highlight poster image for "${title}". High-energy action style with clean headline space.`,
               new Set<string>(this.getRecentImageHistory(job)),
             );
@@ -4014,6 +4029,7 @@ export class AutoPostService {
             imageUrls = [selectedResult.item.imageUrl.trim()];
           } else {
             imageUrls = await this.generateFootballCardImage(
+              userId,
               `Create a football scorecard image for this result: "${selectedResult.item.title}". Editorial sports style, clear score emphasis.`,
               new Set<string>(this.getRecentImageHistory(job)),
             );
@@ -4068,6 +4084,7 @@ export class AutoPostService {
         }
         if (!imageUrls.length && trendTopic) {
           imageUrls = await this.generateFootballCardImage(
+            userId,
             `Create a football breaking-news poster image for "${trendTopic}". Clean typography space, dynamic stadium atmosphere.`,
             new Set<string>(this.getRecentImageHistory(job)),
           );
@@ -4592,7 +4609,7 @@ export class AutoPostService {
     if (!generated) {
       for (let attempt = 0; attempt < maxImageAttempts; attempt += 1) {
         try {
-          generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1 });
+          generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1, userId });
           generationError = null;
         } catch (error) {
           generationError = error as Error;
@@ -4923,6 +4940,10 @@ export class AutoPostService {
         nextRun: nextRunDate.toISOString(),
       };
     }
+
+    await consumeUsageBatch(resolveBillingScope(userId), [
+      { resource: 'scheduledPosts', amount: Math.max(publishPlatforms.length, 1) },
+    ]);
 
     for (const platform of publishPlatforms) {
       const publisher = platformPublishers[platform] ?? publishToTwitter;

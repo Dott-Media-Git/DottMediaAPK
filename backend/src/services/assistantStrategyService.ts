@@ -623,6 +623,7 @@ export class AssistantStrategyService {
           prompt: plan.actions.autoPost?.prompt ?? 'High-performing social post for lead generation',
           businessType: plan.actions.autoPost?.businessType ?? 'Marketing',
           imageCount: 1,
+          userId,
         });
         if (generated.images.length) {
           const scheduleDate = new Date();

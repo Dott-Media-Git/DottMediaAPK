@@ -4,6 +4,7 @@ import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { footballTrendContentService } from '../services/footballTrendContentService';
 import { getTrendingCandidates } from '../services/footballTrendSources';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService';
+import { consumeUsageBatch, resolveBillingScope } from '../services/billing/billingService';
 
 const router = Router();
 
@@ -128,7 +129,13 @@ router.post('/football/trends/scan', requireFirebase, async (req, res, next) => 
 
 router.post('/football/trends/generate', requireFirebase, async (req, res, next) => {
   try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
     const payload = generateSchema.parse(req.body ?? {});
+    await consumeUsageBatch(resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email), [
+      { resource: 'aiReplies', amount: 1 },
+      ...(payload.includePosterImage ? [{ resource: 'images' as const, amount: payload.imageCount ?? 1 }] : []),
+    ]);
     const result = await footballTrendContentService.generate(payload);
     res.json(result);
   } catch (error) {
@@ -141,6 +148,9 @@ router.post('/football/trends/schedule', requireFirebase, async (req, res, next)
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
     const payload = scheduleSchema.parse(req.body ?? {});
+    await consumeUsageBatch(resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email), [
+      { resource: 'scheduledPosts', amount: Math.max(payload.platforms.length * payload.timesPerDay, 1) },
+    ]);
     const result = await socialSchedulingService.schedulePosts({
       userId: authUser.uid,
       platforms: payload.platforms,
@@ -154,6 +164,7 @@ router.post('/football/trends/schedule', requireFirebase, async (req, res, next)
       hashtags: payload.hashtags,
       scheduledFor: payload.scheduledFor,
       timesPerDay: payload.timesPerDay,
+      billingUsageConsumed: true,
     });
     res.json(result);
   } catch (error) {

@@ -466,6 +466,11 @@ router.post('/youtube/sora', ...adminGate, async (req, res, next) => {
     if (!config.openAI.apiKey) {
       throw createHttpError(400, 'Missing OPENAI_API_KEY');
     }
+    await consumeUsage(
+      resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email),
+      payload.model === 'sora-2-pro' ? 'proVideos' : 'basicVideos',
+      1,
+    );
     const scheduledPublishTime = payload.scheduledPublishTime?.trim();
     if (scheduledPublishTime) {
       const parsed = new Date(scheduledPublishTime);

@@ -11,6 +11,7 @@ import { LeadService } from './leadService';
 import { QualificationAgent } from './qualificationAgent';
 import { OutboundMessenger } from '../../services/outboundMessenger';
 import { incrementInboundAnalytics, incrementWebLeadAnalytics } from '../../services/analyticsService';
+import { consumeUsageForUserId } from '../../services/billing/billingService';
 
 const messagesCollection = firestore.collection('messages');
 const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -41,6 +42,10 @@ export class InboundHandler {
   private aiClient = new OpenAI({ apiKey: config.openAI.apiKey, timeout: OPENAI_REPLY_TIMEOUT_MS });
 
   async handle(payload: InboundPayload) {
+    if (!payload.ownerId) {
+      throw new Error('Missing ownerId for metered inbound automation');
+    }
+    await consumeUsageForUserId(payload.ownerId, 'aiReplies', 1);
     const classification = await classifyIntentText(payload.text);
     const replyClassification = toReplyClassification(classification);
     const messageRef = await this.logMessage(payload, classification);

@@ -26,11 +26,43 @@ async function testSettingsValidator() {
   assert.equal(result.booking.provider, 'calendly');
 }
 
+async function testBillingPolicy() {
+  const { assertUsageAllowed, canActivateCheckoutSession, resolveUsablePlan } = await import(
+    '../services/billing/billingPolicy.js'
+  );
+  assert.equal(resolveUsablePlan({ planId: 'creator', subscriptionStatus: 'active' }).id, 'creator');
+  assert.equal(resolveUsablePlan({ planId: 'creator' }).id, 'free');
+  assert.equal(resolveUsablePlan({ planId: 'creator', subscriptionStatus: 'past_due' }).id, 'free');
+  assert.equal(
+    resolveUsablePlan({
+      planId: 'creator',
+      subscriptionStatus: 'active',
+      billingCycleEndsAt: new Date(Date.now() - 1000),
+    }).id,
+    'free',
+  );
+  assert.equal(canActivateCheckoutSession('paid'), true);
+  assert.equal(canActivateCheckoutSession('unpaid'), false);
+
+  const starter = resolveUsablePlan({ planId: 'starter', subscriptionStatus: 'active' });
+  assert.doesNotThrow(() =>
+    assertUsageAllowed(starter, { aiReplies: 499 }, {}, new Map([['aiReplies', 1]])),
+  );
+  assert.throws(
+    () => assertUsageAllowed(starter, { aiReplies: 500 }, {}, new Map([['aiReplies', 1]])),
+    (error: any) => error?.status === 402,
+  );
+  assert.doesNotThrow(() =>
+    assertUsageAllowed(starter, { images: 25 }, { images: 2 }, new Map([['images', 2]])),
+  );
+}
+
 async function run() {
   await testVault();
   await testRoleHelper();
   await testSettingsValidator();
-  console.log('Admin control panel tests passed ✅');
+  await testBillingPolicy();
+  console.log('Backend tests passed');
 }
 
 run().catch(error => {
