@@ -42,6 +42,11 @@ const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId
     instagramAccountId: '17841412643148539',
     instagramUsername: 'gamers44life',
   },
+  LVR7p3WzdFM51ds92Kacf6S40og2: {
+    pageId: '1165009866702868',
+    instagramAccountId: '',
+    instagramUsername: '',
+  },
 };
 
 const CLIENT_ENV_PREFIXES: Record<string, string> = {
@@ -167,16 +172,17 @@ export class SocialPostingService {
         const value = (name: string) => (process.env[`${prefix}_${name}`] ?? '').trim();
         const facebookToken = value('FACEBOOK_PAGE_TOKEN') || value('FACEBOOK_ACCESS_TOKEN');
         const instagramToken = value('INSTAGRAM_ACCESS_TOKEN') || facebookToken;
+        const instagramAccountId = value('INSTAGRAM_ACCOUNT_ID') || clientFallback.instagramAccountId;
         if (facebookToken) {
           fallback.facebook = {
             accessToken: facebookToken,
             pageId: value('FACEBOOK_PAGE_ID') || clientFallback.pageId,
           };
         }
-        if (instagramToken) {
+        if (instagramToken && instagramAccountId) {
           fallback.instagram = {
             accessToken: instagramToken,
-            accountId: value('INSTAGRAM_ACCOUNT_ID') || clientFallback.instagramAccountId,
+            accountId: instagramAccountId,
             username: value('INSTAGRAM_USERNAME') || clientFallback.instagramUsername,
           };
         }
