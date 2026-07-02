@@ -160,7 +160,7 @@ const KNOWN_CONNECTED_CLIENTS = [
     userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
     email: 'kingbrasio100@gmail.com',
     socialAccounts: {
-      facebook: { pageId: '1154065791120794' },
+      facebook: { pageId: '1158550557346330' },
       instagram: { accountId: '17841426388091930' },
     },
   },
@@ -168,15 +168,14 @@ const KNOWN_CONNECTED_CLIENTS = [
     name: 'Dott Energy',
     userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
     socialAccounts: {
-      facebook: { pageId: '1201086759745632' },
-      instagram: { accountId: '17841433799368009' },
+      facebook: { pageId: '1165009866702868' },
     },
   },
   {
     name: 'Car Marketplace',
     userId: 'acmVetCcOiTHeGk5D7eDYieamDF3',
     socialAccounts: {
-      facebook: { pageId: '1033657279841186' },
+      facebook: { pageId: '1191892417341226' },
       instagram: { accountId: '17841414110816982' },
     },
   },
@@ -184,7 +183,7 @@ const KNOWN_CONNECTED_CLIENTS = [
     name: 'Staysphere',
     userId: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
     socialAccounts: {
-      facebook: { pageId: '1191303874068642' },
+      facebook: { pageId: '1254924081027995' },
       instagram: { accountId: '17841448080672466' },
     },
   },

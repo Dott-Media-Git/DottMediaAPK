@@ -17,6 +17,13 @@ const paymentTransactionsCollection = firestore.collection('paymentTransactions'
 
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
+const OWNER_MANAGED_BILLING_EXEMPT_USER_IDS = new Set([
+  'LVR7p3WzdFM51ds92Kacf6S40og2',
+  '80bYIeiuukNFtUvXTUobXmfC7pu1',
+  'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
+  'acmVetCcOiTHeGk5D7eDYieamDF3',
+]);
+
 type CheckoutProvider = 'stripe' | 'flutterwave_mobile_money';
 
 export type BillingScope = {
@@ -328,6 +335,16 @@ export async function consumeUsageBatch(scope: BillingScope, charges: UsageCharg
     normalized.set(charge.resource, (normalized.get(charge.resource) ?? 0) + amount);
   }
   if (!normalized.size) throw createHttpError(400, 'At least one usage charge is required');
+
+  if (OWNER_MANAGED_BILLING_EXEMPT_USER_IDS.has(scope.userId)) {
+    return {
+      ok: true,
+      exempt: true,
+      exemption: 'owner_managed_company',
+      month: currentMonthKey(),
+      charges: [...normalized].map(([resource, amount]) => ({ resource, amount })),
+    };
+  }
 
   const orgRef = orgsCollection.doc(scope.orgId);
   const profileRef = profilesCollection.doc(scope.userId);

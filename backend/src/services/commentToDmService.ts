@@ -36,10 +36,10 @@ const USERNAME_PROFILES: Record<string, string> = {
 
 const FACEBOOK_PAGE_PROFILES: Record<string, string> = {
   '1114686181730831': 'shecare',
-  '1154065791120794': 'dotthr',
-  '1201086759745632': 'dottenergy',
-  '1033657279841186': 'carmarketplace',
-  '1191303874068642': 'staysphere',
+  '1158550557346330': 'dotthr',
+  '1165009866702868': 'dottenergy',
+  '1191892417341226': 'carmarketplace',
+  '1254924081027995': 'staysphere',
   '1121885391014110': 'gamers44life',
 };
 
