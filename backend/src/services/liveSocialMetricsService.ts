@@ -567,7 +567,7 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
   {
     userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
     email: 'kingbrasio100@gmail.com',
-    facebookPageId: '1154065791120794',
+    facebookPageId: '1158550557346330',
     instagramAccountId: '17841426388091930',
     threadsAccountId: '27456972033906662',
     facebookTokenEnv: ['DOTT_HR_FACEBOOK_PAGE_TOKEN', 'DOTT_HR_FACEBOOK_ACCESS_TOKEN', 'DOTTHR_FACEBOOK_PAGE_TOKEN'],
@@ -576,8 +576,7 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
   },
   {
     userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
-    facebookPageId: '1201086759745632',
-    instagramAccountId: '17841433799368009',
+    facebookPageId: '1165009866702868',
     threadsAccountId: '27610824738535971',
     facebookTokenEnv: ['DOTTENERGY_FACEBOOK_PAGE_TOKEN', 'DOTTENERGY_FACEBOOK_ACCESS_TOKEN'],
     instagramTokenEnv: ['DOTTENERGY_INSTAGRAM_ACCESS_TOKEN'],
@@ -585,14 +584,14 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
   },
   {
     userId: 'acmVetCcOiTHeGk5D7eDYieamDF3',
-    facebookPageId: '1033657279841186',
+    facebookPageId: '1191892417341226',
     instagramAccountId: '17841414110816982',
     facebookTokenEnv: ['CARMARKETPLACE_FACEBOOK_PAGE_TOKEN', 'CARMARKETPLACE_FACEBOOK_ACCESS_TOKEN'],
     instagramTokenEnv: ['CARMARKETPLACE_INSTAGRAM_ACCESS_TOKEN'],
   },
   {
     userId: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
-    facebookPageId: '1191303874068642',
+    facebookPageId: '1254924081027995',
     instagramAccountId: '17841448080672466',
     facebookTokenEnv: ['STAYSPHERE_FACEBOOK_PAGE_TOKEN', 'STAYSPHERE_FACEBOOK_ACCESS_TOKEN'],
     instagramTokenEnv: ['STAYSPHERE_INSTAGRAM_ACCESS_TOKEN'],

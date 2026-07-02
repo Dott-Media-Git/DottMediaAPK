@@ -233,12 +233,12 @@ const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId: string; instagramUsername: string }> = {
   acmVetCcOiTHeGk5D7eDYieamDF3: {
-    pageId: '1033657279841186',
+    pageId: '1191892417341226',
     instagramAccountId: '17841414110816982',
     instagramUsername: 'carmarketplace999',
   },
   D1iNgjLKNRaQhH35M0NmGfw1LVD2: {
-    pageId: '1191303874068642',
+    pageId: '1254924081027995',
     instagramAccountId: '17841448080672466',
     instagramUsername: 'staysphere93',
   },
@@ -246,11 +246,6 @@ const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId
     pageId: '1121885391014110',
     instagramAccountId: '17841412643148539',
     instagramUsername: 'gamers44life',
-  },
-  LVR7p3WzdFM51ds92Kacf6S40og2: {
-    pageId: '1201086759745632',
-    instagramAccountId: '17841433799368009',
-    instagramUsername: 'dottenergy100',
   },
 };
 

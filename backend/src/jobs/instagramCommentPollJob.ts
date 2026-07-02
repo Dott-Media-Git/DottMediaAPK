@@ -25,7 +25,6 @@ type PollTarget = { userId?: string; igBusinessId: string; accessToken: string }
 const KNOWN_IG_TARGETS: Record<string, { igBusinessId: string }> = {
   tCE1FQ1cOFgdupOXP23mPUMQRAz1: { igBusinessId: '17841437471047291' },
   '80bYIeiuukNFtUvXTUobXmfC7pu1': { igBusinessId: '17841426388091930' },
-  LVR7p3WzdFM51ds92Kacf6S40og2: { igBusinessId: '17841433799368009' },
 };
 
 const CLIENT_POLL_USER_IDS = [

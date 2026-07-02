@@ -15,25 +15,25 @@ const DEFAULT_FACEBOOK_PAGE_ACCOUNTS: FacebookPageAccount[] = [
   {
     key: 'dotthr',
     userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
-    pageId: '1154065791120794',
+    pageId: '1158550557346330',
     tokenEnv: ['DOTT_HR_FACEBOOK_PAGE_TOKEN', 'DOTT_HR_FACEBOOK_ACCESS_TOKEN', 'DOTTHR_FACEBOOK_PAGE_TOKEN'],
   },
   {
     key: 'dottenergy',
     userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
-    pageId: '1201086759745632',
+    pageId: '1165009866702868',
     tokenEnv: ['DOTTENERGY_FACEBOOK_PAGE_TOKEN', 'DOTTENERGY_FACEBOOK_ACCESS_TOKEN'],
   },
   {
     key: 'carmarketplace',
     userId: 'acmVetCcOiTHeGk5D7eDYieamDF3',
-    pageId: '1033657279841186',
+    pageId: '1191892417341226',
     tokenEnv: ['CARMARKETPLACE_FACEBOOK_PAGE_TOKEN', 'CARMARKETPLACE_FACEBOOK_ACCESS_TOKEN'],
   },
   {
     key: 'staysphere',
     userId: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
-    pageId: '1191303874068642',
+    pageId: '1254924081027995',
     tokenEnv: ['STAYSPHERE_FACEBOOK_PAGE_TOKEN', 'STAYSPHERE_FACEBOOK_ACCESS_TOKEN'],
   },
   {
