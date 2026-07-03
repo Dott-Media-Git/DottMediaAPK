@@ -3,8 +3,15 @@ import { z } from 'zod';
 import { requireFirebase } from '../middleware/firebaseAuth.js';
 import { firestore } from '../db/firestore.js';
 import { AssistantService } from '../services/assistantService.js';
+import { consumeUsage, resolveBillingScope } from '../services/billing/billingService.js';
 const router = Router();
 const assistant = new AssistantService();
+const isFirestoreQuotaError = (error) => {
+    const candidate = error;
+    return candidate?.code === 8 ||
+        candidate?.code === 'resource-exhausted' ||
+        /RESOURCE_EXHAUSTED|Quota exceeded/i.test(candidate?.message ?? '');
+};
 const BodySchema = z.object({
     question: z.string().min(4),
     context: z
@@ -37,9 +44,25 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
         if (!authUser) {
             return res.status(401).json({ message: 'Unauthorized' });
         }
-        const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-        const historyUserId = userDoc.data()?.historyUserId?.trim();
+        let historyUserId;
+        try {
+            const userDoc = await firestore.collection('users').doc(authUser.uid).get();
+            historyUserId = userDoc.data()?.historyUserId?.trim();
+        }
+        catch (error) {
+            if (!isFirestoreQuotaError(error))
+                throw error;
+            console.warn('[assistant] Firestore user lookup quota exhausted; using authenticated user ID');
+        }
         const effectiveUserId = historyUserId || authUser.uid;
+        try {
+            await consumeUsage(resolveBillingScope(authUser.uid, parsed.context?.orgId, authUser.email), 'aiReplies', 1);
+        }
+        catch (error) {
+            if (!isFirestoreQuotaError(error))
+                throw error;
+            console.warn('[assistant] Firestore usage metering quota exhausted; continuing authenticated request');
+        }
         const answer = await assistant.answer(parsed.question, {
             ...(parsed.context ?? {}),
             userId: effectiveUserId,
