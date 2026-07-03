@@ -21,6 +21,9 @@ type WarmPrimaryScreenCachesInput = {
   seedAnalytics?: Partial<DashboardAnalytics>;
 };
 
+const LIVE_SOCIAL_ROLLING_DAYS = 30;
+const LIVE_SOCIAL_ROLLING_HOURS = LIVE_SOCIAL_ROLLING_DAYS * 24;
+
 const warmInFlight = new Map<string, Promise<void>>();
 
 const createEmptyAnalytics = (seed?: Partial<DashboardAnalytics>): DashboardAnalytics => ({
@@ -49,7 +52,7 @@ const emptyOutboundStats: OutboundStats = {
 
 const emptyLiveSocialStats: LiveSocialStats = {
   generatedAt: new Date(0).toISOString(),
-  lookbackHours: 72,
+  lookbackHours: LIVE_SOCIAL_ROLLING_HOURS,
   summary: {
     views: 0,
     interactions: 0,
@@ -105,7 +108,7 @@ export const warmPrimaryScreenCaches = async ({
     ] = await Promise.allSettled([
       orgId ? fetchOrgDashboardAnalytics(scopeId, userId) : fetchAnalytics(userId),
       fetchOutboundStats(userId, scopeId),
-      fetchLiveSocialStats(userId, scopeId, 72),
+      fetchLiveSocialStats(userId, scopeId, LIVE_SOCIAL_ROLLING_HOURS),
       fetchLiveSocialStats(userId, scopeId, getHoursSinceMidnight()),
       fetchActivityHeatmap(userId, scopeId, 7),
       fetchActivityHeatmap(userId, scopeId, 30),

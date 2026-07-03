@@ -5,6 +5,8 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
+  sendEmailVerification,
+  reload,
   updateProfile,
   signOut as firebaseSignOut,
   User as FirebaseUser,
@@ -57,6 +59,10 @@ const auth = firebaseApp ? getAuth(firebaseApp) : null;
 const db = firebaseApp ? getFirestore(firebaseApp) : null;
 const useFirebase = Boolean(auth && db);
 let authBootstrapPromise: Promise<void> | null = null;
+const verificationActionSettings = {
+  url: 'https://dottmediaapk.web.app',
+  handleCodeInApp: false,
+};
 
 const mockDatabase: Record<string, Profile> = {};
 
@@ -75,6 +81,7 @@ const mapFirebaseUser = (user: FirebaseUser): AuthUser => {
     uid: user.uid,
     email: user.email ?? 'member@dott-media.com',
     name: user.displayName ?? user.email ?? 'Dott Media Member',
+    emailVerified: user.emailVerified,
     ...(photoURL ? { photoURL } : {})
   };
 };
@@ -85,6 +92,7 @@ const sanitizeAuthUser = (user: AuthUser): AuthUser => {
     uid: user.uid,
     email: user.email,
     name: user.name,
+    ...(typeof user.emailVerified === 'boolean' ? { emailVerified: user.emailVerified } : {}),
     ...(photoURL ? { photoURL } : {}),
     ...(user.isAdmin ? { isAdmin: true } : {})
   };
@@ -195,6 +203,9 @@ const defaultUser = (uid: string): AuthUser => {
 const normalizeProfile = (data: ProfileDoc | undefined, fallbackUser: AuthUser): Profile => ({
   user: sanitizeAuthUser({
     ...(data?.user ?? fallbackUser),
+    ...(typeof fallbackUser.emailVerified === 'boolean'
+      ? { emailVerified: fallbackUser.emailVerified }
+      : {}),
     ...(data?.isAdmin ? { isAdmin: true } : {})
   }),
   subscriptionStatus: data?.subscriptionStatus ?? 'none',
@@ -264,6 +275,8 @@ export const signUp = async (name: string, email: string, password: string): Pro
   }
   const mappedUser = mapFirebaseUser(credential.user);
   const user = { ...mappedUser, name: name.trim() || mappedUser.name };
+  auth.languageCode = 'en';
+  await sendEmailVerification(credential.user, verificationActionSettings);
   await ensureProfileDoc(user.uid, user, { subscriptionStatus: 'active', onboardingComplete: true });
   await upsertUserRecord(user, 'password', true);
   return { user };
@@ -390,6 +403,109 @@ export const observeAuthState = (
     return () => undefined;
   }
   return onAuthStateChanged(auth, user => handler(user ? mapFirebaseUser(user) : null));
+};
+
+export const resendVerificationEmail = async (): Promise<void> => {
+  requireFirebaseAuth();
+  if (!useFirebase || !auth?.currentUser) return;
+  await reload(auth.currentUser);
+  if (auth.currentUser.emailVerified) return;
+  auth.languageCode = 'en';
+  await sendEmailVerification(auth.currentUser, verificationActionSettings);
+};
+
+export const refreshVerifiedUser = async (): Promise<AuthUser | null> => {
+  requireFirebaseAuth();
+  if (!useFirebase || !auth?.currentUser) return null;
+  await reload(auth.currentUser);
+  return mapFirebaseUser(auth.currentUser);
+};
+
+export type EditableAccountProfile = {
+  name: string;
+  photoURL?: string;
+  companyName: string;
+  contactEmail: string;
+  phone: string;
+  website?: string;
+  businessAddress?: string;
+  jobTitle?: string;
+  bio?: string;
+};
+
+export const uploadProfileImage = async (uid: string, uri: string): Promise<string> => {
+  requireFirebaseAuth();
+  void uid;
+  if (!uri.startsWith('data:image/')) {
+    throw new Error('The selected profile image could not be encoded.');
+  }
+  if (uri.length > 700_000) {
+    throw new Error('Profile image is too large. Choose an image under 500 KB.');
+  }
+  return uri;
+};
+
+export const saveAccountProfile = async (
+  uid: string,
+  currentUser: AuthUser,
+  currentCRM: CRMData | undefined,
+  input: EditableAccountProfile,
+): Promise<{ user: AuthUser; crmData: CRMData }> => {
+  requireFirebaseAuth();
+  const user: AuthUser = sanitizeAuthUser({
+    ...currentUser,
+    name: input.name.trim(),
+    ...(input.photoURL?.trim() ? { photoURL: input.photoURL.trim() } : {}),
+  });
+  const crmData: CRMData = {
+    ...(currentCRM ?? {}),
+    companyName: input.companyName.trim(),
+    email: input.contactEmail.trim(),
+    phone: input.phone.trim(),
+    crmPrompt: currentCRM?.crmPrompt ?? '',
+    isActive: currentCRM?.isActive ?? true,
+    analytics: currentCRM?.analytics ?? createAnalytics(),
+    website: input.website?.trim() ?? '',
+    businessAddress: input.businessAddress?.trim() ?? '',
+    jobTitle: input.jobTitle?.trim() ?? '',
+    bio: input.bio?.trim() ?? '',
+  };
+
+  if (!useFirebase) {
+    mockDatabase[uid] = {
+      ...(mockDatabase[uid] ?? { subscriptionStatus: 'trial', onboardingComplete: true }),
+      user,
+      crmData,
+    };
+    return { user, crmData };
+  }
+
+  if (auth?.currentUser?.uid === uid) {
+    await updateProfile(auth.currentUser, {
+      displayName: user.name,
+      ...(user.photoURL?.startsWith('data:') ? {} : { photoURL: user.photoURL ?? null }),
+    });
+  }
+  await Promise.all([
+    setDoc(profileRef(uid), { user, crmData, updatedAt: serverTimestamp() }, { merge: true }),
+    setDoc(
+      userRef(uid),
+      {
+        name: user.name,
+        photoURL: user.photoURL ?? null,
+        companyName: crmData.companyName,
+        contactEmail: crmData.email,
+        phone: crmData.phone,
+        website: crmData.website ?? '',
+        businessAddress: crmData.businessAddress ?? '',
+        jobTitle: crmData.jobTitle ?? '',
+        bio: crmData.bio ?? '',
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    ),
+  ]);
+  return { user, crmData };
 };
 
 const waitForAuthBootstrap = async (timeoutMs = 3000) => {

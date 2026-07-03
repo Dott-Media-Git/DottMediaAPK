@@ -47,7 +47,7 @@ export const SignupScreen: React.FC<Props> = ({ navigation }) => {
         return;
       }
       await signUp(name.trim(), email.trim().toLowerCase(), password);
-      Alert.alert(t('Account created'), t('Continue to the setup screen to start using the CRM.'));
+      Alert.alert(t('Verify your email'), t('We sent a verification link to your email address.'));
     } catch (error) {
       Alert.alert(t('Signup failed'), t('Please try again later.'));
       console.error(error);

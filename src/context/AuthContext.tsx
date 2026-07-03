@@ -7,7 +7,11 @@ import {
   persistCRMData,
   updateSubscription,
   signOutUser,
-  observeAuthState
+  observeAuthState,
+  saveAccountProfile,
+  resendVerificationEmail,
+  refreshVerifiedUser,
+  type EditableAccountProfile
 } from '@services/firebase';
 import {
   sendCRMSetup,
@@ -16,7 +20,7 @@ import {
   sendSubscriptionActivated
 } from '@services/make';
 import { scheduleWelcomeNotification } from '@services/notifications';
-import { clearCachedValue, readCachedValue, writeCachedValue } from '@services/localCache';
+import { clearCachedValue, peekCachedValue, readCachedValue, writeCachedValue } from '@services/localCache';
 import type { AuthUser, CRMAnalytics, CRMData, SubscriptionStatus } from '@models/crm';
 import { signInWithSocial } from '@services/firebase';
 
@@ -48,7 +52,9 @@ type AuthAction =
   | { type: 'UPDATE_SUBSCRIPTION'; payload: SubscriptionStatus }
   | { type: 'UPDATE_CRM_DATA'; payload: Partial<CRMData> & { onboardingComplete?: boolean } }
   | { type: 'UPDATE_ANALYTICS'; payload: CRMAnalytics }
-  | { type: 'TOGGLE_CRM'; payload: boolean };
+  | { type: 'TOGGLE_CRM'; payload: boolean }
+  | { type: 'UPDATE_ACCOUNT_PROFILE'; payload: { user: AuthUser; crmData: CRMData } }
+  | { type: 'UPDATE_AUTH_USER'; payload: AuthUser };
 
 const initialAnalytics: CRMAnalytics = {
   leads: 0,
@@ -64,6 +70,21 @@ const initialState: AuthState = {
   onboardingComplete: false,
   loading: false,
   hydrated: false
+};
+
+const getInitialAuthState = (): AuthState => {
+  const cached = peekCachedValue<SignInPayload>(AUTH_CACHE_KEY, 1000 * 60 * 60 * 12);
+  if (!cached?.user) {
+    return initialState;
+  }
+  return {
+    user: cached.user,
+    subscriptionStatus: cached.subscriptionStatus,
+    crmData: cached.crmData,
+    onboardingComplete: cached.onboardingComplete,
+    loading: false,
+    hydrated: true,
+  };
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -84,6 +105,9 @@ type AuthContextValue = {
   submitCRMSetup: (data: Omit<CRMData, 'crmPrompt' | 'analytics' | 'isActive'> & { crmPrompt: string }) => Promise<void>;
   toggleCRM: (isActive: boolean) => Promise<void>;
   updateCRMPrompt: (prompt: string) => Promise<void>;
+  updateAccountProfile: (profile: EditableAccountProfile) => Promise<void>;
+  resendEmailVerification: () => Promise<void>;
+  checkEmailVerification: () => Promise<boolean>;
 };
 
 function authReducer(state: AuthState, action: AuthAction): AuthState {
@@ -116,13 +140,17 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
         : state;
     case 'TOGGLE_CRM':
       return state.crmData ? { ...state, crmData: { ...state.crmData, isActive: action.payload } } : state;
+    case 'UPDATE_ACCOUNT_PROFILE':
+      return { ...state, user: action.payload.user, crmData: action.payload.crmData };
+    case 'UPDATE_AUTH_USER':
+      return { ...state, user: action.payload };
     default:
       return state;
   }
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [state, dispatch] = useReducer(authReducer, initialState);
+  const [state, dispatch] = useReducer(authReducer, undefined, getInitialAuthState);
 
   useEffect(() => {
     let active = true;
@@ -367,6 +395,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const updateAccountProfile = async (profile: EditableAccountProfile) => {
+    if (!state.user) return;
+    dispatch({ type: 'SET_LOADING', payload: true });
+    try {
+      const updated = await saveAccountProfile(state.user.uid, state.user, state.crmData, profile);
+      dispatch({ type: 'UPDATE_ACCOUNT_PROFILE', payload: updated });
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
+  };
+
+  const resendEmailVerification = async () => {
+    await resendVerificationEmail();
+  };
+
+  const checkEmailVerification = async () => {
+    const refreshedUser = await refreshVerifiedUser();
+    if (!refreshedUser) return false;
+    dispatch({ type: 'UPDATE_AUTH_USER', payload: refreshedUser });
+    return Boolean(refreshedUser.emailVerified);
+  };
+
   const value = useMemo<AuthContextValue>(
     () => ({
       state,
@@ -383,7 +433,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       startSubscription,
       submitCRMSetup,
       toggleCRM,
-      updateCRMPrompt
+      updateCRMPrompt,
+      updateAccountProfile,
+      resendEmailVerification,
+      checkEmailVerification
     }),
     [state]
   );

@@ -1,6 +1,6 @@
 import 'react-native-gesture-handler';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, StatusBar, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, StatusBar, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Font from 'expo-font';
@@ -14,18 +14,64 @@ import { colors } from '@constants/colors';
 import { FloatingAssistant } from '@components/FloatingAssistant';
 import { warmPrimaryScreenCaches } from '@services/appWarmCache';
 
+const WARM_CACHE_COOLDOWN_MS = 1000 * 60 * 3;
+
 const RootView: React.FC = () => {
   const { state } = useAuth();
   const { mode } = useThemeMode();
+  const lastWarmAtRef = useRef(0);
+
+  const warmSnapshots = useCallback(
+    (force = false) => {
+      if (!state.hydrated || !state.user?.uid) return;
+      const now = Date.now();
+      if (!force && now - lastWarmAtRef.current < WARM_CACHE_COOLDOWN_MS) {
+        return;
+      }
+      lastWarmAtRef.current = now;
+      void warmPrimaryScreenCaches({
+        userId: state.user.uid,
+        orgId: (state.user as any)?.orgId ?? state.crmData?.orgId,
+        seedAnalytics: state.crmData?.analytics,
+      });
+    },
+    [state.crmData?.analytics, state.crmData?.orgId, state.hydrated, state.user],
+  );
 
   useEffect(() => {
     if (!state.hydrated || !state.user?.uid) return;
-    void warmPrimaryScreenCaches({
-      userId: state.user.uid,
-      orgId: (state.user as any)?.orgId ?? state.crmData?.orgId,
-      seedAnalytics: state.crmData?.analytics,
+    warmSnapshots(true);
+  }, [state.hydrated, state.user?.uid, warmSnapshots]);
+
+  useEffect(() => {
+    if (!state.user?.uid) return;
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        warmSnapshots(false);
+      }
     });
-  }, [state.crmData?.analytics, state.crmData?.orgId, state.hydrated, state.user]);
+    return () => {
+      subscription.remove();
+    };
+  }, [state.user?.uid, warmSnapshots]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined' || !state.user?.uid) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        warmSnapshots(false);
+      }
+    };
+    const handleFocus = () => {
+      warmSnapshots(false);
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [state.user?.uid, warmSnapshots]);
 
   return (
     <SafeAreaProvider>

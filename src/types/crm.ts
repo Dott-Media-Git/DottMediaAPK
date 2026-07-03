@@ -17,6 +17,10 @@ export type CRMData = {
   linkedin?: string;
   targetAudience?: string;
   businessGoals?: string;
+  website?: string;
+  businessAddress?: string;
+  jobTitle?: string;
+  bio?: string;
   crmPrompt: string;
   isActive: boolean;
   analytics: CRMAnalytics;
@@ -26,6 +30,7 @@ export type AuthUser = {
   uid: string;
   email: string;
   name: string;
+  emailVerified?: boolean;
   photoURL?: string;
   isAdmin?: boolean;
 };

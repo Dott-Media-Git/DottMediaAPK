@@ -25,13 +25,13 @@ export const DMTextInput: React.FC<DMTextInputProps> = ({
         style={[
           styles.inputWrapper,
           focused && styles.inputWrapperFocused,
-          error && styles.inputWrapperError,
-          rightElement && styles.inputWrapperWithAdornment
+          Boolean(error) && styles.inputWrapperError,
+          Boolean(rightElement) && styles.inputWrapperWithAdornment
         ]}
       >
         <TextInput
           placeholderTextColor={colors.subtext}
-          style={[styles.input, rightElement && styles.inputWithAdornment, style]}
+          style={[styles.input, Boolean(rightElement) && styles.inputWithAdornment, style]}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           {...rest}

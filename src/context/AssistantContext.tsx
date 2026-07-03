@@ -17,13 +17,19 @@ type AssistantContextValue = {
   isChatOpen: boolean;
   messages: Message[];
   isTyping: boolean;
+  assistantTone: string;
+  assistantVoice: string;
   toggleAssistant: (nextValue?: boolean) => Promise<void>;
+  setAssistantTone: (tone: string) => Promise<void>;
+  setAssistantVoice: (voice: string) => Promise<void>;
   toggleChat: (isOpen: boolean) => void;
   trackScreen: (screenName: string) => void;
   sendMessage: (text: string) => Promise<void>;
 };
 
 const STORAGE_KEY = '@dott/assistant-enabled';
+const STORAGE_KEY_ASSISTANT_TONE = '@dott/assistant-tone';
+const STORAGE_KEY_ASSISTANT_VOICE = '@dott/assistant-voice';
 
 const AssistantContext = createContext<AssistantContextValue | undefined>(undefined);
 
@@ -36,12 +42,24 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
+  const [assistantTone, setAssistantToneValue] = useState('fresh');
+  const [assistantVoice, setAssistantVoiceValue] = useState('neutral');
 
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY)
-      .then(value => {
-        if (value !== null) {
-          setEnabled(value === 'true');
+    AsyncStorage.multiGet([STORAGE_KEY, STORAGE_KEY_ASSISTANT_TONE, STORAGE_KEY_ASSISTANT_VOICE])
+      .then(entries => {
+        const enabledValue = entries[0]?.[1];
+        const toneValue = entries[1]?.[1];
+        const voiceValue = entries[2]?.[1];
+
+        if (enabledValue !== null) {
+          setEnabled(enabledValue === 'true');
+        }
+        if (toneValue) {
+          setAssistantToneValue(toneValue);
+        }
+        if (voiceValue) {
+          setAssistantVoiceValue(voiceValue);
         }
       })
       .finally(() => setHydrated(true));
@@ -51,6 +69,16 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const resolved = typeof nextValue === 'boolean' ? nextValue : !enabled;
     setEnabled(resolved);
     await AsyncStorage.setItem(STORAGE_KEY, resolved ? 'true' : 'false');
+  };
+
+  const setAssistantTone = async (tone: string) => {
+    setAssistantToneValue(tone);
+    await AsyncStorage.setItem(STORAGE_KEY_ASSISTANT_TONE, tone);
+  };
+
+  const setAssistantVoice = async (voice: string) => {
+    setAssistantVoiceValue(voice);
+    await AsyncStorage.setItem(STORAGE_KEY_ASSISTANT_VOICE, voice);
   };
 
   const toggleChat = (isOpen: boolean) => {
@@ -100,7 +128,9 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         analytics: authState.crmData?.analytics,
         subscriptionStatus: authState.subscriptionStatus,
         connectedChannels,
-        locale
+        locale,
+        assistantTone,
+        assistantVoice,
       };
 
       const response = await sendChatQuery(text, context, locale);
@@ -135,12 +165,16 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       isChatOpen,
       messages,
       isTyping,
+      assistantTone,
+      assistantVoice,
       toggleAssistant,
+      setAssistantTone,
+      setAssistantVoice,
       toggleChat,
       trackScreen: setCurrentScreen,
       sendMessage,
     }),
-    [enabled, hydrated, currentScreen, isChatOpen, messages, isTyping]
+    [enabled, hydrated, currentScreen, isChatOpen, messages, isTyping, assistantTone, assistantVoice, toggleAssistant, setAssistantTone, setAssistantVoice, toggleChat, sendMessage]
   );
 
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;

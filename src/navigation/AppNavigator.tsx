@@ -23,6 +23,7 @@ import { AdsManagerScreen } from '@screens/AdsManagerScreen';
 import { TrendingNewsScreen } from '@screens/TrendingNewsScreen';
 import { navigationRef } from '@navigation/navigationRef';
 import { ProfileScreen } from '@screens/ProfileScreen';
+import { EmailVerificationScreen } from '@screens/EmailVerificationScreen';
 import { AdminDashboardScreen } from '@screens/admin/AdminDashboardScreen';
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
@@ -52,6 +53,7 @@ const linking = {
         screens: {
           Dashboard: '',
           Profile: 'profile',
+          AccountBilling: 'account-billing',
           CreateContent: 'create',
           SchedulePost: 'schedule',
           PostingHistory: 'history',
@@ -85,7 +87,6 @@ const AuthStackNavigator = () => (
 
 const baseDrawerScreens = [
   { name: 'Dashboard', labelKey: 'Dashboard', component: DashboardScreen, icon: 'stats-chart-outline' },
-  { name: 'Profile', labelKey: 'Profile', component: ProfileScreen, icon: 'person-circle-outline' },
   { name: 'CreateContent', labelKey: 'Create Content', component: CreateContentScreen, icon: 'color-palette-outline' },
   { name: 'SchedulePost', labelKey: 'Schedule Posts', component: SchedulePostScreen, icon: 'calendar-outline' },
   { name: 'PostingHistory', labelKey: 'Posting History', component: PostingHistoryScreen, icon: 'time-outline' },
@@ -97,6 +98,8 @@ const baseDrawerScreens = [
     icon: 'link-outline'
   },
   { name: 'AdsManager', labelKey: 'Ads Manager', component: AdsManagerScreen, icon: 'megaphone-outline' },
+  { name: 'Profile', labelKey: 'Profile', component: ProfileScreen, icon: 'person-circle-outline' },
+  { name: 'AccountBilling', labelKey: 'Account & Billing', component: SubscriptionScreen, icon: 'card-outline' },
   { name: 'Support', labelKey: 'Support', component: SupportScreen, icon: 'chatbubbles-outline' }
 ];
 
@@ -120,7 +123,9 @@ const DrawerNavigator = () => {
     return email === 'brasioxirin@gmail.com' || Boolean((state.user as any)?.isAdmin);
   }, [state.user]);
   const drawerScreens = useMemo(
-    () => (isAdminUser ? [...baseDrawerScreens, adminDrawerScreen] : baseDrawerScreens),
+    () => (isAdminUser
+      ? [...baseDrawerScreens.slice(0, -3), adminDrawerScreen, ...baseDrawerScreens.slice(-3)]
+      : baseDrawerScreens),
     [isAdminUser]
   );
   return (
@@ -196,11 +201,13 @@ export const AppNavigator: React.FC = () => {
     <NavigationContainer
       ref={navigationRef}
       theme={navigationTheme}
-      linking={linking}
+      linking={linking as any}
     >
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         {!isAuthenticated ? (
           <RootStack.Screen name="Auth" component={AuthStackNavigator} />
+        ) : state.user?.emailVerified === false ? (
+          <RootStack.Screen name="EmailVerification" component={EmailVerificationScreen} />
         ) : needsSubscription ? (
           <RootStack.Screen name="Subscription" component={SubscriptionScreen} />
         ) : needsOnboarding ? (

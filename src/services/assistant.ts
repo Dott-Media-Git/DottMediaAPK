@@ -15,6 +15,8 @@ type AssistantContextPayload = {
   subscriptionStatus?: string;
   connectedChannels?: string[];
   locale?: Locale;
+  assistantTone?: string;
+  assistantVoice?: string;
 };
 
 const buildLocalResponse = (question: string, context: AssistantContextPayload) => {
@@ -83,7 +85,7 @@ const buildEffectiveQuestion = (question: string, context: AssistantContextPaylo
 const authHeader = async (userId: string) => {
   const token = await getIdToken();
   if (token) return `Bearer ${token}`;
-  if (userId) return `Bearer mock-${userId}`;
+  if (userId && env.offline) return `Bearer mock-${userId}`;
   return null;
 };
 
@@ -117,7 +119,9 @@ export const askAssistant = async (question: string, context: AssistantContextPa
           analytics: context.analytics,
           subscriptionStatus: context.subscriptionStatus,
           connectedChannels: context.connectedChannels,
-          locale: context.locale
+          locale: context.locale,
+          assistantTone: context.assistantTone,
+          assistantVoice: context.assistantVoice,
         }
       })
     });
