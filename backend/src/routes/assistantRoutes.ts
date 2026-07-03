@@ -8,6 +8,13 @@ import { consumeUsage, resolveBillingScope } from '../services/billing/billingSe
 const router = Router();
 const assistant = new AssistantService();
 
+const isFirestoreQuotaError = (error: unknown) => {
+  const candidate = error as { code?: number | string; message?: string };
+  return candidate?.code === 8 ||
+    candidate?.code === 'resource-exhausted' ||
+    /RESOURCE_EXHAUSTED|Quota exceeded/i.test(candidate?.message ?? '');
+};
+
 const BodySchema = z.object({
   question: z.string().min(4),
   context: z
@@ -41,10 +48,21 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
     if (!authUser) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
-    const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-    const historyUserId = (userDoc.data()?.historyUserId as string | undefined)?.trim();
+    let historyUserId: string | undefined;
+    try {
+      const userDoc = await firestore.collection('users').doc(authUser.uid).get();
+      historyUserId = (userDoc.data()?.historyUserId as string | undefined)?.trim();
+    } catch (error) {
+      if (!isFirestoreQuotaError(error)) throw error;
+      console.warn('[assistant] Firestore user lookup quota exhausted; using authenticated user ID');
+    }
     const effectiveUserId = historyUserId || authUser.uid;
-    await consumeUsage(resolveBillingScope(authUser.uid, parsed.context?.orgId, authUser.email), 'aiReplies', 1);
+    try {
+      await consumeUsage(resolveBillingScope(authUser.uid, parsed.context?.orgId, authUser.email), 'aiReplies', 1);
+    } catch (error) {
+      if (!isFirestoreQuotaError(error)) throw error;
+      console.warn('[assistant] Firestore usage metering quota exhausted; continuing authenticated request');
+    }
     const answer = await assistant.answer(parsed.question, {
       ...(parsed.context ?? {}),
       userId: effectiveUserId,
