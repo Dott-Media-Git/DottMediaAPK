@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { firebaseApp, firestore } from '../db/firestore';
 import { AssistantStrategyService } from '../services/assistantStrategyService';
+import { verifyEmailTransport } from '../services/emailService';
 
 const strategyService = new AssistantStrategyService();
 const scheduleExpression = process.env.WEEKLY_REPORT_CRON?.trim() || '0 8 * * 1';
@@ -50,5 +51,8 @@ cron.schedule(
 );
 
 console.log(`[weekly-report] scheduled ${scheduleExpression} (${timezone})`);
+void verifyEmailTransport().then(status => {
+  console.log(`[weekly-report] email transport ${status.ready ? 'ready' : 'not ready'} (${status.reason})`);
+});
 
 export { runWeeklyReports };

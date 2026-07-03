@@ -11,6 +11,18 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+export const verifyEmailTransport = async () => {
+  if (!config.smtp.host || !config.smtp.from || !config.smtp.user || !config.smtp.pass) {
+    return { ready: false, reason: 'smtp_not_configured' };
+  }
+  try {
+    await transporter.verify();
+    return { ready: true, reason: 'smtp_ready' };
+  } catch (error) {
+    return { ready: false, reason: (error as Error).message };
+  }
+};
+
 export async function sendWorkspaceLiveEmail(to: string, company: string) {
   await transporter.sendMail({
     from: config.smtp.from,
