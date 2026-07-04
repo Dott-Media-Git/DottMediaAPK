@@ -11,7 +11,55 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+const brevoApiKey = process.env.BREVO_API_KEY?.trim() ?? '';
+const brevoSenderEmail =
+  process.env.BREVO_SENDER_EMAIL?.trim() ||
+  config.smtp.from?.match(/<([^>]+)>/)?.[1] ||
+  config.smtp.from?.trim() ||
+  'info@dott-media.org';
+const brevoSenderName = process.env.BREVO_SENDER_NAME?.trim() || 'Dott Media';
+
+const sendWithBrevo = async (input: {
+  to: string;
+  subject: string;
+  textContent: string;
+  htmlContent: string;
+}) => {
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'api-key': brevoApiKey,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { email: brevoSenderEmail, name: brevoSenderName },
+      to: [{ email: input.to }],
+      replyTo: { email: brevoSenderEmail, name: brevoSenderName },
+      subject: input.subject,
+      textContent: input.textContent,
+      htmlContent: input.htmlContent,
+    }),
+  });
+  const payload = await response.json().catch(() => ({})) as { messageId?: string; message?: string };
+  if (!response.ok) {
+    throw new Error(`brevo_${response.status}:${payload.message ?? 'send_failed'}`);
+  }
+  return payload.messageId ?? null;
+};
+
 export const verifyEmailTransport = async () => {
+  if (brevoApiKey) {
+    try {
+      const response = await fetch('https://api.brevo.com/v3/account', {
+        headers: { accept: 'application/json', 'api-key': brevoApiKey },
+      });
+      if (!response.ok) return { ready: false, reason: `brevo_${response.status}` };
+      return { ready: true, reason: 'brevo_ready' };
+    } catch (error) {
+      return { ready: false, reason: (error as Error).message };
+    }
+  }
   if (!config.smtp.host || !config.smtp.from || !config.smtp.user || !config.smtp.pass) {
     return { ready: false, reason: 'smtp_not_configured' };
   }
@@ -48,25 +96,22 @@ export async function sendPerformanceReportEmail(
   report: string,
   period: 'Weekly' | 'Monthly',
 ) {
-  if (!config.smtp.host || !config.smtp.from || !config.smtp.user || !config.smtp.pass) {
+  if (!brevoApiKey && (!config.smtp.host || !config.smtp.from || !config.smtp.user || !config.smtp.pass)) {
     throw new Error('smtp_not_configured');
   }
   const escaped = report
     .split('\n')
     .map(line => line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'))
     .join('<br>');
-  await transporter.sendMail({
-    from: config.smtp.from,
-    to,
-    subject: `${period} performance report - ${company}`,
-    text: [
+  const subject = `${period} performance report - ${company}`;
+  const textContent = [
       `Hi ${company} team,`,
       '',
       report,
       '',
       '-- Dott Media',
-    ].join('\n'),
-    html: `
+    ].join('\n');
+  const htmlContent = `
       <div style="margin:0;background:#f3f7f9;padding:28px;font-family:Arial,sans-serif;color:#132238">
         <div style="max-width:640px;margin:auto;background:#fff;border:1px solid #dbe4ec;border-radius:16px;overflow:hidden">
           <div style="height:7px;background:#0f766e"></div>
@@ -78,8 +123,12 @@ export async function sendPerformanceReportEmail(
           </div>
           <div style="padding:16px 30px;background:#081527;color:#c7d9e1;font-size:11px">Dott Media • Intelligent Business Growth</div>
         </div>
-      </div>`,
-  });
+      </div>`;
+  if (brevoApiKey) {
+    await sendWithBrevo({ to, subject, textContent, htmlContent });
+    return;
+  }
+  await transporter.sendMail({ from: config.smtp.from, to, subject, text: textContent, html: htmlContent });
 }
 
 export async function sendOperationalAlertEmail(to: string | string[], subject: string, body: string) {
