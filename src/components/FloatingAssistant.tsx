@@ -33,6 +33,7 @@ import {
   type OutboundStats,
   type WebLeadStats,
 } from '@services/analytics';
+import { isMainDottMediaAccount } from '@services/accountAccess';
 import { askAssistant } from '@services/assistant';
 
 type Message = {
@@ -59,12 +60,16 @@ type AssistantSnapshotInput = {
 
 export const FloatingAssistant: React.FC = () => {
   const { state } = useAuth();
-  const { enabled, hydrated, currentScreen } = useAssistant();
+  const { enabled, hydrated, currentScreen, assistantTone, assistantVoice } = useAssistant();
   const { locale, t } = useI18n();
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
+  const [fullScreen, setFullScreen] = useState(false);
   const [input, setInput] = useState('');
+  const [hasStartedTyping, setHasStartedTyping] = useState(false);
   const [sending, setSending] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [voiceConversation, setVoiceConversation] = useState(false);
   const [liveSocial, setLiveSocial] = useState<LiveSocialStats | null>(null);
   const [accountSnapshot, setAccountSnapshot] = useState('');
   const analyticsScopeId = useMemo(
@@ -114,7 +119,9 @@ export const FloatingAssistant: React.FC = () => {
       subscriptionStatus: state.subscriptionStatus,
       connectedChannels: baseConnectedChannels,
       currentScreen,
-      locale
+      locale,
+      assistantTone,
+      assistantVoice,
     };
   }, [
     state.user?.uid,
@@ -128,17 +135,22 @@ export const FloatingAssistant: React.FC = () => {
     baseConnectedChannels,
     state.subscriptionStatus,
     currentScreen,
-    locale
+    locale,
+    assistantTone,
+    assistantVoice,
   ]);
 
   const handleOpen = () => setOpen(true);
-  const handleClose = () => setOpen(false);
+  const handleClose = () => {
+    setOpen(false);
+    setFullScreen(false);
+  };
 
   const pushMessage = (message: Message) => {
     setMessages(prev => [...prev, message]);
   };
 
-  const handleSend = async (prompt?: string) => {
+  const handleSend = async (prompt?: string, speakResponse = voiceConversation) => {
     const question = (prompt ?? input).trim();
     if (!question) return;
     setInput('');
@@ -148,6 +160,16 @@ export const FloatingAssistant: React.FC = () => {
     try {
       const answer = await askAssistant(question, context);
       pushMessage({ id: `assistant-${Date.now()}`, role: 'assistant', text: answer });
+      if (speakResponse && Platform.OS === 'web') {
+        const synth = (globalThis as any)?.speechSynthesis;
+        if (synth) {
+          synth.cancel();
+          const utterance = new (globalThis as any).SpeechSynthesisUtterance(answer);
+          utterance.lang = locale || 'en';
+          utterance.rate = 1;
+          synth.speak(utterance);
+        }
+      }
     } catch (error) {
       console.warn('Assistant failed', error);
       pushMessage({
@@ -160,6 +182,48 @@ export const FloatingAssistant: React.FC = () => {
     }
   };
 
+  const handleVoiceInput = () => {
+    if (Platform.OS !== 'web') {
+      pushMessage({
+        id: `assistant-voice-${Date.now()}`,
+        role: 'assistant',
+        text: t('Voice conversation is available in the web app on supported browsers.'),
+      });
+      return;
+    }
+    const browser = globalThis as any;
+    const Recognition = browser.SpeechRecognition || browser.webkitSpeechRecognition;
+    if (!Recognition) {
+      pushMessage({
+        id: `assistant-voice-${Date.now()}`,
+        role: 'assistant',
+        text: t('Voice input is not supported by this browser. Try Chrome or Edge.'),
+      });
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.lang = locale || 'en';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.onstart = () => {
+      setListening(true);
+      setVoiceConversation(true);
+      setHasStartedTyping(true);
+    };
+    recognition.onresult = (event: any) => {
+      const transcript = Array.from(event.results ?? [])
+        .map((result: any) => result?.[0]?.transcript ?? '')
+        .join('');
+      setInput(transcript);
+      if (event.results?.[event.results.length - 1]?.isFinal && transcript.trim()) {
+        void handleSend(transcript, true);
+      }
+    };
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    recognition.start();
+  };
+
   useEffect(() => {
     let cancelled = false;
     if (!state.user?.uid) {
@@ -170,10 +234,11 @@ export const FloatingAssistant: React.FC = () => {
       };
     }
 
+    const canUseOutboundPipeline = isMainDottMediaAccount(state.user);
     void Promise.all([
       fetchLiveSocialStats(state.user.uid, analyticsScopeId, 24),
       fetchAnalytics(state.user.uid),
-      fetchOutboundStats(state.user.uid, analyticsScopeId),
+      canUseOutboundPipeline ? fetchOutboundStats(state.user.uid, analyticsScopeId) : Promise.resolve(null),
       fetchInboundStats(state.user.uid, analyticsScopeId),
       fetchEngagementStats(state.user.uid, analyticsScopeId),
       fetchFollowupStats(state.user.uid, analyticsScopeId),
@@ -261,18 +326,55 @@ export const FloatingAssistant: React.FC = () => {
     <>
       {open ? (
         <View style={styles.overlay}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.avoider}>
-            <View style={[styles.panel, { paddingBottom: 16 + insets.bottom }]}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={[styles.avoider, fullScreen && styles.fullScreenAvoider]}
+          >
+            <View
+              style={[
+                styles.panel,
+                fullScreen && styles.fullScreenPanel,
+                {
+                  paddingTop: fullScreen ? 16 + insets.top : 16,
+                  paddingBottom: 16 + insets.bottom,
+                },
+              ]}
+            >
               <View style={styles.panelHeader}>
-                <View>
+                <View style={styles.headerCopy}>
                   <Text style={styles.panelTitle}>{t('Dott Assistant')}</Text>
                   <Text style={styles.panelSubtitle}>{t('Ask about your account, performance, or next move.')}</Text>
                 </View>
-                <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
-                  <Ionicons name="close" size={20} color={colors.text} />
-                </TouchableOpacity>
+                <View style={styles.headerActions}>
+                  <TouchableOpacity
+                    onPress={() => setFullScreen(value => !value)}
+                    style={styles.headerButton}
+                    accessibilityRole="button"
+                    accessibilityLabel={t(fullScreen ? 'Exit full screen' : 'Open full screen')}
+                  >
+                    <Ionicons
+                      name={fullScreen ? 'contract-outline' : 'expand-outline'}
+                      size={19}
+                      color={colors.text}
+                    />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleClose}
+                    style={styles.headerButton}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('Close assistant')}
+                  >
+                    <Ionicons name="close" size={20} color={colors.text} />
+                  </TouchableOpacity>
+                </View>
               </View>
-              <ScrollView style={styles.thread} contentContainerStyle={{ paddingBottom: 16 }}>
+              <ScrollView
+                style={[styles.thread, fullScreen && styles.fullScreenThread]}
+                contentContainerStyle={[
+                  styles.threadContent,
+                  fullScreen && styles.fullScreenThreadContent,
+                ]}
+              >
                 {messages.map(message => (
                   <View
                     key={message.id}
@@ -289,20 +391,34 @@ export const FloatingAssistant: React.FC = () => {
                   </View>
                 ) : null}
               </ScrollView>
-              <View style={styles.quickPromptRow}>
-                {quickPrompts.map(prompt => (
-                  <TouchableOpacity key={prompt} onPress={() => handleSend(prompt)} style={styles.quickPrompt}>
-                    <Text style={styles.quickPromptText}>{prompt}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              {!hasStartedTyping && !messages.some(message => message.role === 'user') ? (
+                <View style={styles.quickPromptRow}>
+                  {quickPrompts.map(prompt => (
+                    <TouchableOpacity key={prompt} onPress={() => handleSend(prompt)} style={styles.quickPrompt}>
+                      <Text style={styles.quickPromptText}>{prompt}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
               <View style={styles.inputRow}>
+                <TouchableOpacity
+                  onPress={handleVoiceInput}
+                  style={[styles.voiceButton, listening && styles.voiceButtonActive]}
+                  disabled={sending || listening}
+                  accessibilityRole="button"
+                  accessibilityLabel={t(listening ? 'Listening' : 'Talk to Dott Assistant')}
+                >
+                  <Ionicons name={listening ? 'mic' : 'mic-outline'} size={20} color={listening ? colors.background : colors.accent} />
+                </TouchableOpacity>
                 <TextInput
                   style={styles.input}
                   placeholder={t('Ask me anything...')}
                   placeholderTextColor={colors.subtext}
                   value={input}
-                  onChangeText={setInput}
+                  onChangeText={value => {
+                    setInput(value);
+                    if (value.length > 0) setHasStartedTyping(true);
+                  }}
                   editable={!sending}
                   multiline
                 />
@@ -478,6 +594,9 @@ const styles = StyleSheet.create({
   avoider: {
     width: '100%'
   },
+  fullScreenAvoider: {
+    flex: 1,
+  },
   panel: {
     backgroundColor: colors.card,
     borderTopLeftRadius: 28,
@@ -487,10 +606,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border
   },
+  fullScreenPanel: {
+    flex: 1,
+    borderRadius: 0,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+  },
   panelHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center'
+  },
+  headerCopy: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   panelTitle: {
     color: colors.text,
@@ -501,7 +635,7 @@ const styles = StyleSheet.create({
     color: colors.subtext,
     marginTop: 2
   },
-  closeButton: {
+  headerButton: {
     width: 32,
     height: 32,
     borderRadius: 16,
@@ -512,6 +646,20 @@ const styles = StyleSheet.create({
   thread: {
     marginTop: 16,
     maxHeight: 260
+  },
+  threadContent: {
+    paddingBottom: 16,
+  },
+  fullScreenThread: {
+    flex: 1,
+    flexGrow: 1,
+    minHeight: 0,
+    maxHeight: 10000,
+  },
+  fullScreenThreadContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-end',
+    paddingTop: 16,
   },
   messageBubble: {
     borderRadius: 16,
@@ -557,6 +705,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     color: colors.text
+  },
+  voiceButton: {
+    width: 44,
+    height: 44,
+    marginRight: 8,
+    borderRadius: 22,
+    backgroundColor: colors.backgroundAlt,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  voiceButtonActive: {
+    backgroundColor: colors.accent,
   },
   sendButton: {
     marginLeft: 8,

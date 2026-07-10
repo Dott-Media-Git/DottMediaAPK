@@ -14,12 +14,16 @@ import { writeCachedValue } from '@services/localCache';
 import { fetchSocialHistory, type SocialHistory } from '@services/social';
 import { buildTrendingCacheKey, writeTrendingCache } from '@services/trendsCache';
 import { fetchTrendingNews, fetchTrendSources } from '@services/trends';
+import { isMainDottMediaAccount } from '@services/accountAccess';
 
 type WarmPrimaryScreenCachesInput = {
   userId?: string;
   orgId?: string;
   seedAnalytics?: Partial<DashboardAnalytics>;
 };
+
+const LIVE_SOCIAL_ROLLING_DAYS = 30;
+const LIVE_SOCIAL_ROLLING_HOURS = LIVE_SOCIAL_ROLLING_DAYS * 24;
 
 const warmInFlight = new Map<string, Promise<void>>();
 
@@ -49,7 +53,7 @@ const emptyOutboundStats: OutboundStats = {
 
 const emptyLiveSocialStats: LiveSocialStats = {
   generatedAt: new Date(0).toISOString(),
-  lookbackHours: 72,
+  lookbackHours: LIVE_SOCIAL_ROLLING_HOURS,
   summary: {
     views: 0,
     interactions: 0,
@@ -84,6 +88,7 @@ export const warmPrimaryScreenCaches = async ({
   if (!userId) return;
 
   const scopeId = resolveAnalyticsScopeId(userId, orgId);
+  const canUseOutboundPipeline = isMainDottMediaAccount({ uid: userId });
   const warmKey = `${userId}:${scopeId ?? 'default'}`;
   const existing = warmInFlight.get(warmKey);
   if (existing) {
@@ -104,8 +109,8 @@ export const warmPrimaryScreenCaches = async ({
       sourcesResult,
     ] = await Promise.allSettled([
       orgId ? fetchOrgDashboardAnalytics(scopeId, userId) : fetchAnalytics(userId),
-      fetchOutboundStats(userId, scopeId),
-      fetchLiveSocialStats(userId, scopeId, 72),
+      canUseOutboundPipeline ? fetchOutboundStats(userId, scopeId) : Promise.resolve(null),
+      fetchLiveSocialStats(userId, scopeId, LIVE_SOCIAL_ROLLING_HOURS),
       fetchLiveSocialStats(userId, scopeId, getHoursSinceMidnight()),
       fetchActivityHeatmap(userId, scopeId, 7),
       fetchActivityHeatmap(userId, scopeId, 30),

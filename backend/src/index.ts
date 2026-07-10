@@ -38,6 +38,7 @@ import billingRoutes from './routes/billingRoutes';
 import youtubeIntegrationRoutes from './routes/youtubeIntegrationRoutes';
 import tiktokIntegrationRoutes from './routes/tiktokIntegrationRoutes';
 import linkedinIntegrationRoutes from './routes/linkedinIntegrationRoutes';
+import { canUseOutboundPipeline } from './utils/socialAccess';
 import twitterIntegrationRoutes from './routes/twitterIntegrationRoutes';
 import instagramReelsSoraRoutes from './routes/instagramReelsSoraRoutes';
 import publicMediaRoutes from './routes/publicMediaRoutes';
@@ -65,6 +66,7 @@ const initializeAutomation = async () => {
       import('./jobs/followupJob.js'),
       import('./jobs/autoPostJob.js'),
       import('./jobs/autopostComplianceJob.js'),
+      import('./jobs/weeklyReportJob.js'),
       import('./jobs/socialQueueJob.js'),
       import('./jobs/instagramCommentPollJob.js'),
       import('./jobs/instagramDmPollJob.js'),
@@ -113,6 +115,7 @@ app.use(
   }),
 );
 app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false, limit: '64kb' }));
 app.use('/flutterwave/webhook', flutterwaveRoutes);
 app.use(
   morgan(':remote-addr :method :url :status :res[content-length] - :response-time ms :req[x-request-id]'),
@@ -484,6 +487,10 @@ app.post('/api/outbound/runNow', async (req, res, next) => {
     }
 
     const requestedUserId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : '';
+    const requestedEmail = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+    if (!canUseOutboundPipeline({ email: requestedEmail || null }, requestedUserId || null)) {
+      return res.status(403).json({ message: 'Outbound pipeline is only enabled for the main Dott Media account' });
+    }
     const { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } = await import('./services/outboundTargetingService.js');
     const { runProspectDiscovery } = await import('./packages/services/prospectFinder/index.js');
     const { outreachAgent } = await import('./packages/services/outreachAgent/index.js');

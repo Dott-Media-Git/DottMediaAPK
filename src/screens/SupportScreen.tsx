@@ -13,6 +13,7 @@ import { useAuth } from '@context/AuthContext';
 import { LOCALE_FLAGS, LOCALE_LABELS, SUPPORTED_LOCALES, type Locale } from '@constants/i18n';
 import { getIdToken } from '@services/firebase';
 import { env } from '@services/env';
+import { isMainDottMediaAccount } from '@services/accountAccess';
 
 const SUPPORT_WHATSAPP_URL = 'https://wa.me/2348130000000';
 const LANGUAGE_OPTIONS: Array<{ value: Locale; label: string; flag: string }> = SUPPORTED_LOCALES.map(locale => ({
@@ -32,8 +33,6 @@ const HELP_DOCS = [
   { key: 'bwinbet-outbound-ceo', titleKey: 'Bwinbet outbound CEO brief', file: 'bwinbet-outbound-ceo-brief.html' },
 ];
 
-const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
-
 export const SupportScreen: React.FC = () => {
   const { state } = useAuth();
   const { mode, toggleMode } = useThemeMode();
@@ -45,7 +44,7 @@ export const SupportScreen: React.FC = () => {
   const [selectedHelpDoc, setSelectedHelpDoc] = useState<(typeof HELP_DOCS)[number] | null>(null);
   const currentLabel = `${LOCALE_FLAGS[locale]} ${LOCALE_LABELS[locale]}`;
   const helpDocLabel = selectedHelpDoc ? t(selectedHelpDoc.titleKey) : t('Select a platform');
-  const isMainAccount = normalizeLower(state.user?.email) === 'brasioxirin@gmail.com';
+  const isMainAccount = isMainDottMediaAccount(state.user);
   const helpDocBaseUrl = env.helpDocsUrl
     ? env.helpDocsUrl.replace(/\/$/, '')
     : env.apiUrl

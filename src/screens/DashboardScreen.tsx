@@ -35,6 +35,7 @@ import {
   resolveAnalyticsScopeId
 } from '@services/analytics';
 import { fetchAdPerformance, type AdPerformance } from '@services/metaAds';
+import { isMainDottMediaAccount } from '@services/accountAccess';
 
 type ChartMetric = 'views' | 'interactions' | 'outbound' | 'conversions';
 type ReviewRangeKey = '7d' | '14d' | '30d' | '365d';
@@ -226,6 +227,7 @@ export const DashboardScreen: React.FC = () => {
     const crmEmail = normalizeLower(state.crmData?.email);
     return primary.includes('bwinbet') || crmEmail.includes('bwinbet');
   }, [state.crmData?.email, state.user?.email]);
+  const canUseOutboundPipeline = useMemo(() => isMainDottMediaAccount(state.user), [state.user]);
   const analyticsScopeId = useMemo(
     () => resolveAnalyticsScopeId(state.user?.uid, orgId),
     [state.user?.uid, orgId]
@@ -408,20 +410,25 @@ export const DashboardScreen: React.FC = () => {
     let mounted = true;
     let outboundUnsub: (() => void) | null = null;
     const refreshRestOutbound = async () => {
+      if (!canUseOutboundPipeline) {
+        if (mounted) setOutboundStats(emptyOutboundStats);
+        return;
+      }
       const stats = await fetchOutboundStats(state.user?.uid, analyticsScopeId);
       if (stats && mounted) setOutboundStats(stats);
     };
 
-    outboundUnsub =
-      subscribeOutboundStats(
-        analyticsScopeId,
-        stats => mounted && setOutboundStats(stats),
-        error => {
-          console.warn('Realtime outbound stats failed', error);
-          void refreshRestOutbound();
-        },
-        state.user?.uid
-      ) ?? null;
+    outboundUnsub = canUseOutboundPipeline
+      ? subscribeOutboundStats(
+          analyticsScopeId,
+          stats => mounted && setOutboundStats(stats),
+          error => {
+            console.warn('Realtime outbound stats failed', error);
+            void refreshRestOutbound();
+          },
+          state.user?.uid
+        ) ?? null
+      : null;
 
     void refreshRestOutbound();
 
@@ -429,7 +436,7 @@ export const DashboardScreen: React.FC = () => {
       mounted = false;
       outboundUnsub?.();
     };
-  }, [analyticsScopeId, state.user?.uid]);
+  }, [analyticsScopeId, canUseOutboundPipeline, state.user?.uid]);
 
   useEffect(() => {
     if (!state.user?.uid) {
@@ -1088,20 +1095,22 @@ export const DashboardScreen: React.FC = () => {
           ))}
         </View>
       </LinearGradient>
-      <DMCard title={t('Outbound Pipeline')} subtitle={t('Prospecting + booking overview')}>
-        <View style={styles.outboundGrid}>
-          {outboundMetrics.map((metric, index) => (
-            <View
-              key={metric.label}
-              style={[styles.outboundMetric, (index + 1) % 2 === 0 && styles.outboundMetricLast]}
-            >
-              <Text style={styles.outboundLabel}>{metric.label}</Text>
-              <Text style={styles.outboundValue}>{metric.value}</Text>
-              {metric.hint ? <Text style={styles.outboundHint}>{metric.hint}</Text> : null}
-            </View>
-          ))}
-        </View>
-      </DMCard>
+      {canUseOutboundPipeline ? (
+        <DMCard title={t('Outbound Pipeline')} subtitle={t('Prospecting + booking overview')}>
+          <View style={styles.outboundGrid}>
+            {outboundMetrics.map((metric, index) => (
+              <View
+                key={metric.label}
+                style={[styles.outboundMetric, (index + 1) % 2 === 0 && styles.outboundMetricLast]}
+              >
+                <Text style={styles.outboundLabel}>{metric.label}</Text>
+                <Text style={styles.outboundValue}>{metric.value}</Text>
+                {metric.hint ? <Text style={styles.outboundHint}>{metric.hint}</Text> : null}
+              </View>
+            ))}
+          </View>
+        </DMCard>
+      ) : null}
       <DMCard
         title={t('Live Social Performance')}
         subtitle={liveSocialSubtitle}
@@ -1832,4 +1841,3 @@ const styles = StyleSheet.create({
     marginBottom: 8
   }
 });
-

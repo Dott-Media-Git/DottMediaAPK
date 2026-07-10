@@ -7,7 +7,8 @@ import { autoPostService } from './autoPostService';
 import { outreachAgent } from '../packages/services/outreachAgent';
 import { contentGenerationService } from '../packages/services/contentGenerationService';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService';
-import { sendMonthlyPerformanceReportEmail } from './emailService';
+import { sendMonthlyPerformanceReportEmail, sendPerformanceReportEmail } from './emailService';
+import { canUseOutboundPipeline } from '../utils/socialAccess';
 
 const strategiesCollection = firestore.collection('assistant_strategies');
 const settingsCollection = firestore.collection('assistant_settings');
@@ -125,8 +126,11 @@ type StrategyDraftInput = {
 type MonthlyReportInput = {
   userId: string;
   email?: string | null;
+  emails?: string[];
   company?: string;
 };
+
+type WeeklyReportInput = MonthlyReportInput;
 
 const CHANNEL_ALIASES: Array<{ channel: SupportedChannel; aliases: string[] }> = [
   { channel: 'instagram', aliases: ['instagram', 'insta', 'ig'] },
@@ -494,6 +498,25 @@ export class AssistantStrategyService {
     ].join('\n');
   }
 
+  private formatWeeklyReport(metrics: PeriodMetrics, company?: string) {
+    const header = `Weekly performance report${company ? ` for ${company}` : ''}`;
+    return [
+      header,
+      '',
+      `CRM: ${metrics.crm.leads} leads and ${metrics.crm.conversions} conversions.`,
+      `Social: ${metrics.social.posted} posts published, ${metrics.social.failed} failed, ${metrics.social.skipped} skipped.`,
+      `Outreach: ${metrics.outbound.messagesSent} sent, ${metrics.outbound.replies} replies, ${metrics.outbound.conversions} conversions.`,
+      `Inbound: ${metrics.inbound.messages} messages produced ${metrics.inbound.leads} leads.`,
+      `Engagement: ${metrics.engagement.comments} comments, ${metrics.engagement.replies} replies, ${metrics.engagement.conversions} conversions.`,
+      `Follow-ups: ${metrics.followups.sent} sent, ${metrics.followups.replies} replies, ${metrics.followups.conversions} conversions.`,
+      '',
+      'Recommended focus for this week:',
+      `- ${this.determineFocus(metrics)}.`,
+      '- Review failed posts and keep the strongest content themes active.',
+      '- Follow up with positive replies and qualified leads.',
+    ].join('\n');
+  }
+
   private async resolveReportRecipient(userId: string, fallbackEmail?: string | null) {
     try {
       const profileSnap = await firestore.collection('profiles').doc(userId).get();
@@ -623,6 +646,7 @@ export class AssistantStrategyService {
           prompt: plan.actions.autoPost?.prompt ?? 'High-performing social post for lead generation',
           businessType: plan.actions.autoPost?.businessType ?? 'Marketing',
           imageCount: 1,
+          userId,
         });
         if (generated.images.length) {
           const scheduleDate = new Date();
@@ -655,6 +679,8 @@ export class AssistantStrategyService {
       try {
         if (process.env.DISABLE_OUTBOUND_AUTOMATION === 'true') {
           skippedActions.push('Outreach skipped (disabled by configuration)');
+        } else if (!canUseOutboundPipeline(undefined, userId)) {
+          skippedActions.push('Outreach skipped (main Dott Media account only)');
         } else {
           await outreachAgent.runDailyOutreach([], { userId });
           appliedActions.push('Outreach sequence triggered');
@@ -684,13 +710,49 @@ export class AssistantStrategyService {
   }
 
   async sendMonthlyReport(input: MonthlyReportInput) {
-    const recipient = await this.resolveReportRecipient(input.userId, input.email ?? null);
-    if (!recipient) {
+    const addresses = (input.emails ?? []).map(email => email.trim().toLowerCase()).filter(Boolean);
+    let recipients: string[] = [];
+
+    if (addresses.length > 0) {
+      recipients = Array.from(new Set(addresses));
+    } else {
+      const fallback = await this.resolveReportRecipient(input.userId, input.email ?? null);
+      if (fallback) {
+        recipients = [fallback];
+      }
+    }
+
+    if (!recipients.length) {
       return { message: 'I do not have an email address for this account yet.' };
     }
+
     const metrics = await this.buildPeriodMetrics(input.userId, 30);
     const reportText = this.formatMonthlyReport(metrics, input.company);
-    await sendMonthlyPerformanceReportEmail(recipient, input.company ?? 'your team', reportText);
-    return { message: `Monthly performance report emailed to ${recipient}.` };
+
+    await Promise.all(
+      recipients.map(recipient =>
+        sendMonthlyPerformanceReportEmail(recipient, input.company ?? 'your team', reportText)
+      )
+    );
+
+    return { message: `Monthly performance report emailed to ${recipients.join(', ')}.` };
+  }
+
+  async sendWeeklyReport(input: WeeklyReportInput) {
+    const addresses = (input.emails ?? []).map(email => email.trim().toLowerCase()).filter(Boolean);
+    const fallback = addresses.length
+      ? null
+      : await this.resolveReportRecipient(input.userId, input.email ?? null);
+    const recipients = Array.from(new Set(addresses.length ? addresses : fallback ? [fallback] : []));
+    if (!recipients.length) {
+      return { message: 'I do not have an email address for this account yet.' };
+    }
+    const metrics = await this.buildPeriodMetrics(input.userId, 7);
+    const company = input.company ?? 'your team';
+    const reportText = this.formatWeeklyReport(metrics, input.company);
+    await Promise.all(
+      recipients.map(recipient => sendPerformanceReportEmail(recipient, company, reportText, 'Weekly')),
+    );
+    return { message: `Weekly performance report emailed to ${recipients.join(', ')}.` };
   }
 }
