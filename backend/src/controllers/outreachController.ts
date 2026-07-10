@@ -2,12 +2,27 @@ import { Request, Response, NextFunction } from 'express';
 import { PredictiveOutreachService } from '../services/predictiveOutreachService';
 import { firestore } from '../db/firestore';
 import { AuthedRequest } from '../middleware/firebaseAuth';
+import { canUseOutboundPipeline } from '../utils/socialAccess';
 
 const outreach = new PredictiveOutreachService();
+
+const assertOutboundAccess = (req: Request, res: Response) => {
+  const authUser = (req as AuthedRequest).authUser;
+  if (!authUser) {
+    res.status(401).json({ message: 'Unauthorized' });
+    return null;
+  }
+  if (!canUseOutboundPipeline({ email: authUser.email ?? null }, authUser.uid)) {
+    res.status(403).json({ message: 'Outbound pipeline is only enabled for the main Dott Media account' });
+    return null;
+  }
+  return authUser;
+};
 
 export class OutreachController {
   search = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (!assertOutboundAccess(req, res)) return;
       const { platform, query, limit } = req.body as { platform: 'linkedin' | 'instagram'; query: string; limit?: number };
       if (!platform || !query) {
         return res.status(400).json({ message: 'platform and query are required' });
@@ -21,10 +36,8 @@ export class OutreachController {
 
   send = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const authUser = (req as AuthedRequest).authUser;
-      if (!authUser) {
-        return res.status(401).json({ message: 'Unauthorized' });
-      }
+      const authUser = assertOutboundAccess(req, res);
+      if (!authUser) return;
       const { platform, profileId, name, headline, goal } = req.body as {
         platform: 'linkedin' | 'instagram';
         profileId: string;
@@ -44,6 +57,7 @@ export class OutreachController {
 
   stats = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (!assertOutboundAccess(req, res)) return;
       const [queueSnap, convertedSnap, outreachSnap] = await Promise.all([
         firestore.collection('prospects').where('status', '==', 'new').get(),
         firestore.collection('prospects').where('status', '==', 'converted').get(),
@@ -66,10 +80,8 @@ export class OutreachController {
 
   run = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const authUser = (req as AuthedRequest).authUser;
-      if (!authUser) {
-        return res.status(401).json({ message: 'Unauthorized' });
-      }
+      const authUser = assertOutboundAccess(req, res);
+      if (!authUser) return;
       const token = process.env.OUTBOUND_RUN_TOKEN;
       const body = req.body as {
         includeDiscovery?: boolean;
@@ -116,6 +128,7 @@ export class OutreachController {
 
   logs = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (!assertOutboundAccess(req, res)) return;
       const snap = await firestore.collection('outreach').orderBy('sentAt', 'desc').limit(25).get();
       const logs = snap.docs.map(doc => {
         const data = doc.data();

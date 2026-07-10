@@ -36,3 +36,11 @@ export const canUsePrimarySocialDefaults = (
   user?: { email?: string | null },
   userId?: string | null,
 ) => isPrimarySocialEmail(user?.email) || isPrimarySocialUserId(userId);
+
+export const isOutboundRestrictedToPrimaryAccount = () =>
+  process.env.OUTBOUND_ONLY_PRIMARY_ACCOUNT !== 'false';
+
+export const canUseOutboundPipeline = (
+  user?: { email?: string | null },
+  userId?: string | null,
+) => !isOutboundRestrictedToPrimaryAccount() || canUsePrimarySocialDefaults(user, userId);

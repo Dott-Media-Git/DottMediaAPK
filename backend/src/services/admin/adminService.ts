@@ -31,7 +31,7 @@ const defaultSettings: OrgSettingsDocument = {
     crm: true,
     support: true,
     booking: true,
-    outbound: true,
+    outbound: false,
     contentEngagement: true,
     retargeting: true,
   },

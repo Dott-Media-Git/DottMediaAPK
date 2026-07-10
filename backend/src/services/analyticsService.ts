@@ -1,7 +1,8 @@
 import admin from 'firebase-admin';
-import { firestore } from '../db/firestore';
+import { firebaseApp, firestore } from '../db/firestore';
 import { resolveAnalyticsScopeKey, type AnalyticsScope } from './analyticsScope';
 import { supabaseFallbackService } from './supabaseFallbackService';
+import { canUseOutboundPipeline } from '../utils/socialAccess';
 
 export type AnalyticsSummary = {
   leads: number;
@@ -106,6 +107,8 @@ const activityHeatmapScore = (rows: ActivityHeatmapDaily[]) =>
       Number(row.redirectClicks ?? 0),
     0,
   );
+
+const useMockAnalytics = process.env.ALLOW_MOCK_AUTH === 'true' && !firebaseApp;
 
 const mergeActivityHeatmapRow = (
   target: Map<string, ActivityHeatmapDaily>,
@@ -314,7 +317,7 @@ async function readSummaryWithFallback<T extends Record<string, unknown>>(
 export class AnalyticsService {
   async getSummary(userId: string): Promise<AnalyticsSummary> {
     // Mock Data Logic
-    if (process.env.ALLOW_MOCK_AUTH === 'true') {
+    if (useMockAnalytics) {
       const mockHistory = Array.from({ length: 14 }).map((_, i) => {
         const date = new Date();
         date.setDate(date.getDate() - i);
@@ -762,7 +765,19 @@ export type OutboundStats = {
 };
 
 export async function getOutboundStats(scope?: AnalyticsScope): Promise<OutboundStats> {
-  if (process.env.ALLOW_MOCK_AUTH === 'true') {
+  if (!canUseOutboundPipeline(undefined, scope?.userId ?? null)) {
+    return {
+      prospectsContacted: 0,
+      responders: 0,
+      replies: 0,
+      positiveReplies: 0,
+      conversions: 0,
+      demoBookings: 0,
+      conversionRate: 0,
+    };
+  }
+
+  if (useMockAnalytics) {
     return {
       prospectsContacted: 1250,
       responders: 295,

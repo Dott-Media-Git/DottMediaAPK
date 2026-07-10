@@ -8,7 +8,7 @@ import { sendInstagramMessage, likeInstagramMedia, commentInstagramMedia } from 
 import { sendWhatsAppMessage } from './senders/whatsappSender';
 import { XDmCredentials, sendXDirectMessage } from './senders/xSender';
 import { incrementMetric } from '../../../services/analyticsService';
-import { canUsePrimarySocialDefaults } from '../../../utils/socialAccess';
+import { canUseOutboundPipeline, canUsePrimarySocialDefaults } from '../../../utils/socialAccess';
 import { loadWarmOutreachState, normalizeOutreachRecipient } from '../../../services/outreachConsentService';
 
 const prospectsCollection = firestore.collection('prospects');
@@ -58,6 +58,18 @@ export class OutreachAgent {
    */
   async runDailyOutreach(seedProspects: Prospect[] = [], options?: { userId?: string }) {
     const userId = options?.userId;
+    if (!canUseOutboundPipeline(undefined, userId ?? null)) {
+      await outboundLogsCollection.add({
+        ranAt: admin.firestore.FieldValue.serverTimestamp(),
+        prospectsConsidered: 0,
+        messagesSent: 0,
+        skipped: seedProspects.length,
+        errors: [],
+        userId: userId ?? null,
+        restrictedToPrimaryAccount: true,
+      });
+      return { messagesSent: 0, skipped: seedProspects.length, errors: [{ error: 'restricted_to_primary_account' }] };
+    }
     const perChannelCap = Math.max(0, Number(process.env.OUTBOUND_DAILY_CAP_PER_CHANNEL ?? 20));
     const runContext = await this.buildRunContext(userId, perChannelCap);
     const perChannelCaps = this.resolvePerChannelCaps(perChannelCap, runContext.xPolicy.dailyCap);
@@ -312,9 +324,9 @@ Max 3 sentences. Add natural emoji if suitable.
     const firstName = prospect.name?.trim()?.split(' ')[0] ?? 'there';
     if (sportsBrand) {
       const templates = [
-        `Hi ${firstName}! Thanks for engaging with our football updates. We share daily match insights, value picks, and timing alerts. More info: www.bwinbetug.info | Bets: www.bwinbetug.com`,
-        `Hi ${firstName}, great to connect! We post curated football insights and smart bet angles across major leagues. For full details visit www.bwinbetug.info, then place your bet at www.bwinbetug.com`,
-        `Hi ${firstName}! If you want structured football tips (form, odds context, and key fixtures), we can share today's board. Info: www.bwinbetug.info | Place bets: www.bwinbetug.com`,
+        `Hi ${firstName}! Thanks for engaging with our football updates. We share daily match insights, value picks, and timing alerts. More info: the link in bio | Bets: the betting link in bio`,
+        `Hi ${firstName}, great to connect! We post curated football insights and smart bet angles across major leagues. For full details visit the link in bio, then place your bet at the betting link in bio`,
+        `Hi ${firstName}! If you want structured football tips (form, odds context, and key fixtures), we can share today's board. Info: the link in bio | Place bets: the betting link in bio`,
       ];
       const seed = `${prospect.id}:${new Date().toISOString().slice(0, 10)}`;
       return templates[this.hashSeed(seed) % templates.length];

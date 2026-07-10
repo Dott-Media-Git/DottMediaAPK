@@ -8,6 +8,7 @@ import { outreachAgent } from '../packages/services/outreachAgent';
 import { contentGenerationService } from '../packages/services/contentGenerationService';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService';
 import { sendMonthlyPerformanceReportEmail, sendPerformanceReportEmail } from './emailService';
+import { canUseOutboundPipeline } from '../utils/socialAccess';
 
 const strategiesCollection = firestore.collection('assistant_strategies');
 const settingsCollection = firestore.collection('assistant_settings');
@@ -678,6 +679,8 @@ export class AssistantStrategyService {
       try {
         if (process.env.DISABLE_OUTBOUND_AUTOMATION === 'true') {
           skippedActions.push('Outreach skipped (disabled by configuration)');
+        } else if (!canUseOutboundPipeline(undefined, userId)) {
+          skippedActions.push('Outreach skipped (main Dott Media account only)');
         } else {
           await outreachAgent.runDailyOutreach([], { userId });
           appliedActions.push('Outreach sequence triggered');

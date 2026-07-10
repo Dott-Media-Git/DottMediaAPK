@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "dottmediaapk",
     "public": "dist",
     "ignore": [
       "firebase.json",

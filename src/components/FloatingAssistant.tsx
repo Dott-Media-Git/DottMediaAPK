@@ -33,6 +33,7 @@ import {
   type OutboundStats,
   type WebLeadStats,
 } from '@services/analytics';
+import { isMainDottMediaAccount } from '@services/accountAccess';
 import { askAssistant } from '@services/assistant';
 
 type Message = {
@@ -233,10 +234,11 @@ export const FloatingAssistant: React.FC = () => {
       };
     }
 
+    const canUseOutboundPipeline = isMainDottMediaAccount(state.user);
     void Promise.all([
       fetchLiveSocialStats(state.user.uid, analyticsScopeId, 24),
       fetchAnalytics(state.user.uid),
-      fetchOutboundStats(state.user.uid, analyticsScopeId),
+      canUseOutboundPipeline ? fetchOutboundStats(state.user.uid, analyticsScopeId) : Promise.resolve(null),
       fetchInboundStats(state.user.uid, analyticsScopeId),
       fetchEngagementStats(state.user.uid, analyticsScopeId),
       fetchFollowupStats(state.user.uid, analyticsScopeId),

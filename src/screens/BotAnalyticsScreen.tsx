@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { VictoryBar, VictoryChart, VictoryLegend, VictoryLine, VictoryPie, VictoryTheme } from 'victory-native';
+import * as VictoryNative from 'victory-native';
 import { colors } from '@constants/colors';
 import { fetchBotAnalytics, subscribeBotAnalytics } from '@services/botStats';
 import { fetchSocialHistory } from '@services/social';
@@ -10,6 +10,14 @@ import { emptyBotAnalytics } from '@constants/botAnalytics';
 import { notifyLeadAlerts } from '@services/notifications';
 import { useI18n } from '@context/I18nContext';
 import { useAuth } from '@context/AuthContext';
+import { isMainDottMediaAccount } from '@services/accountAccess';
+
+const VictoryBar = (VictoryNative as any).VictoryBar as React.ComponentType<any>;
+const VictoryChart = (VictoryNative as any).VictoryChart as React.ComponentType<any>;
+const VictoryLegend = (VictoryNative as any).VictoryLegend as React.ComponentType<any>;
+const VictoryLine = (VictoryNative as any).VictoryLine as React.ComponentType<any>;
+const VictoryPie = (VictoryNative as any).VictoryPie as React.ComponentType<any>;
+const VictoryTheme = (VictoryNative as any).VictoryTheme;
 
 const SectionHeader: React.FC<{ title: string; subtitle?: string }> = ({ title, subtitle }) => (
   <View style={styles.sectionHeader}>
@@ -39,6 +47,7 @@ export const BotAnalyticsScreen: React.FC = () => {
   const lastAlertPendingRef = useRef<number>(0);
   const hasConnectedSocials = Boolean(state.crmData?.instagram || state.crmData?.facebook || state.crmData?.linkedin);
   const orgId = (state.user as any)?.orgId ?? state.crmData?.orgId;
+  const canUseOutboundPipeline = useMemo(() => isMainDottMediaAccount(state.user), [state.user]);
   const analyticsScopeId = useMemo(
     () => resolveAnalyticsScopeId(state.user?.uid, orgId),
     [state.user?.uid, orgId]
@@ -105,7 +114,7 @@ export const BotAnalyticsScreen: React.FC = () => {
 
   useEffect(() => {
     let mounted = true;
-    if (!hasConnectedSocials) {
+    if (!hasConnectedSocials || !canUseOutboundPipeline) {
       setOutboundStats(null);
       return () => {
         mounted = false;
@@ -121,7 +130,7 @@ export const BotAnalyticsScreen: React.FC = () => {
       mounted = false;
       clearInterval(interval);
     };
-  }, [analyticsScopeId, hasConnectedSocials, state.user?.uid]);
+  }, [analyticsScopeId, canUseOutboundPipeline, hasConnectedSocials, state.user?.uid]);
 
   const summaryStats = [
     { label: t('Messages Today'), value: analytics.summary.totalMessagesToday },
@@ -176,19 +185,21 @@ export const BotAnalyticsScreen: React.FC = () => {
         </View>
       )}
 
-      <View style={styles.card}>
-        <SectionHeader title={t('Outbound Snapshot')} subtitle={t('Prospecting to booked demos')} />
-        {outboundStats ? (
-          <View style={styles.outboundRow}>
-            <MiniStat label={t('Contacted')} value={outboundStats.prospectsContacted} />
-            <MiniStat label={t('Replies')} value={outboundStats.replies} />
-            <MiniStat label={t('Conversions')} value={outboundStats.conversions} />
-            <MiniStat label={t('Demos')} value={outboundStats.demoBookings} />
-          </View>
-        ) : (
-          <ActivityIndicator color={colors.accent} />
-        )}
-      </View>
+      {canUseOutboundPipeline ? (
+        <View style={styles.card}>
+          <SectionHeader title={t('Outbound Snapshot')} subtitle={t('Prospecting to booked demos')} />
+          {outboundStats ? (
+            <View style={styles.outboundRow}>
+              <MiniStat label={t('Contacted')} value={outboundStats.prospectsContacted} />
+              <MiniStat label={t('Replies')} value={outboundStats.replies} />
+              <MiniStat label={t('Conversions')} value={outboundStats.conversions} />
+              <MiniStat label={t('Demos')} value={outboundStats.demoBookings} />
+            </View>
+          ) : (
+            <ActivityIndicator color={colors.accent} />
+          )}
+        </View>
+      ) : null}
 
       {loading ? (
         <ActivityIndicator color={colors.accent} style={styles.loader} />
@@ -239,7 +250,7 @@ export const BotAnalyticsScreen: React.FC = () => {
                   data={analytics.charts.leadsByPlatform.map(point => ({ x: point.label.toUpperCase(), y: point.value }))}
                   style={{
                     data: {
-                      fill: ({ datum }) => platformColors[datum.x.toLowerCase() as PlatformName] ?? colors.accent
+                      fill: ({ datum }: { datum: any }) => platformColors[datum.x.toLowerCase() as PlatformName] ?? colors.accent
                     }
                   }}
                 />
@@ -252,7 +263,7 @@ export const BotAnalyticsScreen: React.FC = () => {
                 data={analytics.categoryBreakdown.map(point => ({ x: point.label, y: point.value }))}
                 colorScale={['#7C83FD', '#96BAFF', '#7DEDFF', '#88C0D0']}
                 style={{ labels: { fill: colors.text, fontSize: 12 } }}
-                labels={({ datum }) => `${datum.x}\n${Math.round(datum.y)}`}
+                labels={({ datum }: { datum: any }) => `${datum.x}\n${Math.round(datum.y)}`}
               />
             </View>
           </View>
@@ -281,7 +292,7 @@ export const BotAnalyticsScreen: React.FC = () => {
                 data={leadInsights.intentBreakdown.map(point => ({ x: point.label, y: point.value }))}
                 colorScale={['#5E81AC', '#81A1C1', '#88C0D0', '#EBCB8B']}
                 style={{ labels: { fill: colors.text, fontSize: 12 } }}
-                labels={({ datum }) => `${datum.x}\n${Math.round(datum.y)}`}
+                labels={({ datum }: { datum: any }) => `${datum.x}\n${Math.round(datum.y)}`}
               />
             </View>
             <View style={[styles.card, styles.rowCard]}>
@@ -291,7 +302,7 @@ export const BotAnalyticsScreen: React.FC = () => {
                 data={leadInsights.responseMix.map(point => ({ x: point.label, y: point.value }))}
                 colorScale={['#F7B32B', '#F78154', '#5BC0EB', '#9BC53D', '#E55934']}
                 style={{ labels: { fill: colors.text, fontSize: 12 } }}
-                labels={({ datum }) => `${datum.x}\n${Math.round(datum.y)}`}
+                labels={({ datum }: { datum: any }) => `${datum.x}\n${Math.round(datum.y)}`}
               />
             </View>
           </View>
