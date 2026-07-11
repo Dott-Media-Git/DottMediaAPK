@@ -7,6 +7,7 @@ const socialLimitsCollection = firestore.collection('socialLimits');
 const socialDailyCollection = firestore.collection('analytics').doc('socialDaily').collection('user');
 const analyticsCollection = firestore.collection('analytics');
 const usersCollection = firestore.collection('users');
+const profilesCollection = firestore.collection('profiles');
 
 const MAX_AUTPOST_JOBS = Math.max(Number(process.env.SUPABASE_BACKFILL_AUTPOST_LIMIT ?? 200), 1);
 const MAX_SCHEDULED_POSTS = Math.max(Number(process.env.SUPABASE_BACKFILL_SCHEDULED_LIMIT ?? 3000), 1);
@@ -14,6 +15,8 @@ const MAX_SOCIAL_LIMITS = Math.max(Number(process.env.SUPABASE_BACKFILL_SOCIAL_L
 const MAX_SOCIAL_DAILY = Math.max(Number(process.env.SUPABASE_BACKFILL_SOCIAL_DAILY ?? 3000), 1);
 const MAX_ANALYTICS_DAILY = Math.max(Number(process.env.SUPABASE_BACKFILL_ANALYTICS_DAILY ?? 120), 1);
 const MAX_SOCIAL_ACCOUNTS = Math.max(Number(process.env.SUPABASE_BACKFILL_SOCIAL_ACCOUNTS ?? 500), 1);
+const MAX_USERS = Math.max(Number(process.env.SUPABASE_BACKFILL_USERS ?? 2000), 1);
+const MAX_PROFILES = Math.max(Number(process.env.SUPABASE_BACKFILL_PROFILES ?? 2000), 1);
 
 let backfillPromise: Promise<boolean> | null = null;
 
@@ -107,6 +110,47 @@ async function backfillSocialAccounts() {
     count += 1;
   }
   return count;
+}
+
+async function backfillUsers() {
+  const snap = await usersCollection.limit(MAX_USERS).get();
+  for (const doc of snap.docs) {
+    const data = doc.data() as Record<string, unknown>;
+    await supabaseFallbackService.upsertUser({
+      userId: doc.id,
+      email: typeof data.email === 'string' ? data.email : null,
+      name: typeof data.name === 'string' ? data.name : null,
+      photoURL: typeof data.photoURL === 'string' ? data.photoURL : null,
+      authProvider: typeof data.authProvider === 'string' ? data.authProvider : null,
+      isAdmin: Boolean(data.isAdmin),
+      createdAt: data.createdAt,
+      lastLoginAt: data.lastLoginAt,
+      data,
+    });
+  }
+  return snap.size;
+}
+
+async function backfillProfiles() {
+  const snap = await profilesCollection.limit(MAX_PROFILES).get();
+  for (const doc of snap.docs) {
+    const data = doc.data() as Record<string, unknown>;
+    const user = data.user && typeof data.user === 'object' ? (data.user as Record<string, unknown>) : {};
+    const crmData = data.crmData && typeof data.crmData === 'object' ? (data.crmData as Record<string, unknown>) : {};
+    await supabaseFallbackService.upsertProfile({
+      userId: doc.id,
+      email: typeof user.email === 'string' ? user.email : typeof crmData.email === 'string' ? crmData.email : null,
+      name: typeof user.name === 'string' ? user.name : null,
+      subscriptionStatus: typeof data.subscriptionStatus === 'string' ? data.subscriptionStatus : null,
+      onboardingComplete: Boolean(data.onboardingComplete),
+      userData: user,
+      crmData,
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt,
+      data,
+    });
+  }
+  return snap.size;
 }
 
 async function backfillScheduledPosts() {
@@ -244,7 +288,9 @@ export const backfillSupabaseFallback = async () => {
     }
 
     try {
-      const [autopostJobs, socialAccounts, scheduledPosts, socialLimits, socialDaily, analytics] = await Promise.all([
+      const [users, profiles, autopostJobs, socialAccounts, scheduledPosts, socialLimits, socialDaily, analytics] = await Promise.all([
+        backfillUsers(),
+        backfillProfiles(),
         backfillAutopostJobs(),
         backfillSocialAccounts(),
         backfillScheduledPosts(),
@@ -254,6 +300,8 @@ export const backfillSupabaseFallback = async () => {
       ]);
 
       console.info('[supabase-backfill] completed', {
+        users,
+        profiles,
         autopostJobs,
         socialAccounts,
         scheduledPosts,

@@ -62,6 +62,31 @@ type SocialLogRecord = {
   postedAt?: unknown;
 };
 
+type UserRecord = {
+  userId: string;
+  email?: string | null;
+  name?: string | null;
+  photoURL?: string | null;
+  authProvider?: string | null;
+  isAdmin?: boolean;
+  createdAt?: unknown;
+  lastLoginAt?: unknown;
+  data?: Record<string, unknown>;
+};
+
+type ProfileRecord = {
+  userId: string;
+  email?: string | null;
+  name?: string | null;
+  subscriptionStatus?: string | null;
+  onboardingComplete?: boolean;
+  userData?: Record<string, unknown>;
+  crmData?: Record<string, unknown>;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+  data?: Record<string, unknown>;
+};
+
 type InboundMessageRecord = {
   id: string;
   channel: string;
@@ -742,6 +767,133 @@ class SupabaseFallbackService {
           .map(row => String(row.scheduled_post_id ?? '').toLowerCase().trim())
           .filter(Boolean)
       : [];
+  }
+
+  async upsertUser(record: UserRecord) {
+    if (!this.isConfigured() || !record.userId) return;
+    const row = {
+      user_id: record.userId,
+      email: record.email ?? null,
+      name: record.name ?? null,
+      photo_url: record.photoURL ?? null,
+      auth_provider: record.authProvider ?? null,
+      is_admin: Boolean(record.isAdmin),
+      data: sanitizeJson(record.data ?? {}) ?? {},
+      created_at: toIsoString(record.createdAt),
+      last_login_at: toIsoString(record.lastLoginAt),
+      updated_at: NOW(),
+    };
+    try {
+      await this.request('POST', 'dott_users', {
+        params: { on_conflict: 'user_id' },
+        prefer: 'resolution=merge-duplicates,return=minimal',
+        body: [row],
+      });
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      await this.databaseQuery(
+        `insert into public.dott_users
+          (user_id, email, name, photo_url, auth_provider, is_admin, data, created_at, last_login_at, updated_at)
+         values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
+         on conflict (user_id) do update set
+          email = excluded.email,
+          name = excluded.name,
+          photo_url = excluded.photo_url,
+          auth_provider = excluded.auth_provider,
+          is_admin = excluded.is_admin,
+          data = excluded.data,
+          created_at = coalesce(public.dott_users.created_at, excluded.created_at),
+          last_login_at = excluded.last_login_at,
+          updated_at = excluded.updated_at`,
+        [
+          row.user_id,
+          row.email,
+          row.name,
+          row.photo_url,
+          row.auth_provider,
+          row.is_admin,
+          JSON.stringify(row.data),
+          row.created_at,
+          row.last_login_at,
+          row.updated_at,
+        ],
+      );
+    }
+  }
+
+  async upsertProfile(record: ProfileRecord) {
+    if (!this.isConfigured() || !record.userId) return;
+    const row = {
+      user_id: record.userId,
+      email: record.email ?? null,
+      name: record.name ?? null,
+      subscription_status: record.subscriptionStatus ?? null,
+      onboarding_complete: Boolean(record.onboardingComplete),
+      user_data: sanitizeJson(record.userData ?? {}) ?? {},
+      crm_data: sanitizeJson(record.crmData ?? {}) ?? {},
+      data: sanitizeJson(record.data ?? {}) ?? {},
+      created_at: toIsoString(record.createdAt),
+      updated_at: toIsoString(record.updatedAt) ?? NOW(),
+    };
+    try {
+      await this.request('POST', 'dott_profiles', {
+        params: { on_conflict: 'user_id' },
+        prefer: 'resolution=merge-duplicates,return=minimal',
+        body: [row],
+      });
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      await this.databaseQuery(
+        `insert into public.dott_profiles
+          (user_id, email, name, subscription_status, onboarding_complete, user_data, crm_data, data, created_at, updated_at)
+         values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10)
+         on conflict (user_id) do update set
+          email = excluded.email,
+          name = excluded.name,
+          subscription_status = excluded.subscription_status,
+          onboarding_complete = excluded.onboarding_complete,
+          user_data = excluded.user_data,
+          crm_data = excluded.crm_data,
+          data = excluded.data,
+          created_at = coalesce(public.dott_profiles.created_at, excluded.created_at),
+          updated_at = excluded.updated_at`,
+        [
+          row.user_id,
+          row.email,
+          row.name,
+          row.subscription_status,
+          row.onboarding_complete,
+          JSON.stringify(row.user_data),
+          JSON.stringify(row.crm_data),
+          JSON.stringify(row.data),
+          row.created_at,
+          row.updated_at,
+        ],
+      );
+    }
+  }
+
+  async getProfile(userId: string) {
+    if (!this.isConfigured() || !userId) return null;
+    let row: any = null;
+    try {
+      row = await this.getSingleRow<any>('dott_profiles', { user_id: `eq.${userId}` });
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      const rows = await this.databaseQuery<any>('select * from public.dott_profiles where user_id = $1 limit 1', [userId]);
+      row = rows[0] ?? null;
+    }
+    if (!row) return null;
+    return {
+      userId: row.user_id,
+      email: row.email ?? null,
+      name: row.name ?? null,
+      subscriptionStatus: row.subscription_status ?? null,
+      onboardingComplete: Boolean(row.onboarding_complete),
+      userData: row.user_data && typeof row.user_data === 'object' ? row.user_data : {},
+      crmData: row.crm_data && typeof row.crm_data === 'object' ? row.crm_data : {},
+      data: row.data && typeof row.data === 'object' ? row.data : {},
+    };
   }
 
   async upsertAutopostJob(userId: string, job: Record<string, unknown>) {

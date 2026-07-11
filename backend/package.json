@@ -18,7 +18,8 @@
     "ensure-client-social-automation": "tsx scripts/ensureClientSocialAutomation.ts",
     "process-client-comments-once": "tsx scripts/processClientCommentsOnce.ts",
     "post-stored-reel-backups-once": "tsx scripts/postStoredReelBackupsOnce.ts",
-    "post-dott-energy-sample": "tsx scripts/postDottEnergySample.ts"
+    "post-dott-energy-sample": "tsx scripts/postDottEnergySample.ts",
+    "supabase:backfill": "tsx scripts/runSupabaseBackfill.ts"
   },
   "keywords": [],
   "author": "",
