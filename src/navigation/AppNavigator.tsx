@@ -4,7 +4,7 @@ import { NavigationContainer, DefaultTheme, Theme } from '@react-navigation/nati
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createDrawerNavigator, DrawerContentScrollView, DrawerItem } from '@react-navigation/drawer';
 import { Ionicons } from '@expo/vector-icons';
-import { TouchableOpacity, View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
+import { TouchableOpacity, View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
@@ -24,7 +24,6 @@ import { TrendingNewsScreen } from '@screens/TrendingNewsScreen';
 import { navigationRef } from '@navigation/navigationRef';
 import { ProfileScreen } from '@screens/ProfileScreen';
 import { EmailVerificationScreen } from '@screens/EmailVerificationScreen';
-import { PhoneVerificationScreen } from '@screens/PhoneVerificationScreen';
 import { AdminDashboardScreen } from '@screens/admin/AdminDashboardScreen';
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
@@ -209,8 +208,6 @@ export const AppNavigator: React.FC = () => {
           <RootStack.Screen name="Auth" component={AuthStackNavigator} />
         ) : state.user?.emailVerified === false ? (
           <RootStack.Screen name="EmailVerification" component={EmailVerificationScreen} />
-        ) : Platform.OS === 'web' && !state.user?.phoneVerified ? (
-          <RootStack.Screen name="PhoneVerification" component={PhoneVerificationScreen} />
         ) : needsSubscription ? (
           <RootStack.Screen name="Subscription" component={SubscriptionScreen} />
         ) : needsOnboarding ? (
