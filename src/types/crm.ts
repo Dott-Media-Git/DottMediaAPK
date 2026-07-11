@@ -31,6 +31,8 @@ export type AuthUser = {
   email: string;
   name: string;
   emailVerified?: boolean;
+  phoneNumber?: string;
+  phoneVerified?: boolean;
   photoURL?: string;
   isAdmin?: boolean;
 };

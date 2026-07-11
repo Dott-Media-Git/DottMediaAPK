@@ -5,7 +5,6 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
-  sendEmailVerification,
   reload,
   updateProfile,
   signOut as firebaseSignOut,
@@ -13,7 +12,10 @@ import {
   onAuthStateChanged,
   GoogleAuthProvider,
   FacebookAuthProvider,
-  signInWithPopup
+  signInWithPopup,
+  linkWithPhoneNumber,
+  RecaptchaVerifier,
+  type ConfirmationResult,
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -59,11 +61,8 @@ const auth = firebaseApp ? getAuth(firebaseApp) : null;
 const db = firebaseApp ? getFirestore(firebaseApp) : null;
 const useFirebase = Boolean(auth && db);
 let authBootstrapPromise: Promise<void> | null = null;
-const verificationActionSettings = {
-  url: 'https://dottmediaapk.web.app',
-  handleCodeInApp: false,
-};
-
+let phoneConfirmation: ConfirmationResult | null = null;
+let phoneVerifier: RecaptchaVerifier | null = null;
 const mockDatabase: Record<string, Profile> = {};
 
 const createAnalytics = (): CRMAnalytics => ({
@@ -82,6 +81,8 @@ const mapFirebaseUser = (user: FirebaseUser): AuthUser => {
     email: user.email ?? 'member@dott-media.com',
     name: user.displayName ?? user.email ?? 'Dott Media Member',
     emailVerified: user.emailVerified,
+    phoneNumber: user.phoneNumber ?? undefined,
+    phoneVerified: Boolean(user.phoneNumber),
     ...(photoURL ? { photoURL } : {})
   };
 };
@@ -93,6 +94,8 @@ const sanitizeAuthUser = (user: AuthUser): AuthUser => {
     email: user.email,
     name: user.name,
     ...(typeof user.emailVerified === 'boolean' ? { emailVerified: user.emailVerified } : {}),
+    ...(typeof user.phoneNumber === 'string' ? { phoneNumber: user.phoneNumber } : {}),
+    ...(typeof user.phoneVerified === 'boolean' ? { phoneVerified: user.phoneVerified } : {}),
     ...(photoURL ? { photoURL } : {}),
     ...(user.isAdmin ? { isAdmin: true } : {})
   };
@@ -275,10 +278,9 @@ export const signUp = async (name: string, email: string, password: string): Pro
   }
   const mappedUser = mapFirebaseUser(credential.user);
   const user = { ...mappedUser, name: name.trim() || mappedUser.name };
-  auth.languageCode = 'en';
-  await sendEmailVerification(credential.user, verificationActionSettings);
   await ensureProfileDoc(user.uid, user, { subscriptionStatus: 'active', onboardingComplete: true });
   await upsertUserRecord(user, 'password', true);
+  await requestBrandedVerificationEmail();
   return { user };
 };
 
@@ -410,8 +412,21 @@ export const resendVerificationEmail = async (): Promise<void> => {
   if (!useFirebase || !auth?.currentUser) return;
   await reload(auth.currentUser);
   if (auth.currentUser.emailVerified) return;
-  auth.languageCode = 'en';
-  await sendEmailVerification(auth.currentUser, verificationActionSettings);
+  await requestBrandedVerificationEmail();
+};
+
+const requestBrandedVerificationEmail = async (): Promise<void> => {
+  if (!auth?.currentUser) throw new Error('Sign in before requesting verification.');
+  const token = await auth.currentUser.getIdToken();
+  const baseUrl = env.apiUrl || 'https://dottmediaapk.onrender.com';
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/auth/send-verification-email`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { message?: string };
+    throw new Error(body.message || 'Unable to send verification email.');
+  }
 };
 
 export const refreshVerifiedUser = async (): Promise<AuthUser | null> => {
@@ -419,6 +434,88 @@ export const refreshVerifiedUser = async (): Promise<AuthUser | null> => {
   if (!useFirebase || !auth?.currentUser) return null;
   await reload(auth.currentUser);
   return mapFirebaseUser(auth.currentUser);
+};
+
+export const startPhoneVerification = async (phoneNumber: string): Promise<void> => {
+  requireFirebaseAuth();
+  if (!auth?.currentUser) throw new Error('Sign in before verifying your phone.');
+  if (typeof document === 'undefined') {
+    throw new Error('Phone verification currently requires the Dott Media web app.');
+  }
+  const trimmedPhone = phoneNumber.trim();
+  const containerId = 'dott-phone-recaptcha';
+  let container = document.getElementById(containerId);
+  if (!container) {
+    container = document.createElement('div');
+    container.id = containerId;
+    container.style.position = 'fixed';
+    container.style.right = '0';
+    container.style.bottom = '0';
+    container.style.width = '1px';
+    container.style.height = '1px';
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+  }
+  if (!phoneVerifier) {
+    phoneVerifier = new RecaptchaVerifier(auth, container, {
+      size: 'invisible',
+      'expired-callback': () => {
+        phoneVerifier?.clear();
+        phoneVerifier = null;
+      },
+    });
+  }
+  try {
+    await phoneVerifier.render();
+    phoneConfirmation = await linkWithPhoneNumber(auth.currentUser, trimmedPhone, phoneVerifier);
+  } catch (error) {
+    phoneVerifier?.clear();
+    phoneVerifier = null;
+    throw new Error(formatPhoneVerificationError(error));
+  }
+};
+
+export const confirmPhoneVerification = async (code: string): Promise<AuthUser> => {
+  if (!phoneConfirmation) throw new Error('Request a verification code first.');
+  try {
+    const result = await phoneConfirmation.confirm(code.trim());
+    phoneConfirmation = null;
+    phoneVerifier?.clear();
+    phoneVerifier = null;
+    await reload(result.user);
+    return mapFirebaseUser(result.user);
+  } catch (error) {
+    throw new Error(formatPhoneVerificationError(error));
+  }
+};
+
+const formatPhoneVerificationError = (error: unknown) => {
+  const code = (error as { code?: string })?.code ?? '';
+  const message = (error as { message?: string })?.message ?? '';
+  switch (code) {
+    case 'auth/invalid-phone-number':
+    case 'auth/missing-phone-number':
+      return 'Use a valid phone number in international format, for example +256700000000.';
+    case 'auth/operation-not-allowed':
+      return 'Phone sign-in is not enabled in Firebase Authentication.';
+    case 'auth/unauthorized-domain':
+    case 'auth/app-not-authorized':
+      return 'This app domain is not authorized for Firebase phone verification.';
+    case 'auth/captcha-check-failed':
+    case 'auth/missing-app-credential':
+      return 'The security check failed. Refresh the page and try sending the code again.';
+    case 'auth/quota-exceeded':
+    case 'auth/too-many-requests':
+      return 'Firebase SMS sending is temporarily rate limited. Please try again later.';
+    case 'auth/network-request-failed':
+      return 'Network failed before Firebase could send the SMS. Check your connection and try again.';
+    case 'auth/credential-already-in-use':
+      return 'That phone number is already connected to another account.';
+    case 'auth/provider-already-linked':
+      return 'This account already has a phone number connected.';
+    default:
+      return message || 'Unable to send the SMS verification code.';
+  }
 };
 
 export type EditableAccountProfile = {

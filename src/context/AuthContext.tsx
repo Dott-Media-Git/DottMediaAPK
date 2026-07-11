@@ -11,6 +11,8 @@ import {
   saveAccountProfile,
   resendVerificationEmail,
   refreshVerifiedUser,
+  startPhoneVerification as startFirebasePhoneVerification,
+  confirmPhoneVerification as confirmFirebasePhoneVerification,
   type EditableAccountProfile
 } from '@services/firebase';
 import {
@@ -108,6 +110,8 @@ type AuthContextValue = {
   updateAccountProfile: (profile: EditableAccountProfile) => Promise<void>;
   resendEmailVerification: () => Promise<void>;
   checkEmailVerification: () => Promise<boolean>;
+  startPhoneVerification: (phoneNumber: string) => Promise<void>;
+  confirmPhoneVerification: (code: string) => Promise<void>;
 };
 
 function authReducer(state: AuthState, action: AuthAction): AuthState {
@@ -417,6 +421,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return Boolean(refreshedUser.emailVerified);
   };
 
+  const startPhoneVerification = async (phoneNumber: string) => {
+    await startFirebasePhoneVerification(phoneNumber);
+  };
+
+  const confirmPhoneVerification = async (code: string) => {
+    const user = await confirmFirebasePhoneVerification(code);
+    dispatch({ type: 'UPDATE_AUTH_USER', payload: user });
+  };
+
   const value = useMemo<AuthContextValue>(
     () => ({
       state,
@@ -436,7 +449,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updateCRMPrompt,
       updateAccountProfile,
       resendEmailVerification,
-      checkEmailVerification
+      checkEmailVerification,
+      startPhoneVerification,
+      confirmPhoneVerification
     }),
     [state]
   );
