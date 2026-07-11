@@ -26,7 +26,10 @@ const phoneCodeSchema = z.object({
 });
 
 const verificationCodeTtlMs = 10 * 60 * 1000;
-const verificationCodeCollection = 'phoneVerificationCodes';
+const phoneVerificationCodes = new Map<
+  string,
+  { phoneNumber: string; code: string; expiresAt: number; attempts: number }
+>();
 
 const generatePhoneCode = () => `${Math.floor(100000 + Math.random() * 900000)}`;
 
@@ -73,18 +76,8 @@ router.post('/auth/send-phone-verification', requireFirebase, async (req, res, n
     const { phoneNumber } = phoneSchema.parse(req.body);
     const code = generatePhoneCode();
     const expiresAt = Date.now() + verificationCodeTtlMs;
-    await firestore.collection(verificationCodeCollection).doc(authUser.uid).set(
-      {
-        phoneNumber,
-        code,
-        expiresAt,
-        attempts: 0,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
     await sendPhoneVerificationSms(phoneNumber, code);
+    phoneVerificationCodes.set(authUser.uid, { phoneNumber, code, expiresAt, attempts: 0 });
     res.json({ ok: true, expiresInSeconds: verificationCodeTtlMs / 1000 });
   } catch (error) {
     next(error);
@@ -98,29 +91,21 @@ router.post('/auth/confirm-phone-verification', requireFirebase, async (req, res
       return res.status(400).json({ message: 'An authenticated account is required.' });
     }
     const { code } = phoneCodeSchema.parse(req.body);
-    const ref = firestore.collection(verificationCodeCollection).doc(authUser.uid);
-    const snap = await ref.get();
-    if (!snap.exists) {
+    const data = phoneVerificationCodes.get(authUser.uid);
+    if (!data) {
       return res.status(400).json({ message: 'Request a verification code first.' });
     }
-    const data = snap.data() as { phoneNumber?: string; code?: string; expiresAt?: number; attempts?: number };
     const attempts = Number(data.attempts ?? 0);
     if (!data.phoneNumber || !data.code || !data.expiresAt || data.expiresAt < Date.now()) {
-      await ref.delete().catch(() => undefined);
+      phoneVerificationCodes.delete(authUser.uid);
       return res.status(400).json({ message: 'The verification code has expired. Request a new code.' });
     }
     if (attempts >= 5) {
-      await ref.delete().catch(() => undefined);
+      phoneVerificationCodes.delete(authUser.uid);
       return res.status(429).json({ message: 'Too many incorrect attempts. Request a new code.' });
     }
     if (data.code !== code) {
-      await ref.set(
-        {
-          attempts: attempts + 1,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
+      phoneVerificationCodes.set(authUser.uid, { ...data, attempts: attempts + 1 });
       return res.status(400).json({ message: 'Invalid verification code.' });
     }
     await firebaseApp.auth().updateUser(authUser.uid, { phoneNumber: data.phoneNumber });
@@ -136,8 +121,8 @@ router.post('/auth/confirm-phone-verification', requireFirebase, async (req, res
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true },
-    );
-    await ref.delete().catch(() => undefined);
+    ).catch(error => console.warn('[auth] phone profile update failed', (error as Error).message));
+    phoneVerificationCodes.delete(authUser.uid);
     res.json({ ok: true, phoneNumber: data.phoneNumber, phoneVerified: true });
   } catch (error) {
     next(error);
