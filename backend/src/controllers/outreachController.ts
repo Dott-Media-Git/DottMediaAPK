@@ -13,7 +13,7 @@ const assertOutboundAccess = (req: Request, res: Response) => {
     return null;
   }
   if (!canUseOutboundPipeline({ email: authUser.email ?? null }, authUser.uid)) {
-    res.status(403).json({ message: 'Outbound pipeline is only enabled for the main Dott Media account' });
+    res.status(403).json({ message: 'Outbound pipeline is disabled for all accounts' });
     return null;
   }
   return authUser;

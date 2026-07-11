@@ -101,7 +101,7 @@ router.get('/stats/outbound', requireFirebase, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
     if (!canUseOutboundPipeline({ email: authUser?.email ?? null }, authUser?.uid ?? null)) {
-      return res.status(403).json({ message: 'Outbound pipeline is only enabled for the main Dott Media account' });
+      return res.status(403).json({ message: 'Outbound pipeline is disabled for all accounts' });
     }
     const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
     const stats = await getOutboundStats({ userId: authUser?.uid, scopeId });
