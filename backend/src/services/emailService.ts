@@ -113,7 +113,11 @@ export async function sendPhoneVerificationSms(to: string, code: string) {
   });
   const payload = await response.json().catch(() => ({})) as { messageId?: number; message?: string };
   if (!response.ok) {
-    throw new Error(`brevo_sms_${response.status}:${payload.message ?? 'send_failed'}`);
+    const message = payload.message ?? 'send_failed';
+    if (response.status === 402 || /credit/i.test(message)) {
+      throw new Error('Brevo SMS credits are not available. Add SMS credits in Brevo, then try sending the code again.');
+    }
+    throw new Error(`Brevo SMS failed (${response.status}): ${message}`);
   }
   return payload.messageId ?? null;
 }

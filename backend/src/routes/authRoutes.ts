@@ -76,7 +76,13 @@ router.post('/auth/send-phone-verification', requireFirebase, async (req, res, n
     const { phoneNumber } = phoneSchema.parse(req.body);
     const code = generatePhoneCode();
     const expiresAt = Date.now() + verificationCodeTtlMs;
-    await sendPhoneVerificationSms(phoneNumber, code);
+    try {
+      await sendPhoneVerificationSms(phoneNumber, code);
+    } catch (error) {
+      const message = (error as Error).message || 'Unable to send the SMS verification code.';
+      const status = /credit/i.test(message) ? 402 : 502;
+      return res.status(status).json({ message });
+    }
     phoneVerificationCodes.set(authUser.uid, { phoneNumber, code, expiresAt, attempts: 0 });
     res.json({ ok: true, expiresInSeconds: verificationCodeTtlMs / 1000 });
   } catch (error) {
