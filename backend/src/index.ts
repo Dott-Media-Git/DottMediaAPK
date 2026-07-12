@@ -54,6 +54,7 @@ import { firestore } from './db/firestore';
 import { ensureGeneratedMediaRoot } from './services/generatedMediaService';
 import { ensureSupabaseFallbackSchema } from './services/supabaseSchemaService';
 import { backfillSupabaseFallback } from './services/supabaseBackfillService';
+import { checkSupabaseHealth } from './services/supabaseHealthService';
 import { captureException } from './lib/monitoring';
 import { requestContext, RequestWithContext } from './middleware/requestContext';
 import { createRateLimit } from './middleware/rateLimit';
@@ -172,6 +173,22 @@ app.get('/version', (_req, res) => {
     serviceId: process.env.RENDER_SERVICE_ID ?? null,
     serviceName: process.env.RENDER_SERVICE_NAME ?? null,
   });
+});
+
+app.get('/api/migration/supabase/health', async (req, res, next) => {
+  try {
+    const expectedToken = process.env.SUPABASE_MIGRATION_HEALTH_TOKEN ?? process.env.CRON_SECRET ?? '';
+    const providedToken =
+      req.header('x-migration-token') ?? (typeof req.query.token === 'string' ? req.query.token : '');
+    if (expectedToken && providedToken !== expectedToken) {
+      return res.status(401).json({ ok: false, message: 'Invalid token' });
+    }
+
+    const health = await checkSupabaseHealth();
+    res.status(health.ok ? 200 : 503).json(health);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.use('/', inboundWebhookRoutes);

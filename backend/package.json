@@ -19,6 +19,7 @@
     "process-client-comments-once": "tsx scripts/processClientCommentsOnce.ts",
     "post-stored-reel-backups-once": "tsx scripts/postStoredReelBackupsOnce.ts",
     "post-dott-energy-sample": "tsx scripts/postDottEnergySample.ts",
+    "supabase:health": "tsx scripts/checkSupabaseHealth.ts",
     "supabase:backfill": "tsx scripts/runSupabaseBackfill.ts"
   },
   "keywords": [],
