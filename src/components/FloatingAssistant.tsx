@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -11,6 +13,7 @@ import {
   View
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import Svg, { Circle, Defs, Ellipse, G, Path, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
@@ -41,6 +44,8 @@ type Message = {
   role: 'assistant' | 'user';
   text: string;
 };
+
+type DottiState = 'idle' | 'happy' | 'thinking' | 'analyzing' | 'empathetic' | 'excited' | 'focused' | 'closing';
 
 type AssistantSnapshotInput = {
   companyName?: string;
@@ -85,6 +90,20 @@ export const FloatingAssistant: React.FC = () => {
   ]);
 
   const canDisplay = hydrated && enabled && Boolean(state.user);
+  const hasUserMessage = useMemo(() => messages.some(message => message.role === 'user'), [messages]);
+  const dottiState = useMemo(
+    () =>
+      resolveDottiState({
+        input,
+        messages,
+        sending,
+        listening,
+        accountSnapshot,
+        currentScreen,
+      }),
+    [accountSnapshot, currentScreen, input, listening, messages, sending]
+  );
+  const showDotti = hasStartedTyping || hasUserMessage || sending || listening;
 
   const quickPrompts = useMemo(
     () => [
@@ -342,9 +361,14 @@ export const FloatingAssistant: React.FC = () => {
             >
               <View style={styles.panelHeader}>
                 <View style={styles.headerCopy}>
-                  <Text style={styles.panelTitle}>{t('Dott Assistant')}</Text>
+                  <Text style={styles.panelTitle}>{t('Dotti Assistant')}</Text>
                   <Text style={styles.panelSubtitle}>{t('Ask about your account, performance, or next move.')}</Text>
                 </View>
+                {showDotti ? (
+                  <View style={styles.dottiSlot} pointerEvents="none">
+                    <DottiAvatar state={dottiState} size={62} />
+                  </View>
+                ) : null}
                 <View style={styles.headerActions}>
                   <TouchableOpacity
                     onPress={() => setFullScreen(value => !value)}
@@ -380,7 +404,7 @@ export const FloatingAssistant: React.FC = () => {
                     key={message.id}
                     style={[styles.messageBubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}
                   >
-                    <Text style={styles.messageLabel}>{message.role === 'user' ? t('You') : t('Dott')}</Text>
+                    <Text style={styles.messageLabel}>{message.role === 'user' ? t('You') : t('Dotti')}</Text>
                     <Text style={styles.messageText}>{message.text}</Text>
                   </View>
                 ))}
@@ -406,7 +430,7 @@ export const FloatingAssistant: React.FC = () => {
                   style={[styles.voiceButton, listening && styles.voiceButtonActive]}
                   disabled={sending || listening}
                   accessibilityRole="button"
-                  accessibilityLabel={t(listening ? 'Listening' : 'Talk to Dott Assistant')}
+                  accessibilityLabel={t(listening ? 'Listening' : 'Talk to Dotti Assistant')}
                 >
                   <Ionicons name={listening ? 'mic' : 'mic-outline'} size={20} color={listening ? colors.background : colors.accent} />
                 </TouchableOpacity>
@@ -441,7 +465,7 @@ export const FloatingAssistant: React.FC = () => {
           ]}
           onPress={handleOpen}
           accessibilityRole="button"
-          accessibilityLabel={t('Open AI assistant')}
+          accessibilityLabel={t('Open Dotti assistant')}
         >
           <Ionicons name="sparkles-outline" size={26} color={colors.background} />
         </TouchableOpacity>
@@ -450,13 +474,162 @@ export const FloatingAssistant: React.FC = () => {
   );
 };
 
+const DOTTI_CONFIG: Record<DottiState, { blush: number; bob: number; brow: number; mouth: number; eye: number }> = {
+  idle: { blush: 0.28, bob: 0.5, brow: 0, mouth: 0, eye: 1 },
+  happy: { blush: 0.55, bob: 0.75, brow: -2, mouth: 1, eye: 1 },
+  thinking: { blush: 0.32, bob: 0.35, brow: 3, mouth: -0.2, eye: 0.92 },
+  analyzing: { blush: 0.35, bob: 0.55, brow: 1, mouth: 0.35, eye: 0.96 },
+  empathetic: { blush: 0.5, bob: 0.25, brow: 4, mouth: 0.2, eye: 0.82 },
+  excited: { blush: 0.75, bob: 1, brow: -4, mouth: 1.35, eye: 1.06 },
+  focused: { blush: 0.26, bob: 0.2, brow: -1, mouth: -0.35, eye: 0.86 },
+  closing: { blush: 0.62, bob: 0.65, brow: -2, mouth: 0.8, eye: 1 },
+};
+
+const DottiAvatar: React.FC<{ state: DottiState; size?: number }> = ({ state, size = 62 }) => {
+  const cfg = DOTTI_CONFIG[state] ?? DOTTI_CONFIG.idle;
+  const float = useRef(new Animated.Value(0)).current;
+  const [blink, setBlink] = useState(false);
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(float, {
+          toValue: 1,
+          duration: Math.max(900, 1700 - cfg.bob * 450),
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(float, {
+          toValue: 0,
+          duration: Math.max(900, 1700 - cfg.bob * 450),
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [cfg.bob, float]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setBlink(true);
+      setTimeout(() => setBlink(false), 150);
+    }, state === 'focused' ? 4600 : 3400);
+    return () => clearInterval(interval);
+  }, [state]);
+
+  const translateY = float.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -4 * cfg.bob],
+  });
+  const eyeHeight = blink ? 2 : 13 * cfg.eye;
+
+  return (
+    <Animated.View style={[styles.dottiAvatar, { width: size, height: size + 8, transform: [{ translateY }] }]}>
+      <Svg width={size} height={size + 8} viewBox="0 0 260 300">
+        <Defs>
+          <RadialGradient id="dottiBody" cx="42%" cy="32%" r="75%">
+            <Stop offset="0%" stopColor="#FFFFFF" />
+            <Stop offset="48%" stopColor="#F3F7FF" />
+            <Stop offset="100%" stopColor="#DDE8FF" />
+          </RadialGradient>
+          <RadialGradient id="dottiFace" cx="45%" cy="28%" r="72%">
+            <Stop offset="0%" stopColor="#FFFFFF" />
+            <Stop offset="62%" stopColor="#FFF8F2" />
+            <Stop offset="100%" stopColor="#F0E6DE" />
+          </RadialGradient>
+          <RadialGradient id="dottiEye" cx="40%" cy="38%" r="70%">
+            <Stop offset="0%" stopColor="#FFFFFF" />
+            <Stop offset="24%" stopColor="#78F6FF" />
+            <Stop offset="100%" stopColor="#13294B" />
+          </RadialGradient>
+        </Defs>
+        <Ellipse cx="130" cy="270" rx="60" ry="12" fill="#0B1220" opacity="0.16" />
+        <Path d="M54 218 C44 183 46 124 74 82 C101 40 159 35 191 69 C226 106 224 173 207 221 C190 267 75 266 54 218Z" fill="url(#dottiBody)" stroke="#ABC2EE" strokeWidth="5" />
+        <Path d="M70 74 C60 58 57 38 68 26 C83 9 107 30 102 60" fill="#EAF1FF" stroke="#ABC2EE" strokeWidth="5" />
+        <Path d="M189 70 C199 53 203 36 192 25 C176 9 153 31 159 62" fill="#EAF1FF" stroke="#ABC2EE" strokeWidth="5" />
+        <Circle cx="130" cy="151" r="73" fill="url(#dottiFace)" stroke="#F0DCD1" strokeWidth="4" />
+        <Path d={`M84 ${118 + cfg.brow} C99 ${108 + cfg.brow} 113 ${108 + cfg.brow} 126 ${118 + cfg.brow}`} fill="none" stroke="#25324A" strokeWidth="6" strokeLinecap="round" opacity="0.65" />
+        <Path d={`M135 ${118 - cfg.brow} C149 ${108 - cfg.brow} 165 ${108 - cfg.brow} 179 ${118 - cfg.brow}`} fill="none" stroke="#25324A" strokeWidth="6" strokeLinecap="round" opacity="0.65" />
+        <Ellipse cx="104" cy="148" rx="17" ry={eyeHeight} fill="url(#dottiEye)" />
+        <Ellipse cx="156" cy="148" rx="17" ry={eyeHeight} fill="url(#dottiEye)" />
+        {!blink ? (
+          <>
+            <Circle cx="99" cy="143" r="5" fill="#FFFFFF" opacity="0.9" />
+            <Circle cx="151" cy="143" r="5" fill="#FFFFFF" opacity="0.9" />
+          </>
+        ) : null}
+        <Circle cx="78" cy="174" r="13" fill="#FF8FA5" opacity={cfg.blush} />
+        <Circle cx="182" cy="174" r="13" fill="#FF8FA5" opacity={cfg.blush} />
+        <Path d={buildDottiMouthPath(cfg.mouth)} fill="#26324C" transform="translate(130 201)" opacity="0.88" />
+        {state === 'analyzing' || state === 'thinking' ? (
+          <G opacity="0.82">
+            <Circle cx="206" cy="84" r="8" fill="#55D6BE" />
+            <Circle cx="222" cy="70" r="5" fill="#7C5CFF" />
+            <Rect x="214" y="92" width="22" height="6" rx="3" fill="#F7B955" />
+          </G>
+        ) : null}
+        {state === 'closing' || state === 'excited' ? (
+          <G opacity="0.9">
+            <Path d="M48 96 L56 110 L72 113 L60 124 L63 140 L48 132 L34 140 L37 124 L25 113 L41 110Z" fill="#F7B955" />
+            <Circle cx="213" cy="111" r="7" fill="#55D6BE" />
+          </G>
+        ) : null}
+      </Svg>
+    </Animated.View>
+  );
+};
+
+const buildDottiMouthPath = (smile: number) => {
+  const width = 20 + Math.max(0, smile) * 4;
+  const dip = 6 + smile * 10;
+  const thickness = 6 + Math.max(0, smile) * 3;
+  return `M ${-width} 0 Q 0 ${dip} ${width} 0 Q 0 ${dip + thickness} ${-width} 0 Z`;
+};
+
+const resolveDottiState = ({
+  input,
+  messages,
+  sending,
+  listening,
+  accountSnapshot,
+  currentScreen,
+}: {
+  input: string;
+  messages: Message[];
+  sending: boolean;
+  listening: boolean;
+  accountSnapshot: string;
+  currentScreen?: string;
+}): DottiState => {
+  if (listening) return 'focused';
+  if (sending) return 'thinking';
+
+  const latestText = input.trim() || [...messages].reverse().find(message => message.text.trim())?.text || '';
+  const contextText = `${latestText} ${currentScreen ?? ''} ${accountSnapshot}`.toLowerCase();
+  return inferDottiStateFromText(contextText);
+};
+
+const inferDottiStateFromText = (text: string): DottiState => {
+  const value = text.toLowerCase();
+  if (/\b(deal|closed|closing|sale|sold|conversion|signup|subscribed|won)\b/.test(value)) return 'closing';
+  if (/\b(great|awesome|amazing|excellent|nice|love|wow|congrats|growth|viral|win)\b/.test(value)) return 'excited';
+  if (/\b(analy|report|metric|performance|views|engagement|conversion|channels|connected|stats|summary)\b/.test(value)) return 'analyzing';
+  if (/\b(sorry|issue|problem|failed|error|quota|understand|help|stuck|blocked)\b/.test(value)) return 'empathetic';
+  if (/\b(focus|priority|optimize|strategy|next move|campaign|plan|schedule)\b/.test(value)) return 'focused';
+  if (/\b(hmm|think|thinking|maybe|what if|why|how)\b/.test(value)) return 'thinking';
+  if (/\b(hi|hello|hey|thanks|thank you)\b/.test(value)) return 'happy';
+  return 'idle';
+};
+
 const buildPerformanceSummary = (
   companyName: string | undefined,
   liveSocial: LiveSocialStats | null,
   t: (key: string, params?: Record<string, string | number>) => string
 ) => {
   if (!liveSocial) {
-    return t('Hi! I am your Dott assistant. Ask me about your account, performance, or where to focus next.');
+    return t('Hi! I am Dotti, your Dott assistant. Ask me about your account, performance, or where to focus next.');
   }
   const companyTag = companyName ? ` ${companyName}` : '';
   return t(
@@ -620,6 +793,17 @@ const styles = StyleSheet.create({
   headerCopy: {
     flex: 1,
     paddingRight: 12,
+  },
+  dottiSlot: {
+    width: 66,
+    height: 72,
+    marginRight: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dottiAvatar: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerActions: {
     flexDirection: 'row',
