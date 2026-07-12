@@ -353,6 +353,7 @@ class SupabaseFallbackService {
         apikey: SUPABASE_SERVICE_ROLE_KEY,
         Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
         'Content-Type': 'application/json',
+        'User-Agent': 'DottMediaBackend/1.0',
         ...(options.prefer ? { Prefer: options.prefer } : {}),
       },
       data: options.body,

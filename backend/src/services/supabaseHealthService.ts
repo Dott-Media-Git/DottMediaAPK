@@ -4,6 +4,8 @@ import { Client } from 'pg';
 type CheckResult = {
   ok: boolean;
   configured: boolean;
+  reachable?: boolean;
+  schemaReady?: boolean;
   status?: number | null;
   error?: string;
   durationMs?: number;
@@ -51,21 +53,31 @@ const checkRest = async (): Promise<CheckResult> => {
       headers: {
         apikey: SUPABASE_SERVICE_ROLE_KEY,
         Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'User-Agent': 'DottMediaBackend/1.0',
       },
       timeout: Number(process.env.SUPABASE_HEALTH_TIMEOUT_MS ?? 10000),
       validateStatus: status => status < 500,
     });
+    const schemaMissing =
+      response.status === 404 &&
+      typeof response.data === 'object' &&
+      response.data !== null &&
+      (response.data as { code?: string }).code === 'PGRST205';
     return {
       ok: response.status >= 200 && response.status < 300,
       configured: true,
+      reachable: response.status < 500,
+      schemaReady: !schemaMissing && response.status >= 200 && response.status < 300,
       status: response.status,
-      error: response.status >= 300 ? `REST returned ${response.status}` : undefined,
+      error: schemaMissing ? 'Supabase reachable, migration tables not created yet' : response.status >= 300 ? `REST returned ${response.status}` : undefined,
       durationMs: Date.now() - started,
     };
   } catch (error) {
     return {
       ok: false,
       configured: true,
+      reachable: false,
+      schemaReady: false,
       status: axios.isAxiosError(error) ? error.response?.status ?? null : null,
       error: messageFromError(error),
       durationMs: Date.now() - started,
@@ -104,7 +116,7 @@ const checkDatabase = async (): Promise<CheckResult> => {
 export const checkSupabaseHealth = async (): Promise<SupabaseHealth> => {
   const [rest, database] = await Promise.all([checkRest(), checkDatabase()]);
   return {
-    ok: rest.ok && database.ok,
+    ok: (rest.ok || rest.reachable === true) && database.ok,
     projectRef: projectRefFromUrl(),
     rest,
     database,
