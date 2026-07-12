@@ -103,7 +103,7 @@ export const FloatingAssistant: React.FC = () => {
       }),
     [accountSnapshot, currentScreen, input, listening, messages, sending]
   );
-  const showDotti = hasStartedTyping || hasUserMessage || sending || listening;
+  const showDotti = open || hasStartedTyping || hasUserMessage || sending || listening;
 
   const quickPrompts = useMemo(
     () => [
