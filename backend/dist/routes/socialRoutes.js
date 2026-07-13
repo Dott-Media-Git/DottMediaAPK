@@ -7,6 +7,7 @@ import admin from 'firebase-admin';
 import { z } from 'zod';
 import { requireFirebase } from '../middleware/firebaseAuth.js';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService.js';
+import { consumeUsage, resolveBillingScope } from '../services/billing/billingService.js';
 import { socialPostingService } from '../packages/services/socialPostingService.js';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService.js';
 import { autoPostService } from '../services/autoPostService.js';
@@ -15,13 +16,315 @@ import { firestore } from '../db/firestore.js';
 import { config } from '../config.js';
 import { getTikTokIntegration, getYouTubeIntegration } from '../services/socialIntegrationService.js';
 import { resolveFacebookPageId, resolveInstagramAccountId, resolveThreadsAccountId } from '../services/socialAccountResolver.js';
+import { fetchBwinMetaSocialProfile, resolveKnownLiveSocialProfile } from '../services/liveSocialMetricsService.js';
 import { canUsePrimarySocialDefaults } from '../utils/socialAccess.js';
 import { createSignedState, verifySignedState } from '../utils/oauthState.js';
 const CRON_SECRET = process.env.CRON_SECRET;
+const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
+const META_GRAPH_BASE = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
 const THREADS_GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const THREADS_GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
+const HISTORY_LIVE_FETCH_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_LIVE_FETCH_TIMEOUT_MS ?? 6000), 1000);
+const HISTORY_DAILY_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_DAILY_TIMEOUT_MS ?? 5000), 1000);
+const HISTORY_STORED_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_STORED_TIMEOUT_MS ?? 5000), 1000);
+const HISTORY_SOCIAL_LOG_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_SOCIAL_LOG_TIMEOUT_MS ?? 8000), 1000);
 const router = Router();
 let renderEnvCache;
+const BWIN_USER_ID = (process.env.BWIN_USER_ID ?? '1zvY9nNyXMcfxdPQEyx0bIdK7r53').trim();
+const BWIN_SCOPE_ALIASES = new Set(['bwinbetug', BWIN_USER_ID, process.env.BWIN_SCOPE_ID, process.env.BWIN_TRACK_OWNER_ID].filter(Boolean));
+const isBwinHistoryRequest = (...values) => values.some(value => {
+    const normalized = String(value ?? '').trim();
+    return normalized ? BWIN_SCOPE_ALIASES.has(normalized) || normalized.toLowerCase().includes('ball_analytics') : false;
+});
+const toHistoryTimestamp = (value) => {
+    const millis = value instanceof Date ? value.getTime() : typeof value === 'number' ? value : Date.parse(value);
+    return Number.isFinite(millis) ? { seconds: Math.floor(millis / 1000) } : undefined;
+};
+const deriveFacebookPageToken = async (pageId, accessToken) => {
+    try {
+        const response = await axios.get(`${META_GRAPH_BASE}/me/accounts`, {
+            params: { fields: 'id,access_token', access_token: accessToken },
+            timeout: 30000,
+        });
+        const page = (Array.isArray(response.data?.data) ? response.data.data : []).find((entry) => String(entry?.id ?? '') === pageId);
+        return String(page?.access_token ?? accessToken).trim();
+    }
+    catch {
+        return accessToken;
+    }
+};
+const mergeLiveHistoryProfiles = (...profiles) => {
+    const merged = profiles.reduce((acc, profile) => {
+        if (!profile)
+            return acc;
+        return {
+            id: acc?.id ?? profile.id,
+            email: acc?.email ?? profile.email,
+            socialAccounts: {
+                ...(acc?.socialAccounts ?? {}),
+                ...(profile.socialAccounts ?? {}),
+            },
+        };
+    }, null);
+    return merged?.socialAccounts ? merged : null;
+};
+const fetchKnownMetaHistoryPosts = async (knownProfile) => {
+    if (!knownProfile?.socialAccounts)
+        return [];
+    const posts = [];
+    const facebook = knownProfile.socialAccounts.facebook;
+    if (facebook?.pageId && facebook?.accessToken) {
+        try {
+            const pageToken = await deriveFacebookPageToken(String(facebook.pageId), String(facebook.accessToken));
+            const response = await axios.get(`${META_GRAPH_BASE}/${facebook.pageId}/posts`, {
+                params: {
+                    fields: 'id,created_time,message,permalink_url,full_picture',
+                    limit: 50,
+                    access_token: pageToken,
+                },
+                timeout: 30000,
+            });
+            (Array.isArray(response.data?.data) ? response.data.data : []).forEach((post) => {
+                const createdAt = toHistoryTimestamp(String(post?.created_time ?? ''));
+                if (!post?.id || !createdAt)
+                    return;
+                posts.push({
+                    id: `meta-facebook-${post.id}`,
+                    platform: 'facebook',
+                    status: 'posted',
+                    caption: String(post.message ?? ''),
+                    remoteId: String(post.id),
+                    postedAt: createdAt,
+                    createdAt,
+                    imageUrls: post.full_picture ? [String(post.full_picture)] : [],
+                    permalink: post.permalink_url ?? null,
+                    source: 'meta_live',
+                });
+            });
+        }
+        catch (error) {
+            console.warn('[social-history-route] live Facebook history fetch failed', error instanceof Error ? error.message : String(error));
+        }
+    }
+    const instagram = knownProfile.socialAccounts.instagram;
+    if (instagram?.accountId && instagram?.accessToken) {
+        try {
+            const response = await axios.get(`${META_GRAPH_BASE}/${instagram.accountId}/media`, {
+                params: {
+                    fields: 'id,timestamp,caption,media_type,media_product_type,media_url,permalink,thumbnail_url',
+                    limit: 50,
+                    access_token: instagram.accessToken,
+                },
+                timeout: 30000,
+            });
+            (Array.isArray(response.data?.data) ? response.data.data : []).forEach((post) => {
+                const createdAt = toHistoryTimestamp(String(post?.timestamp ?? ''));
+                if (!post?.id || !createdAt)
+                    return;
+                const productType = String(post.media_product_type ?? '').toUpperCase();
+                const mediaType = String(post.media_type ?? '').toUpperCase();
+                const platform = productType === 'STORY'
+                    ? 'instagram_story'
+                    : productType === 'REELS' || mediaType === 'VIDEO'
+                        ? 'instagram_reels'
+                        : 'instagram';
+                const mediaUrl = post.media_url || post.thumbnail_url;
+                posts.push({
+                    id: `meta-instagram-${post.id}`,
+                    platform,
+                    status: 'posted',
+                    caption: String(post.caption ?? ''),
+                    remoteId: String(post.id),
+                    postedAt: createdAt,
+                    createdAt,
+                    imageUrls: mediaUrl ? [String(mediaUrl)] : [],
+                    videoUrl: mediaType === 'VIDEO' && post.media_url ? String(post.media_url) : undefined,
+                    permalink: post.permalink ?? null,
+                    source: 'meta_live',
+                });
+            });
+        }
+        catch (error) {
+            console.warn('[social-history-route] live Instagram history fetch failed', error instanceof Error ? error.message : String(error));
+        }
+    }
+    const threads = knownProfile.socialAccounts.threads;
+    if (threads?.accountId && threads?.accessToken) {
+        try {
+            const response = await axios.get(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/${threads.accountId}/threads`, {
+                params: {
+                    fields: 'id,timestamp,text,media_product_type,permalink',
+                    limit: 50,
+                    access_token: threads.accessToken,
+                },
+                timeout: 30000,
+            });
+            (Array.isArray(response.data?.data) ? response.data.data : []).forEach((post) => {
+                const createdAt = toHistoryTimestamp(String(post?.timestamp ?? ''));
+                if (!post?.id || !createdAt)
+                    return;
+                posts.push({
+                    id: `threads-${post.id}`,
+                    platform: 'threads',
+                    status: 'posted',
+                    caption: String(post.text ?? ''),
+                    remoteId: String(post.id),
+                    postedAt: createdAt,
+                    createdAt,
+                    imageUrls: [],
+                    permalink: post.permalink ?? null,
+                    source: 'threads_live',
+                });
+            });
+        }
+        catch (error) {
+            console.warn('[social-history-route] live Threads history fetch failed', error instanceof Error ? error.message : String(error));
+        }
+    }
+    return posts;
+};
+const fetchSocialLogHistoryPosts = async (userId) => {
+    if (!userId)
+        return [];
+    const posts = [];
+    try {
+        const snap = await firestore.collection('socialLogs').where('userId', '==', userId).orderBy('postedAt', 'desc').limit(100).get();
+        snap.docs.forEach(doc => {
+            const data = doc.data();
+            posts.push({
+                id: `social-log-${doc.id}`,
+                platform: String(data.platform ?? 'social'),
+                status: String(data.status ?? 'posted'),
+                remoteId: data.responseId ? String(data.responseId) : undefined,
+                postedAt: data.postedAt ?? data.createdAt,
+                createdAt: data.postedAt ?? data.createdAt,
+                caption: '',
+                source: 'social_log',
+                error: data.error ?? null,
+            });
+        });
+    }
+    catch (error) {
+        console.warn('[social-history-route] Firestore social log history fetch failed', error instanceof Error ? error.message : String(error));
+    }
+    try {
+        const logs = await supabaseFallbackService.getSocialLogsByUser(userId, 100);
+        logs.forEach((log, index) => {
+            posts.push({
+                id: `supabase-social-log-${log.responseId ?? log.scheduledPostId ?? index}`,
+                platform: String(log.platform ?? 'social'),
+                status: String(log.status ?? 'posted'),
+                remoteId: log.responseId ? String(log.responseId) : undefined,
+                postedAt: log.postedAt,
+                createdAt: log.postedAt,
+                caption: '',
+                source: 'social_log',
+                error: log.error ?? null,
+            });
+        });
+    }
+    catch (error) {
+        console.warn('[social-history-route] Supabase social log history fetch failed', error instanceof Error ? error.message : String(error));
+    }
+    return posts;
+};
+const withFallbackTimeout = async (label, promise, timeoutMs, fallback) => {
+    let timeout;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise(resolve => {
+                timeout = setTimeout(() => {
+                    console.warn(`[social-history-route] ${label} timed out after ${timeoutMs}ms`);
+                    resolve(fallback);
+                }, timeoutMs);
+            }),
+        ]);
+    }
+    catch (error) {
+        console.warn(`[social-history-route] ${label} failed`, error instanceof Error ? error.message : String(error));
+        return fallback;
+    }
+    finally {
+        if (timeout)
+            clearTimeout(timeout);
+    }
+};
+const timestampSeconds = (value) => {
+    if (!value)
+        return 0;
+    if (typeof value === 'number')
+        return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+    if (typeof value === 'string') {
+        const parsed = Date.parse(value);
+        return Number.isNaN(parsed) ? 0 : Math.floor(parsed / 1000);
+    }
+    if (value instanceof Date)
+        return Math.floor(value.getTime() / 1000);
+    if (typeof value.toDate === 'function')
+        return Math.floor(value.toDate().getTime() / 1000);
+    if (typeof value.toMillis === 'function')
+        return Math.floor(value.toMillis() / 1000);
+    if (typeof value.seconds === 'number')
+        return value.seconds;
+    if (typeof value._seconds === 'number')
+        return value._seconds;
+    return 0;
+};
+const isUserFacingHistoryPlatform = (platform) => {
+    const raw = String(platform ?? '').toLowerCase().trim();
+    return Boolean(raw) && raw !== 'social' && !raw.endsWith('_worker');
+};
+const mergeHistoryPosts = (basePosts, livePosts) => {
+    const byKey = new Map();
+    [...basePosts, ...livePosts].forEach(post => {
+        if (!isUserFacingHistoryPlatform(post.platform))
+            return;
+        const key = String(post.remoteId || post.id || `${post.platform}-${timestampSeconds(post.postedAt ?? post.createdAt)}`);
+        const existing = byKey.get(key);
+        if (!existing || timestampSeconds(post.postedAt ?? post.createdAt) > timestampSeconds(existing.postedAt ?? existing.createdAt)) {
+            byKey.set(key, post);
+        }
+    });
+    return Array.from(byKey.values()).sort((a, b) => timestampSeconds(b.postedAt ?? b.createdAt) - timestampSeconds(a.postedAt ?? a.createdAt));
+};
+const buildHistorySummary = (posts) => posts.reduce((acc, post) => {
+    const platform = String(post.platform ?? 'unknown');
+    const status = String(post.status ?? 'unknown');
+    acc.perPlatform[platform] = (acc.perPlatform[platform] ?? 0) + 1;
+    acc.byStatus[status] = (acc.byStatus[status] ?? 0) + 1;
+    return acc;
+}, { perPlatform: {}, byStatus: {} });
+const normalizePostedPlatformForSummary = (platform) => {
+    const raw = String(platform ?? '').toLowerCase();
+    if (!raw || raw.endsWith('_worker') || raw === 'social')
+        return '';
+    if (raw === 'instagram_story' || raw === 'instagram_reels')
+        return 'instagram';
+    if (raw === 'facebook_story')
+        return 'facebook';
+    if (raw === 'twitter')
+        return 'x';
+    return raw;
+};
+const buildTodayHistory = (posts) => {
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todaySeconds = Math.floor(todayStart.getTime() / 1000);
+    const todayPosts = posts.filter(post => post.status === 'posted' && timestampSeconds(post.postedAt ?? post.createdAt) >= todaySeconds);
+    const todaySummary = todayPosts.reduce((acc, post) => {
+        acc.totalPosted += 1;
+        const platform = normalizePostedPlatformForSummary(post.platform);
+        if (platform)
+            acc.perPlatform[platform] = (acc.perPlatform[platform] ?? 0) + 1;
+        if (post.videoUrl || ['instagram_reels', 'youtube', 'tiktok'].includes(String(post.platform ?? '').toLowerCase())) {
+            acc.videoPosts += 1;
+        }
+        return acc;
+    }, { date: todayDate, totalPosted: 0, videoPosts: 0, perPlatform: {} });
+    return { todayPosts, todaySummary };
+};
 const normalizeBaseUrl = (value) => value.replace(/\/+$/, '');
 const resolveRenderEnv = () => {
     if (renderEnvCache !== undefined) {
@@ -91,14 +394,14 @@ const getThreadsScopes = () => {
     }
     return ['threads_basic', 'threads_content_publish'];
 };
-const buildThreadsConnectUrl = (req, userId) => {
+const buildThreadsConnectUrl = (req, userId, orgId, email) => {
     const { appId, redirectUri } = getThreadsAppConfig(req);
     const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://threads.net/oauth/authorize');
     url.searchParams.set('client_id', appId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', getThreadsScopes().join(','));
-    url.searchParams.set('state', createSignedState(userId));
+    url.searchParams.set('state', createSignedState(userId, { orgId: orgId || undefined, email: email || undefined }));
     return url.toString();
 };
 const exchangeThreadsCodeForToken = async (req, code) => {
@@ -168,6 +471,26 @@ const loadStoredSocialAccounts = async (userId) => {
         }
     }
     return userData;
+};
+const loadStatusSocialAccounts = async (userId, email) => {
+    const stored = await loadStoredSocialAccounts(userId);
+    const knownProfile = resolveKnownLiveSocialProfile(userId) ||
+        resolveKnownLiveSocialProfile(email) ||
+        resolveKnownLiveSocialProfile(stored.email);
+    const bwinProfile = isBwinHistoryRequest(userId, email, stored.email)
+        ? await fetchBwinMetaSocialProfile()
+        : null;
+    const merged = mergeLiveHistoryProfiles(knownProfile, bwinProfile, stored.socialAccounts
+        ? {
+            id: userId,
+            email: stored.email ?? email ?? null,
+            socialAccounts: stored.socialAccounts,
+        }
+        : null);
+    return {
+        email: stored.email ?? email ?? null,
+        socialAccounts: merged?.socialAccounts ?? stored.socialAccounts ?? {},
+    };
 };
 const persistSocialAccounts = async (userId, payload) => {
     let firestoreError = null;
@@ -295,6 +618,7 @@ const scheduleSchema = z
         'threads',
         'tiktok',
         'youtube',
+        'whatsapp',
     ]))
         .min(1),
     images: z.array(z.string().min(1)).optional(),
@@ -315,6 +639,8 @@ const scheduleSchema = z
     const videoCapable = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
     const hasImagePlatform = data.platforms.some(platform => {
         if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels')
+            return false;
+        if (platform === 'whatsapp')
             return false;
         if (videoCapable.has(platform) && data.videoUrl)
             return false;
@@ -364,6 +690,7 @@ const autoPostSchema = z
         'threads',
         'tiktok',
         'youtube',
+        'whatsapp',
     ]))
         .min(1)
         .optional(),
@@ -435,7 +762,8 @@ router.post('/posts/schedule', requireFirebase, async (req, res, next) => {
         if (!authUser || authUser.uid !== payload.userId) {
             return res.status(403).json({ message: 'Cannot schedule for another user' });
         }
-        const result = await socialSchedulingService.schedulePosts(payload);
+        await consumeUsage(resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email), 'scheduledPosts', Math.max(payload.platforms.length * payload.timesPerDay, 1));
+        const result = await socialSchedulingService.schedulePosts({ ...payload, billingUsageConsumed: true });
         res.json(result);
     }
     catch (error) {
@@ -494,9 +822,14 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
             return res.status(401).json({ message: 'Unauthorized' });
         const requestedUserId = typeof req.query.userId === 'string' ? req.query.userId.trim() : '';
         let historyUserId = '';
+        let storedEmail = '';
+        let storedSocialAccounts;
         try {
             const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-            historyUserId = (userDoc.data()?.historyUserId ?? '').trim();
+            const userData = userDoc.data() ?? {};
+            historyUserId = (userData.historyUserId ?? '').trim();
+            storedEmail = (userData.email ?? '').trim();
+            storedSocialAccounts = userData.socialAccounts;
         }
         catch (error) {
             console.warn('[social-history-route] user lookup failed; using direct auth user id', {
@@ -507,15 +840,39 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
         if (requestedUserId && requestedUserId !== authUser.uid && requestedUserId !== historyUserId) {
             return res.status(403).json({ message: 'Forbidden' });
         }
-        const userId = requestedUserId || historyUserId || authUser.uid;
-        const history = await socialPostingService.getHistory(userId);
-        const daily = await socialAnalyticsService.getDailySummary(userId);
+        const knownProfile = resolveKnownLiveSocialProfile(requestedUserId) ||
+            resolveKnownLiveSocialProfile(historyUserId) ||
+            resolveKnownLiveSocialProfile(authUser.uid) ||
+            resolveKnownLiveSocialProfile(authUser.email) ||
+            resolveKnownLiveSocialProfile(storedEmail);
+        const bwinProfile = isBwinHistoryRequest(requestedUserId, historyUserId, authUser.uid, authUser.email, storedEmail)
+            ? await fetchBwinMetaSocialProfile()
+            : null;
+        const userId = requestedUserId || historyUserId || knownProfile?.id || bwinProfile?.id || authUser.uid;
+        const history = await withFallbackTimeout('stored posting history', socialPostingService.getHistory(userId), HISTORY_STORED_TIMEOUT_MS, { posts: [], todayPosts: [], summary: { perPlatform: {}, byStatus: {} }, daily: [] });
+        const storedProfile = storedSocialAccounts
+            ? {
+                id: userId,
+                email: storedEmail || authUser.email || null,
+                socialAccounts: storedSocialAccounts,
+            }
+            : null;
+        const liveHistoryProfile = mergeLiveHistoryProfiles(knownProfile, bwinProfile, storedProfile);
+        const [liveMetaPosts, socialLogPosts] = await Promise.all([
+            withFallbackTimeout('live social history enrichment', fetchKnownMetaHistoryPosts(liveHistoryProfile), HISTORY_LIVE_FETCH_TIMEOUT_MS, []),
+            withFallbackTimeout('social log history', fetchSocialLogHistoryPosts(userId), HISTORY_SOCIAL_LOG_TIMEOUT_MS, []),
+        ]);
+        const storedPosts = [...(history.posts ?? []), ...(history.todayPosts ?? [])];
+        const posts = mergeHistoryPosts(storedPosts, [...liveMetaPosts, ...socialLogPosts]).slice(0, 400);
+        const { todayPosts, todaySummary } = buildTodayHistory(posts);
+        const summary = buildHistorySummary(posts);
+        const daily = await withFallbackTimeout('daily social history summary', socialAnalyticsService.getDailySummary(userId), HISTORY_DAILY_TIMEOUT_MS, []);
         res.set({
             'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
             Pragma: 'no-cache',
             Expires: '0',
         });
-        res.json({ ...history, daily, userId });
+        res.json({ ...history, posts, summary, todayPosts, todaySummary, daily, userId });
     }
     catch (error) {
         next(error);
@@ -526,7 +883,7 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
         const authUser = req.authUser;
         if (!authUser)
             return res.status(401).json({ message: 'Unauthorized' });
-        const userData = await loadStoredSocialAccounts(authUser.uid);
+        const userData = await loadStatusSocialAccounts(authUser.uid, authUser.email);
         const accounts = userData?.socialAccounts ?? {};
         const allowDefaults = canUsePrimarySocialDefaults(userData, authUser.uid);
         let youtube = null;
@@ -549,10 +906,14 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
             instagram: Boolean(accounts.instagram?.accessToken && accounts.instagram?.accountId) ||
                 (allowDefaults && Boolean(config.channels.instagram.accessToken && config.channels.instagram.businessId)),
             threads: Boolean(accounts.threads?.accessToken && accounts.threads?.accountId) ||
-                (allowDefaults && Boolean(config.channels.threads.accessToken && config.channels.threads.profileId)),
+                (allowDefaults && Boolean(config.channels.threads.accessToken && config.channels.threads.profileId)) ||
+                (isBwinHistoryRequest(authUser.uid, authUser.email, userData?.email) &&
+                    process.env.BWIN_THREADS_CONNECTED === 'true'),
             linkedin: Boolean(accounts.linkedin?.accessToken && accounts.linkedin?.urn) ||
                 (allowDefaults && Boolean(config.linkedin.accessToken && config.linkedin.organizationId)),
             twitter: Boolean(accounts.twitter?.accessToken && accounts.twitter?.accessSecret),
+            whatsapp: Boolean(accounts.whatsapp?.accessToken && accounts.whatsapp?.phoneNumberId) ||
+                (allowDefaults && Boolean(config.whatsapp.token && config.whatsapp.phoneNumberId)),
             youtube: Boolean(youtube?.connected),
             tiktok: Boolean(tiktok?.connected) ||
                 (allowDefaults && Boolean(config.tiktok.accessToken && config.tiktok.openId)),
@@ -568,7 +929,7 @@ router.get('/social/threads/connect-url', requireFirebase, async (req, res, next
         const authUser = req.authUser;
         if (!authUser)
             return res.status(401).json({ message: 'Unauthorized' });
-        res.json({ url: buildThreadsConnectUrl(req, authUser.uid) });
+        res.json({ url: buildThreadsConnectUrl(req, authUser.uid, req.header('x-org-id'), authUser.email) });
     }
     catch (error) {
         next(error);
@@ -579,7 +940,7 @@ router.get('/social/threads/connect', requireFirebase, async (req, res, next) =>
         const authUser = req.authUser;
         if (!authUser)
             return res.status(401).json({ message: 'Unauthorized' });
-        res.redirect(buildThreadsConnectUrl(req, authUser.uid));
+        res.redirect(buildThreadsConnectUrl(req, authUser.uid, req.header('x-org-id'), authUser.email));
     }
     catch (error) {
         next(error);
@@ -605,11 +966,15 @@ router.get('/social/threads/callback', async (req, res) => {
         }
         const userData = await loadStoredSocialAccounts(state.userId);
         const currentAccounts = { ...(userData.socialAccounts ?? {}) };
+        const wasThreadsConnected = Boolean(currentAccounts.threads);
         currentAccounts.threads = {
             accessToken,
             accountId: profile.id,
             username: profile.username ?? currentAccounts.threads?.username,
         };
+        if (!wasThreadsConnected) {
+            await consumeUsage(resolveBillingScope(state.userId, typeof state.orgId === 'string' ? state.orgId : undefined, typeof state.email === 'string' ? state.email : userData.email ?? undefined), 'connectedSocials', 1);
+        }
         await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
         try {
             await mergeAutopostPlatforms(state.userId, ['threads']);
