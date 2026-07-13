@@ -7,6 +7,28 @@ export type AdminMetrics = {
     newSignupsThisWeek: number;
     connectedClients: number;
   };
+  clients: Array<{
+    userId: string;
+    email?: string | null;
+    name?: string | null;
+    packageId: string;
+    packageName: string;
+    subscriptionStatus?: string | null;
+    createdAt?: string | null;
+    lastActiveAt?: string | null;
+  }>;
+  activeClients: Array<{
+    userId: string;
+    email?: string | null;
+    name?: string | null;
+    packageId: string;
+    packageName: string;
+    subscriptionStatus?: string | null;
+    createdAt?: string | null;
+    lastActiveAt?: string | null;
+  }>;
+  packageBreakdown: Array<{ packageId: string; packageName: string; total: number; active: number }>;
+  packageGrowth: Array<{ date: string } & Record<string, number | string>>;
   signupsByDay: Array<{ date: string; count: number }>;
   connectedPlatforms: Record<string, number>;
   topActiveAccounts: Array<{ userId: string; email?: string; name?: string; posts: number }>;

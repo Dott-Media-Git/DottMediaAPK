@@ -4,6 +4,7 @@ import https from 'https';
 import { firestore } from '../../db/firestore';
 import { resolveAnalyticsScopeKey } from '../analyticsScope';
 import { supabaseFallbackService } from '../supabaseFallbackService';
+import { normalizePlanId, planCatalog, type DottPlanId } from '../billing/planCatalog';
 
 export type AdminMetrics = {
   summary: {
@@ -12,6 +13,28 @@ export type AdminMetrics = {
     newSignupsThisWeek: number;
     connectedClients: number;
   };
+  clients: Array<{
+    userId: string;
+    email?: string | null;
+    name?: string | null;
+    packageId: string;
+    packageName: string;
+    subscriptionStatus?: string | null;
+    createdAt?: string | null;
+    lastActiveAt?: string | null;
+  }>;
+  activeClients: Array<{
+    userId: string;
+    email?: string | null;
+    name?: string | null;
+    packageId: string;
+    packageName: string;
+    subscriptionStatus?: string | null;
+    createdAt?: string | null;
+    lastActiveAt?: string | null;
+  }>;
+  packageBreakdown: Array<{ packageId: string; packageName: string; total: number; active: number }>;
+  packageGrowth: Array<{ date: string } & Record<string, number | string>>;
   signupsByDay: Array<{ date: string; count: number }>;
   connectedPlatforms: Record<string, number>;
   topActiveAccounts: Array<{ userId: string; email?: string; name?: string; posts: number }>;
@@ -207,6 +230,90 @@ const knownClientLookup = new Map(
   ]),
 );
 
+type AdminClientSummary = AdminMetrics['clients'][number];
+
+type ClientMetricInput = {
+  userId: string;
+  email?: string | null;
+  name?: string | null;
+  planId?: unknown;
+  plan?: unknown;
+  packageId?: unknown;
+  package?: unknown;
+  subscriptionStatus?: unknown;
+  createdAt?: unknown;
+  lastActiveAt?: unknown;
+};
+
+const planNameLookup = new Map(planCatalog.map(plan => [plan.id, plan.name]));
+
+const resolveClientPlanId = (client: ClientMetricInput): DottPlanId => {
+  const explicitPlan = client.planId ?? client.plan ?? client.packageId ?? client.package;
+  if (explicitPlan) return normalizePlanId(explicitPlan);
+  const status = String(client.subscriptionStatus ?? '').trim().toLowerCase();
+  return status === 'active' || status === 'trialing' ? 'creator' : 'free';
+};
+
+const buildClientPackageMetrics = (
+  rawClients: ClientMetricInput[],
+  activeUserIds: Set<string>,
+  growthDates: string[],
+) => {
+  const deduped = new Map<string, AdminClientSummary>();
+  rawClients.forEach(client => {
+    const userId = String(client.userId || '').trim();
+    if (!userId) return;
+    const existing = deduped.get(userId);
+    const packageId = resolveClientPlanId(client);
+    const next: AdminClientSummary = {
+      userId,
+      email: client.email ?? existing?.email ?? knownClientLookup.get(userId)?.email ?? null,
+      name: client.name ?? existing?.name ?? knownClientLookup.get(userId)?.name ?? null,
+      packageId,
+      packageName: planNameLookup.get(packageId) ?? packageId,
+      subscriptionStatus:
+        typeof client.subscriptionStatus === 'string'
+          ? client.subscriptionStatus
+          : existing?.subscriptionStatus ?? null,
+      createdAt: toIso(client.createdAt) || existing?.createdAt || null,
+      lastActiveAt: toIso(client.lastActiveAt) || existing?.lastActiveAt || null,
+    };
+    deduped.set(userId, next);
+  });
+
+  const clients = Array.from(deduped.values()).sort((a, b) => {
+    const aTime = toMillis(a.createdAt);
+    const bTime = toMillis(b.createdAt);
+    return bTime - aTime || String(a.email ?? a.name ?? a.userId).localeCompare(String(b.email ?? b.name ?? b.userId));
+  });
+
+  const activeClients = clients
+    .filter(client => activeUserIds.has(client.userId))
+    .sort((a, b) => toMillis(b.lastActiveAt) - toMillis(a.lastActiveAt));
+
+  const packageBreakdown = planCatalog.map(plan => ({
+    packageId: plan.id,
+    packageName: plan.name,
+    total: clients.filter(client => client.packageId === plan.id).length,
+    active: activeClients.filter(client => client.packageId === plan.id).length,
+  }));
+
+  const firstGrowthDate = growthDates[0] ?? new Date().toISOString().slice(0, 10);
+  const packageGrowth = growthDates.map(date => {
+    const dayEnd = Date.parse(`${date}T23:59:59.999Z`);
+    const row: { date: string } & Record<string, number | string> = { date };
+    planCatalog.forEach(plan => {
+      row[plan.id] = clients.filter(client => {
+        const createdAtMs = toMillis(client.createdAt) || Date.parse(`${firstGrowthDate}T00:00:00.000Z`);
+        return client.packageId === plan.id && createdAtMs <= dayEnd;
+      }).length;
+    });
+    return row;
+  });
+
+  return { clients, activeClients, packageBreakdown, packageGrowth };
+};
+
 type LivePostRow = {
   id: string;
   userId?: string;
@@ -347,6 +454,8 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
       email: (data.email as string | undefined) ?? authData?.email,
       name: (data.name as string | undefined) ?? authData?.name,
       socialAccounts: (data.socialAccounts ?? {}) as Record<string, any>,
+      planId: data.planId ?? data.plan ?? data.packageId ?? data.package,
+      subscriptionStatus: data.subscriptionStatus,
       createdAt: data.createdAt ?? authData?.createdAt,
       lastLoginAt: data.lastLoginAt ?? authData?.lastLoginAt,
     };
@@ -359,6 +468,8 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
       email: authData.email,
       name: authData.name,
       socialAccounts: {},
+      planId: undefined,
+      subscriptionStatus: undefined,
       createdAt: authData.createdAt,
       lastLoginAt: authData.lastLoginAt,
     });
@@ -537,6 +648,27 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
   const crmCampaigns = outboundRunsSnap?.size ?? 0;
   const leadCount = leadsSnap?.size ?? 0;
   const imageGenerations = uniquePostLikeRows.filter(row => ['instagram', 'facebook', 'instagram_story', 'facebook_story'].includes(row.platform)).length;
+  const activeUserIds = new Set(
+    users
+      .filter(user => toMillis(user.lastLoginAt) >= last24h)
+      .map(user => user.uid),
+  );
+  uniquePostLikeRows
+    .filter(row => row.userId && Date.now() - row.timestamp <= 24 * 60 * 60 * 1000)
+    .forEach(row => activeUserIds.add(row.userId as string));
+  const clientPackageMetrics = buildClientPackageMetrics(
+    users.map(user => ({
+      userId: user.uid,
+      email: user.email,
+      name: user.name,
+      planId: user.planId,
+      subscriptionStatus: user.subscriptionStatus,
+      createdAt: user.createdAt,
+      lastActiveAt: user.lastLoginAt,
+    })),
+    activeUserIds,
+    weekDates,
+  );
 
   const liveLogins = users
     .map(user => ({
@@ -588,10 +720,14 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
   return {
     summary: {
       totalClients: users.length,
-      activeSessions,
+      activeSessions: Math.max(activeSessions, clientPackageMetrics.activeClients.length),
       newSignupsThisWeek: weekDates.reduce((sum, date) => sum + (signupsByDay.get(date) ?? 0), 0),
       connectedClients: connectedClients.size,
     },
+    clients: clientPackageMetrics.clients,
+    activeClients: clientPackageMetrics.activeClients,
+    packageBreakdown: clientPackageMetrics.packageBreakdown,
+    packageGrowth: clientPackageMetrics.packageGrowth,
     signupsByDay: weekDates.map(date => ({ date, count: signupsByDay.get(date) ?? 0 })),
     connectedPlatforms,
     topActiveAccounts,
@@ -773,6 +909,37 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
       .filter(row => row.userId && Date.now() - row.timestamp <= 24 * 60 * 60 * 1000)
       .map(row => row.userId as string),
   );
+  authMetadata.forEach((authData, uid) => {
+    if (toMillis(authData.lastLoginAt) >= last24h) liveActiveClients.add(uid);
+  });
+  const fallbackClientRows = Array.from(allKnownClients).map(userId => {
+    const authData = authMetadata.get(userId);
+    const accountRow = accountRows.find(row => row.userId === userId) as
+      | { email?: string | null; name?: string | null }
+      | undefined;
+    return {
+      userId,
+      email: clientEmails.get(userId) ?? authData?.email ?? accountRow?.email ?? knownClientLookup.get(userId)?.email,
+      name: clientNames.get(userId) ?? authData?.name ?? accountRow?.name ?? knownClientLookup.get(userId)?.name,
+      planId: undefined,
+      subscriptionStatus: undefined,
+      createdAt: authData?.createdAt,
+      lastActiveAt: authData?.lastLoginAt,
+    };
+  });
+  authMetadata.forEach((authData, uid) => {
+    if (fallbackClientRows.some(row => row.userId === uid)) return;
+    fallbackClientRows.push({
+      userId: uid,
+      email: authData.email,
+      name: authData.name,
+      planId: undefined,
+      subscriptionStatus: undefined,
+      createdAt: authData.createdAt,
+      lastActiveAt: authData.lastLoginAt,
+    });
+  });
+  const clientPackageMetrics = buildClientPackageMetrics(fallbackClientRows, liveActiveClients, weekDates);
 
   const liveFeed = postLikeRows
     .filter(row => row.timestamp)
@@ -787,11 +954,15 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
 
   return {
     summary: {
-      totalClients: Math.max(allKnownClients.size, authMetadata.size),
-      activeSessions: Math.max(liveActiveClients.size, authActiveSessions),
+      totalClients: Math.max(clientPackageMetrics.clients.length, allKnownClients.size, authMetadata.size),
+      activeSessions: Math.max(clientPackageMetrics.activeClients.length, liveActiveClients.size, authActiveSessions),
       newSignupsThisWeek: weekDates.reduce((sum, date) => sum + (signupsByDay.get(date) ?? 0), 0),
       connectedClients: connectedClients.size,
     },
+    clients: clientPackageMetrics.clients,
+    activeClients: clientPackageMetrics.activeClients,
+    packageBreakdown: clientPackageMetrics.packageBreakdown,
+    packageGrowth: clientPackageMetrics.packageGrowth,
     signupsByDay: weekDates.map(date => ({ date, count: signupsByDay.get(date) ?? 0 })),
     connectedPlatforms,
     topActiveAccounts,

@@ -34,6 +34,10 @@ const emptyMetrics: AdminMetrics = {
     newSignupsThisWeek: 0,
     connectedClients: 0,
   },
+  clients: [],
+  activeClients: [],
+  packageBreakdown: [],
+  packageGrowth: [],
   signupsByDay: [],
   connectedPlatforms: {},
   topActiveAccounts: [],
@@ -117,6 +121,8 @@ export const AdminDashboardScreen: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [liveSocialError, setLiveSocialError] = useState<string | null>(null);
   const [complianceError, setComplianceError] = useState<string | null>(null);
+  const [showTotalClients, setShowTotalClients] = useState(false);
+  const [showActiveClients, setShowActiveClients] = useState(false);
 
   const isAdminUser = useMemo(() => {
     const email = normalizeLower(state.user?.email);
@@ -214,6 +220,19 @@ export const AdminDashboardScreen: React.FC = () => {
     metrics.weeklyPostVolume.length > 0
       ? metrics.weeklyPostVolume.map(point => ({ x: formatShortDate(point.date), y: point.count }))
       : [{ x: t('Now'), y: 0 }];
+  const packageBreakdown = metrics.packageBreakdown ?? [];
+  const packageGrowthRows = metrics.packageGrowth ?? [];
+  const packageGrowthSeries = packageBreakdown
+    .filter(pkg => pkg.total > 0)
+    .slice(0, 5)
+    .map(pkg => ({
+      packageId: pkg.packageId,
+      packageName: pkg.packageName,
+      total: pkg.total,
+      data: packageGrowthRows.length
+        ? packageGrowthRows.map(point => ({ x: formatShortDate(String(point.date)), y: Number(point[pkg.packageId] ?? 0) }))
+        : [{ x: t('Now'), y: pkg.total }],
+    }));
 
   const connectedPlatforms = [
     { key: 'instagram', label: 'Instagram', color: '#F77737' },
@@ -400,6 +419,120 @@ export const AdminDashboardScreen: React.FC = () => {
             barWidth={18}
           />
         </VictoryChart>
+        <View style={styles.clientDropdownWrap}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setShowTotalClients(value => !value)}
+            style={({ pressed }) => [styles.dropdownToggle, pressed ? styles.dropdownTogglePressed : null]}
+          >
+            <Text style={styles.dropdownToggleText}>{t('Total clients list')}</Text>
+            <Text style={styles.dropdownToggleMeta}>{metrics.clients.length}</Text>
+          </Pressable>
+          {showTotalClients ? (
+            <View style={styles.clientList}>
+              {metrics.clients.length === 0 ? (
+                <Text style={styles.emptyText}>{t('No clients found yet.')}</Text>
+              ) : (
+                metrics.clients.map(client => (
+                  <View key={client.userId} style={styles.clientListRow}>
+                    <View style={styles.clientListIdentity}>
+                      <Text style={styles.accountName}>{client.name || client.email || client.userId}</Text>
+                      <Text style={styles.feedTime}>{client.email || client.userId}</Text>
+                    </View>
+                    <Text style={styles.packagePill}>{client.packageName}</Text>
+                  </View>
+                ))
+              )}
+            </View>
+          ) : null}
+
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setShowActiveClients(value => !value)}
+            style={({ pressed }) => [styles.dropdownToggle, pressed ? styles.dropdownTogglePressed : null]}
+          >
+            <Text style={styles.dropdownToggleText}>{t('Active clients list')}</Text>
+            <Text style={styles.dropdownToggleMeta}>{metrics.activeClients.length}</Text>
+          </Pressable>
+          {showActiveClients ? (
+            <View style={styles.clientList}>
+              {metrics.activeClients.length === 0 ? (
+                <Text style={styles.emptyText}>{t('No clients have been active in the last 24 hours.')}</Text>
+              ) : (
+                metrics.activeClients.map(client => (
+                  <View key={client.userId} style={styles.clientListRow}>
+                    <View style={styles.clientListIdentity}>
+                      <Text style={styles.accountName}>{client.name || client.email || client.userId}</Text>
+                      <Text style={styles.feedTime}>{client.email || client.userId}</Text>
+                    </View>
+                    <Text style={styles.packagePill}>{client.packageName}</Text>
+                  </View>
+                ))
+              )}
+            </View>
+          ) : null}
+        </View>
+      </DMCard>
+
+      <DMCard
+        title={t('Packages & Growth')}
+        subtitle={t('Clients per package and package adoption over time')}
+        style={styles.cardShadow}
+      >
+        <View style={styles.packageGrid}>
+          {packageBreakdown.map(pkg => (
+            <View key={pkg.packageId} style={styles.packageCard}>
+              <Text style={styles.statLabel}>{pkg.packageName}</Text>
+              <Text style={styles.statValue}>{pkg.total}</Text>
+              <Text style={styles.statHint}>{t('{{count}} active', { count: pkg.active })}</Text>
+            </View>
+          ))}
+        </View>
+        <SectionHeader title={t('Package growth')} subtitle={t('Cumulative users by package')} />
+        {packageGrowthSeries.length === 0 ? (
+          <Text style={styles.emptyText}>{t('Package growth appears once clients are loaded.')}</Text>
+        ) : (
+          <>
+            <VictoryChart theme={VictoryTheme.material} domainPadding={10}>
+              <VictoryAxis
+                style={{
+                  axis: { stroke: colors.border },
+                  tickLabels: { fill: colors.subtext, fontSize: 10 },
+                  grid: { stroke: 'transparent' },
+                }}
+              />
+              <VictoryAxis
+                dependentAxis
+                style={{
+                  axis: { stroke: colors.border },
+                  tickLabels: { fill: colors.subtext, fontSize: 10 },
+                  grid: { stroke: 'transparent' },
+                }}
+              />
+              {packageGrowthSeries.map((pkg, index) => (
+                <VictoryLine
+                  key={pkg.packageId}
+                  data={pkg.data}
+                  interpolation="monotoneX"
+                  style={{
+                    data: {
+                      stroke: ['#0EA5E9', '#22C55E', '#F59E0B', '#EC4899', '#8B5CF6'][index % 5],
+                      strokeWidth: 3,
+                    },
+                  }}
+                />
+              ))}
+            </VictoryChart>
+            <View style={styles.packageLegend}>
+              {packageGrowthSeries.map((pkg, index) => (
+                <View key={pkg.packageId} style={styles.packageLegendItem}>
+                  <View style={[styles.packageLegendDot, { backgroundColor: ['#0EA5E9', '#22C55E', '#F59E0B', '#EC4899', '#8B5CF6'][index % 5] }]} />
+                  <Text style={styles.feedTime}>{pkg.packageName}</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
       </DMCard>
 
       <DMCard
@@ -715,6 +848,106 @@ const styles = StyleSheet.create({
     color: colors.subtext,
     fontSize: 11,
     marginTop: 6,
+  },
+  clientDropdownWrap: {
+    marginTop: 6,
+  },
+  dropdownToggle: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  dropdownTogglePressed: {
+    opacity: 0.82,
+  },
+  dropdownToggleText: {
+    color: colors.text,
+    fontWeight: '700',
+  },
+  dropdownToggleMeta: {
+    minWidth: 34,
+    textAlign: 'center',
+    color: colors.text,
+    fontWeight: '800',
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 999,
+    overflow: 'hidden',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  clientList: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    padding: 10,
+    backgroundColor: colors.backgroundAlt,
+  },
+  clientListRow: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  clientListIdentity: {
+    flex: 1,
+    minWidth: 0,
+  },
+  packagePill: {
+    color: colors.accent,
+    fontSize: 11,
+    fontWeight: '800',
+    backgroundColor: 'rgba(14,165,233,0.12)',
+    borderRadius: 999,
+    overflow: 'hidden',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  packageGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  packageCard: {
+    width: '48%',
+    minHeight: 92,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+  },
+  packageLegend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 2,
+  },
+  packageLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  packageLegendDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
   },
   rowSplit: {
     flexDirection: 'row',
