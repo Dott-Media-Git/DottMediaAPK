@@ -563,6 +563,18 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
     linkedinTokenEnv: ['DOTT_MAIN_LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_ACCESS_TOKEN'],
   },
   {
+    userId: 'HAo6YtFvhKgSySa8EoERKYYq2IV2',
+    email: 'brasioxirin@gmail.com',
+    facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1150240071508730',
+    instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '1861959871343966',
+    threadsAccountId: '28808899498698518',
+    linkedinAuthorUrn: 'urn:li:person:VQV6WSzWDf',
+    facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
+    instagramTokenEnv: ['DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
+    threadsTokenEnv: ['DOTT_MAIN_THREADS_ACCESS_TOKEN', 'THREADS_ACCESS_TOKEN'],
+    linkedinTokenEnv: ['DOTT_MAIN_LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_ACCESS_TOKEN'],
+  },
+  {
     userId: SHECARE_USER_ID,
     email: 'shecaredoctor@gmail.com',
     facebookPageId: SHECARE_FACEBOOK_PAGE_ID,
