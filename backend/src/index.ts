@@ -292,6 +292,13 @@ app.post('/api/autopost/runDue', async (req, res, next) => {
       return res.status(401).json({ message: 'Invalid token' });
     }
 
+    if (req.body?.background === true || req.body?.background === 'true') {
+      void autoPostService.runDueJobs()
+        .then(result => console.info('[autopost] runDue background complete', result))
+        .catch(error => console.error('[autopost] runDue background failed', error));
+      return res.status(202).json({ ok: true, accepted: true });
+    }
+
     const result = await autoPostService.runDueJobs();
     res.json({ ok: true, ...result });
   } catch (error) {
