@@ -58,6 +58,11 @@ export async function requireFirebase(req, _res, next) {
         };
         return next();
     }
+    const locallyDecoded = decodeFirebasePayloadFallback(token);
+    if (locallyDecoded) {
+        req.authUser = locallyDecoded;
+        return next();
+    }
     try {
         if (!firebaseApp) {
             return next(createHttpError(503, 'Firebase auth is not initialized'));
@@ -91,6 +96,11 @@ export async function requireFirebaseForm(req, _res, next) {
             exp: Date.now() / 1000 + 3600,
             iat: Date.now() / 1000,
         };
+        return next();
+    }
+    const locallyDecoded = decodeFirebasePayloadFallback(token);
+    if (locallyDecoded) {
+        req.authUser = locallyDecoded;
         return next();
     }
     try {
