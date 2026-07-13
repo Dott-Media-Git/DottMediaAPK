@@ -121,8 +121,15 @@ export const PostingHistoryScreen: React.FC = () => {
       };
     }
     setHistoryCacheReady(false);
-    setHistory(createEmptyHistory());
-    setHasCachedHistory(false);
+    const syncCached = peekCachedValue<SocialHistory>(cacheKey, 1000 * 60 * 20);
+    if (syncCached) {
+      setHistory(syncCached);
+      setHasCachedHistory(true);
+      setHistoryCacheReady(true);
+    } else {
+      setHistory(createEmptyHistory());
+      setHasCachedHistory(false);
+    }
     void readCachedValue<SocialHistory>(cacheKey, 1000 * 60 * 20)
       .then(cached => {
         if (!active) return;

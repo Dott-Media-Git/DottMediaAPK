@@ -17,7 +17,7 @@ import { DMCard } from '@components/DMCard';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
-import { buildDashboardCacheKey, readDashboardCache, writeDashboardCache } from '@services/dashboardCache';
+import { buildDashboardCacheKey, peekDashboardCache, readDashboardCache, writeDashboardCache } from '@services/dashboardCache';
 import {
   ActivityHeatmapDaily,
   fetchAnalytics,
@@ -236,24 +236,51 @@ export const DashboardScreen: React.FC = () => {
     () => buildDashboardCacheKey(state.user?.uid, analyticsScopeId),
     [state.user?.uid, analyticsScopeId],
   );
+  const initialDashboardSnapshot = useMemo(() => peekDashboardCache(dashboardCacheKey), [dashboardCacheKey]);
+  const initialHasCachedSnapshot = Boolean(
+    initialDashboardSnapshot &&
+      hasLiveDashboardSignal(
+        createEmptyAnalytics(initialDashboardSnapshot.analytics),
+        initialDashboardSnapshot.outboundStats,
+        initialDashboardSnapshot.liveSocialStats,
+        initialDashboardSnapshot.todayLiveSocialStats,
+        initialDashboardSnapshot.activityHeatmapRows,
+        initialDashboardSnapshot.activityHeatmapRestRows,
+      ),
+  );
   const [analytics, setAnalytics] = useState<DashboardAnalytics>(() =>
-    createEmptyAnalytics(state.crmData?.analytics)
+    initialHasCachedSnapshot ? createEmptyAnalytics(initialDashboardSnapshot?.analytics) : createEmptyAnalytics(state.crmData?.analytics)
   );
   const [loading, setLoading] = useState(false);
   const [chartMetric, setChartMetric] = useState<ChartMetric>('views');
-  const [outboundStats, setOutboundStats] = useState<OutboundStats>(() => emptyOutboundStats);
-  const [liveSocialStats, setLiveSocialStats] = useState<LiveSocialStats>(() => emptyLiveSocialStats);
-  const [todayLiveSocialStats, setTodayLiveSocialStats] = useState<LiveSocialStats>(() => emptyLiveSocialStats);
-  const [activityHeatmapRows, setActivityHeatmapRows] = useState<ActivityHeatmapDaily[]>([]);
-  const [activityHeatmapRestRows, setActivityHeatmapRestRows] = useState<ActivityHeatmapDaily[]>([]);
-  const [rollingPerformanceRows, setRollingPerformanceRows] = useState<ActivityHeatmapDaily[]>([]);
+  const [outboundStats, setOutboundStats] = useState<OutboundStats>(() =>
+    initialHasCachedSnapshot ? initialDashboardSnapshot?.outboundStats ?? emptyOutboundStats : emptyOutboundStats
+  );
+  const [liveSocialStats, setLiveSocialStats] = useState<LiveSocialStats>(() =>
+    initialHasCachedSnapshot ? initialDashboardSnapshot?.liveSocialStats ?? emptyLiveSocialStats : emptyLiveSocialStats
+  );
+  const [todayLiveSocialStats, setTodayLiveSocialStats] = useState<LiveSocialStats>(() =>
+    initialHasCachedSnapshot ? initialDashboardSnapshot?.todayLiveSocialStats ?? emptyLiveSocialStats : emptyLiveSocialStats
+  );
+  const [activityHeatmapRows, setActivityHeatmapRows] = useState<ActivityHeatmapDaily[]>(
+    () => (initialHasCachedSnapshot ? initialDashboardSnapshot?.activityHeatmapRows ?? [] : [])
+  );
+  const [activityHeatmapRestRows, setActivityHeatmapRestRows] = useState<ActivityHeatmapDaily[]>(
+    () => (initialHasCachedSnapshot ? initialDashboardSnapshot?.activityHeatmapRestRows ?? [] : [])
+  );
+  const [rollingPerformanceRows, setRollingPerformanceRows] = useState<ActivityHeatmapDaily[]>(
+    () =>
+      initialHasCachedSnapshot
+        ? initialDashboardSnapshot?.rollingPerformanceRows ?? initialDashboardSnapshot?.activityHeatmapRestRows ?? []
+        : []
+  );
   const [adPerformance, setAdPerformance] = useState<AdPerformance>(() => emptyAdPerformance);
   const [adPerformanceLoading, setAdPerformanceLoading] = useState(false);
   const [liveSocialLoading, setLiveSocialLoading] = useState(false);
   const [selectedRangeKey, setSelectedRangeKey] = useState<ReviewRangeKey>('7d');
   const [rangeMenuOpen, setRangeMenuOpen] = useState(false);
-  const [cacheReady, setCacheReady] = useState(false);
-  const [hasCachedSnapshot, setHasCachedSnapshot] = useState(false);
+  const [cacheReady, setCacheReady] = useState(initialHasCachedSnapshot);
+  const [hasCachedSnapshot, setHasCachedSnapshot] = useState(initialHasCachedSnapshot);
   const selectedRange = useMemo(
     () => REVIEW_RANGE_OPTIONS.find(option => option.key === selectedRangeKey) ?? REVIEW_RANGE_OPTIONS[0],
     [selectedRangeKey],
@@ -261,8 +288,33 @@ export const DashboardScreen: React.FC = () => {
 
   useEffect(() => {
     let active = true;
-    setCacheReady(false);
-    setHasCachedSnapshot(false);
+    const syncSnapshot = peekDashboardCache(dashboardCacheKey);
+    if (syncSnapshot) {
+      const cachedAnalytics = createEmptyAnalytics(syncSnapshot.analytics);
+      if (
+        hasLiveDashboardSignal(
+          cachedAnalytics,
+          syncSnapshot.outboundStats,
+          syncSnapshot.liveSocialStats,
+          syncSnapshot.todayLiveSocialStats,
+          syncSnapshot.activityHeatmapRows,
+          syncSnapshot.activityHeatmapRestRows,
+        )
+      ) {
+        setAnalytics(cachedAnalytics);
+        setOutboundStats(syncSnapshot.outboundStats);
+        setLiveSocialStats(syncSnapshot.liveSocialStats);
+        setTodayLiveSocialStats(syncSnapshot.todayLiveSocialStats);
+        setActivityHeatmapRows(syncSnapshot.activityHeatmapRows);
+        setActivityHeatmapRestRows(syncSnapshot.activityHeatmapRestRows);
+        setRollingPerformanceRows(syncSnapshot.rollingPerformanceRows ?? syncSnapshot.activityHeatmapRestRows);
+        setHasCachedSnapshot(true);
+        setCacheReady(true);
+      }
+    } else {
+      setCacheReady(false);
+      setHasCachedSnapshot(false);
+    }
     void readDashboardCache(dashboardCacheKey)
       .then(snapshot => {
         if (!active) return;

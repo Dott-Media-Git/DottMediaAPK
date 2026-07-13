@@ -1,13 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { VictoryBar, VictoryChart, VictoryPie, VictoryTheme } from 'victory-native';
+import * as VictoryNative from 'victory-native';
 import { DMCard } from '@components/DMCard';
 import { colors } from '@constants/colors';
 import { EngagementStats, fetchEngagementStats, resolveAnalyticsScopeId } from '@services/analytics';
 import { useI18n } from '@context/I18nContext';
 import { useAuth } from '@context/AuthContext';
+import { peekCachedValue, writeCachedValue } from '@services/localCache';
+
+const VictoryBar = (VictoryNative as any).VictoryBar as React.ComponentType<any>;
+const VictoryChart = (VictoryNative as any).VictoryChart as React.ComponentType<any>;
+const VictoryPie = (VictoryNative as any).VictoryPie as React.ComponentType<any>;
+const VictoryTheme = (VictoryNative as any).VictoryTheme;
 
 const keywords = ['price', 'cost', 'crm', 'automation', 'ai', 'demo'];
+const ENGAGEMENT_ANALYTICS_CACHE_MAX_AGE_MS = 1000 * 60 * 20;
+
+const emptyEngagementStats: EngagementStats = {
+  comments: 0,
+  replies: 0,
+  conversions: 0,
+  conversionRate: 0,
+};
 
 export const EngagementAnalyticsScreen: React.FC = () => {
   const { t } = useI18n();
@@ -17,7 +31,16 @@ export const EngagementAnalyticsScreen: React.FC = () => {
     () => resolveAnalyticsScopeId(state.user?.uid, orgId),
     [state.user?.uid, orgId]
   );
-  const [stats, setStats] = useState<EngagementStats | null>(null);
+  const cacheKey = useMemo(
+    () => `dott.analytics.engagement.v1:${analyticsScopeId ?? state.user?.uid ?? 'guest'}`,
+    [analyticsScopeId, state.user?.uid],
+  );
+  const [stats, setStats] = useState<EngagementStats | null>(
+    () => peekCachedValue<EngagementStats>(cacheKey, ENGAGEMENT_ANALYTICS_CACHE_MAX_AGE_MS) ?? null,
+  );
+  const [hasCachedStats, setHasCachedStats] = useState(
+    () => Boolean(peekCachedValue<EngagementStats>(cacheKey, ENGAGEMENT_ANALYTICS_CACHE_MAX_AGE_MS)),
+  );
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -27,10 +50,24 @@ export const EngagementAnalyticsScreen: React.FC = () => {
         if (mounted) setStats(null);
         return;
       }
-      setLoading(true);
+      const cached = peekCachedValue<EngagementStats>(cacheKey, ENGAGEMENT_ANALYTICS_CACHE_MAX_AGE_MS);
+      if (cached) {
+        setStats(cached);
+        setHasCachedStats(true);
+      } else {
+        setHasCachedStats(false);
+      }
+      if (!cached && !hasCachedStats) {
+        setLoading(true);
+      }
       try {
         const payload = await fetchEngagementStats(state.user.uid, analyticsScopeId);
-        if (mounted) setStats(payload);
+        if (mounted) {
+          const next = payload ?? emptyEngagementStats;
+          setStats(next);
+          setHasCachedStats(true);
+          void writeCachedValue(cacheKey, next);
+        }
       } finally {
         if (mounted) setLoading(false);
       }
@@ -39,7 +76,7 @@ export const EngagementAnalyticsScreen: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [analyticsScopeId, state.user]);
+  }, [analyticsScopeId, cacheKey, hasCachedStats, state.user]);
 
   const funnel = useMemo(
     () => [
@@ -94,7 +131,7 @@ export const EngagementAnalyticsScreen: React.FC = () => {
               x: point.label.toUpperCase(),
               y: point.value,
             }))}
-            labels={({ datum }) => `${datum.x}\n${Math.round(datum.y)}`}
+            labels={({ datum }: { datum: any }) => `${datum.x}\n${Math.round(datum.y)}`}
           />
         )}
         <Text style={styles.note}>{t('Listening for: {{keywords}}.', { keywords: keywords.join(', ') })}</Text>

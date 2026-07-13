@@ -20,6 +20,7 @@ const RootView: React.FC = () => {
   const { state } = useAuth();
   const { mode } = useThemeMode();
   const lastWarmAtRef = useRef(0);
+  const warmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const warmSnapshots = useCallback(
     (force = false) => {
@@ -29,13 +30,23 @@ const RootView: React.FC = () => {
         return;
       }
       lastWarmAtRef.current = now;
-      void warmPrimaryScreenCaches({
-        userId: state.user.uid,
-        orgId: (state.user as any)?.orgId ?? state.crmData?.orgId,
-        seedAnalytics: state.crmData?.analytics,
-      });
+      if (warmTimerRef.current) clearTimeout(warmTimerRef.current);
+      warmTimerRef.current = setTimeout(() => {
+        void warmPrimaryScreenCaches({
+          userId: state.user?.uid,
+          orgId: (state.user as any)?.orgId ?? state.crmData?.orgId,
+          seedAnalytics: state.crmData?.analytics,
+        });
+      }, 700);
     },
     [state.crmData?.analytics, state.crmData?.orgId, state.hydrated, state.user],
+  );
+
+  useEffect(
+    () => () => {
+      if (warmTimerRef.current) clearTimeout(warmTimerRef.current);
+    },
+    [],
   );
 
   useEffect(() => {
