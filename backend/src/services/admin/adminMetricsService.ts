@@ -62,6 +62,7 @@ const ADMIN_LIVE_META_CLIENT_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_META_CLI
 const ADMIN_LIVE_META_TOTAL_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_META_TOTAL_TIMEOUT_MS ?? 7000);
 
 const knownClientIds = () => KNOWN_CONNECTED_CLIENTS.map(client => client.userId).filter(Boolean);
+const adminSocialDailyUserIds = () => ['cMPZQccGggbhZe9dbvtxFmBehP02', ...knownClientIds()];
 
 const toMillis = (value: any) => {
   if (!value) return 0;
@@ -237,6 +238,37 @@ const normalizeAutopostPlatform = (platform?: string | null) => {
   if (raw === 'instagram_reels') return 'instagram';
   if (raw === 'twitter') return 'x';
   return raw;
+};
+
+const mergeDailyCountersIntoSuccessRate = async (
+  autopostSuccessRate: AdminMetrics['autopostSuccessRate'],
+  weekDates: string[],
+) => {
+  const weekSet = new Set(weekDates);
+  const rows = (
+    await Promise.all(
+      adminSocialDailyUserIds().map(userId =>
+        supabaseFallbackService.getSocialDailySummary(userId, 14).catch(() => []),
+      ),
+    )
+  ).flat();
+  rows
+    .filter(row => weekSet.has(row.date))
+    .forEach(row => {
+      Object.entries(row.perPlatform ?? {}).forEach(([rawPlatform, rawCount]) => {
+        const platform = normalizeAutopostPlatform(rawPlatform);
+        const entry = autopostSuccessRate[platform];
+        if (!entry) return;
+        const posted = Math.max(entry.posted, Number(rawCount ?? 0));
+        const attempted = Math.max(entry.attempted, posted + entry.failed);
+        autopostSuccessRate[platform] = {
+          posted,
+          failed: entry.failed,
+          attempted,
+          rate: attempted ? Number((posted / attempted).toFixed(2)) : 0,
+        };
+      });
+    });
 };
 
 type AdminClientSummary = AdminMetrics['clients'][number];
@@ -675,6 +707,7 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
     const rate = attempted ? Number((posted / attempted).toFixed(2)) : 0;
     autopostSuccessRate[platform] = { posted, failed, attempted, rate };
   });
+  await mergeDailyCountersIntoSuccessRate(autopostSuccessRate, weekDates);
 
   const scopeKeys = [resolveAnalyticsScopeKey(), ...users.map(user => user.uid), ...knownClientIds()];
   const summaryTotals = await aggregateAnalyticsSummaries(scopeKeys);
@@ -936,6 +969,7 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
       rate: attempted ? Number((posted / attempted).toFixed(2)) : 0,
     };
   });
+  await mergeDailyCountersIntoSuccessRate(autopostSuccessRate, weekDates);
 
   const engagementCounters = (engagement ?? {}) as Record<string, any>;
   const outboundCounters = (outbound ?? {}) as Record<string, any>;
