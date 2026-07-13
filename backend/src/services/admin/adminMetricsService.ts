@@ -58,6 +58,8 @@ const usersCollection = firestore.collection('users');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const notificationsCollection = firestore.collection('notifications');
 const integrationsCollection = firestore.collection('socialIntegrations');
+const ADMIN_LIVE_META_CLIENT_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_META_CLIENT_TIMEOUT_MS ?? 5000);
+const ADMIN_LIVE_META_TOTAL_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_META_TOTAL_TIMEOUT_MS ?? 7000);
 
 const knownClientIds = () => KNOWN_CONNECTED_CLIENTS.map(client => client.userId).filter(Boolean);
 
@@ -417,7 +419,7 @@ const fetchLiveMetaPostRows = async (weekStartMs: number) => {
   if (!token) return [] as LivePostRow[];
   const batches = await Promise.all(
     KNOWN_CONNECTED_CLIENTS.map(client =>
-      timeout(fetchMetaRowsForClient(client, weekStartMs), 16000, `live Meta metrics ${client.userId}`).catch(error => {
+      timeout(fetchMetaRowsForClient(client, weekStartMs), ADMIN_LIVE_META_CLIENT_TIMEOUT_MS, `live Meta metrics ${client.userId}`).catch(error => {
         console.warn('[admin-metrics] live Meta client timeout', {
           userId: client.userId,
           error: (error as Error).message,
@@ -545,7 +547,7 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
     ...(doc.data() as Record<string, any>),
   }));
   const postedPosts = recentPosts.filter(post => post.status === 'posted');
-  const liveMetaPostRows = await timeout(fetchLiveMetaPostRows(weekStart.getTime()), 22000, 'admin live Meta posts').catch(error => {
+  const liveMetaPostRows = await timeout(fetchLiveMetaPostRows(weekStart.getTime()), ADMIN_LIVE_META_TOTAL_TIMEOUT_MS, 'admin live Meta posts').catch(error => {
     console.warn('[admin-metrics] live Meta posts unavailable', (error as Error).message);
     return [] as LivePostRow[];
   });
@@ -838,7 +840,7 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
         timestamp: toMillis(log.postedAt),
       }));
   if (!postLikeRows.length) {
-    postLikeRows = await timeout(fetchLiveMetaPostRows(weekStartMs), 22000, 'admin live Meta fallback').catch(error => {
+    postLikeRows = await timeout(fetchLiveMetaPostRows(weekStartMs), ADMIN_LIVE_META_TOTAL_TIMEOUT_MS, 'admin live Meta fallback').catch(error => {
       console.warn('[admin-metrics] live Meta fallback unavailable', (error as Error).message);
       return [] as LivePostRow[];
     });

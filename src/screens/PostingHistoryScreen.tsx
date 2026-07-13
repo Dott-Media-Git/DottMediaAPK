@@ -149,10 +149,15 @@ export const PostingHistoryScreen: React.FC = () => {
   }, [cacheKey, history, historyCacheReady, state.user?.uid]);
 
   useEffect(() => {
+    if (!state.user || !historyCacheReady) return;
+    void load({ silent: hasCachedHistory, force: true });
+  }, [hasCachedHistory, historyCacheReady, load, state.user]);
+
+  useEffect(() => {
     if (!state.user) return;
     const interval = setInterval(() => {
       load({ silent: true, force: true }).catch(() => undefined);
-    }, 30000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [load, state.user]);
 

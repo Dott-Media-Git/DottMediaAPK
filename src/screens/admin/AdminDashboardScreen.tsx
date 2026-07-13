@@ -115,6 +115,7 @@ export const AdminDashboardScreen: React.FC = () => {
   const [complianceState, setComplianceState] = useState<ComplianceState>(emptyComplianceState);
   const [liveSocialRows, setLiveSocialRows] = useState<AdminLiveSocialAccount[]>([]);
   const [liveSocialUpdatedAt, setLiveSocialUpdatedAt] = useState('');
+  const [expandedLiveSocialUserId, setExpandedLiveSocialUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [liveSocialLoading, setLiveSocialLoading] = useState(false);
   const [complianceLoading, setComplianceLoading] = useState(false);
@@ -171,8 +172,10 @@ export const AdminDashboardScreen: React.FC = () => {
     setLiveSocialError(null);
     try {
       const payload = await fetchAdminLiveSocial(720);
-      setLiveSocialRows(payload.rows ?? []);
+      const rows = payload.rows ?? [];
+      setLiveSocialRows(rows);
       setLiveSocialUpdatedAt(payload.generatedAt ?? '');
+      setExpandedLiveSocialUserId(current => (current && rows.some(row => row.userId === current) ? current : null));
     } catch (err: any) {
       setLiveSocialError(err?.message ?? t('Unable to load live social stats.'));
     } finally {
@@ -275,6 +278,7 @@ export const AdminDashboardScreen: React.FC = () => {
     },
     { views: 0, interactions: 0, conversions: 0 },
   );
+  const loadedLiveSocialAccounts = liveSocialRows.filter(row => row.status === 'ok').length;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -574,17 +578,19 @@ export const AdminDashboardScreen: React.FC = () => {
         style={styles.cardShadow}
       >
         {liveSocialError ? <Text style={styles.errorText}>{liveSocialError}</Text> : null}
-        <View style={styles.statGrid}>
-          <StatCard label={t('Total views')} value={formatNumber(liveSocialTotals.views)} />
-          <StatCard label={t('Interactions')} value={formatNumber(liveSocialTotals.interactions)} />
-          <StatCard label={t('Conversions')} value={formatNumber(liveSocialTotals.conversions)} />
-          <StatCard label={t('Accounts loaded')} value={liveSocialRows.filter(row => row.status === 'ok').length} />
+        <View style={styles.liveSocialSummaryLine}>
+          <Text style={styles.liveSocialSummaryText}>
+            {t('{{accounts}} accounts live', { accounts: loadedLiveSocialAccounts })} | {formatNumber(liveSocialTotals.views)} {t('views')} |{' '}
+            {formatNumber(liveSocialTotals.interactions)} {t('interactions')} | {formatNumber(liveSocialTotals.conversions)} {t('conversions')}
+          </Text>
+          {liveSocialLoading ? <ActivityIndicator color={colors.accent} /> : null}
         </View>
         {liveSocialRows.length === 0 ? (
           <Text style={styles.emptyText}>{t('No live account stats loaded yet.')}</Text>
         ) : (
           liveSocialRows.map(row => {
             const stats = row.stats;
+            const isExpanded = expandedLiveSocialUserId === row.userId;
             const platforms = stats?.platforms;
             const channelParts = [
               platforms?.facebook?.connected
@@ -601,17 +607,27 @@ export const AdminDashboardScreen: React.FC = () => {
                 : '',
             ].filter(Boolean);
             return (
-              <View key={row.userId} style={styles.liveSocialAccountRow}>
+              <Pressable
+                key={row.userId}
+                style={styles.liveSocialAccountRow}
+                onPress={() => setExpandedLiveSocialUserId(current => (current === row.userId ? null : row.userId))}
+              >
                 <View style={styles.liveSocialAccountHeader}>
                   <View style={styles.liveSocialAccountNameWrap}>
                     <Text style={styles.accountName}>{row.label}</Text>
                     <Text style={styles.feedTime}>{row.email ?? row.scopeId ?? row.userId}</Text>
                   </View>
+                  {stats ? (
+                    <Text style={styles.liveSocialCompactStats}>
+                      {formatNumber(stats.summary.views)} {t('views')} | {formatNumber(stats.summary.interactions)} {t('int.')} |{' '}
+                      {Number(stats.summary.engagementRate ?? 0).toFixed(2)}%
+                    </Text>
+                  ) : null}
                   <Text style={[styles.liveSocialStatus, row.status === 'ok' ? styles.liveSocialStatusOk : styles.liveSocialStatusError]}>
                     {row.status === 'ok' ? t('Live') : t('Error')}
                   </Text>
                 </View>
-                {stats ? (
+                {stats && isExpanded ? (
                   <>
                     <View style={styles.liveSocialMetricGrid}>
                       <View style={styles.liveSocialMetric}>
@@ -629,10 +645,11 @@ export const AdminDashboardScreen: React.FC = () => {
                     </View>
                     <Text style={styles.liveSocialChannels}>{channelParts.length ? channelParts.join(' | ') : t('No connected live channels reported.')}</Text>
                   </>
-                ) : (
+                ) : null}
+                {!stats ? (
                   <Text style={styles.errorText}>{row.error ?? t('Unable to load this account.')}</Text>
-                )}
-              </View>
+                ) : null}
+              </Pressable>
             );
           })
         )}
@@ -979,6 +996,27 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 12,
   },
+  liveSocialSummaryLine: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    backgroundColor: colors.backgroundAlt,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  liveSocialSummaryText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
   liveSocialAccountRow: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -995,6 +1033,13 @@ const styles = StyleSheet.create({
   },
   liveSocialAccountNameWrap: {
     flex: 1,
+  },
+  liveSocialCompactStats: {
+    color: colors.subtext,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 3,
+    textAlign: 'right',
   },
   liveSocialStatus: {
     fontSize: 11,

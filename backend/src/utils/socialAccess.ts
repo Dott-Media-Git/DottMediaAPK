@@ -46,6 +46,8 @@ export const isOutboundPipelineEnabled = () =>
 export const canUseOutboundPipeline = (
   user?: { email?: string | null },
   userId?: string | null,
-) =>
-  isOutboundPipelineEnabled() &&
-  (!isOutboundRestrictedToPrimaryAccount() || canUsePrimarySocialDefaults(user, userId));
+) => {
+  void user;
+  void userId;
+  return false;
+};

@@ -41,6 +41,7 @@ const ADMIN_LIVE_SOCIAL_CLIENTS = [
   { label: 'Gamers 4 Life', userId: 'vzdH1DnfFLVjlY8bBgC26WACmmw2' },
   { label: 'Bwin / Ball Analytics', userId: process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53', scopeId: process.env.BWIN_SCOPE_ID || 'bwinbetug', email: 'ball_analytics' },
 ];
+const ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS ?? 12000);
 
 const withTimeout = <T>(promise: Promise<T>, ms: number, label: string) =>
   Promise.race<T>([
@@ -78,7 +79,7 @@ router.get('/admin/live-social', requireFirebase, requireAdmin, async (req, res,
                 email: client.email,
               },
             }),
-            45000,
+            ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS,
             `live social ${client.label}`,
           );
           return {
