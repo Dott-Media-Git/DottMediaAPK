@@ -17,5 +17,8 @@ jobs:
     steps:
       - name: Trigger live social queue
         run: |
-          curl --fail --show-error --silent --max-time 180 \
-            https://dottmediaapk.onrender.com/api/social/runQueue
+          curl --fail --show-error --silent --max-time 540 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            https://dottmediaapk.onrender.com/api/autopost/runDue
