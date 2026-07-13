@@ -29,6 +29,8 @@ const HISTORY_LIVE_FETCH_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_LIVE_F
 const HISTORY_DAILY_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_DAILY_TIMEOUT_MS ?? 5000), 1000);
 const HISTORY_STORED_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_STORED_TIMEOUT_MS ?? 5000), 1000);
 const HISTORY_SOCIAL_LOG_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_SOCIAL_LOG_TIMEOUT_MS ?? 8000), 1000);
+const HISTORY_USER_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_USER_LOOKUP_TIMEOUT_MS ?? 4000), 1000);
+const SOCIAL_STATUS_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.SOCIAL_STATUS_LOOKUP_TIMEOUT_MS ?? 5000), 1000);
 
 const router = Router();
 
@@ -886,11 +888,18 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
     let storedEmail = '';
     let storedSocialAccounts: Record<string, unknown> | undefined;
     try {
-      const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-      const userData = userDoc.data() ?? {};
-      historyUserId = ((userData.historyUserId as string | undefined) ?? '').trim();
-      storedEmail = ((userData.email as string | undefined) ?? '').trim();
-      storedSocialAccounts = userData.socialAccounts as Record<string, unknown> | undefined;
+      const userDoc = await withFallbackTimeout(
+        'social history user lookup',
+        firestore.collection('users').doc(authUser.uid).get(),
+        HISTORY_USER_LOOKUP_TIMEOUT_MS,
+        null,
+      );
+      if (userDoc) {
+        const userData = userDoc.data() ?? {};
+        historyUserId = ((userData.historyUserId as string | undefined) ?? '').trim();
+        storedEmail = ((userData.email as string | undefined) ?? '').trim();
+        storedSocialAccounts = userData.socialAccounts as Record<string, unknown> | undefined;
+      }
     } catch (error) {
       console.warn('[social-history-route] user lookup failed; using direct auth user id', {
         userId: authUser.uid,
@@ -956,18 +965,23 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
 
-    const userData = await loadStatusSocialAccounts(authUser.uid, authUser.email);
+    const userData = await withFallbackTimeout(
+      'social status account lookup',
+      loadStatusSocialAccounts(authUser.uid, authUser.email),
+      SOCIAL_STATUS_LOOKUP_TIMEOUT_MS,
+      null,
+    );
     const accounts = userData?.socialAccounts ?? {};
     const allowDefaults = canUsePrimarySocialDefaults(userData, authUser.uid);
     let youtube: Awaited<ReturnType<typeof getYouTubeIntegration>> | null = null;
     let tiktok: Awaited<ReturnType<typeof getTikTokIntegration>> | null = null;
     try {
-      youtube = await getYouTubeIntegration(authUser.uid);
+      youtube = await withFallbackTimeout('youtube status lookup', getYouTubeIntegration(authUser.uid), SOCIAL_STATUS_LOOKUP_TIMEOUT_MS, null);
     } catch (error) {
       console.warn('[social-status-route] youtube lookup failed', error);
     }
     try {
-      tiktok = await getTikTokIntegration(authUser.uid);
+      tiktok = await withFallbackTimeout('tiktok status lookup', getTikTokIntegration(authUser.uid), SOCIAL_STATUS_LOOKUP_TIMEOUT_MS, null);
     } catch (error) {
       console.warn('[social-status-route] tiktok lookup failed', error);
     }
