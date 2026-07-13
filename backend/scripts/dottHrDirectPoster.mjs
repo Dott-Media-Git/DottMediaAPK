@@ -156,6 +156,7 @@ function mimeFor(fileName) {
 }
 
 function imageFiles() {
+  if (!fs.existsSync(ASSET_DIR)) return [];
   return fs
     .readdirSync(ASSET_DIR, { withFileTypes: true })
     .filter(entry => entry.isFile() && /\.(png|jpe?g|webp)$/i.test(entry.name))
