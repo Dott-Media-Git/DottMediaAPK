@@ -196,6 +196,49 @@ const fetchKnownMetaHistoryPosts = async (knownProfile: LiveHistoryProfile | nul
   return posts;
 };
 
+const fetchSocialLogHistoryPosts = async (userId: string) => {
+  if (!userId) return [];
+  const posts: any[] = [];
+  try {
+    const snap = await firestore.collection('socialLogs').where('userId', '==', userId).orderBy('postedAt', 'desc').limit(100).get();
+    snap.docs.forEach(doc => {
+      const data = doc.data() as Record<string, any>;
+      posts.push({
+        id: `social-log-${doc.id}`,
+        platform: String(data.platform ?? 'social'),
+        status: String(data.status ?? 'posted'),
+        remoteId: data.responseId ? String(data.responseId) : undefined,
+        postedAt: data.postedAt ?? data.createdAt,
+        createdAt: data.postedAt ?? data.createdAt,
+        caption: '',
+        source: 'social_log',
+        error: data.error ?? null,
+      });
+    });
+  } catch (error) {
+    console.warn('[social-history-route] Firestore social log history fetch failed', error instanceof Error ? error.message : String(error));
+  }
+  try {
+    const logs = await supabaseFallbackService.getSocialLogsByUser(userId, 100);
+    logs.forEach((log: any, index: number) => {
+      posts.push({
+        id: `supabase-social-log-${log.responseId ?? log.scheduledPostId ?? index}`,
+        platform: String(log.platform ?? 'social'),
+        status: String(log.status ?? 'posted'),
+        remoteId: log.responseId ? String(log.responseId) : undefined,
+        postedAt: log.postedAt,
+        createdAt: log.postedAt,
+        caption: '',
+        source: 'social_log',
+        error: log.error ?? null,
+      });
+    });
+  } catch (error) {
+    console.warn('[social-history-route] Supabase social log history fetch failed', error instanceof Error ? error.message : String(error));
+  }
+  return posts;
+};
+
 const timestampSeconds = (value: any) => {
   if (!value) return 0;
   if (typeof value === 'number') return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
@@ -847,9 +890,12 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
         }
       : null;
     const liveHistoryProfile = mergeLiveHistoryProfiles(knownProfile, bwinProfile, storedProfile);
-    const liveMetaPosts = await fetchKnownMetaHistoryPosts(liveHistoryProfile);
+    const [liveMetaPosts, socialLogPosts] = await Promise.all([
+      fetchKnownMetaHistoryPosts(liveHistoryProfile),
+      fetchSocialLogHistoryPosts(userId),
+    ]);
     const storedPosts = [...(history.posts ?? []), ...(history.todayPosts ?? [])];
-    const posts = mergeHistoryPosts(storedPosts, liveMetaPosts).slice(0, 400);
+    const posts = mergeHistoryPosts(storedPosts, [...liveMetaPosts, ...socialLogPosts]).slice(0, 400);
     const { todayPosts, todaySummary } = buildTodayHistory(posts);
     const summary = buildHistorySummary(posts);
     const daily = await socialAnalyticsService.getDailySummary(userId);
