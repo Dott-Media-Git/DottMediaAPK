@@ -18,6 +18,7 @@ import {
   type ComplianceReport,
   type ComplianceState,
 } from '@services/admin/complianceService';
+import { peekCachedValue, writeCachedValue } from '@services/localCache';
 
 const VictoryAxis = (VictoryNative as any).VictoryAxis as React.ComponentType<any>;
 const VictoryBar = (VictoryNative as any).VictoryBar as React.ComponentType<any>;
@@ -26,6 +27,8 @@ const VictoryLine = (VictoryNative as any).VictoryLine as React.ComponentType<an
 const VictoryTheme = (VictoryNative as any).VictoryTheme;
 
 const ADMIN_EMAILS = ['brasioxirin@gmail.com'];
+const ADMIN_METRICS_CACHE_KEY = 'dott.admin.metrics.v1';
+const ADMIN_METRICS_CACHE_MAX_AGE_MS = 1000 * 60 * 20;
 
 const emptyMetrics: AdminMetrics = {
   summary: {
@@ -110,7 +113,12 @@ export const AdminDashboardScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const [metrics, setMetrics] = useState<AdminMetrics>(emptyMetrics);
+  const [metrics, setMetrics] = useState<AdminMetrics>(
+    () => peekCachedValue<AdminMetrics>(ADMIN_METRICS_CACHE_KEY, ADMIN_METRICS_CACHE_MAX_AGE_MS) ?? emptyMetrics,
+  );
+  const [hasCachedMetrics, setHasCachedMetrics] = useState(
+    () => Boolean(peekCachedValue<AdminMetrics>(ADMIN_METRICS_CACHE_KEY, ADMIN_METRICS_CACHE_MAX_AGE_MS)),
+  );
   const [complianceReports, setComplianceReports] = useState<ComplianceReport[]>([]);
   const [complianceState, setComplianceState] = useState<ComplianceState>(emptyComplianceState);
   const [liveSocialRows, setLiveSocialRows] = useState<AdminLiveSocialAccount[]>([]);
@@ -131,11 +139,15 @@ export const AdminDashboardScreen: React.FC = () => {
   }, [state.user]);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
+    if (!hasCachedMetrics) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const payload = await fetchAdminMetrics();
       setMetrics(payload);
+      setHasCachedMetrics(true);
+      void writeCachedValue(ADMIN_METRICS_CACHE_KEY, payload);
     } catch (err: any) {
       setError(err?.message ?? t('Unable to load admin metrics.'));
     } finally {
@@ -150,7 +162,7 @@ export const AdminDashboardScreen: React.FC = () => {
     } catch (err: any) {
       setComplianceError(err?.message ?? t('Unable to load compliance reports.'));
     }
-  }, [t]);
+  }, [hasCachedMetrics, t]);
 
   const runCompliance = useCallback(async () => {
     setComplianceLoading(true);
