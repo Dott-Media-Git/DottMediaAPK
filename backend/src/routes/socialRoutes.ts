@@ -25,6 +25,8 @@ const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const META_GRAPH_BASE = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
 const THREADS_GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const THREADS_GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
+const HISTORY_LIVE_FETCH_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_LIVE_FETCH_TIMEOUT_MS ?? 6000), 1000);
+const HISTORY_DAILY_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_DAILY_TIMEOUT_MS ?? 5000), 1000);
 
 const router = Router();
 
@@ -196,16 +198,93 @@ const fetchKnownMetaHistoryPosts = async (knownProfile: LiveHistoryProfile | nul
   return posts;
 };
 
+const fetchSocialLogHistoryPosts = async (userId: string) => {
+  if (!userId) return [];
+  const posts: any[] = [];
+  try {
+    const snap = await firestore.collection('socialLogs').where('userId', '==', userId).orderBy('postedAt', 'desc').limit(100).get();
+    snap.docs.forEach(doc => {
+      const data = doc.data() as Record<string, any>;
+      posts.push({
+        id: `social-log-${doc.id}`,
+        platform: String(data.platform ?? 'social'),
+        status: String(data.status ?? 'posted'),
+        remoteId: data.responseId ? String(data.responseId) : undefined,
+        postedAt: data.postedAt ?? data.createdAt,
+        createdAt: data.postedAt ?? data.createdAt,
+        caption: '',
+        source: 'social_log',
+        error: data.error ?? null,
+      });
+    });
+  } catch (error) {
+    console.warn('[social-history-route] Firestore social log history fetch failed', error instanceof Error ? error.message : String(error));
+  }
+  try {
+    const logs = await supabaseFallbackService.getSocialLogsByUser(userId, 100);
+    logs.forEach((log: any, index: number) => {
+      posts.push({
+        id: `supabase-social-log-${log.responseId ?? log.scheduledPostId ?? index}`,
+        platform: String(log.platform ?? 'social'),
+        status: String(log.status ?? 'posted'),
+        remoteId: log.responseId ? String(log.responseId) : undefined,
+        postedAt: log.postedAt,
+        createdAt: log.postedAt,
+        caption: '',
+        source: 'social_log',
+        error: log.error ?? null,
+      });
+    });
+  } catch (error) {
+    console.warn('[social-history-route] Supabase social log history fetch failed', error instanceof Error ? error.message : String(error));
+  }
+  return posts;
+};
+
+const withFallbackTimeout = async <T,>(label: string, promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>(resolve => {
+        timeout = setTimeout(() => {
+          console.warn(`[social-history-route] ${label} timed out after ${timeoutMs}ms`);
+          resolve(fallback);
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    console.warn(`[social-history-route] ${label} failed`, error instanceof Error ? error.message : String(error));
+    return fallback;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+};
+
 const timestampSeconds = (value: any) => {
   if (!value) return 0;
+  if (typeof value === 'number') return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : Math.floor(parsed / 1000);
+  }
+  if (value instanceof Date) return Math.floor(value.getTime() / 1000);
+  if (typeof value.toDate === 'function') return Math.floor(value.toDate().getTime() / 1000);
+  if (typeof value.toMillis === 'function') return Math.floor(value.toMillis() / 1000);
   if (typeof value.seconds === 'number') return value.seconds;
   if (typeof value._seconds === 'number') return value._seconds;
   return 0;
 };
 
+const isUserFacingHistoryPlatform = (platform?: string) => {
+  const raw = String(platform ?? '').toLowerCase().trim();
+  return Boolean(raw) && raw !== 'social' && !raw.endsWith('_worker');
+};
+
 const mergeHistoryPosts = (basePosts: any[], livePosts: any[]) => {
   const byKey = new Map<string, any>();
   [...basePosts, ...livePosts].forEach(post => {
+    if (!isUserFacingHistoryPlatform(post.platform)) return;
     const key = String(post.remoteId || post.id || `${post.platform}-${timestampSeconds(post.postedAt ?? post.createdAt)}`);
     const existing = byKey.get(key);
     if (!existing || timestampSeconds(post.postedAt ?? post.createdAt) > timestampSeconds(existing.postedAt ?? existing.createdAt)) {
@@ -231,6 +310,7 @@ const buildHistorySummary = (posts: any[]) =>
 
 const normalizePostedPlatformForSummary = (platform?: string) => {
   const raw = String(platform ?? '').toLowerCase();
+  if (!raw || raw.endsWith('_worker') || raw === 'social') return '';
   if (raw === 'instagram_story' || raw === 'instagram_reels') return 'instagram';
   if (raw === 'facebook_story') return 'facebook';
   if (raw === 'twitter') return 'x';
@@ -839,12 +919,20 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
         }
       : null;
     const liveHistoryProfile = mergeLiveHistoryProfiles(knownProfile, bwinProfile, storedProfile);
-    const liveMetaPosts = await fetchKnownMetaHistoryPosts(liveHistoryProfile);
+    const [liveMetaPosts, socialLogPosts] = await Promise.all([
+      withFallbackTimeout('live social history enrichment', fetchKnownMetaHistoryPosts(liveHistoryProfile), HISTORY_LIVE_FETCH_TIMEOUT_MS, []),
+      fetchSocialLogHistoryPosts(userId),
+    ]);
     const storedPosts = [...(history.posts ?? []), ...(history.todayPosts ?? [])];
-    const posts = mergeHistoryPosts(storedPosts, liveMetaPosts).slice(0, 400);
+    const posts = mergeHistoryPosts(storedPosts, [...liveMetaPosts, ...socialLogPosts]).slice(0, 400);
     const { todayPosts, todaySummary } = buildTodayHistory(posts);
     const summary = buildHistorySummary(posts);
-    const daily = await socialAnalyticsService.getDailySummary(userId);
+    const daily = await withFallbackTimeout(
+      'daily social history summary',
+      socialAnalyticsService.getDailySummary(userId),
+      HISTORY_DAILY_TIMEOUT_MS,
+      [],
+    );
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
       Pragma: 'no-cache',
@@ -886,7 +974,9 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
         (allowDefaults && Boolean(config.channels.instagram.accessToken && config.channels.instagram.businessId)),
       threads:
         Boolean(accounts.threads?.accessToken && accounts.threads?.accountId) ||
-        (allowDefaults && Boolean(config.channels.threads.accessToken && config.channels.threads.profileId)),
+        (allowDefaults && Boolean(config.channels.threads.accessToken && config.channels.threads.profileId)) ||
+        (isBwinHistoryRequest(authUser.uid, authUser.email, userData?.email) &&
+          process.env.BWIN_THREADS_CONNECTED === 'true'),
       linkedin:
         Boolean(accounts.linkedin?.accessToken && accounts.linkedin?.urn) ||
         (allowDefaults && Boolean(config.linkedin.accessToken && config.linkedin.organizationId)),

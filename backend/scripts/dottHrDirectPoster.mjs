@@ -16,7 +16,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '..', '.env'), override: false
 
 const UID = process.env.DOTTHR_UID || '80bYIeiuukNFtUvXTUobXmfC7pu1';
 const EMAIL = process.env.DOTTHR_EMAIL || 'kingbrasio100@gmail.com';
-const DOTTHR_PAGE_ID = process.env.DOTTHR_PAGE_ID || '1154065791120794';
+const DOTTHR_PAGE_ID = process.env.DOTTHR_PAGE_ID || '1158550557346330';
 const DOTTHR_IG_ID = process.env.DOTTHR_IG_ID || '17841426388091930';
 const ASSET_DIR =
   process.env.DOTTHR_ASSET_DIR ||
@@ -79,6 +79,37 @@ function addThreadsFallback(accounts) {
   };
 }
 
+function loadDirectEnvFallback() {
+  const facebookToken = (
+    process.env.DOTT_HR_FACEBOOK_PAGE_TOKEN ||
+    process.env.DOTTHR_FACEBOOK_PAGE_TOKEN ||
+    ''
+  ).trim();
+  const instagramToken = (
+    process.env.DOTT_HR_INSTAGRAM_ACCESS_TOKEN ||
+    process.env.DOTTHR_INSTAGRAM_ACCESS_TOKEN ||
+    facebookToken ||
+    ''
+  ).trim();
+  if (!facebookToken && !instagramToken) return null;
+  return addThreadsFallback({
+    facebook: facebookToken
+      ? {
+          pageId: DOTTHR_PAGE_ID,
+          pageName: 'Dott Human Resource',
+          accessToken: facebookToken,
+        }
+      : undefined,
+    instagram: instagramToken
+      ? {
+          accountId: DOTTHR_IG_ID,
+          username: 'dott_human_resource',
+          accessToken: instagramToken,
+        }
+      : undefined,
+  });
+}
+
 const QUOTE_TEMPLATES = [
   {
     key: 'drucker-leadership',
@@ -117,6 +148,38 @@ function saveState(state) {
   fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
 
+async function loadPersistentState() {
+  const localState = loadState();
+  try {
+    const snap = await admin.firestore().collection('automationState').doc('dotthrDirectPoster').get();
+    const remoteState = snap.exists ? snap.data() : null;
+    if (!remoteState) return localState;
+    return {
+      ...localState,
+      ...remoteState,
+      runs: Array.isArray(remoteState.runs) && remoteState.runs.length ? remoteState.runs : localState.runs,
+    };
+  } catch (error) {
+    console.warn('Dott HR persistent state load failed; using local state', error.message);
+    return localState;
+  }
+}
+
+async function savePersistentState(state) {
+  saveState(state);
+  try {
+    await admin.firestore().collection('automationState').doc('dotthrDirectPoster').set(
+      {
+        ...state,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  } catch (error) {
+    console.warn('Dott HR persistent state save failed; local state saved', error.message);
+  }
+}
+
 function mimeFor(fileName) {
   const ext = path.extname(fileName).toLowerCase();
   if (ext === '.png') return 'image/png';
@@ -125,6 +188,7 @@ function mimeFor(fileName) {
 }
 
 function imageFiles() {
+  if (!fs.existsSync(ASSET_DIR)) return [];
   return fs
     .readdirSync(ASSET_DIR, { withFileTypes: true })
     .filter(entry => entry.isFile() && /\.(png|jpe?g|webp)$/i.test(entry.name))
@@ -242,6 +306,10 @@ function fromFields(fields) {
 }
 
 async function loadUserSocialAccounts(serviceAccount) {
+  const directFallback = loadDirectEnvFallback();
+  if (directFallback?.facebook?.accessToken && directFallback?.instagram?.accessToken) {
+    return directFallback;
+  }
   const tokenFallback = await loadMetaTokenFallback();
   const auth = new GoogleAuth({
     credentials: serviceAccount,
@@ -258,6 +326,10 @@ async function loadUserSocialAccounts(serviceAccount) {
       signal: AbortSignal.timeout(30000),
     });
   } catch (error) {
+    if (directFallback) {
+      console.warn(`Firestore user lookup failed: ${error?.message || String(error)}; using Dott HR direct env fallback`);
+      return directFallback;
+    }
     if (tokenFallback) {
       console.warn(`Firestore user lookup failed: ${error?.message || String(error)}; using Dott HR Meta token fallback`);
       return tokenFallback;
@@ -265,6 +337,10 @@ async function loadUserSocialAccounts(serviceAccount) {
     throw error;
   }
   if (!response.ok) {
+    if (directFallback) {
+      console.warn(`Firestore user lookup failed: ${response.status}; using Dott HR direct env fallback`);
+      return directFallback;
+    }
     if (tokenFallback) {
       console.warn(`Firestore user lookup failed: ${response.status}; using Dott HR Meta token fallback`);
       return tokenFallback;
@@ -273,6 +349,7 @@ async function loadUserSocialAccounts(serviceAccount) {
   }
   const doc = await response.json();
   const socialAccounts = fromFields(doc.fields || {}).socialAccounts || {};
+  if (!socialAccounts.facebook?.accessToken && directFallback) return directFallback;
   if (!socialAccounts.facebook?.accessToken && tokenFallback) return addThreadsFallback(tokenFallback);
   return addThreadsFallback(socialAccounts);
 }
@@ -489,16 +566,16 @@ admin.initializeApp({
   projectId: credentials.project_id || credentials.projectId,
 });
 
-const state = loadState();
+const state = await loadPersistentState();
 const files = imageFiles();
-if (!files.length) throw new Error(`No images found in ${ASSET_DIR}`);
+if (!files.length && !forceQuote) throw new Error(`No images found in ${ASSET_DIR}`);
 
 const cursorKey = mode === 'story' ? 'storyCursor' : 'feedCursor';
 const runCountKey = mode === 'story' ? 'storyRunCount' : 'feedRunCount';
 const runCount = Number(state[runCountKey] || 0);
 const shouldPostQuote = forceQuote || runCount % 3 === 2;
 const quoteTemplate = QUOTE_TEMPLATES[runCount % QUOTE_TEMPLATES.length];
-const index = Number(state[cursorKey] || 0) % files.length;
+const index = files.length ? Number(state[cursorKey] || 0) % files.length : 0;
 const filePath = shouldPostQuote ? await renderQuoteImage(quoteTemplate, mode) : path.join(ASSET_DIR, files[index]);
 const fileName = path.basename(filePath);
 const caption = shouldPostQuote
@@ -561,6 +638,6 @@ state.runs = [
   },
   ...(Array.isArray(state.runs) ? state.runs : []),
 ].slice(0, 100);
-saveState(state);
+await savePersistentState(state);
 
 console.log(JSON.stringify(state.runs[0], null, 2));

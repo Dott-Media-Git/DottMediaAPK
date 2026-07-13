@@ -1,21 +1,34 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View, RefreshControl } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
-import { VictoryAxis, VictoryChart, VictoryLine, VictoryScatter, VictoryTheme } from 'victory-native';
+import * as NavigationNative from '@react-navigation/native';
+import * as VictoryNative from 'victory-native';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { fetchSocialHistory, type SocialHistory, type SocialPost } from '@services/social';
-import { readCachedValue, writeCachedValue } from '@services/localCache';
+import { peekCachedValue, readCachedValue, writeCachedValue } from '@services/localCache';
 import { useI18n } from '@context/I18nContext';
 
-const getTimestampSeconds = (timestamp?: { seconds?: number; _seconds?: number }) => {
+const useFocusEffect = (NavigationNative as any).useFocusEffect as (effect: React.EffectCallback) => void;
+const VictoryAxis = (VictoryNative as any).VictoryAxis as React.ComponentType<any>;
+const VictoryChart = (VictoryNative as any).VictoryChart as React.ComponentType<any>;
+const VictoryLine = (VictoryNative as any).VictoryLine as React.ComponentType<any>;
+const VictoryScatter = (VictoryNative as any).VictoryScatter as React.ComponentType<any>;
+const VictoryTheme = (VictoryNative as any).VictoryTheme;
+
+const getTimestampSeconds = (timestamp?: { seconds?: number; _seconds?: number } | string | number | Date) => {
   if (!timestamp) return undefined;
+  if (typeof timestamp === 'number') return timestamp > 1e12 ? Math.floor(timestamp / 1000) : Math.floor(timestamp);
+  if (typeof timestamp === 'string') {
+    const parsed = Date.parse(timestamp);
+    return Number.isNaN(parsed) ? undefined : Math.floor(parsed / 1000);
+  }
+  if (timestamp instanceof Date) return Math.floor(timestamp.getTime() / 1000);
   const seconds = timestamp.seconds ?? timestamp._seconds;
   return typeof seconds === 'number' ? seconds : undefined;
 };
 
 const getPostSeconds = (post: SocialPost) =>
-  getTimestampSeconds((post.postedAt ?? post.createdAt ?? post.scheduledFor) as { seconds?: number; _seconds?: number });
+  getTimestampSeconds((post.postedAt ?? post.createdAt ?? post.scheduledFor) as { seconds?: number; _seconds?: number } | string | number | Date);
 
 const normalizePostedPlatform = (platform?: string) => {
   const raw = (platform ?? '').toLowerCase().trim();
@@ -60,21 +73,28 @@ const buildCumulativeSeries = (posts: SocialPost[], start: Date, end: Date, zero
   return points;
 };
 
+const createEmptyHistory = (): SocialHistory => ({
+  posts: [],
+  summary: { perPlatform: {}, byStatus: {} },
+  daily: [],
+});
+
 export const PostingHistoryScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
-  const [history, setHistory] = useState<SocialHistory>({
-    posts: [],
-    summary: { perPlatform: {}, byStatus: {} },
-    daily: [],
-  });
-  const [refreshing, setRefreshing] = useState(false);
-  const [historyCacheReady, setHistoryCacheReady] = useState(false);
-  const [hasCachedHistory, setHasCachedHistory] = useState(false);
   const cacheKey = useMemo(
-    () => `dott.postingHistory.v1:${state.user?.uid ?? 'guest'}`,
+    () => `dott.postingHistory.v2:${state.user?.uid ?? 'guest'}`,
     [state.user?.uid],
   );
+  const initialHistory = useMemo(
+    () =>
+      peekCachedValue<SocialHistory>(cacheKey, 1000 * 60 * 20) ?? createEmptyHistory(),
+    [cacheKey],
+  );
+  const [history, setHistory] = useState<SocialHistory>(initialHistory);
+  const [refreshing, setRefreshing] = useState(false);
+  const [historyCacheReady, setHistoryCacheReady] = useState(Boolean(state.user?.uid));
+  const [hasCachedHistory, setHasCachedHistory] = useState(Boolean(initialHistory.posts.length || Object.keys(initialHistory.summary?.perPlatform ?? {}).length));
 
   const load = useCallback(
     async (options?: { silent?: boolean; force?: boolean }) => {
@@ -107,6 +127,15 @@ export const PostingHistoryScreen: React.FC = () => {
       };
     }
     setHistoryCacheReady(false);
+    const syncCached = peekCachedValue<SocialHistory>(cacheKey, 1000 * 60 * 20);
+    if (syncCached) {
+      setHistory(syncCached);
+      setHasCachedHistory(true);
+      setHistoryCacheReady(true);
+    } else {
+      setHistory(createEmptyHistory());
+      setHasCachedHistory(false);
+    }
     void readCachedValue<SocialHistory>(cacheKey, 1000 * 60 * 20)
       .then(cached => {
         if (!active) return;
@@ -133,16 +162,21 @@ export const PostingHistoryScreen: React.FC = () => {
   }, [cacheKey, history, historyCacheReady, state.user?.uid]);
 
   useEffect(() => {
+    if (!state.user || !historyCacheReady) return;
+    void load({ silent: hasCachedHistory, force: true });
+  }, [hasCachedHistory, historyCacheReady, load, state.user]);
+
+  useEffect(() => {
     if (!state.user) return;
     const interval = setInterval(() => {
       load({ silent: true, force: true }).catch(() => undefined);
-    }, 30000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [load, state.user]);
 
   useFocusEffect(
     useCallback(() => {
-      void load({ silent: hasCachedHistory, force: !hasCachedHistory });
+      void load({ silent: hasCachedHistory, force: true });
     }, [hasCachedHistory, load])
   );
 
@@ -150,29 +184,43 @@ export const PostingHistoryScreen: React.FC = () => {
   today.setHours(0, 0, 0, 0);
   const todaySeconds = Math.floor(today.getTime() / 1000);
   const now = new Date();
-  const hasServerToday = Boolean(history.todaySummary);
-
-  const postedToday = useMemo(
-    () => {
-      if (hasServerToday) {
-        return (history.todayPosts ?? []).filter(post => post.status === 'posted');
-      }
-      return history.posts.filter(post => {
+  const fallbackTodayPosts = useMemo(
+    () =>
+      history.posts.filter(post => {
         if (post.status !== 'posted') return false;
         const seconds = getPostSeconds(post);
         return typeof seconds === 'number' && seconds >= todaySeconds;
+      }),
+    [history.posts, todaySeconds],
+  );
+
+  const postedToday = useMemo(
+    () => {
+      const byId = new Map<string, SocialPost>();
+      [...(history.todayPosts ?? []), ...fallbackTodayPosts].forEach((post, index) => {
+        if (post.status !== 'posted') return;
+        byId.set(String(post.id ?? `${post.platform ?? 'post'}-${index}`), post);
       });
+      return Array.from(byId.values());
     },
-    [hasServerToday, history.posts, history.todayPosts, todaySeconds],
+    [fallbackTodayPosts, history.todayPosts],
   );
 
   const videoPostsToday = useMemo(() => postedToday.filter(isVideoPost), [postedToday]);
   const postedTodayCount = useMemo(
-    () => (typeof history.todaySummary?.totalPosted === 'number' ? history.todaySummary.totalPosted : postedToday.length),
+    () =>
+      Math.max(
+        typeof history.todaySummary?.totalPosted === 'number' ? history.todaySummary.totalPosted : 0,
+        postedToday.length,
+      ),
     [history.todaySummary?.totalPosted, postedToday.length],
   );
   const videoPostsTodayCount = useMemo(
-    () => (typeof history.todaySummary?.videoPosts === 'number' ? history.todaySummary.videoPosts : videoPostsToday.length),
+    () =>
+      Math.max(
+        typeof history.todaySummary?.videoPosts === 'number' ? history.todaySummary.videoPosts : 0,
+        videoPostsToday.length,
+      ),
     [history.todaySummary?.videoPosts, videoPostsToday.length],
   );
 
@@ -196,16 +244,19 @@ export const PostingHistoryScreen: React.FC = () => {
       Object.entries(sourceSummary).forEach(([platformKey, count]) => {
         const normalized = normalizePostedPlatform(platformKey);
         if (normalized && Object.prototype.hasOwnProperty.call(counts, normalized)) {
-          counts[normalized] += Number(count ?? 0);
+          counts[normalized] = Math.max(counts[normalized] ?? 0, Number(count ?? 0));
         }
       });
-      return counts;
     }
+    const postCounts: Record<string, number> = {};
     postedToday.forEach(post => {
       const normalized = normalizePostedPlatform(post.platform);
       if (normalized && Object.prototype.hasOwnProperty.call(counts, normalized)) {
-        counts[normalized] += 1;
+        postCounts[normalized] = (postCounts[normalized] ?? 0) + 1;
       }
+    });
+    Object.entries(postCounts).forEach(([platform, count]) => {
+      counts[platform] = Math.max(counts[platform] ?? 0, count);
     });
     return counts;
   }, [history.todaySummary?.perPlatform, postedToday]);
