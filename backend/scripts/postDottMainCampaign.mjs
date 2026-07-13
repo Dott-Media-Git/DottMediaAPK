@@ -1563,14 +1563,28 @@ async function main() {
       },
     });
   }
-  await addSocialLogs(socialLogs);
+  try {
+    await addSocialLogs(socialLogs);
+  } catch (error) {
+    console.warn(
+      '[dott-main-campaign] social log write failed; posts already attempted',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   const dailyPlatforms = {};
   if (instagramResult) dailyPlatforms[item.type === 'video' ? 'instagram_reels' : 'instagram'] = 1;
   if (facebookResult) dailyPlatforms.facebook = 1;
   if (threadsResult) dailyPlatforms.threads = 1;
   if (linkedinResult) dailyPlatforms.linkedin = 1;
   if (twitterResult) dailyPlatforms.twitter = 1;
-  await incrementSocialDaily(dailyPlatforms);
+  try {
+    await incrementSocialDaily(dailyPlatforms);
+  } catch (error) {
+    console.warn(
+      '[dott-main-campaign] daily counter write failed; posts already attempted',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 
   await updateCampaignState(state, stateData, {
     dottCampaignEnabled: true,
