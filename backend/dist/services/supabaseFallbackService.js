@@ -2,11 +2,16 @@ import admin from 'firebase-admin';
 import axios from 'axios';
 import { Pool } from 'pg';
 import dns from 'dns';
+import https from 'https';
 import { resolveAnalyticsScopeKey } from './analyticsScope.js';
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
 const SUPABASE_DATABASE_URL = (process.env.SUPABASE_DATABASE_URL ?? '').trim();
 const REST_BASE = SUPABASE_URL ? `${SUPABASE_URL}/rest/v1` : '';
+const allowInsecureSupabaseTls = process.env.ALLOW_INSECURE_SUPABASE_TLS === 'true' ||
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0' ||
+    (process.env.NODE_ENV !== 'production' && process.env.ALLOW_INSECURE_SUPABASE_TLS !== 'false');
+const supabaseHttpsAgent = allowInsecureSupabaseTls ? new https.Agent({ rejectUnauthorized: false }) : undefined;
 const NOW = () => new Date().toISOString();
 dns.setDefaultResultOrder('ipv4first');
 const pgPool = SUPABASE_DATABASE_URL
@@ -237,10 +242,12 @@ class SupabaseFallbackService {
                 apikey: SUPABASE_SERVICE_ROLE_KEY,
                 Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
                 'Content-Type': 'application/json',
+                'User-Agent': 'DottMediaBackend/1.0',
                 ...(options.prefer ? { Prefer: options.prefer } : {}),
             },
             data: options.body,
             timeout: 30000,
+            ...(supabaseHttpsAgent ? { httpsAgent: supabaseHttpsAgent } : {}),
         };
         if (this.isCircuitOpen()) {
             throw new Error(`supabase_circuit_open retry_after_ms=${this.circuitOpenUntil - Date.now()}`);
@@ -384,6 +391,18 @@ class SupabaseFallbackService {
             params: {
                 select: '*',
                 user_id: `eq.${userId}`,
+                order: 'created_at.desc',
+                limit,
+            },
+        });
+        return Array.isArray(rows) ? rows.map(row => this.deserializeScheduledPost(row)) : [];
+    }
+    async getRecentScheduledPosts(limit = 500) {
+        if (!this.isConfigured())
+            return [];
+        const rows = await this.request('GET', 'dott_scheduled_posts', {
+            params: {
+                select: '*',
                 order: 'created_at.desc',
                 limit,
             },
@@ -580,12 +599,57 @@ class SupabaseFallbackService {
         })));
     }
     async getSocialLogsByUser(userId, limit = 250) {
-        if (!this.isConfigured() || !userId)
+        if (!userId)
+            return [];
+        if (this.hasDatabaseFallback()) {
+            try {
+                const rows = await this.databaseQuery(`select user_id, platform, scheduled_post_id, status, response_id, error, posted_at
+             from public.dott_social_logs
+            where user_id = $1
+            order by posted_at desc
+            limit $2`, [userId, limit]);
+                return rows.map(row => ({
+                    userId: row.user_id,
+                    platform: row.platform,
+                    scheduledPostId: row.scheduled_post_id,
+                    status: row.status,
+                    responseId: row.response_id ?? null,
+                    error: row.error ?? null,
+                    postedAt: toTimestampStub(row.posted_at),
+                }));
+            }
+            catch (error) {
+                console.warn('[supabase-fallback] database social log lookup failed; falling back to REST', error instanceof Error ? error.message : String(error));
+            }
+        }
+        if (!this.isConfigured())
             return [];
         const rows = await this.request('GET', 'dott_social_logs', {
             params: {
                 select: '*',
                 user_id: `eq.${userId}`,
+                order: 'posted_at.desc',
+                limit,
+            },
+        });
+        return Array.isArray(rows)
+            ? rows.map(row => ({
+                userId: row.user_id,
+                platform: row.platform,
+                scheduledPostId: row.scheduled_post_id,
+                status: row.status,
+                responseId: row.response_id ?? null,
+                error: row.error ?? null,
+                postedAt: toTimestampStub(row.posted_at),
+            }))
+            : [];
+    }
+    async getRecentSocialLogs(limit = 500) {
+        if (!this.isConfigured())
+            return [];
+        const rows = await this.request('GET', 'dott_social_logs', {
+            params: {
+                select: '*',
                 order: 'posted_at.desc',
                 limit,
             },
@@ -618,6 +682,134 @@ class SupabaseFallbackService {
                 .map(row => String(row.scheduled_post_id ?? '').toLowerCase().trim())
                 .filter(Boolean)
             : [];
+    }
+    async upsertUser(record) {
+        if (!this.isConfigured() || !record.userId)
+            return;
+        const row = {
+            user_id: record.userId,
+            email: record.email ?? null,
+            name: record.name ?? null,
+            photo_url: record.photoURL ?? null,
+            auth_provider: record.authProvider ?? null,
+            is_admin: Boolean(record.isAdmin),
+            data: sanitizeJson(record.data ?? {}) ?? {},
+            created_at: toIsoString(record.createdAt),
+            last_login_at: toIsoString(record.lastLoginAt),
+            updated_at: NOW(),
+        };
+        try {
+            await this.request('POST', 'dott_users', {
+                params: { on_conflict: 'user_id' },
+                prefer: 'resolution=merge-duplicates,return=minimal',
+                body: [row],
+            });
+        }
+        catch (error) {
+            if (!this.hasDatabaseFallback())
+                throw error;
+            await this.databaseQuery(`insert into public.dott_users
+          (user_id, email, name, photo_url, auth_provider, is_admin, data, created_at, last_login_at, updated_at)
+         values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
+         on conflict (user_id) do update set
+          email = excluded.email,
+          name = excluded.name,
+          photo_url = excluded.photo_url,
+          auth_provider = excluded.auth_provider,
+          is_admin = excluded.is_admin,
+          data = excluded.data,
+          created_at = coalesce(public.dott_users.created_at, excluded.created_at),
+          last_login_at = excluded.last_login_at,
+          updated_at = excluded.updated_at`, [
+                row.user_id,
+                row.email,
+                row.name,
+                row.photo_url,
+                row.auth_provider,
+                row.is_admin,
+                JSON.stringify(row.data),
+                row.created_at,
+                row.last_login_at,
+                row.updated_at,
+            ]);
+        }
+    }
+    async upsertProfile(record) {
+        if (!this.isConfigured() || !record.userId)
+            return;
+        const row = {
+            user_id: record.userId,
+            email: record.email ?? null,
+            name: record.name ?? null,
+            subscription_status: record.subscriptionStatus ?? null,
+            onboarding_complete: Boolean(record.onboardingComplete),
+            user_data: sanitizeJson(record.userData ?? {}) ?? {},
+            crm_data: sanitizeJson(record.crmData ?? {}) ?? {},
+            data: sanitizeJson(record.data ?? {}) ?? {},
+            created_at: toIsoString(record.createdAt),
+            updated_at: toIsoString(record.updatedAt) ?? NOW(),
+        };
+        try {
+            await this.request('POST', 'dott_profiles', {
+                params: { on_conflict: 'user_id' },
+                prefer: 'resolution=merge-duplicates,return=minimal',
+                body: [row],
+            });
+        }
+        catch (error) {
+            if (!this.hasDatabaseFallback())
+                throw error;
+            await this.databaseQuery(`insert into public.dott_profiles
+          (user_id, email, name, subscription_status, onboarding_complete, user_data, crm_data, data, created_at, updated_at)
+         values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10)
+         on conflict (user_id) do update set
+          email = excluded.email,
+          name = excluded.name,
+          subscription_status = excluded.subscription_status,
+          onboarding_complete = excluded.onboarding_complete,
+          user_data = excluded.user_data,
+          crm_data = excluded.crm_data,
+          data = excluded.data,
+          created_at = coalesce(public.dott_profiles.created_at, excluded.created_at),
+          updated_at = excluded.updated_at`, [
+                row.user_id,
+                row.email,
+                row.name,
+                row.subscription_status,
+                row.onboarding_complete,
+                JSON.stringify(row.user_data),
+                JSON.stringify(row.crm_data),
+                JSON.stringify(row.data),
+                row.created_at,
+                row.updated_at,
+            ]);
+        }
+    }
+    async getProfile(userId) {
+        if (!this.isConfigured() || !userId)
+            return null;
+        let row = null;
+        try {
+            row = await this.getSingleRow('dott_profiles', { user_id: `eq.${userId}` });
+        }
+        catch (error) {
+            if (!this.hasDatabaseFallback())
+                throw error;
+            const rows = await this.databaseQuery('select * from public.dott_profiles where user_id = $1 limit 1', [userId]);
+            row = rows[0] ?? null;
+        }
+        if (!row)
+            return null;
+        return {
+            userId: row.user_id,
+            email: row.email ?? null,
+            name: row.name ?? null,
+            subscriptionStatus: row.subscription_status ?? null,
+            onboardingComplete: Boolean(row.onboarding_complete),
+            userData: row.user_data && typeof row.user_data === 'object' ? row.user_data : {},
+            crmData: row.crm_data && typeof row.crm_data === 'object' ? row.crm_data : {},
+            data: row.data && typeof row.data === 'object' ? row.data : {},
+        };
     }
     async upsertAutopostJob(userId, job) {
         if (!this.isConfigured() || !userId)
@@ -768,6 +960,49 @@ class SupabaseFallbackService {
             email: row.email ?? null,
             socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
         };
+    }
+    async getAllSocialAccounts(limit = 1000) {
+        if (!this.isConfigured())
+            return [];
+        try {
+            const rows = await this.request('GET', 'dott_social_accounts', {
+                params: {
+                    select: '*',
+                    order: 'updated_at.desc',
+                    limit,
+                },
+            });
+            return Array.isArray(rows)
+                ? rows.map(row => ({
+                    userId: row.user_id,
+                    email: row.email ?? null,
+                    socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
+                }))
+                : [];
+        }
+        catch (error) {
+            const status = error?.response?.status;
+            if (status !== 404 && this.hasDatabaseFallback()) {
+                const rows = await this.databaseQuery('select user_id, email, accounts from public.dott_social_accounts order by updated_at desc limit $1', [limit]);
+                return rows.map(row => ({
+                    userId: row.user_id,
+                    email: row.email ?? null,
+                    socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
+                }));
+            }
+            if (status !== 404)
+                throw error;
+            const jobs = await this.getActiveAutopostJobs(limit);
+            return jobs
+                .map(job => ({
+                userId: String(job.userId ?? ''),
+                email: job.email ?? null,
+                socialAccounts: job.socialAccounts && typeof job.socialAccounts === 'object'
+                    ? job.socialAccounts
+                    : {},
+            }))
+                .filter(row => row.userId);
+        }
     }
     async getSocialAccountsFromDatabase(userId) {
         const rows = await this.databaseQuery('select email, accounts from public.dott_social_accounts where user_id = $1 limit 1', [userId]);
