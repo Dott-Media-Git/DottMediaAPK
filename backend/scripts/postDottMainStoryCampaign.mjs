@@ -17,10 +17,29 @@ const ASSET_BASE_URL = (
   process.env.DOTT_STORY_ASSET_BASE_URL ||
   'https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign'
 ).replace(/\/$/, '');
+const IMAGE_ASSET_BASE_URL = (
+  process.env.DOTT_STORY_IMAGE_BASE_URL ||
+  `${ASSET_BASE_URL}/backend/public/campaign-images/dottmain`
+).replace(/\/$/, '');
 const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPTS ?? 20), 5);
 const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_MS ?? 3000), 1000);
 const PUBLISH_RETRIES = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRIES ?? 3), 1);
 const PUBLISH_RETRY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_PUBLISH_RETRY_DELAY_MS ?? 4000), 1000);
+const PUBLISHED_IMAGE_FILENAMES = new Set([
+  'services-ai-workflows.jpeg',
+  'best-ai-automation-services.jpeg',
+  'best-ai-tech-services.jpeg',
+  'special-deals-first-service.jpeg',
+  'social-ai-connectivity.jpeg',
+  'ai-drive-business-growth.png',
+  'increase-business-efficiency-speed.png',
+  'boost-sales-ai-sales-agent.png',
+  'bot-efficiency-reduced-workload.png',
+  'ai-sales-agent-team.png',
+  'ai-sales-agent-close-faster.png',
+  'meet-your-new-ai-sales-agent.png',
+]);
+const FALLBACK_IMAGE_FILENAME = 'services-ai-workflows.jpeg';
 
 const STORY_SET_EMOTION = [
   { slug: 'ai-business-growth-family', filename: 'ai-business-growth-family.png' },
@@ -316,7 +335,8 @@ async function incrementSocialDaily(postedCountByPlatform) {
 }
 
 function buildAssetUrl(item) {
-  return `${ASSET_BASE_URL}/backend/public/campaign-images/dottmain/${encodeURIComponent(item.filename)}`;
+  const filename = PUBLISHED_IMAGE_FILENAMES.has(item.filename) ? item.filename : FALLBACK_IMAGE_FILENAME;
+  return `${IMAGE_ASSET_BASE_URL}/${encodeURIComponent(filename)}`;
 }
 
 function describeError(error) {

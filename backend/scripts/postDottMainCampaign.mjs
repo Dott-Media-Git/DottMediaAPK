@@ -35,6 +35,21 @@ const DEFAULT_VIDEO_INSTAGRAM_CAPTION =
 const DEFAULT_VIDEO_FACEBOOK_CAPTION =
   "Dott Media in motion.\n\nAI-powered systems, smarter marketing, stronger branding, and business automation that keeps working for you.\n\nVisit: www.dott-media.org\nMessage us for a walkthrough.\n\n#DottMedia #AIAutomation #BusinessGrowth #BrandSystems #DigitalMedia #MarketingAutomation";
 const LINKEDIN_API = 'https://api.linkedin.com/v2';
+const PUBLISHED_IMAGE_FILENAMES = new Set([
+  'services-ai-workflows.jpeg',
+  'best-ai-automation-services.jpeg',
+  'best-ai-tech-services.jpeg',
+  'special-deals-first-service.jpeg',
+  'social-ai-connectivity.jpeg',
+  'ai-drive-business-growth.png',
+  'increase-business-efficiency-speed.png',
+  'boost-sales-ai-sales-agent.png',
+  'bot-efficiency-reduced-workload.png',
+  'ai-sales-agent-team.png',
+  'ai-sales-agent-close-faster.png',
+  'meet-your-new-ai-sales-agent.png',
+]);
+const FALLBACK_IMAGE_FILENAME = 'services-ai-workflows.jpeg';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1029,7 +1044,11 @@ function buildAssetUrl(item) {
     return item.assetUrl;
   }
   const baseUrl = item.type === 'video' ? VIDEO_ASSET_BASE_URL : IMAGE_ASSET_BASE_URL;
-  return `${baseUrl}/${encodeURIComponent(item.filename)}`;
+  const filename =
+    item.type === 'video' || PUBLISHED_IMAGE_FILENAMES.has(item.filename)
+      ? item.filename
+      : FALLBACK_IMAGE_FILENAME;
+  return `${baseUrl}/${encodeURIComponent(filename)}`;
 }
 
 async function publishToInstagram({ accountId, accessToken, imageUrl, caption }) {

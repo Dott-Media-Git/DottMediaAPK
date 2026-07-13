@@ -30,7 +30,7 @@ jobs:
       DOTT_MAIN_INSTAGRAM_USERNAME: ${{ secrets.DOTT_MAIN_INSTAGRAM_USERNAME }}
       DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN: ${{ secrets.DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN }}
       META_GRAPH_VERSION: v19.0
-      DOTT_STORY_ASSET_BASE_URL: https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign
+      DOTT_STORY_IMAGE_BASE_URL: https://cdn.jsdelivr.net/gh/Dott-Media-Git/DottMediaAPK@main/backend/public/campaign-images/dottmain
       DOTT_STORY_FORCE_SLUG: ${{ github.event.inputs.force_slug }}
     steps:
       - name: Checkout repository
