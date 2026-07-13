@@ -43,5 +43,5 @@ jobs:
           test -n "$EXPO_PUBLIC_FIREBASE_API_KEY"
 
       - name: Run Dott HR story worker
-        run: node scripts/dottHrDirectPoster.mjs --mode=story --quote
+        run: node scripts/dottHrDirectPoster.mjs --mode=story
         working-directory: backend
