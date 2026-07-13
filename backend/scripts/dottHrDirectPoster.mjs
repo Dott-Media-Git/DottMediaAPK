@@ -139,7 +139,14 @@ function loadState() {
   try {
     return JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
   } catch {
-    return { feedCursor: 0, storyCursor: 0, runs: [] };
+    const seed = Math.floor(Date.now() / (60 * 60 * 1000));
+    return {
+      feedCursor: seed % 6,
+      storyCursor: seed % 4,
+      feedRunCount: seed,
+      storyRunCount: seed,
+      runs: [],
+    };
   }
 }
 
@@ -568,12 +575,11 @@ admin.initializeApp({
 
 const state = await loadPersistentState();
 const files = imageFiles();
-if (!files.length && !forceQuote) throw new Error(`No images found in ${ASSET_DIR}`);
 
 const cursorKey = mode === 'story' ? 'storyCursor' : 'feedCursor';
 const runCountKey = mode === 'story' ? 'storyRunCount' : 'feedRunCount';
 const runCount = Number(state[runCountKey] || 0);
-const shouldPostQuote = forceQuote || runCount % 3 === 2;
+const shouldPostQuote = forceQuote || !files.length || runCount % 3 === 2;
 const quoteTemplate = QUOTE_TEMPLATES[runCount % QUOTE_TEMPLATES.length];
 const index = files.length ? Number(state[cursorKey] || 0) % files.length : 0;
 const filePath = shouldPostQuote ? await renderQuoteImage(quoteTemplate, mode) : path.join(ASSET_DIR, files[index]);
