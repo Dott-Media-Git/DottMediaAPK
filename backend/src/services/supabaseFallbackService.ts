@@ -709,7 +709,39 @@ class SupabaseFallbackService {
   }
 
   async getSocialLogsByUser(userId: string, limit = 250) {
-    if (!this.isConfigured() || !userId) return [] as SocialLogRecord[];
+    if (!userId) return [] as SocialLogRecord[];
+    if (this.hasDatabaseFallback()) {
+      try {
+        const rows = await this.databaseQuery<{
+          user_id: string;
+          platform: string;
+          scheduled_post_id: string;
+          status: string;
+          response_id?: string | null;
+          error?: string | null;
+          posted_at?: string | null;
+        }>(
+          `select user_id, platform, scheduled_post_id, status, response_id, error, posted_at
+             from public.dott_social_logs
+            where user_id = $1
+            order by posted_at desc
+            limit $2`,
+          [userId, limit],
+        );
+        return rows.map(row => ({
+          userId: row.user_id,
+          platform: row.platform,
+          scheduledPostId: row.scheduled_post_id,
+          status: row.status,
+          responseId: row.response_id ?? null,
+          error: row.error ?? null,
+          postedAt: toTimestampStub(row.posted_at),
+        }));
+      } catch (error) {
+        console.warn('[supabase-fallback] database social log lookup failed; falling back to REST', error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (!this.isConfigured()) return [] as SocialLogRecord[];
     const rows = await this.request<any[]>('GET', 'dott_social_logs', {
       params: {
         select: '*',
