@@ -554,10 +554,16 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
     ...(doc.data() as Record<string, any>),
   }));
   const postedPosts = recentPosts.filter(post => post.status === 'posted');
-  const liveMetaPostRows = await timeout(fetchLiveMetaPostRows(weekStart.getTime()), ADMIN_LIVE_META_TOTAL_TIMEOUT_MS, 'admin live Meta posts').catch(error => {
-    console.warn('[admin-metrics] live Meta posts unavailable', (error as Error).message);
-    return [] as LivePostRow[];
-  });
+  const [liveMetaPostRows, socialLogRows] = await Promise.all([
+    timeout(fetchLiveMetaPostRows(weekStart.getTime()), ADMIN_LIVE_META_TOTAL_TIMEOUT_MS, 'admin live Meta posts').catch(error => {
+      console.warn('[admin-metrics] live Meta posts unavailable', (error as Error).message);
+      return [] as LivePostRow[];
+    }),
+    timeout(supabaseFallbackService.getRecentSocialLogs(1000), 8000, 'admin social logs').catch(error => {
+      console.warn('[admin-metrics] social logs unavailable', (error as Error).message);
+      return [] as Awaited<ReturnType<typeof supabaseFallbackService.getRecentSocialLogs>>;
+    }),
+  ]);
 
   const weeklyCounts = new Map<string, number>();
   weekDates.forEach(date => weeklyCounts.set(date, 0));
@@ -571,6 +577,14 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
       timestamp: toMillis(post.postedAt || post.createdAt),
     })),
     ...liveMetaPostRows,
+    ...socialLogRows.map((log, index) => ({
+      id: String(log.responseId ?? log.scheduledPostId ?? `social-log-${index}`),
+      userId: log.userId,
+      platform: String(log.platform ?? 'social'),
+      status: String(log.status ?? 'posted'),
+      source: 'social_log',
+      timestamp: toMillis(log.postedAt),
+    })),
   ];
   const uniquePostLikeRows = Array.from(
     postLikeRows
