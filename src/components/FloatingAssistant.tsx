@@ -77,6 +77,7 @@ export const FloatingAssistant: React.FC = () => {
   const [voiceConversation, setVoiceConversation] = useState(false);
   const [liveSocial, setLiveSocial] = useState<LiveSocialStats | null>(null);
   const [accountSnapshot, setAccountSnapshot] = useState('');
+  const openedOnLaunchRef = useRef(false);
   const analyticsScopeId = useMemo(
     () => resolveAnalyticsScopeId(state.user?.uid, ((state.user as any)?.orgId ?? state.crmData?.orgId) as string | undefined),
     [state.user?.uid, state.user, state.crmData?.orgId]
@@ -105,13 +106,20 @@ export const FloatingAssistant: React.FC = () => {
   );
   const showDotti = open || hasStartedTyping || hasUserMessage || sending || listening;
 
+  useEffect(() => {
+    if (!canDisplay || openedOnLaunchRef.current) return;
+    openedOnLaunchRef.current = true;
+    setOpen(true);
+    setFullScreen(true);
+  }, [canDisplay]);
+
   const quickPrompts = useMemo(
     () => [
-      t('Summarize my account today'),
-      t('Which channels are connected right now?'),
-      t('How is my performance this week?'),
-      t('Recommend a growth strategy'),
-      t('What should I optimize next?')
+      t('What should we do today?'),
+      t('Create a fresh post'),
+      t('Check my channels'),
+      t('Show what matters'),
+      t('Plan my next move')
     ],
     [t]
   );
@@ -362,7 +370,7 @@ export const FloatingAssistant: React.FC = () => {
               <View style={styles.panelHeader}>
                 <View style={styles.headerCopy}>
                   <Text style={styles.panelTitle}>{t('Dotti Assistant')}</Text>
-                  <Text style={styles.panelSubtitle}>{t('Ask about your account, performance, or next move.')}</Text>
+                  <Text style={styles.panelSubtitle}>{t('Tell Dotti what you want to work on today.')}</Text>
                 </View>
                 {showDotti ? (
                   <View style={styles.dottiSlot} pointerEvents="none">
@@ -547,13 +555,22 @@ const DottiAvatar: React.FC<{ state: DottiState; size?: number }> = ({ state, si
         </Defs>
         <Ellipse cx="130" cy="270" rx="60" ry="12" fill="#0B1220" opacity="0.16" />
         <Path d="M54 218 C44 183 46 124 74 82 C101 40 159 35 191 69 C226 106 224 173 207 221 C190 267 75 266 54 218Z" fill="url(#dottiBody)" stroke="#ABC2EE" strokeWidth="5" />
-        <Path d="M70 74 C60 58 57 38 68 26 C83 9 107 30 102 60" fill="#EAF1FF" stroke="#ABC2EE" strokeWidth="5" />
-        <Path d="M189 70 C199 53 203 36 192 25 C176 9 153 31 159 62" fill="#EAF1FF" stroke="#ABC2EE" strokeWidth="5" />
+        <Path d="M72 88 C63 76 60 62 66 50 C73 36 89 35 101 48 C91 59 83 73 80 91" fill="#EAF1FF" stroke="#ABC2EE" strokeWidth="5" />
+        <Path d="M188 88 C197 76 200 62 194 50 C187 36 171 35 159 48 C169 59 177 73 180 91" fill="#EAF1FF" stroke="#ABC2EE" strokeWidth="5" />
         <Circle cx="130" cy="151" r="73" fill="url(#dottiFace)" stroke="#F0DCD1" strokeWidth="4" />
+        <Path d="M58 153 C50 166 50 184 59 197" fill="none" stroke="#26324C" strokeWidth="7" strokeLinecap="round" opacity="0.5" />
+        <Path d="M202 153 C210 166 210 184 201 197" fill="none" stroke="#26324C" strokeWidth="7" strokeLinecap="round" opacity="0.5" />
+        <Rect x="49" y="151" width="12" height="43" rx="6" fill="#26324C" opacity="0.72" />
+        <Rect x="199" y="151" width="12" height="43" rx="6" fill="#26324C" opacity="0.72" />
         <Path d={`M84 ${118 + cfg.brow} C99 ${108 + cfg.brow} 113 ${108 + cfg.brow} 126 ${118 + cfg.brow}`} fill="none" stroke="#25324A" strokeWidth="6" strokeLinecap="round" opacity="0.65" />
         <Path d={`M135 ${118 - cfg.brow} C149 ${108 - cfg.brow} 165 ${108 - cfg.brow} 179 ${118 - cfg.brow}`} fill="none" stroke="#25324A" strokeWidth="6" strokeLinecap="round" opacity="0.65" />
         <Ellipse cx="104" cy="148" rx="17" ry={eyeHeight} fill="url(#dottiEye)" />
         <Ellipse cx="156" cy="148" rx="17" ry={eyeHeight} fill="url(#dottiEye)" />
+        <Rect x="78" y="132" width="51" height="34" rx="13" fill="none" stroke="#1F2937" strokeWidth="5" />
+        <Rect x="131" y="132" width="51" height="34" rx="13" fill="none" stroke="#1F2937" strokeWidth="5" />
+        <Path d="M129 148 C130 146 132 146 131 148" fill="none" stroke="#1F2937" strokeWidth="5" strokeLinecap="round" />
+        <Path d="M76 145 L64 139" fill="none" stroke="#1F2937" strokeWidth="5" strokeLinecap="round" />
+        <Path d="M184 145 L196 139" fill="none" stroke="#1F2937" strokeWidth="5" strokeLinecap="round" />
         {!blink ? (
           <>
             <Circle cx="99" cy="143" r="5" fill="#FFFFFF" opacity="0.9" />
@@ -629,11 +646,11 @@ const buildPerformanceSummary = (
   t: (key: string, params?: Record<string, string | number>) => string
 ) => {
   if (!liveSocial) {
-    return t('Hi! I am Dotti, your Dott assistant. Ask me about your account, performance, or where to focus next.');
+    return t("Hi, I'm Dotti. I'm here with you. What would you like to work on today?");
   }
   const companyTag = companyName ? ` ${companyName}` : '';
   return t(
-    'Hi{{company}} team! Views are at {{views}}, interactions {{interactions}}, conversions {{conversions}}. Ask for your account summary, growth strategy, or next move.',
+    "Welcome back{{company}}. I'm Dotti. We can create, check your channels, or plan the next move. What should we start with?",
     {
       company: companyTag,
       views: Math.round(liveSocial.summary.views ?? 0),
