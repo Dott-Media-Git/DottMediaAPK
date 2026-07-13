@@ -554,7 +554,7 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
     ...(doc.data() as Record<string, any>),
   }));
   const postedPosts = recentPosts.filter(post => post.status === 'posted');
-  const [liveMetaPostRows, socialLogRows] = await Promise.all([
+  const [liveMetaPostRows, socialLogRows, firestoreSocialLogsSnap] = await Promise.all([
     timeout(fetchLiveMetaPostRows(weekStart.getTime()), ADMIN_LIVE_META_TOTAL_TIMEOUT_MS, 'admin live Meta posts').catch(error => {
       console.warn('[admin-metrics] live Meta posts unavailable', (error as Error).message);
       return [] as LivePostRow[];
@@ -563,7 +563,22 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
       console.warn('[admin-metrics] social logs unavailable', (error as Error).message);
       return [] as Awaited<ReturnType<typeof supabaseFallbackService.getRecentSocialLogs>>;
     }),
+    firestore.collection('socialLogs').orderBy('postedAt', 'desc').limit(1000).get().catch(error => {
+      console.warn('[admin-metrics] Firestore social logs unavailable', (error as Error).message);
+      return null;
+    }),
   ]);
+  const firestoreSocialLogRows = firestoreSocialLogsSnap?.docs.map(doc => {
+    const data = doc.data() as Record<string, any>;
+    return {
+      id: String(data.responseId ?? data.scheduledPostId ?? doc.id),
+      userId: data.userId as string | undefined,
+      platform: String(data.platform ?? 'social'),
+      status: String(data.status ?? 'posted'),
+      source: 'social_log',
+      timestamp: toMillis(data.postedAt ?? data.createdAt),
+    };
+  }) ?? [];
 
   const weeklyCounts = new Map<string, number>();
   weekDates.forEach(date => weeklyCounts.set(date, 0));
@@ -577,6 +592,7 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
       timestamp: toMillis(post.postedAt || post.createdAt),
     })),
     ...liveMetaPostRows,
+    ...firestoreSocialLogRows,
     ...socialLogRows.map((log, index) => ({
       id: String(log.responseId ?? log.scheduledPostId ?? `social-log-${index}`),
       userId: log.userId,
