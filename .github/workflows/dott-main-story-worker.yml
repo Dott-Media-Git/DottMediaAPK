@@ -23,6 +23,12 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       DOTT_MAIN_USER_ID: cMPZQccGggbhZe9dbvtxFmBehP02
+      DOTT_MAIN_FACEBOOK_PAGE_ID: ${{ secrets.DOTT_MAIN_FACEBOOK_PAGE_ID }}
+      DOTT_MAIN_FACEBOOK_PAGE_NAME: ${{ secrets.DOTT_MAIN_FACEBOOK_PAGE_NAME }}
+      DOTT_MAIN_FACEBOOK_ACCESS_TOKEN: ${{ secrets.DOTT_MAIN_FACEBOOK_ACCESS_TOKEN }}
+      DOTT_MAIN_INSTAGRAM_ACCOUNT_ID: ${{ secrets.DOTT_MAIN_INSTAGRAM_ACCOUNT_ID }}
+      DOTT_MAIN_INSTAGRAM_USERNAME: ${{ secrets.DOTT_MAIN_INSTAGRAM_USERNAME }}
+      DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN: ${{ secrets.DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN }}
       META_GRAPH_VERSION: v19.0
       DOTT_STORY_ASSET_BASE_URL: https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign
       DOTT_STORY_FORCE_SLUG: ${{ github.event.inputs.force_slug }}
@@ -46,6 +52,10 @@ jobs:
           test -n "$FIREBASE_SERVICE_ACCOUNT_JSON"
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
+          test -n "$DOTT_MAIN_FACEBOOK_PAGE_ID"
+          test -n "$DOTT_MAIN_FACEBOOK_ACCESS_TOKEN"
+          test -n "$DOTT_MAIN_INSTAGRAM_ACCOUNT_ID"
+          test -n "$DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN"
 
       - name: Run Dott main story worker
         shell: bash

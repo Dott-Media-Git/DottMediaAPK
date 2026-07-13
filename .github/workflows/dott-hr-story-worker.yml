@@ -1,0 +1,47 @@
+name: Dott HR Story Worker
+
+on:
+  schedule:
+    - cron: '45 */8 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: dott-hr-story-worker
+  cancel-in-progress: false
+
+jobs:
+  post-dott-hr-story:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+      EXPO_PUBLIC_FIREBASE_API_KEY: ${{ secrets.EXPO_PUBLIC_FIREBASE_API_KEY }}
+      META_GRAPH_VERSION: v23.0
+      DOTTHR_META_USER_TOKEN: ${{ secrets.DOTTHR_META_USER_TOKEN }}
+      DOTT_HR_FACEBOOK_PAGE_TOKEN: ${{ secrets.DOTT_HR_FACEBOOK_PAGE_TOKEN }}
+      DOTT_HR_INSTAGRAM_ACCESS_TOKEN: ${{ secrets.DOTT_HR_INSTAGRAM_ACCESS_TOKEN }}
+      DOTT_HR_THREADS_ACCESS_TOKEN: ${{ secrets.DOTT_HR_THREADS_ACCESS_TOKEN }}
+      DOTT_HR_THREADS_PROFILE_ID: ${{ secrets.DOTT_HR_THREADS_PROFILE_ID }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: backend
+
+      - name: Validate required secrets
+        run: |
+          test -n "$FIREBASE_SERVICE_ACCOUNT_JSON"
+          test -n "$EXPO_PUBLIC_FIREBASE_API_KEY"
+
+      - name: Run Dott HR story worker
+        run: node scripts/dottHrDirectPoster.mjs --mode=story --quote
+        working-directory: backend

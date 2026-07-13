@@ -78,6 +78,7 @@ export const FloatingAssistant: React.FC = () => {
   const [liveSocial, setLiveSocial] = useState<LiveSocialStats | null>(null);
   const [accountSnapshot, setAccountSnapshot] = useState('');
   const [typedWelcomeText, setTypedWelcomeText] = useState('');
+  const [forcedDottiState, setForcedDottiState] = useState<DottiState | null>(null);
   const openedOnLaunchRef = useRef(false);
   const analyticsScopeId = useMemo(
     () => resolveAnalyticsScopeId(state.user?.uid, ((state.user as any)?.orgId ?? state.crmData?.orgId) as string | undefined),
@@ -96,6 +97,7 @@ export const FloatingAssistant: React.FC = () => {
   const welcomeMessageText = messages[0]?.id === 'welcome' ? messages[0].text : '';
   const dottiState = useMemo(
     () =>
+      forcedDottiState ??
       resolveDottiState({
         input,
         messages,
@@ -104,7 +106,7 @@ export const FloatingAssistant: React.FC = () => {
         accountSnapshot,
         currentScreen,
       }),
-    [accountSnapshot, currentScreen, input, listening, messages, sending]
+    [accountSnapshot, currentScreen, forcedDottiState, input, listening, messages, sending]
   );
   const showDotti = open || hasStartedTyping || hasUserMessage || sending || listening;
 
@@ -202,6 +204,7 @@ export const FloatingAssistant: React.FC = () => {
     const question = (prompt ?? input).trim();
     if (!question) return;
     setInput('');
+    setForcedDottiState('thinking');
     const userMessage: Message = { id: `user-${Date.now()}`, role: 'user', text: question };
     pushMessage(userMessage);
     setSending(true);
@@ -227,6 +230,7 @@ export const FloatingAssistant: React.FC = () => {
       });
     } finally {
       setSending(false);
+      setTimeout(() => setForcedDottiState(null), 350);
     }
   };
 
@@ -508,7 +512,7 @@ export const FloatingAssistant: React.FC = () => {
 const DOTTI_CONFIG: Record<DottiState, { blush: number; bob: number; brow: number; mouth: number; eye: number }> = {
   idle: { blush: 0.28, bob: 0.5, brow: 0, mouth: 0, eye: 1 },
   happy: { blush: 0.55, bob: 0.75, brow: -2, mouth: 1, eye: 1 },
-  thinking: { blush: 0.32, bob: 0.35, brow: 3, mouth: -0.2, eye: 0.92 },
+  thinking: { blush: 0.18, bob: 1, brow: 10, mouth: -0.95, eye: 0.64 },
   analyzing: { blush: 0.35, bob: 0.55, brow: 1, mouth: 0.35, eye: 0.96 },
   empathetic: { blush: 0.5, bob: 0.25, brow: 4, mouth: 0.2, eye: 0.82 },
   excited: { blush: 0.75, bob: 1, brow: -4, mouth: 1.35, eye: 1.06 },
@@ -608,6 +612,14 @@ const DottiAvatar: React.FC<{ state: DottiState; size?: number }> = ({ state, si
             <Circle cx="206" cy="84" r="8" fill="#55D6BE" />
             <Circle cx="222" cy="70" r="5" fill="#7C5CFF" />
             <Rect x="214" y="92" width="22" height="6" rx="3" fill="#F7B955" />
+          </G>
+        ) : null}
+        {state === 'thinking' ? (
+          <G opacity="0.9">
+            <Circle cx="196" cy="57" r="9" fill="#FFFFFF" stroke="#7C5CFF" strokeWidth="4" />
+            <Circle cx="216" cy="38" r="14" fill="#FFFFFF" stroke="#7C5CFF" strokeWidth="4" />
+            <Circle cx="238" cy="27" r="8" fill="#FFFFFF" stroke="#7C5CFF" strokeWidth="4" />
+            <Path d="M91 184 C106 196 151 196 168 184" fill="none" stroke="#26324C" strokeWidth="5" strokeLinecap="round" opacity="0.45" />
           </G>
         ) : null}
         {state === 'closing' || state === 'excited' ? (

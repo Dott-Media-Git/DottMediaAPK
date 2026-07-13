@@ -4,6 +4,10 @@ import { fileURLToPath } from 'url';
 
 import axios from 'axios';
 import admin from 'firebase-admin';
+import dotenv from 'dotenv';
+import { TwitterApi } from 'twitter-api-v2';
+
+dotenv.config({ path: '.env', override: false });
 
 const DOTT_MAIN_USER_ID = process.env.DOTT_MAIN_USER_ID || 'cMPZQccGggbhZe9dbvtxFmBehP02';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v19.0';
@@ -308,6 +312,7 @@ function supabaseHeaders() {
 }
 
 function hasSupabaseConfig() {
+  if (/^(1|true|yes)$/i.test((process.env.DISABLE_SUPABASE || '').trim())) return false;
   return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 }
 
@@ -464,8 +469,27 @@ async function getMainAccounts() {
     username: (process.env.DOTT_MAIN_INSTAGRAM_USERNAME || '').trim() || undefined,
     accessToken: (process.env.DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN || '').trim(),
   };
-  if (envFacebook.pageId && envFacebook.accessToken && envInstagram.accountId && envInstagram.accessToken) {
-    return { facebook: envFacebook, instagram: envInstagram };
+  const envThreads = {
+    accountId: (process.env.DOTT_MAIN_THREADS_ACCOUNT_ID || process.env.THREADS_PROFILE_ID || '').trim(),
+    username: (process.env.DOTT_MAIN_THREADS_USERNAME || '').trim() || undefined,
+    accessToken: (process.env.DOTT_MAIN_THREADS_ACCESS_TOKEN || process.env.THREADS_ACCESS_TOKEN || '').trim(),
+  };
+  const envTwitter = getTwitterAccountFromEnv();
+  const envLinkedin = getLinkedInAccountFromEnv();
+  const hasEnvMeta = envFacebook.pageId && envFacebook.accessToken && envInstagram.accountId && envInstagram.accessToken;
+  const hasAnyEnvAccount =
+    hasEnvMeta ||
+    (envThreads.accountId && envThreads.accessToken) ||
+    envLinkedin ||
+    isUsableTwitterAccount(envTwitter);
+  if (hasAnyEnvAccount) {
+    return {
+      facebook: envFacebook.pageId && envFacebook.accessToken ? envFacebook : null,
+      instagram: envInstagram.accountId && envInstagram.accessToken ? envInstagram : null,
+      linkedin: envLinkedin,
+      threads: envThreads.accountId && envThreads.accessToken ? envThreads : null,
+      twitter: envTwitter,
+    };
   }
 
   if (hasSupabaseConfig()) {
@@ -483,8 +507,16 @@ async function getMainAccounts() {
       const payload = response.data || {};
       const facebook = payload.facebook || {};
       const instagram = payload.instagram || {};
+      const threads = payload.threads || null;
+      const twitter = payload.twitter || null;
       if (facebook.pageId && facebook.accessToken && instagram.accountId && instagram.accessToken) {
-        return { facebook, instagram, linkedin: await getLinkedInAccount() };
+        return {
+          facebook,
+          instagram,
+          linkedin: envLinkedin,
+          threads: threads?.accountId && threads?.accessToken ? threads : envThreads.accountId && envThreads.accessToken ? envThreads : null,
+          twitter: isUsableTwitterAccount(twitter) ? twitter : envTwitter,
+        };
       }
     } catch (error) {
       console.warn(
@@ -505,11 +537,13 @@ async function getMainAccounts() {
   if (!instagram.accountId || !instagram.accessToken) {
     throw new Error('Dott main Instagram credentials missing in Firestore');
   }
-  const linkedin = data.socialAccounts?.linkedin || (await getLinkedInAccount());
-  return { facebook, instagram, linkedin };
+  const linkedin = data.socialAccounts?.linkedin || envLinkedin || (await getLinkedInAccount());
+  const threads = data.socialAccounts?.threads || (envThreads.accountId && envThreads.accessToken ? envThreads : null);
+  const twitter = isUsableTwitterAccount(data.socialAccounts?.twitter) ? data.socialAccounts.twitter : envTwitter;
+  return { facebook, instagram, linkedin, threads, twitter };
 }
 
-async function getLinkedInAccount() {
+function getLinkedInAccountFromEnv() {
   const envToken = (process.env.DOTT_MAIN_LINKEDIN_ACCESS_TOKEN || process.env.LINKEDIN_ACCESS_TOKEN || '').trim();
   const envRefreshToken = (
     process.env.DOTT_MAIN_LINKEDIN_REFRESH_TOKEN ||
@@ -517,15 +551,54 @@ async function getLinkedInAccount() {
     ''
   ).trim();
   const envUrn = (process.env.DOTT_MAIN_LINKEDIN_AUTHOR_URN || process.env.LINKEDIN_AUTHOR_URN || '').trim();
-  if (envToken && envUrn) {
-    return refreshLinkedInAccount({
-      accessToken: envToken,
-      refreshToken: envRefreshToken || undefined,
-      accessTokenExpiresAt: Number(process.env.DOTT_MAIN_LINKEDIN_ACCESS_TOKEN_EXPIRES_AT || 0) || undefined,
-      refreshTokenExpiresAt: Number(process.env.DOTT_MAIN_LINKEDIN_REFRESH_TOKEN_EXPIRES_AT || 0) || undefined,
-      urn: envUrn,
-    });
-  }
+  if (!envToken || !envUrn) return null;
+  return {
+    accessToken: envToken,
+    refreshToken: envRefreshToken || undefined,
+    accessTokenExpiresAt: Number(process.env.DOTT_MAIN_LINKEDIN_ACCESS_TOKEN_EXPIRES_AT || 0) || undefined,
+    refreshTokenExpiresAt: Number(process.env.DOTT_MAIN_LINKEDIN_REFRESH_TOKEN_EXPIRES_AT || 0) || undefined,
+    urn: envUrn,
+  };
+}
+
+function getTwitterAccountFromEnv() {
+  const accessToken = (process.env.DOTT_MAIN_X_ACCESS_TOKEN || process.env.TWITTER_ACCESS_TOKEN || process.env.X_ACCESS_TOKEN || '').trim();
+  const accessSecret = (
+    process.env.DOTT_MAIN_X_ACCESS_SECRET ||
+    process.env.TWITTER_ACCESS_SECRET ||
+    process.env.TWITTER_ACCESS_TOKEN_SECRET ||
+    process.env.X_ACCESS_SECRET ||
+    ''
+  ).trim();
+  const appKey = (
+    process.env.DOTT_MAIN_X_API_KEY ||
+    process.env.TWITTER_API_KEY ||
+    process.env.TWITTER_CONSUMER_KEY ||
+    process.env.X_API_KEY ||
+    ''
+  ).trim();
+  const appSecret = (
+    process.env.DOTT_MAIN_X_API_SECRET ||
+    process.env.TWITTER_API_SECRET ||
+    process.env.TWITTER_CONSUMER_SECRET ||
+    process.env.X_API_SECRET ||
+    ''
+  ).trim();
+  return isUsableTwitterAccount({ accessToken, accessSecret, appKey, appSecret })
+    ? { accessToken, accessSecret, appKey, appSecret }
+    : null;
+}
+
+function isUsableTwitterAccount(account) {
+  if (!account) return false;
+  const appKey = account.appKey || account.consumerKey;
+  const appSecret = account.appSecret || account.consumerSecret;
+  return Boolean(account.accessToken && account.accessSecret && appKey && appSecret);
+}
+
+async function getLinkedInAccount() {
+  const envAccount = getLinkedInAccountFromEnv();
+  if (envAccount) return refreshLinkedInAccount(envAccount);
 
   if (hasSupabaseConfig()) {
     try {
@@ -667,6 +740,52 @@ async function publishToLinkedIn({ accessToken, urn, caption, mediaUrl, mediaTyp
     },
   );
   return { id: response.data?.id || response.headers?.['x-restli-id'] || `li_${Date.now()}` };
+}
+
+async function publishToThreads({ accountId, accessToken, caption, mediaUrl, mediaType }) {
+  const baseUrl = `https://graph.threads.net/v1.0/${accountId}`;
+  const params = new URLSearchParams({
+    media_type: mediaType === 'video' ? 'VIDEO' : 'IMAGE',
+    text: caption,
+    access_token: accessToken,
+  });
+  if (mediaType === 'video') {
+    params.set('video_url', mediaUrl);
+  } else {
+    params.set('image_url', mediaUrl);
+  }
+  const create = await axios.post(`${baseUrl}/threads`, params, { timeout: 60000 });
+  const creationId = create.data?.id;
+  if (!creationId) throw new Error('Threads container creation failed');
+  const publish = await axios.post(
+    `${baseUrl}/threads_publish`,
+    new URLSearchParams({ creation_id: creationId, access_token: accessToken }),
+    { timeout: 60000 },
+  );
+  const id = publish.data?.id;
+  if (!id) throw new Error('Threads publish failed');
+  return { id };
+}
+
+async function publishToTwitter({ account, caption, mediaUrl, mediaType }) {
+  const appKey = account.appKey || account.consumerKey;
+  const appSecret = account.appSecret || account.consumerSecret;
+  const client = new TwitterApi({
+    appKey,
+    appSecret,
+    accessToken: account.accessToken,
+    accessSecret: account.accessSecret,
+  });
+  const media = await axios.get(mediaUrl, { responseType: 'arraybuffer', timeout: 60000 });
+  const buffer = Buffer.isBuffer(media.data) ? media.data : Buffer.from(media.data);
+  const mediaId = await client.v1.uploadMedia(buffer, {
+    mimeType: mediaType === 'video' ? 'video/mp4' : 'image/jpeg',
+  });
+  const tweet = await client.v2.tweet({
+    text: caption.slice(0, 270),
+    media: { media_ids: [mediaId] },
+  });
+  return { id: tweet.data?.id || `x_${Date.now()}` };
 }
 
 async function getCampaignState() {
@@ -1100,6 +1219,8 @@ function getPendingRun(data, contentKey) {
     instagramResult: pending.instagramResult && typeof pending.instagramResult === 'object' ? pending.instagramResult : null,
     facebookResult: pending.facebookResult && typeof pending.facebookResult === 'object' ? pending.facebookResult : null,
     linkedinResult: pending.linkedinResult && typeof pending.linkedinResult === 'object' ? pending.linkedinResult : null,
+    threadsResult: pending.threadsResult && typeof pending.threadsResult === 'object' ? pending.threadsResult : null,
+    twitterResult: pending.twitterResult && typeof pending.twitterResult === 'object' ? pending.twitterResult : null,
   };
 }
 
@@ -1112,7 +1233,7 @@ async function persistPendingRun(state, previousData, campaignState, pendingRun)
 }
 
 async function main() {
-  const { facebook, instagram, linkedin } = await getMainAccounts();
+  const { facebook, instagram, linkedin, threads, twitter } = await getMainAccounts();
   const { state, data, campaignState, item, forced } = await chooseItem();
   let stateData = data;
   const currentHour = hourBucket();
@@ -1144,6 +1265,8 @@ async function main() {
       instagramResult: null,
       facebookResult: null,
       linkedinResult: null,
+      threadsResult: null,
+      twitterResult: null,
     };
     await persistPendingRun(state, stateData, campaignState, pendingRun);
     stateData = {
@@ -1154,7 +1277,7 @@ async function main() {
   }
 
   let instagramResult = pendingRun.instagramResult;
-  if (!instagramResult) {
+  if (!instagramResult && instagram?.accountId && instagram?.accessToken) {
     instagramResult =
       item.type === 'video'
         ? await publishToInstagramReel({
@@ -1179,7 +1302,7 @@ async function main() {
   }
 
   let facebookResult = pendingRun.facebookResult;
-  if (!facebookResult) {
+  if (!facebookResult && facebook?.pageId && facebook?.accessToken) {
     facebookResult =
       item.type === 'video'
         ? await publishToFacebookVideo({
@@ -1201,6 +1324,30 @@ async function main() {
       dottCampaignPendingRun: pendingRun,
       dottCampaignPendingRunAt: pendingRun.startedAt,
     };
+  }
+
+  let threadsResult = pendingRun.threadsResult;
+  let threadsError = null;
+  if (!threadsResult && threads?.accessToken && threads?.accountId) {
+    try {
+      threadsResult = await publishToThreads({
+        accountId: threads.accountId,
+        accessToken: threads.accessToken,
+        caption: item.instagramCaption,
+        mediaUrl: hostedUrl,
+        mediaType: item.type,
+      });
+      pendingRun = { ...pendingRun, threadsResult };
+      await persistPendingRun(state, stateData, campaignState, pendingRun);
+      stateData = {
+        ...(stateData && typeof stateData === 'object' ? stateData : {}),
+        dottCampaignPendingRun: pendingRun,
+        dottCampaignPendingRunAt: pendingRun.startedAt,
+      };
+    } catch (error) {
+      threadsError = error instanceof Error ? error.message : String(error);
+      console.warn('[dott-main-campaign] Threads publish failed; other posts remain active', threadsError);
+    }
   }
 
   let linkedinResult = pendingRun.linkedinResult;
@@ -1227,6 +1374,33 @@ async function main() {
     }
   }
 
+  let twitterResult = pendingRun.twitterResult;
+  let twitterError = null;
+  if (!twitterResult && isUsableTwitterAccount(twitter)) {
+    try {
+      twitterResult = await publishToTwitter({
+        account: twitter,
+        caption: item.facebookCaption,
+        mediaUrl: hostedUrl,
+        mediaType: item.type,
+      });
+      pendingRun = { ...pendingRun, twitterResult };
+      await persistPendingRun(state, stateData, campaignState, pendingRun);
+      stateData = {
+        ...(stateData && typeof stateData === 'object' ? stateData : {}),
+        dottCampaignPendingRun: pendingRun,
+        dottCampaignPendingRunAt: pendingRun.startedAt,
+      };
+    } catch (error) {
+      twitterError = error instanceof Error ? error.message : String(error);
+      console.warn('[dott-main-campaign] X publish failed; other posts remain active', twitterError);
+    }
+  }
+
+  if (!instagramResult && !facebookResult && !threadsResult && !linkedinResult && !twitterResult) {
+    throw new Error('No Dott main connected platform posted successfully');
+  }
+
   const postedAt = new Date().toISOString();
   const socialLogs = [
     {
@@ -1234,7 +1408,15 @@ async function main() {
       platform: WORKER_TAG,
       scheduled_post_id: `external:${contentKey}`,
       status: 'posted',
-      response_id: `${instagramResult.id}|${facebookResult.id}${linkedinResult?.id ? `|${linkedinResult.id}` : ''}`,
+      response_id: [
+        instagramResult?.id,
+        facebookResult?.id,
+        threadsResult?.id,
+        linkedinResult?.id,
+        twitterResult?.id,
+      ]
+        .filter(Boolean)
+        .join('|'),
       posted_at: postedAt,
       payload: {
         slug: item.slug,
@@ -1242,12 +1424,14 @@ async function main() {
         worker: WORKER_TAG,
         contentType: item.type === 'video' ? 'campaign_video' : 'campaign_image',
         ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
-        instagram: instagramResult,
-        facebook: facebookResult,
+        ...(instagramResult ? { instagram: instagramResult } : {}),
+        ...(facebookResult ? { facebook: facebookResult } : {}),
+        ...(threadsResult ? { threads: threadsResult } : {}),
         ...(linkedinResult ? { linkedin: linkedinResult } : {}),
+        ...(twitterResult ? { twitter: twitterResult } : {}),
       },
     },
-    {
+    ...(instagramResult ? [{
       user_id: DOTT_MAIN_USER_ID,
       platform: 'instagram',
       scheduled_post_id: `external:${contentKey}`,
@@ -1262,8 +1446,8 @@ async function main() {
         ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
         instagram: instagramResult,
       },
-    },
-    {
+    }] : []),
+    ...(facebookResult ? [{
       user_id: DOTT_MAIN_USER_ID,
       platform: 'facebook',
       scheduled_post_id: `external:${contentKey}`,
@@ -1278,7 +1462,7 @@ async function main() {
         ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
         facebook: facebookResult,
       },
-    },
+    }] : []),
   ];
   if (linkedinResult) {
     socialLogs.push({
@@ -1313,12 +1497,80 @@ async function main() {
       },
     });
   }
+  if (threadsResult) {
+    socialLogs.push({
+      user_id: DOTT_MAIN_USER_ID,
+      platform: 'threads',
+      scheduled_post_id: `external:${contentKey}`,
+      status: 'posted',
+      response_id: threadsResult.id,
+      posted_at: postedAt,
+      payload: {
+        slug: item.slug,
+        filename: item.filename,
+        worker: WORKER_TAG,
+        contentType: item.type === 'video' ? 'campaign_video' : 'campaign_image',
+        ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
+        threads: threadsResult,
+      },
+    });
+  } else if (threadsError) {
+    socialLogs.push({
+      user_id: DOTT_MAIN_USER_ID,
+      platform: 'threads',
+      scheduled_post_id: `external:${contentKey}`,
+      status: 'failed',
+      response_id: null,
+      error: threadsError,
+      posted_at: postedAt,
+      payload: {
+        slug: item.slug,
+        filename: item.filename,
+        worker: WORKER_TAG,
+      },
+    });
+  }
+  if (twitterResult) {
+    socialLogs.push({
+      user_id: DOTT_MAIN_USER_ID,
+      platform: 'twitter',
+      scheduled_post_id: `external:${contentKey}`,
+      status: 'posted',
+      response_id: twitterResult.id,
+      posted_at: postedAt,
+      payload: {
+        slug: item.slug,
+        filename: item.filename,
+        worker: WORKER_TAG,
+        contentType: item.type === 'video' ? 'campaign_video' : 'campaign_image',
+        ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
+        twitter: twitterResult,
+      },
+    });
+  } else if (twitterError) {
+    socialLogs.push({
+      user_id: DOTT_MAIN_USER_ID,
+      platform: 'twitter',
+      scheduled_post_id: `external:${contentKey}`,
+      status: 'failed',
+      response_id: null,
+      error: twitterError,
+      posted_at: postedAt,
+      payload: {
+        slug: item.slug,
+        filename: item.filename,
+        worker: WORKER_TAG,
+      },
+    });
+  }
   await addSocialLogs(socialLogs);
-  await incrementSocialDaily(
-    item.type === 'video'
-      ? { instagram_reels: 1, facebook: 1, ...(linkedinResult ? { linkedin: 1 } : {}) }
-      : { instagram: 1, facebook: 1, ...(linkedinResult ? { linkedin: 1 } : {}) },
-  );
+  const dailyPlatforms = {};
+  if (instagramResult) dailyPlatforms[item.type === 'video' ? 'instagram_reels' : 'instagram'] = 1;
+  if (facebookResult) dailyPlatforms.facebook = 1;
+  if (threadsResult) dailyPlatforms.threads = 1;
+  if (linkedinResult) dailyPlatforms.linkedin = 1;
+  if (twitterResult) dailyPlatforms.twitter = 1;
+  await incrementSocialDaily(dailyPlatforms);
 
   await updateCampaignState(state, stateData, {
     dottCampaignEnabled: true,
@@ -1328,8 +1580,13 @@ async function main() {
     dottCampaignPendingRun: null,
     dottCampaignPendingRunAt: null,
     dottCampaignLastResult: [
-      { platform: item.type === 'video' ? 'instagram_reels' : 'instagram', status: 'posted', remoteId: instagramResult.id },
-      { platform: 'facebook', status: 'posted', remoteId: facebookResult.id },
+      ...(instagramResult
+        ? [{ platform: item.type === 'video' ? 'instagram_reels' : 'instagram', status: 'posted', remoteId: instagramResult.id }]
+        : []),
+      ...(facebookResult ? [{ platform: 'facebook', status: 'posted', remoteId: facebookResult.id }] : []),
+      ...(threadsResult ? [{ platform: 'threads', status: 'posted', remoteId: threadsResult.id }] : []),
+      ...(linkedinResult ? [{ platform: 'linkedin', status: 'posted', remoteId: linkedinResult.id }] : []),
+      ...(twitterResult ? [{ platform: 'twitter', status: 'posted', remoteId: twitterResult.id }] : []),
     ],
   });
 
@@ -1340,8 +1597,11 @@ async function main() {
       slug: item.slug,
       mediaType: item.type,
       ...(item.type === 'video' ? { videoUrl: hostedUrl } : { imageUrl: hostedUrl }),
-      instagram: instagramResult,
-      facebook: facebookResult,
+      ...(instagramResult ? { instagram: instagramResult } : {}),
+      ...(facebookResult ? { facebook: facebookResult } : {}),
+      ...(threadsResult ? { threads: threadsResult } : {}),
+      ...(linkedinResult ? { linkedin: linkedinResult } : {}),
+      ...(twitterResult ? { twitter: twitterResult } : {}),
     }),
   );
 }
