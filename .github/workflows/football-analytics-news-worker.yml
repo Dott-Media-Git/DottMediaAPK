@@ -1,0 +1,61 @@
+name: Football Analytics News Worker
+
+on:
+  schedule:
+    - cron: '12 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: football-analytics-news-worker
+  cancel-in-progress: false
+
+jobs:
+  post-football-analytics-news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      FOOTBALL_ANALYTICS_USER_ID: 1zvY9nNyXMcfxdPQEyx0bIdK7r53
+      META_GRAPH_VERSION: v19.0
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: backend
+
+      - name: Install poster renderer dependencies
+        run: python -m pip install --disable-pip-version-check pillow requests
+
+      - name: Validate required secrets
+        run: |
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+
+      - name: Run Football Analytics news worker
+        run: |
+          set +e
+          output=$(node scripts/footballAnalyticsNewsWorker.mjs 2>&1)
+          status=$?
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ]; then
+            clean_output=$(printf '%s' "$output" | tr '\n' ' ' | tr '\r' ' ')
+            echo "::error title=Football Analytics news worker failure::$clean_output"
+            exit "$status"
+          fi
+        working-directory: backend
