@@ -77,6 +77,7 @@ export const FloatingAssistant: React.FC = () => {
   const [voiceConversation, setVoiceConversation] = useState(false);
   const [liveSocial, setLiveSocial] = useState<LiveSocialStats | null>(null);
   const [accountSnapshot, setAccountSnapshot] = useState('');
+  const [typedWelcomeText, setTypedWelcomeText] = useState('');
   const openedOnLaunchRef = useRef(false);
   const analyticsScopeId = useMemo(
     () => resolveAnalyticsScopeId(state.user?.uid, ((state.user as any)?.orgId ?? state.crmData?.orgId) as string | undefined),
@@ -92,6 +93,7 @@ export const FloatingAssistant: React.FC = () => {
 
   const canDisplay = hydrated && enabled && Boolean(state.user);
   const hasUserMessage = useMemo(() => messages.some(message => message.role === 'user'), [messages]);
+  const welcomeMessageText = messages[0]?.id === 'welcome' ? messages[0].text : '';
   const dottiState = useMemo(
     () =>
       resolveDottiState({
@@ -110,8 +112,27 @@ export const FloatingAssistant: React.FC = () => {
     if (!canDisplay || openedOnLaunchRef.current) return;
     openedOnLaunchRef.current = true;
     setOpen(true);
-    setFullScreen(true);
+    setFullScreen(false);
   }, [canDisplay]);
+
+  useEffect(() => {
+    if (!welcomeMessageText || hasUserMessage) {
+      setTypedWelcomeText(welcomeMessageText);
+      return;
+    }
+
+    setTypedWelcomeText('');
+    let index = 0;
+    const timer = setInterval(() => {
+      index += 1;
+      setTypedWelcomeText(welcomeMessageText.slice(0, index));
+      if (index >= welcomeMessageText.length) {
+        clearInterval(timer);
+      }
+    }, 28);
+
+    return () => clearInterval(timer);
+  }, [hasUserMessage, welcomeMessageText]);
 
   const quickPrompts = useMemo(
     () => [
@@ -413,7 +434,9 @@ export const FloatingAssistant: React.FC = () => {
                     style={[styles.messageBubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}
                   >
                     <Text style={styles.messageLabel}>{message.role === 'user' ? t('You') : t('Dotti')}</Text>
-                    <Text style={styles.messageText}>{message.text}</Text>
+                    <Text style={styles.messageText}>
+                      {message.id === 'welcome' && !hasUserMessage ? typedWelcomeText : message.text}
+                    </Text>
                   </View>
                 ))}
                 {sending ? (
