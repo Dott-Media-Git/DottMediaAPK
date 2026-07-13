@@ -772,11 +772,28 @@ async function publishToThreads({ accountId, accessToken, caption, mediaUrl, med
   const create = await axios.post(`${baseUrl}/threads`, params, { timeout: 60000 });
   const creationId = create.data?.id;
   if (!creationId) throw new Error('Threads container creation failed');
-  const publish = await axios.post(
-    `${baseUrl}/threads_publish`,
-    new URLSearchParams({ creation_id: creationId, access_token: accessToken }),
-    { timeout: 60000 },
-  );
+  let publish;
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+    try {
+      publish = await axios.post(
+        `${baseUrl}/threads_publish`,
+        new URLSearchParams({ creation_id: creationId, access_token: accessToken }),
+        { timeout: 60000 },
+      );
+      break;
+    } catch (error) {
+      lastError = error;
+      const message = error?.response?.data?.error?.message ?? error?.message ?? '';
+      if (!/not ready|not available|processing|try again|container/i.test(String(message))) {
+        throw error;
+      }
+    }
+  }
+  if (!publish && lastError) throw lastError;
   const id = publish.data?.id;
   if (!id) throw new Error('Threads publish failed');
   return { id };
