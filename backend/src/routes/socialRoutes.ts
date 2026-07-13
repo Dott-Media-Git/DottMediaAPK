@@ -198,6 +198,14 @@ const fetchKnownMetaHistoryPosts = async (knownProfile: LiveHistoryProfile | nul
 
 const timestampSeconds = (value: any) => {
   if (!value) return 0;
+  if (typeof value === 'number') return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : Math.floor(parsed / 1000);
+  }
+  if (value instanceof Date) return Math.floor(value.getTime() / 1000);
+  if (typeof value.toDate === 'function') return Math.floor(value.toDate().getTime() / 1000);
+  if (typeof value.toMillis === 'function') return Math.floor(value.toMillis() / 1000);
   if (typeof value.seconds === 'number') return value.seconds;
   if (typeof value._seconds === 'number') return value._seconds;
   return 0;

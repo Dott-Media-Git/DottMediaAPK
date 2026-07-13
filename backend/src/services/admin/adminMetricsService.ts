@@ -232,6 +232,13 @@ const knownClientLookup = new Map(
   ]),
 );
 
+const normalizeAutopostPlatform = (platform?: string | null) => {
+  const raw = String(platform ?? '').trim().toLowerCase();
+  if (raw === 'instagram_reels') return 'instagram';
+  if (raw === 'twitter') return 'x';
+  return raw;
+};
+
 type AdminClientSummary = AdminMetrics['clients'][number];
 
 type ClientMetricInput = {
@@ -622,13 +629,16 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
 
   const autopostEntries: Array<Record<string, any>> = autopostSnap.docs
     .map(doc => doc.data() as Record<string, any>)
-    .filter(entry => entry.source === 'autopost');
+    .filter(entry => {
+      const platform = normalizeAutopostPlatform(String(entry.platform ?? ''));
+      return ['instagram', 'instagram_story', 'facebook', 'facebook_story', 'linkedin'].includes(platform);
+    });
 
   const autopostPlatforms = ['instagram', 'instagram_story', 'facebook', 'facebook_story', 'linkedin'];
   const autopostSuccessRate: AdminMetrics['autopostSuccessRate'] = {};
 
   autopostPlatforms.forEach(platform => {
-    const relevant = autopostEntries.filter(entry => entry.platform === platform);
+    const relevant = autopostEntries.filter(entry => normalizeAutopostPlatform(String(entry.platform ?? '')) === platform);
     const posted = relevant.filter(entry => entry.status === 'posted').length;
     const failed = relevant.filter(entry => entry.status === 'failed' || entry.status === 'skipped_limit').length;
     const attempted = posted + failed;

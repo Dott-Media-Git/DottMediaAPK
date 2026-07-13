@@ -53,7 +53,7 @@ export const planCatalog: PlanDefinition[] = [
     id: 'starter',
     orgPlan: 'Starter',
     name: 'Starter',
-    priceMonthlyCents: 999,
+    priceMonthlyCents: 2000,
     estimatedCostsCents: { openAi: 385, backend: 60, otherOps: 30 },
     stripePriceEnv: 'STRIPE_PRICE_STARTER',
     description: 'Entry plan for creators and small teams.',

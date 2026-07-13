@@ -47,7 +47,7 @@ const fallbackPlans: BillingPlan[] = [
     id: 'starter',
     name: 'Starter',
     description: 'Entry plan for creators and small teams.',
-    priceMonthlyCents: 999,
+    priceMonthlyCents: 2000,
     stripeConfigured: false,
     limits: { aiReplies: 500, images: 25, basicVideos: 2, proVideos: 0, scheduledPosts: 100 },
   },
