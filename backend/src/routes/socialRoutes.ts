@@ -27,6 +27,8 @@ const THREADS_GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const THREADS_GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
 const HISTORY_LIVE_FETCH_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_LIVE_FETCH_TIMEOUT_MS ?? 6000), 1000);
 const HISTORY_DAILY_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_DAILY_TIMEOUT_MS ?? 5000), 1000);
+const HISTORY_STORED_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_STORED_TIMEOUT_MS ?? 5000), 1000);
+const HISTORY_SOCIAL_LOG_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_SOCIAL_LOG_TIMEOUT_MS ?? 8000), 1000);
 
 const router = Router();
 
@@ -910,7 +912,12 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
       ? await fetchBwinMetaSocialProfile()
       : null;
     const userId = requestedUserId || historyUserId || knownProfile?.id || bwinProfile?.id || authUser.uid;
-    const history = await socialPostingService.getHistory(userId);
+    const history = await withFallbackTimeout(
+      'stored posting history',
+      socialPostingService.getHistory(userId),
+      HISTORY_STORED_TIMEOUT_MS,
+      { posts: [], todayPosts: [], summary: { perPlatform: {}, byStatus: {} }, daily: [] },
+    );
     const storedProfile = storedSocialAccounts
       ? {
           id: userId,
@@ -921,7 +928,7 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
     const liveHistoryProfile = mergeLiveHistoryProfiles(knownProfile, bwinProfile, storedProfile);
     const [liveMetaPosts, socialLogPosts] = await Promise.all([
       withFallbackTimeout('live social history enrichment', fetchKnownMetaHistoryPosts(liveHistoryProfile), HISTORY_LIVE_FETCH_TIMEOUT_MS, []),
-      fetchSocialLogHistoryPosts(userId),
+      withFallbackTimeout('social log history', fetchSocialLogHistoryPosts(userId), HISTORY_SOCIAL_LOG_TIMEOUT_MS, []),
     ]);
     const storedPosts = [...(history.posts ?? []), ...(history.todayPosts ?? [])];
     const posts = mergeHistoryPosts(storedPosts, [...liveMetaPosts, ...socialLogPosts]).slice(0, 400);
