@@ -1734,6 +1734,12 @@ export async function getLiveSocialMetrics(
         output.platforms.x.interactions,
         output.platforms.x.views,
       );
+    } else if (twitterCredential) {
+      const timelineStats = await fetchOwnXTimelineMetrics(twitterCredential);
+      output.platforms.x.views = timelineStats.views;
+      output.platforms.x.interactions = timelineStats.interactions;
+      output.platforms.x.postsAnalyzed = Math.max(output.platforms.x.postsAnalyzed, timelineStats.postsAnalyzed);
+      output.platforms.x.engagementRate = formatRate(timelineStats.interactions, timelineStats.views);
     }
 
     output.platforms.facebook.conversions = toNumber(sourceRedirectClicks.facebook);
