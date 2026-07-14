@@ -301,6 +301,25 @@ const fetchSocialLogHistoryPosts = async (userId: string) => {
   if (!userId) return [];
   const posts: any[] = [];
   try {
+    const logs = await supabaseFallbackService.getSocialLogsByUser(userId, 500);
+    logs.forEach((log: any, index: number) => {
+      posts.push({
+        id: `supabase-social-log-${log.responseId ?? log.scheduledPostId ?? index}`,
+        platform: String(log.platform ?? 'social'),
+        status: String(log.status ?? 'posted'),
+        remoteId: log.responseId ? String(log.responseId) : undefined,
+        postedAt: log.postedAt,
+        createdAt: log.postedAt,
+        caption: '',
+        source: 'supabase_social_log',
+        error: log.error ?? null,
+      });
+    });
+  } catch (error) {
+    console.warn('[social-history-route] Supabase social log history fetch failed', error instanceof Error ? error.message : String(error));
+  }
+  if (posts.length > 0) return posts;
+  try {
     const snap = await firestore.collection('socialLogs').where('userId', '==', userId).orderBy('postedAt', 'desc').limit(100).get();
     snap.docs.forEach(doc => {
       const data = doc.data() as Record<string, any>;
@@ -318,24 +337,6 @@ const fetchSocialLogHistoryPosts = async (userId: string) => {
     });
   } catch (error) {
     console.warn('[social-history-route] Firestore social log history fetch failed', error instanceof Error ? error.message : String(error));
-  }
-  try {
-    const logs = await supabaseFallbackService.getSocialLogsByUser(userId, 500);
-    logs.forEach((log: any, index: number) => {
-      posts.push({
-        id: `supabase-social-log-${log.responseId ?? log.scheduledPostId ?? index}`,
-        platform: String(log.platform ?? 'social'),
-        status: String(log.status ?? 'posted'),
-        remoteId: log.responseId ? String(log.responseId) : undefined,
-        postedAt: log.postedAt,
-        createdAt: log.postedAt,
-        caption: '',
-        source: 'social_log',
-        error: log.error ?? null,
-      });
-    });
-  } catch (error) {
-    console.warn('[social-history-route] Supabase social log history fetch failed', error instanceof Error ? error.message : String(error));
   }
   return posts;
 };
