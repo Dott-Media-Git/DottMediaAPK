@@ -801,6 +801,30 @@ async function publishToThreads({ accountId, accessToken, caption, mediaUrl, med
   return { id };
 }
 
+async function publishTextToThreads({ accountId, accessToken, caption }) {
+  const baseUrl = `https://graph.threads.net/v1.0/${accountId}`;
+  const createResponse = await axios.post(`${baseUrl}/threads`, null, {
+    params: {
+      media_type: 'TEXT',
+      text: caption,
+      access_token: accessToken,
+    },
+    timeout: 30000,
+  });
+  const creationId = createResponse.data?.id;
+  if (!creationId) throw new Error('Threads text container creation failed');
+  const publishResponse = await axios.post(`${baseUrl}/threads_publish`, null, {
+    params: {
+      creation_id: creationId,
+      access_token: accessToken,
+    },
+    timeout: 30000,
+  });
+  const id = publishResponse.data?.id;
+  if (!id) throw new Error('Threads text publish failed');
+  return { id, fallback: 'text' };
+}
+
 async function publishToTwitter({ account, caption, mediaUrl, mediaType }) {
   const appKey = account.appKey || account.consumerKey;
   const appSecret = account.appSecret || account.consumerSecret;
@@ -1416,8 +1440,27 @@ async function main() {
         dottCampaignPendingRunAt: pendingRun.startedAt,
       };
     } catch (error) {
-      threadsError = error instanceof Error ? error.message : String(error);
-      console.warn('[dott-main-campaign] Threads publish failed; other posts remain active', threadsError);
+      const mediaError = error instanceof Error ? error.message : String(error);
+      try {
+        threadsResult = await publishTextToThreads({
+          accountId: threads.accountId,
+          accessToken: threads.accessToken,
+          caption: item.instagramCaption,
+        });
+        pendingRun = { ...pendingRun, threadsResult };
+        await persistPendingRun(state, stateData, campaignState, pendingRun);
+        stateData = {
+          ...(stateData && typeof stateData === 'object' ? stateData : {}),
+          dottCampaignPendingRun: pendingRun,
+          dottCampaignPendingRunAt: pendingRun.startedAt,
+        };
+        console.warn('[dott-main-campaign] Threads media publish failed; text fallback posted', mediaError);
+      } catch (fallbackError) {
+        threadsError = `${mediaError}; text fallback: ${
+          fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+        }`;
+        console.warn('[dott-main-campaign] Threads publish failed; other posts remain active', threadsError);
+      }
     }
   }
 
