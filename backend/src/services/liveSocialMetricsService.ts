@@ -488,16 +488,6 @@ const normalizeSocialLogPost = (entry: {
 const hasSocialAccounts = (profile?: UserSocialProfile | null) =>
   Boolean(profile?.socialAccounts && Object.keys(profile.socialAccounts).length > 0);
 
-const isKnownLiveSocialProfile = (profile?: UserSocialProfile | null) =>
-  Boolean(
-    profile?.id &&
-      KNOWN_LIVE_SOCIAL_PROFILES.some(
-        known =>
-          known.userId === profile.id ||
-          (!!profile.email && known.email?.toLowerCase() === profile.email.toLowerCase()),
-      ),
-  );
-
 const rootMetaToken = () =>
   (
     process.env.META_GRAPH_TOKEN ??
@@ -812,9 +802,6 @@ const resolveLiveMetricOwners = async (
 
   const addProfile = (profile?: UserSocialProfile | null) => {
     if (!profile) return;
-    if (isKnownLiveSocialProfile(profile)) {
-      accountLevelMetaOnly = true;
-    }
     const profileId = profile.id?.trim();
     if (profileId && profilesById.has(profileId)) {
       const existing = profilesById.get(profileId);
