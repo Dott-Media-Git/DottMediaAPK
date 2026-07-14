@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import axios from 'axios';
 import admin from 'firebase-admin';
 import dotenv from 'dotenv';
+import { Client } from 'pg';
 import { TwitterApi } from 'twitter-api-v2';
 
 dotenv.config({ path: '.env', override: false });
@@ -13,6 +14,7 @@ const DOTT_MAIN_USER_ID = process.env.DOTT_MAIN_USER_ID || 'cMPZQccGggbhZe9dbvtx
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v19.0';
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const SUPABASE_DATABASE_URL = (process.env.SUPABASE_DATABASE_URL || '').trim();
 const WORKER_TAG = 'dott_main_campaign_worker';
 const FORCED_SLUG = (process.env.DOTT_CAMPAIGN_FORCE_SLUG || '').trim();
 const BYPASS_DEDUPE = /^(1|true|yes)$/i.test((process.env.DOTT_CAMPAIGN_BYPASS_DEDUPE || '').trim());
@@ -979,14 +981,47 @@ async function hasProcessedContent(contentKey) {
 }
 
 async function addSocialLogs(entries) {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !entries.length) return;
-  await axios.post(`${SUPABASE_URL}/rest/v1/dott_social_logs`, entries, {
-    headers: {
-      ...supabaseHeaders(),
-      Prefer: 'return=minimal',
-    },
-    timeout: 30000,
-  });
+  if (!entries.length) return;
+  if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      await axios.post(`${SUPABASE_URL}/rest/v1/dott_social_logs`, entries, {
+        headers: {
+          ...supabaseHeaders(),
+          Prefer: 'return=minimal',
+        },
+        timeout: 30000,
+      });
+      return;
+    } catch (error) {
+      console.warn(
+        '[dott-main-campaign] Supabase REST social log write failed; trying database fallback',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+  if (!SUPABASE_DATABASE_URL) return;
+  const client = new Client({ connectionString: SUPABASE_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  await client.connect();
+  try {
+    for (const entry of entries) {
+      await client.query(
+        `insert into public.dott_social_logs
+          (user_id, platform, scheduled_post_id, status, response_id, error, posted_at)
+         values ($1, $2, $3, $4, $5, $6, coalesce($7::timestamptz, now()))`,
+        [
+          entry.user_id,
+          entry.platform,
+          entry.scheduled_post_id,
+          entry.status,
+          entry.response_id ?? null,
+          entry.error ?? null,
+          entry.posted_at ?? null,
+        ],
+      );
+    }
+  } finally {
+    await client.end();
+  }
 }
 
 async function incrementSocialDaily(postedCountByPlatform) {
