@@ -500,12 +500,13 @@ async function getMainAccounts() {
     envLinkedin ||
     isUsableTwitterAccount(envTwitter);
   if (hasAnyEnvAccount) {
+    const storedTwitter = isUsableTwitterAccount(envTwitter) ? envTwitter : await getStoredTwitterAccount();
     return {
       facebook: envFacebook.pageId && envFacebook.accessToken ? envFacebook : null,
       instagram: envInstagram.accountId && envInstagram.accessToken ? envInstagram : null,
       linkedin: envLinkedin,
       threads: envThreads.accountId && envThreads.accessToken ? envThreads : null,
-      twitter: envTwitter,
+      twitter: storedTwitter,
     };
   }
 
@@ -611,6 +612,27 @@ function isUsableTwitterAccount(account) {
   const appKey = account.appKey || account.consumerKey;
   const appSecret = account.appSecret || account.consumerSecret;
   return Boolean(account.accessToken && account.accessSecret && appKey && appSecret);
+}
+
+async function getStoredTwitterAccount() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return null;
+  try {
+    const response = await axios.get(`${SUPABASE_URL}/rest/v1/dott_social_accounts`, {
+      headers: supabaseHeaders(),
+      params: {
+        select: 'accounts',
+        user_id: `eq.${DOTT_MAIN_USER_ID}`,
+        order: 'updated_at.desc.nullslast',
+        limit: 1,
+      },
+      timeout: 30000,
+    });
+    const account = Array.isArray(response.data) ? response.data[0]?.accounts?.twitter : null;
+    return isUsableTwitterAccount(account) ? account : null;
+  } catch (error) {
+    console.warn('[dott-main-campaign] stored X credentials unavailable', error instanceof Error ? error.message : String(error));
+    return null;
+  }
 }
 
 async function getLinkedInAccount() {
