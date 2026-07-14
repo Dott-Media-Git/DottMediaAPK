@@ -73,6 +73,7 @@ export type AdminLiveSocialAccount = {
       facebook: { connected: boolean; views: number; interactions: number; engagementRate: number };
       instagram: { connected: boolean; views: number; interactions: number; engagementRate: number };
       threads: { connected: boolean; views: number; interactions: number; engagementRate: number };
+      linkedin: { connected: boolean; views: number; interactions: number; engagementRate: number };
       x: { connected: boolean; views: number; interactions: number; engagementRate: number };
       web: { connected: boolean; views: number; interactions: number; engagementRate: number };
     };
