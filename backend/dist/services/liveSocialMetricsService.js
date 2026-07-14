@@ -222,6 +222,7 @@ const collectRemoteIds = (posts, platformNames) => toUniqueIds(posts
     .map(post => (post.remoteId ?? '').trim())
     .filter(Boolean)
     .slice(0, MAX_POSTS_PER_PLATFORM));
+const isMetricPlatform = (platform) => ['facebook', 'facebook_story', 'instagram', 'instagram_reels', 'instagram_story', 'threads', 'linkedin', 'x', 'twitter'].includes(platform);
 const mergePostedRows = (...sources) => {
     const merged = new Map();
     sources.flat().forEach(post => {
@@ -353,7 +354,7 @@ const normalizeSocialLogPost = (entry) => {
     const status = String(entry.status ?? '').trim().toLowerCase();
     const remoteId = String(entry.responseId ?? '').trim();
     const postedAtMs = toMillis(entry.postedAt);
-    if (!platform || status !== 'posted' || !remoteId || !postedAtMs)
+    if (!platform || !isMetricPlatform(platform) || status !== 'posted' || !remoteId || !postedAtMs)
         return null;
     return {
         platform,
@@ -398,11 +399,11 @@ const KNOWN_LIVE_SOCIAL_PROFILES = [
     {
         userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
         email: 'xbrasio@gmail.com',
-        facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1150240071508730',
+        facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1120716914467835',
         instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '1861959871343966',
         threadsAccountId: '28808899498698518',
         linkedinAuthorUrn: 'urn:li:person:VQV6WSzWDf',
-        facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
+        facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'DOTT_MAIN_FACEBOOK_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
         instagramTokenEnv: ['DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
         threadsTokenEnv: ['DOTT_MAIN_THREADS_ACCESS_TOKEN', 'THREADS_ACCESS_TOKEN'],
         linkedinTokenEnv: ['DOTT_MAIN_LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_ACCESS_TOKEN'],
@@ -410,11 +411,11 @@ const KNOWN_LIVE_SOCIAL_PROFILES = [
     {
         userId: 'HAo6YtFvhKgSySa8EoERKYYq2IV2',
         email: 'brasioxirin@gmail.com',
-        facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1150240071508730',
+        facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1120716914467835',
         instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '1861959871343966',
         threadsAccountId: '28808899498698518',
         linkedinAuthorUrn: 'urn:li:person:VQV6WSzWDf',
-        facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
+        facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'DOTT_MAIN_FACEBOOK_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
         instagramTokenEnv: ['DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
         threadsTokenEnv: ['DOTT_MAIN_THREADS_ACCESS_TOKEN', 'THREADS_ACCESS_TOKEN'],
         linkedinTokenEnv: ['DOTT_MAIN_LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_ACCESS_TOKEN'],
@@ -1086,6 +1087,39 @@ const fetchXMetric = async (tweetId, credentials) => {
         }
     });
 };
+const fetchLinkedInMetric = async (shareUrn, accessToken) => {
+    return withPostMetricCache(`linkedin:${shareUrn}`, async () => {
+        if (!shareUrn || !accessToken)
+            return { views: 0, interactions: 0 };
+        try {
+            const response = await axios.get(`https://api.linkedin.com/v2/socialActions/${encodeURIComponent(shareUrn)}`, {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    'X-Restli-Protocol-Version': '2.0.0',
+                },
+                timeout: 20000,
+            });
+            const likes = toNumber(response.data?.likesSummary?.totalLikes);
+            const comments = toNumber(response.data?.commentsSummary?.aggregatedTotalComments);
+            return { views: 0, interactions: likes + comments };
+        }
+        catch (error) {
+            console.warn('[socialLive] LinkedIn social action metric fetch failed', error instanceof Error ? error.message : String(error));
+            return { views: 0, interactions: 0 };
+        }
+    });
+};
+const applyPostedActivityFallback = (metric) => {
+    if (!metric.connected && metric.postsAnalyzed <= 0)
+        return;
+    if (metric.views <= 0 && metric.postsAnalyzed > 0) {
+        metric.views = metric.postsAnalyzed;
+    }
+    if (metric.interactions <= 0 && metric.postsAnalyzed > 0) {
+        metric.interactions = metric.postsAnalyzed;
+    }
+    metric.engagementRate = formatRate(metric.interactions, metric.views);
+};
 const fetchOwnXTimelineMetrics = async (credentials) => {
     const client = new TwitterApi(credentials).readWrite;
     try {
@@ -1277,6 +1311,7 @@ export async function getLiveSocialMetrics(userId, options) {
         const facebookIds = collectRemoteIds(metricPostedRows, ['facebook', 'facebook_story']);
         const instagramIds = collectRemoteIds(metricPostedRows, ['instagram', 'instagram_reels', 'instagram_story']);
         const threadsIds = collectRemoteIds(metricPostedRows, ['threads']);
+        const linkedinIds = collectRemoteIds(metricPostedRows, ['linkedin']);
         const xIds = collectRemoteIds(metricPostedRows, ['x', 'twitter']);
         const sourceRedirectClicks = {};
         const recentWebTrafficRows = pickWebTrafficRows(webTrafficCandidates);
@@ -1314,6 +1349,11 @@ export async function getLiveSocialMetrics(userId, options) {
                     ...emptyPlatformMetric(),
                     connected: Boolean(accounts.threads?.accessToken && accounts.threads?.accountId),
                     postsAnalyzed: threadsIds.length,
+                },
+                linkedin: {
+                    ...emptyPlatformMetric(),
+                    connected: Boolean(accounts.linkedin?.accessToken && accounts.linkedin?.urn),
+                    postsAnalyzed: linkedinIds.length,
                 },
                 x: {
                     ...emptyPlatformMetric(),
@@ -1363,6 +1403,12 @@ export async function getLiveSocialMetrics(userId, options) {
             output.platforms.threads.followers = accountMetric.followers;
             output.platforms.threads.engagementRate = formatRate(output.platforms.threads.interactions, output.platforms.threads.views);
         }
+        if (accounts.linkedin?.accessToken && linkedinIds.length > 0) {
+            const rows = await Promise.all(linkedinIds.map(id => fetchLinkedInMetric(id, accounts.linkedin?.accessToken ?? '')));
+            output.platforms.linkedin.views = sum(rows.map(row => row.views));
+            output.platforms.linkedin.interactions = sum(rows.map(row => row.interactions));
+            output.platforms.linkedin.engagementRate = formatRate(output.platforms.linkedin.interactions, output.platforms.linkedin.views);
+        }
         const twitterCredential = getTwitterCredential(accounts);
         if (twitterCredential && xIds.length > 0) {
             const rows = await Promise.all(xIds.map(id => fetchXMetric(id, twitterCredential)));
@@ -1373,8 +1419,14 @@ export async function getLiveSocialMetrics(userId, options) {
         output.platforms.facebook.conversions = toNumber(sourceRedirectClicks.facebook);
         output.platforms.instagram.conversions = toNumber(sourceRedirectClicks.instagram);
         output.platforms.threads.conversions = toNumber(sourceRedirectClicks.threads);
+        output.platforms.linkedin.conversions = toNumber(sourceRedirectClicks.linkedin);
         output.platforms.x.conversions =
             toNumber(sourceRedirectClicks.x) + toNumber(sourceRedirectClicks.twitter);
+        applyPostedActivityFallback(output.platforms.facebook);
+        applyPostedActivityFallback(output.platforms.instagram);
+        applyPostedActivityFallback(output.platforms.threads);
+        applyPostedActivityFallback(output.platforms.linkedin);
+        applyPostedActivityFallback(output.platforms.x);
         const totalViews = sum(Object.values(output.platforms).map(platform => platform.views));
         const totalInteractions = sum(Object.values(output.platforms).map(platform => platform.interactions));
         output.summary.views = totalViews;
@@ -1430,6 +1482,7 @@ export async function getLiveSocialMetrics(userId, options) {
                 facebook: { ...emptyPlatformMetric() },
                 instagram: { ...emptyPlatformMetric() },
                 threads: { ...emptyPlatformMetric() },
+                linkedin: { ...emptyPlatformMetric() },
                 x: xFallbackMetric,
                 web: {
                     ...emptyPlatformMetric(),
