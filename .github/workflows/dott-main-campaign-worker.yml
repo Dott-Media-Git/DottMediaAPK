@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
+    inputs:
+      bypassDedupe:
+        description: 'Force a fresh campaign item even when the recent-post dedupe window is active'
+        required: false
+        default: 'false'
 
 concurrency:
   group: dott-main-campaign-worker
@@ -38,6 +43,7 @@ jobs:
       DOTT_CAMPAIGN_IMAGE_BASE_URL: https://cdn.jsdelivr.net/gh/Dott-Media-Git/DottMediaAPK@main/backend/public/campaign-images/dottmain
       DOTT_CAMPAIGN_VIDEO_BASE_URL: https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign/backend/public/campaign-videos/dottmain
       DOTT_CAMPAIGN_ASSET_BASE_URL: https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign
+      DOTT_CAMPAIGN_BYPASS_DEDUPE: ${{ github.event.inputs.bypassDedupe || 'false' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
