@@ -72,6 +72,7 @@ export type LiveSocialStats = {
     facebook: LiveSocialPlatformStats;
     instagram: LiveSocialPlatformStats;
     threads: LiveSocialPlatformStats;
+    linkedin: LiveSocialPlatformStats;
     x: LiveSocialPlatformStats;
     web: LiveSocialPlatformStats;
   };
@@ -115,6 +116,7 @@ const emptyLiveSocialStats: LiveSocialStats = {
     facebook: { ...emptyLiveSocialPlatformStats },
     instagram: { ...emptyLiveSocialPlatformStats },
     threads: { ...emptyLiveSocialPlatformStats },
+    linkedin: { ...emptyLiveSocialPlatformStats },
     x: { ...emptyLiveSocialPlatformStats },
     web: { ...emptyLiveSocialPlatformStats },
   },
@@ -160,6 +162,7 @@ const normalizeLiveSocialStats = (value: any, requestedLookbackHours?: number): 
     facebook: normalizePlatform(value?.platforms?.facebook),
     instagram: normalizePlatform(value?.platforms?.instagram),
     threads: normalizePlatform(value?.platforms?.threads),
+    linkedin: normalizePlatform(value?.platforms?.linkedin),
     x: normalizePlatform(value?.platforms?.x),
     web: normalizePlatform(value?.platforms?.web),
   },
