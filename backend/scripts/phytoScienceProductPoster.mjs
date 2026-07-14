@@ -9,6 +9,8 @@ const PHYTO_USER_ID = process.env.PHYTO_SCIENCE_USER_ID || '7NXnsNmSRsh84gaQ1hi6
 const PHYTO_EMAIL = process.env.PHYTO_SCIENCE_EMAIL || 'dottmedia5@gmail.com';
 const parsedLimit = Number(readArg('limit') || process.env.PHYTO_POST_LIMIT || 3);
 const POST_LIMIT = Number.isFinite(parsedLimit) ? Math.max(parsedLimit, 1) : 3;
+const parsedCooldownHours = Number(process.env.PHYTO_REPEAT_COOLDOWN_HOURS || 48);
+const REPEAT_COOLDOWN_HOURS = Number.isFinite(parsedCooldownHours) ? Math.max(parsedCooldownHours, 1) : 48;
 const DRY_RUN = process.argv.includes('--dry-run');
 const POST_ALL = process.argv.includes('--all');
 
@@ -206,9 +208,10 @@ async function loadRecentSourceUrls(client, userId) {
       where user_id = $1
         and scheduled_post_id like 'phyto:%'
         and status = 'posted'
+        and posted_at > now() - ($2::text || ' hours')::interval
       order by posted_at desc
       limit 100`,
-    [userId],
+    [userId, REPEAT_COOLDOWN_HOURS],
   );
   return new Set(result.rows.map(row => String(row.scheduled_post_id || '').replace(/^phyto:/, '')));
 }
