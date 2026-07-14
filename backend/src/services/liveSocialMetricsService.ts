@@ -559,7 +559,7 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
     userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
     email: 'xbrasio@gmail.com',
     facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1120716914467835',
-    instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '1861959871343966',
+    instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '17841448754415534',
     threadsAccountId: '28808899498698518',
     linkedinAuthorUrn: 'urn:li:person:VQV6WSzWDf',
     facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'DOTT_MAIN_FACEBOOK_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
@@ -571,7 +571,7 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
     userId: 'HAo6YtFvhKgSySa8EoERKYYq2IV2',
     email: 'brasioxirin@gmail.com',
     facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1120716914467835',
-    instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '1861959871343966',
+    instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '17841448754415534',
     threadsAccountId: '28808899498698518',
     linkedinAuthorUrn: 'urn:li:person:VQV6WSzWDf',
     facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'DOTT_MAIN_FACEBOOK_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
@@ -737,6 +737,32 @@ const mergeSocialAccountsPreservingTokens = (
   return base;
 };
 
+const mergeSocialAccountsPreferOverlay = (
+  base: UserSocialAccounts,
+  overlay?: UserSocialAccounts,
+): UserSocialAccounts => {
+  if (!overlay) return base;
+  Object.entries(overlay).forEach(([platform, account]) => {
+    if (!account || typeof account !== 'object') return;
+    const current = base[platform];
+    const mergedAccount = {
+      ...((current as Record<string, unknown>) ?? {}),
+    };
+    Object.entries(account as Record<string, unknown>).forEach(([key, value]) => {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed) mergedAccount[key] = trimmed;
+        return;
+      }
+      if (value !== null && value !== undefined) {
+        mergedAccount[key] = value;
+      }
+    });
+    base[platform] = mergedAccount;
+  });
+  return base;
+};
+
 const fetchSupabaseSocialProfile = async (userId: string): Promise<UserSocialProfile | null> => {
   try {
     const fallback = await supabaseFallbackService.getSocialAccounts(userId);
@@ -748,6 +774,27 @@ const fetchSupabaseSocialProfile = async (userId: string): Promise<UserSocialPro
     };
   } catch (error) {
     console.warn('[socialLive] supabase social account fetch failed', { userId, error });
+    return null;
+  }
+};
+
+const fetchSupabaseSocialProfileByIdentifiers = async (
+  userIds: string[],
+  emails: Array<string | null | undefined>,
+): Promise<UserSocialProfile | null> => {
+  try {
+    const fallback = await supabaseFallbackService.getSocialAccountsByIdentifiers(
+      userIds,
+      emails.filter((value): value is string => typeof value === 'string'),
+    );
+    if (!fallback) return null;
+    return {
+      id: fallback.userId ?? userIds.find(Boolean),
+      email: fallback.email ?? null,
+      socialAccounts: fallback.socialAccounts as UserSocialAccounts,
+    };
+  } catch (error) {
+    console.warn('[socialLive] supabase social account identifier fetch failed', { userIds, emails, error });
     return null;
   }
 };
@@ -1089,26 +1136,39 @@ const fetchInstagramMetric = async (mediaId: string, accessToken: string) => {
       let views = 0;
       let interactions = likes + comments;
 
-      try {
-        const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
-          params: {
-            metric: 'views,reach,saved,shares,total_interactions',
-            access_token: accessToken,
-          },
-          timeout: 30000,
-        });
-        const rows = Array.isArray(insights.data?.data) ? insights.data.data : [];
-        views =
-          parseInsightArrayValue(rows, 'views') ||
-          parseInsightArrayValue(rows, 'reach');
-        interactions =
-          parseInsightArrayValue(rows, 'total_interactions') ||
-          likes +
-            comments +
-            parseInsightArrayValue(rows, 'saved') +
-            parseInsightArrayValue(rows, 'shares');
-      } catch {
-        // Optional insights can fail if scope is not available.
+      const insightMetricGroups = [
+        'views,reach,saved,shares,total_interactions',
+        'views,reach,total_interactions',
+        'plays,reach,saved,shares,total_interactions',
+        'impressions,reach,engagement',
+      ];
+      for (const metric of insightMetricGroups) {
+        try {
+          const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
+            params: {
+              metric,
+              access_token: accessToken,
+            },
+            timeout: 30000,
+          });
+          const rows = Array.isArray(insights.data?.data) ? insights.data.data : [];
+          views =
+            parseInsightArrayValue(rows, 'views') ||
+            parseInsightArrayValue(rows, 'plays') ||
+            parseInsightArrayValue(rows, 'impressions') ||
+            parseInsightArrayValue(rows, 'reach') ||
+            views;
+          interactions =
+            parseInsightArrayValue(rows, 'total_interactions') ||
+            parseInsightArrayValue(rows, 'engagement') ||
+            likes +
+              comments +
+              parseInsightArrayValue(rows, 'saved') +
+              parseInsightArrayValue(rows, 'shares');
+          if (views > 0 || interactions > likes + comments) break;
+        } catch {
+          // Try the next metric group because Meta availability varies by media type.
+        }
       }
 
       return { views, interactions };
@@ -1488,6 +1548,13 @@ export async function getLiveSocialMetrics(
       resolveKnownLiveSocialProfile(userData?.email);
     if (knownRuntimeProfile?.socialAccounts) {
       mergeSocialAccountsPreservingTokens(accounts, knownRuntimeProfile.socialAccounts);
+    }
+    const storedRuntimeProfile = await fetchSupabaseSocialProfileByIdentifiers(
+      Array.from(new Set([userId, options?.scope?.scopeId, primaryOwnerId, userData?.id].filter(Boolean) as string[])),
+      [options?.scope?.email, userData?.email, knownRuntimeProfile?.email],
+    );
+    if (storedRuntimeProfile?.socialAccounts) {
+      mergeSocialAccountsPreferOverlay(accounts, storedRuntimeProfile.socialAccounts);
     }
     if ([userId, options?.scope?.scopeId, primaryOwnerId].includes(SHECARE_USER_ID)) {
       const shecareMetaToken =

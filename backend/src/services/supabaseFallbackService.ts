@@ -1078,6 +1078,49 @@ class SupabaseFallbackService {
     };
   }
 
+  async getSocialAccountsByIdentifiers(userIds: string[] = [], emails: string[] = []) {
+    if (!this.isConfigured()) return null;
+    const normalizedUserIds = Array.from(new Set(userIds.map(value => value.trim()).filter(Boolean)));
+    const normalizedEmails = Array.from(new Set(emails.map(value => value.trim().toLowerCase()).filter(Boolean)));
+    if (!normalizedUserIds.length && !normalizedEmails.length) return null;
+
+    const mapRow = (row: any) => ({
+      userId: row.user_id,
+      email: row.email ?? null,
+      socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
+    });
+
+    if (this.hasDatabaseFallback()) {
+      try {
+        const rows = await this.databaseQuery<any>(
+          `select user_id, email, accounts
+             from public.dott_social_accounts
+            where ($1::text[] <> '{}'::text[] and user_id = any($1::text[]))
+               or ($2::text[] <> '{}'::text[] and lower(email) = any($2::text[]))
+            order by updated_at desc nulls last
+            limit 1`,
+          [normalizedUserIds, normalizedEmails],
+        );
+        if (rows[0]) return mapRow(rows[0]);
+      } catch (error) {
+        console.warn('[supabase-fallback] social account identifier database lookup failed', {
+          userIds: normalizedUserIds,
+          emails: normalizedEmails,
+          error,
+        });
+      }
+    }
+
+    const rows = await this.getAllSocialAccounts(1000);
+    return (
+      rows.find(row => {
+        const userMatch = row.userId && normalizedUserIds.includes(row.userId);
+        const emailMatch = row.email && normalizedEmails.includes(String(row.email).toLowerCase());
+        return userMatch || emailMatch;
+      }) ?? null
+    );
+  }
+
   async getAllSocialAccounts(limit = 1000) {
     if (!this.isConfigured()) return [] as Array<{ userId: string; email?: string | null; socialAccounts: Record<string, unknown> }>;
     try {
