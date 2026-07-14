@@ -103,6 +103,7 @@ const knownAccountNames: Record<string, string> = {
   '1zvY9nNyXMcfxdPQEyx0bIdK7r53': 'Bwin / Ball Analytics',
   tCE1FQ1cOFgdupOXP23mPUMQRAz1: 'SheCare Doctor',
   '80bYIeiuukNFtUvXTUobXmfC7pu1': 'Dott HR',
+  cMPZQccGggbhZe9dbvtxFmBehP02: 'Dott Media',
   LVR7p3WzdFM51ds92Kacf6S40og2: 'Dott Energy',
   acmVetCcOiTHeGk5D7eDYieamDF3: 'Car Marketplace',
   D1iNgjLKNRaQhH35M0NmGfw1LVD2: 'Staysphere',
@@ -613,6 +614,9 @@ export const AdminDashboardScreen: React.FC = () => {
                 : '',
               platforms?.threads?.connected
                 ? `Threads ${formatNumber(platforms.threads.views)} views / ${formatNumber(platforms.threads.interactions)} int.`
+                : '',
+              platforms?.linkedin?.connected
+                ? `LinkedIn ${formatNumber(platforms.linkedin.views)} views / ${formatNumber(platforms.linkedin.interactions)} int.`
                 : '',
               platforms?.x?.connected
                 ? `X ${formatNumber(platforms.x.views)} views / ${formatNumber(platforms.x.interactions)} int.`
