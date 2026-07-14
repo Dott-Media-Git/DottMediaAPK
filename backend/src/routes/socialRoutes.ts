@@ -76,26 +76,68 @@ const deriveFacebookPageToken = async (pageId: string, accessToken: string) => {
 
 type LiveHistoryProfile = NonNullable<ReturnType<typeof resolveKnownLiveSocialProfile>>;
 
+const mergeHistoryAccount = (base: Record<string, unknown> | undefined, overlay: Record<string, unknown> | undefined) => {
+  const merged = { ...(base ?? {}) };
+  Object.entries(overlay ?? {}).forEach(([key, value]) => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) merged[key] = trimmed;
+      return;
+    }
+    if (value !== null && value !== undefined) {
+      merged[key] = value;
+    }
+  });
+  return Object.keys(merged).length ? merged : undefined;
+};
+
 const mergeLiveHistoryProfiles = (...profiles: Array<LiveHistoryProfile | null | undefined>): LiveHistoryProfile | null => {
   const merged = profiles.reduce<LiveHistoryProfile | null>((acc, profile) => {
     if (!profile) return acc;
+    const socialAccounts = { ...(acc?.socialAccounts ?? {}) };
+    Object.entries(profile.socialAccounts ?? {}).forEach(([platform, account]) => {
+      const mergedAccount = mergeHistoryAccount(
+        socialAccounts[platform] as Record<string, unknown> | undefined,
+        account as Record<string, unknown> | undefined,
+      );
+      if (mergedAccount) socialAccounts[platform] = mergedAccount;
+    });
     return {
       id: acc?.id ?? profile.id,
       email: acc?.email ?? profile.email,
-      socialAccounts: {
-        ...(acc?.socialAccounts ?? {}),
-        ...(profile.socialAccounts ?? {}),
-      },
+      socialAccounts,
     };
   }, null);
   return merged?.socialAccounts ? merged : null;
 };
 
+const fetchSupabaseLiveHistoryProfile = async (
+  userIds: string[],
+  emails: Array<string | null | undefined>,
+): Promise<LiveHistoryProfile | null> => {
+  try {
+    const fallback = await supabaseFallbackService.getSocialAccountsByIdentifiers(
+      userIds,
+      emails.filter((value): value is string => typeof value === 'string'),
+    );
+    if (!fallback?.socialAccounts) return null;
+    return {
+      id: fallback.userId ?? userIds.find(Boolean) ?? '',
+      email: fallback.email ?? null,
+      socialAccounts: fallback.socialAccounts as LiveHistoryProfile['socialAccounts'],
+    };
+  } catch (error) {
+    console.warn('[social-history-route] Supabase social account lookup failed', error instanceof Error ? error.message : String(error));
+    return null;
+  }
+};
+
 const fetchKnownMetaHistoryPosts = async (knownProfile: LiveHistoryProfile | null) => {
   if (!knownProfile?.socialAccounts) return [];
-  const posts: any[] = [];
   const facebook = knownProfile.socialAccounts.facebook;
-  if (facebook?.pageId && facebook?.accessToken) {
+  const fetchFacebook = async () => {
+    const posts: any[] = [];
+    if (!facebook?.pageId || !facebook?.accessToken) return posts;
     try {
       const pageToken = await deriveFacebookPageToken(String(facebook.pageId), String(facebook.accessToken));
       const response = await axios.get(`${META_GRAPH_BASE}/${facebook.pageId}/posts`, {
@@ -125,10 +167,13 @@ const fetchKnownMetaHistoryPosts = async (knownProfile: LiveHistoryProfile | nul
     } catch (error) {
       console.warn('[social-history-route] live Facebook history fetch failed', error instanceof Error ? error.message : String(error));
     }
-  }
+    return posts;
+  };
 
   const instagram = knownProfile.socialAccounts.instagram;
-  if (instagram?.accountId && instagram?.accessToken) {
+  const fetchInstagram = async () => {
+    const posts: any[] = [];
+    if (!instagram?.accountId || !instagram?.accessToken) return posts;
     try {
       const response = await axios.get(`${META_GRAPH_BASE}/${instagram.accountId}/media`, {
         params: {
@@ -167,10 +212,13 @@ const fetchKnownMetaHistoryPosts = async (knownProfile: LiveHistoryProfile | nul
     } catch (error) {
       console.warn('[social-history-route] live Instagram history fetch failed', error instanceof Error ? error.message : String(error));
     }
-  }
+    return posts;
+  };
 
   const threads = knownProfile.socialAccounts.threads;
-  if (threads?.accountId && threads?.accessToken) {
+  const fetchThreads = async () => {
+    const posts: any[] = [];
+    if (!threads?.accountId || !threads?.accessToken) return posts;
     try {
       const response = await axios.get(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/${threads.accountId}/threads`, {
         params: {
@@ -199,9 +247,13 @@ const fetchKnownMetaHistoryPosts = async (knownProfile: LiveHistoryProfile | nul
     } catch (error) {
       console.warn('[social-history-route] live Threads history fetch failed', error instanceof Error ? error.message : String(error));
     }
-  }
+    return posts;
+  };
+
   const linkedin = knownProfile.socialAccounts.linkedin;
-  if (linkedin?.accessToken && linkedin?.urn) {
+  const fetchLinkedIn = async () => {
+    const posts: any[] = [];
+    if (!linkedin?.accessToken || !linkedin?.urn) return posts;
     try {
       const response = await axios.get(`${LINKEDIN_API_BASE}/ugcPosts`, {
         params: {
@@ -238,8 +290,11 @@ const fetchKnownMetaHistoryPosts = async (knownProfile: LiveHistoryProfile | nul
     } catch (error) {
       console.warn('[social-history-route] live LinkedIn history fetch failed', error instanceof Error ? error.message : String(error));
     }
-  }
-  return posts;
+    return posts;
+  };
+
+  const rows = await Promise.all([fetchFacebook(), fetchInstagram(), fetchThreads(), fetchLinkedIn()]);
+  return rows.flat();
 };
 
 const fetchSocialLogHistoryPosts = async (userId: string) => {
@@ -961,6 +1016,15 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
       ? await fetchBwinMetaSocialProfile()
       : null;
     const userId = requestedUserId || historyUserId || knownProfile?.id || bwinProfile?.id || authUser.uid;
+    const supabaseProfile = await withFallbackTimeout(
+      'supabase social account history lookup',
+      fetchSupabaseLiveHistoryProfile(
+        Array.from(new Set([requestedUserId, historyUserId, knownProfile?.id, bwinProfile?.id, authUser.uid].filter(Boolean) as string[])),
+        [authUser.email, storedEmail, knownProfile?.email, bwinProfile?.email],
+      ),
+      HISTORY_USER_LOOKUP_TIMEOUT_MS,
+      null,
+    );
     const history = await withFallbackTimeout(
       'stored posting history',
       socialPostingService.getHistory(userId),
@@ -974,7 +1038,7 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
           socialAccounts: storedSocialAccounts as NonNullable<ReturnType<typeof resolveKnownLiveSocialProfile>>['socialAccounts'],
         }
       : null;
-    const liveHistoryProfile = mergeLiveHistoryProfiles(knownProfile, bwinProfile, storedProfile);
+    const liveHistoryProfile = mergeLiveHistoryProfiles(knownProfile, bwinProfile, storedProfile, supabaseProfile);
     const [liveMetaPosts, socialLogPosts] = await Promise.all([
       withFallbackTimeout('live social history enrichment', fetchKnownMetaHistoryPosts(liveHistoryProfile), HISTORY_LIVE_FETCH_TIMEOUT_MS, []),
       withFallbackTimeout('social log history', fetchSocialLogHistoryPosts(userId), HISTORY_SOCIAL_LOG_TIMEOUT_MS, []),
