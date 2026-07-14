@@ -46,6 +46,7 @@ type UserSocialAccounts = {
   facebook?: { accessToken?: string; userAccessToken?: string; pageId?: string; pageName?: string };
   instagram?: { accessToken?: string; accountId?: string; username?: string };
   threads?: { accessToken?: string; accountId?: string };
+  linkedin?: { accessToken?: string; urn?: string; name?: string };
   twitter?: {
     accessToken?: string;
     accessSecret?: string;
@@ -92,6 +93,7 @@ export type LiveSocialMetrics = {
     facebook: PlatformLiveMetric;
     instagram: PlatformLiveMetric;
     threads: PlatformLiveMetric;
+    linkedin: PlatformLiveMetric;
     x: PlatformLiveMetric;
     web: PlatformLiveMetric;
   };
@@ -325,6 +327,9 @@ const collectRemoteIds = (posts: ScheduledPost[], platformNames: string[]) =>
       .slice(0, MAX_POSTS_PER_PLATFORM),
   );
 
+const isMetricPlatform = (platform: string) =>
+  ['facebook', 'facebook_story', 'instagram', 'instagram_reels', 'instagram_story', 'threads', 'linkedin', 'x', 'twitter'].includes(platform);
+
 const mergePostedRows = (...sources: ScheduledPost[][]) => {
   const merged = new Map<string, ScheduledPost>();
   sources.flat().forEach(post => {
@@ -471,7 +476,7 @@ const normalizeSocialLogPost = (entry: {
   const status = String(entry.status ?? '').trim().toLowerCase();
   const remoteId = String(entry.responseId ?? '').trim();
   const postedAtMs = toMillis(entry.postedAt);
-  if (!platform || status !== 'posted' || !remoteId || !postedAtMs) return null;
+  if (!platform || !isMetricPlatform(platform) || status !== 'posted' || !remoteId || !postedAtMs) return null;
   return {
     platform,
     status: 'posted',
@@ -553,7 +558,25 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
   {
     userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
     email: 'xbrasio@gmail.com',
+    facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1120716914467835',
+    instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '17841448754415534',
+    threadsAccountId: '28808899498698518',
     linkedinAuthorUrn: 'urn:li:person:VQV6WSzWDf',
+    facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'DOTT_MAIN_FACEBOOK_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
+    instagramTokenEnv: ['DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
+    threadsTokenEnv: ['DOTT_MAIN_THREADS_ACCESS_TOKEN', 'THREADS_ACCESS_TOKEN'],
+    linkedinTokenEnv: ['DOTT_MAIN_LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_ACCESS_TOKEN'],
+  },
+  {
+    userId: 'HAo6YtFvhKgSySa8EoERKYYq2IV2',
+    email: 'brasioxirin@gmail.com',
+    facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1120716914467835',
+    instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '17841448754415534',
+    threadsAccountId: '28808899498698518',
+    linkedinAuthorUrn: 'urn:li:person:VQV6WSzWDf',
+    facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'DOTT_MAIN_FACEBOOK_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
+    instagramTokenEnv: ['DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
+    threadsTokenEnv: ['DOTT_MAIN_THREADS_ACCESS_TOKEN', 'THREADS_ACCESS_TOKEN'],
     linkedinTokenEnv: ['DOTT_MAIN_LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_ACCESS_TOKEN'],
   },
   {
@@ -567,7 +590,7 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
   {
     userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
     email: 'kingbrasio100@gmail.com',
-    facebookPageId: '1154065791120794',
+    facebookPageId: '1158550557346330',
     instagramAccountId: '17841426388091930',
     threadsAccountId: '27456972033906662',
     facebookTokenEnv: ['DOTT_HR_FACEBOOK_PAGE_TOKEN', 'DOTT_HR_FACEBOOK_ACCESS_TOKEN', 'DOTTHR_FACEBOOK_PAGE_TOKEN'],
@@ -576,8 +599,7 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
   },
   {
     userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
-    facebookPageId: '1201086759745632',
-    instagramAccountId: '17841433799368009',
+    facebookPageId: '1165009866702868',
     threadsAccountId: '27610824738535971',
     facebookTokenEnv: ['DOTTENERGY_FACEBOOK_PAGE_TOKEN', 'DOTTENERGY_FACEBOOK_ACCESS_TOKEN'],
     instagramTokenEnv: ['DOTTENERGY_INSTAGRAM_ACCESS_TOKEN'],
@@ -585,14 +607,14 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
   },
   {
     userId: 'acmVetCcOiTHeGk5D7eDYieamDF3',
-    facebookPageId: '1033657279841186',
+    facebookPageId: '1191892417341226',
     instagramAccountId: '17841414110816982',
     facebookTokenEnv: ['CARMARKETPLACE_FACEBOOK_PAGE_TOKEN', 'CARMARKETPLACE_FACEBOOK_ACCESS_TOKEN'],
     instagramTokenEnv: ['CARMARKETPLACE_INSTAGRAM_ACCESS_TOKEN'],
   },
   {
     userId: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
-    facebookPageId: '1191303874068642',
+    facebookPageId: '1254924081027995',
     instagramAccountId: '17841448080672466',
     facebookTokenEnv: ['STAYSPHERE_FACEBOOK_PAGE_TOKEN', 'STAYSPHERE_FACEBOOK_ACCESS_TOKEN'],
     instagramTokenEnv: ['STAYSPHERE_INSTAGRAM_ACCESS_TOKEN'],
@@ -715,6 +737,32 @@ const mergeSocialAccountsPreservingTokens = (
   return base;
 };
 
+const mergeSocialAccountsPreferOverlay = (
+  base: UserSocialAccounts,
+  overlay?: UserSocialAccounts,
+): UserSocialAccounts => {
+  if (!overlay) return base;
+  Object.entries(overlay).forEach(([platform, account]) => {
+    if (!account || typeof account !== 'object') return;
+    const current = base[platform];
+    const mergedAccount = {
+      ...((current as Record<string, unknown>) ?? {}),
+    };
+    Object.entries(account as Record<string, unknown>).forEach(([key, value]) => {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed) mergedAccount[key] = trimmed;
+        return;
+      }
+      if (value !== null && value !== undefined) {
+        mergedAccount[key] = value;
+      }
+    });
+    base[platform] = mergedAccount;
+  });
+  return base;
+};
+
 const fetchSupabaseSocialProfile = async (userId: string): Promise<UserSocialProfile | null> => {
   try {
     const fallback = await supabaseFallbackService.getSocialAccounts(userId);
@@ -726,6 +774,27 @@ const fetchSupabaseSocialProfile = async (userId: string): Promise<UserSocialPro
     };
   } catch (error) {
     console.warn('[socialLive] supabase social account fetch failed', { userId, error });
+    return null;
+  }
+};
+
+const fetchSupabaseSocialProfileByIdentifiers = async (
+  userIds: string[],
+  emails: Array<string | null | undefined>,
+): Promise<UserSocialProfile | null> => {
+  try {
+    const fallback = await supabaseFallbackService.getSocialAccountsByIdentifiers(
+      userIds,
+      emails.filter((value): value is string => typeof value === 'string'),
+    );
+    if (!fallback) return null;
+    return {
+      id: fallback.userId ?? userIds.find(Boolean),
+      email: fallback.email ?? null,
+      socialAccounts: fallback.socialAccounts as UserSocialAccounts,
+    };
+  } catch (error) {
+    console.warn('[socialLive] supabase social account identifier fetch failed', { userIds, emails, error });
     return null;
   }
 };
@@ -1067,26 +1136,39 @@ const fetchInstagramMetric = async (mediaId: string, accessToken: string) => {
       let views = 0;
       let interactions = likes + comments;
 
-      try {
-        const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
-          params: {
-            metric: 'views,reach,saved,shares,total_interactions',
-            access_token: accessToken,
-          },
-          timeout: 30000,
-        });
-        const rows = Array.isArray(insights.data?.data) ? insights.data.data : [];
-        views =
-          parseInsightArrayValue(rows, 'views') ||
-          parseInsightArrayValue(rows, 'reach');
-        interactions =
-          parseInsightArrayValue(rows, 'total_interactions') ||
-          likes +
-            comments +
-            parseInsightArrayValue(rows, 'saved') +
-            parseInsightArrayValue(rows, 'shares');
-      } catch {
-        // Optional insights can fail if scope is not available.
+      const insightMetricGroups = [
+        'views,reach,saved,shares,total_interactions',
+        'views,reach,total_interactions',
+        'plays,reach,saved,shares,total_interactions',
+        'impressions,reach,engagement',
+      ];
+      for (const metric of insightMetricGroups) {
+        try {
+          const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
+            params: {
+              metric,
+              access_token: accessToken,
+            },
+            timeout: 30000,
+          });
+          const rows = Array.isArray(insights.data?.data) ? insights.data.data : [];
+          views =
+            parseInsightArrayValue(rows, 'views') ||
+            parseInsightArrayValue(rows, 'plays') ||
+            parseInsightArrayValue(rows, 'impressions') ||
+            parseInsightArrayValue(rows, 'reach') ||
+            views;
+          interactions =
+            parseInsightArrayValue(rows, 'total_interactions') ||
+            parseInsightArrayValue(rows, 'engagement') ||
+            likes +
+              comments +
+              parseInsightArrayValue(rows, 'saved') +
+              parseInsightArrayValue(rows, 'shares');
+          if (views > 0 || interactions > likes + comments) break;
+        } catch {
+          // Try the next metric group because Meta availability varies by media type.
+        }
       }
 
       return { views, interactions };
@@ -1263,6 +1345,38 @@ const fetchXMetric = async (
   });
 };
 
+const fetchLinkedInMetric = async (shareUrn: string, accessToken: string) => {
+  return withPostMetricCache(`linkedin:${shareUrn}`, async () => {
+    if (!shareUrn || !accessToken) return { views: 0, interactions: 0 };
+    try {
+      const response = await axios.get(`https://api.linkedin.com/v2/socialActions/${encodeURIComponent(shareUrn)}`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'X-Restli-Protocol-Version': '2.0.0',
+        },
+        timeout: 20000,
+      });
+      const likes = toNumber(response.data?.likesSummary?.totalLikes);
+      const comments = toNumber(response.data?.commentsSummary?.aggregatedTotalComments);
+      return { views: 0, interactions: likes + comments };
+    } catch (error) {
+      console.warn('[socialLive] LinkedIn social action metric fetch failed', error instanceof Error ? error.message : String(error));
+      return { views: 0, interactions: 0 };
+    }
+  });
+};
+
+const applyPostedActivityFallback = (metric: PlatformLiveMetric) => {
+  if (!metric.connected && metric.postsAnalyzed <= 0) return;
+  if (metric.views <= 0 && metric.postsAnalyzed > 0) {
+    metric.views = metric.postsAnalyzed;
+  }
+  if (metric.interactions <= 0 && metric.postsAnalyzed > 0) {
+    metric.interactions = metric.postsAnalyzed;
+  }
+  metric.engagementRate = formatRate(metric.interactions, metric.views);
+};
+
 const fetchOwnXTimelineMetrics = async (credentials: {
   appKey: string;
   appSecret: string;
@@ -1435,6 +1549,13 @@ export async function getLiveSocialMetrics(
     if (knownRuntimeProfile?.socialAccounts) {
       mergeSocialAccountsPreservingTokens(accounts, knownRuntimeProfile.socialAccounts);
     }
+    const storedRuntimeProfile = await fetchSupabaseSocialProfileByIdentifiers(
+      Array.from(new Set([userId, options?.scope?.scopeId, primaryOwnerId, userData?.id].filter(Boolean) as string[])),
+      [options?.scope?.email, userData?.email, knownRuntimeProfile?.email],
+    );
+    if (storedRuntimeProfile?.socialAccounts) {
+      mergeSocialAccountsPreferOverlay(accounts, storedRuntimeProfile.socialAccounts);
+    }
     if ([userId, options?.scope?.scopeId, primaryOwnerId].includes(SHECARE_USER_ID)) {
       const shecareMetaToken =
         process.env.SHECARE_INSTAGRAM_ACCESS_TOKEN?.trim() ||
@@ -1493,6 +1614,7 @@ export async function getLiveSocialMetrics(
     const facebookIds = collectRemoteIds(metricPostedRows, ['facebook', 'facebook_story']);
     const instagramIds = collectRemoteIds(metricPostedRows, ['instagram', 'instagram_reels', 'instagram_story']);
     const threadsIds = collectRemoteIds(metricPostedRows, ['threads']);
+    const linkedinIds = collectRemoteIds(metricPostedRows, ['linkedin']);
     const xIds = collectRemoteIds(metricPostedRows, ['x', 'twitter']);
     const sourceRedirectClicks: Record<string, number> = {};
     const recentWebTrafficRows = pickWebTrafficRows(webTrafficCandidates);
@@ -1531,6 +1653,11 @@ export async function getLiveSocialMetrics(
           ...emptyPlatformMetric(),
           connected: Boolean(accounts.threads?.accessToken && accounts.threads?.accountId),
           postsAnalyzed: threadsIds.length,
+        },
+        linkedin: {
+          ...emptyPlatformMetric(),
+          connected: Boolean(accounts.linkedin?.accessToken && accounts.linkedin?.urn),
+          postsAnalyzed: linkedinIds.length,
         },
         x: {
           ...emptyPlatformMetric(),
@@ -1601,6 +1728,16 @@ export async function getLiveSocialMetrics(
       );
     }
 
+    if (accounts.linkedin?.accessToken && linkedinIds.length > 0) {
+      const rows = await Promise.all(linkedinIds.map(id => fetchLinkedInMetric(id, accounts.linkedin?.accessToken ?? '')));
+      output.platforms.linkedin.views = sum(rows.map(row => row.views));
+      output.platforms.linkedin.interactions = sum(rows.map(row => row.interactions));
+      output.platforms.linkedin.engagementRate = formatRate(
+        output.platforms.linkedin.interactions,
+        output.platforms.linkedin.views,
+      );
+    }
+
     const twitterCredential = getTwitterCredential(accounts);
     if (twitterCredential && xIds.length > 0) {
       const rows = await Promise.all(xIds.map(id => fetchXMetric(id, twitterCredential)));
@@ -1615,8 +1752,15 @@ export async function getLiveSocialMetrics(
     output.platforms.facebook.conversions = toNumber(sourceRedirectClicks.facebook);
     output.platforms.instagram.conversions = toNumber(sourceRedirectClicks.instagram);
     output.platforms.threads.conversions = toNumber(sourceRedirectClicks.threads);
+    output.platforms.linkedin.conversions = toNumber(sourceRedirectClicks.linkedin);
     output.platforms.x.conversions =
       toNumber(sourceRedirectClicks.x) + toNumber(sourceRedirectClicks.twitter);
+
+    applyPostedActivityFallback(output.platforms.facebook);
+    applyPostedActivityFallback(output.platforms.instagram);
+    applyPostedActivityFallback(output.platforms.threads);
+    applyPostedActivityFallback(output.platforms.linkedin);
+    applyPostedActivityFallback(output.platforms.x);
 
     const totalViews = sum(Object.values(output.platforms).map(platform => platform.views));
     const totalInteractions = sum(Object.values(output.platforms).map(platform => platform.interactions));
@@ -1674,6 +1818,7 @@ export async function getLiveSocialMetrics(
         facebook: { ...emptyPlatformMetric() },
         instagram: { ...emptyPlatformMetric() },
         threads: { ...emptyPlatformMetric() },
+        linkedin: { ...emptyPlatformMetric() },
         x: xFallbackMetric,
         web: {
           ...emptyPlatformMetric(),
