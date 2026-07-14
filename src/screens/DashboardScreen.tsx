@@ -93,6 +93,7 @@ const emptyLiveSocialStats: LiveSocialStats = {
     facebook: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
     instagram: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
     threads: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
+    linkedin: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
     x: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
     web: { connected: false, views: 0, interactions: 0, engagementRate: 0, conversions: 0, postsAnalyzed: 0 },
   },
@@ -888,6 +889,7 @@ export const DashboardScreen: React.FC = () => {
         { key: 'facebook', label: 'Facebook', ...liveSocialStats.platforms.facebook },
         { key: 'instagram', label: 'Instagram', ...liveSocialStats.platforms.instagram },
         { key: 'threads', label: 'Threads', ...liveSocialStats.platforms.threads },
+        { key: 'linkedin', label: 'LinkedIn', ...liveSocialStats.platforms.linkedin },
         { key: 'x', label: 'X', ...liveSocialStats.platforms.x },
         { key: 'web', label: 'Web', ...liveSocialStats.platforms.web },
       ].filter(
