@@ -1,0 +1,38 @@
+name: Phyto Science Product Worker
+
+on:
+  schedule:
+    - cron: '17 */8 * * *'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Number of fresh Phyto product posts to publish'
+        required: false
+        default: '1'
+
+jobs:
+  post-phyto-products:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      META_GRAPH_VERSION: v23.0
+      SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+      PHYTO_POST_LIMIT: ${{ github.event.inputs.limit || '1' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Publish Phyto Science product spotlight
+        working-directory: backend
+        run: node scripts/phytoScienceProductPoster.mjs
