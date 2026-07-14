@@ -9,6 +9,10 @@ on:
         description: 'Force a fresh campaign item even when the recent-post dedupe window is active'
         required: false
         default: 'false'
+      forceSlug:
+        description: 'Optional campaign slug to publish'
+        required: false
+        default: ''
 
 concurrency:
   group: dott-main-campaign-worker
@@ -22,6 +26,7 @@ jobs:
       FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
       DOTT_MAIN_USER_ID: cMPZQccGggbhZe9dbvtxFmBehP02
       DOTT_MAIN_FACEBOOK_PAGE_ID: ${{ secrets.DOTT_MAIN_FACEBOOK_PAGE_ID }}
       DOTT_MAIN_FACEBOOK_PAGE_NAME: ${{ secrets.DOTT_MAIN_FACEBOOK_PAGE_NAME }}
@@ -44,6 +49,7 @@ jobs:
       DOTT_CAMPAIGN_VIDEO_BASE_URL: https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign/backend/public/campaign-videos/dottmain
       DOTT_CAMPAIGN_ASSET_BASE_URL: https://mhvonxlnytyvsisdhxyf.supabase.co/storage/v1/object/public/dott-campaign
       DOTT_CAMPAIGN_BYPASS_DEDUPE: ${{ github.event.inputs.bypassDedupe || 'false' }}
+      DOTT_CAMPAIGN_FORCE_SLUG: ${{ github.event.inputs.forceSlug || '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
