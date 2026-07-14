@@ -33,6 +33,7 @@ import { getLiveSocialMetrics } from '../services/liveSocialMetricsService';
 const router = Router();
 
 const ADMIN_LIVE_SOCIAL_CLIENTS = [
+  { label: 'Dott Media', userId: 'cMPZQccGggbhZe9dbvtxFmBehP02', email: 'xbrasio@gmail.com' },
   { label: 'SheCare Doctor', userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1', email: 'shecaredoctor@gmail.com' },
   { label: 'Dott HR', userId: '80bYIeiuukNFtUvXTUobXmfC7pu1', email: 'kingbrasio100@gmail.com' },
   { label: 'Dott Energy', userId: 'LVR7p3WzdFM51ds92Kacf6S40og2' },
@@ -42,6 +43,13 @@ const ADMIN_LIVE_SOCIAL_CLIENTS = [
   { label: 'Bwin / Ball Analytics', userId: process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53', scopeId: process.env.BWIN_SCOPE_ID || 'bwinbetug', email: 'ball_analytics' },
 ];
 const ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS ?? 12000);
+const ADMIN_METRICS_FRESH_MS = Number(process.env.ADMIN_METRICS_FRESH_MS ?? 15000);
+const ADMIN_METRICS_STALE_MS = Number(process.env.ADMIN_METRICS_STALE_MS ?? 180000);
+const ADMIN_COMPLIANCE_LIVE_CACHE_MS = Number(process.env.ADMIN_COMPLIANCE_LIVE_CACHE_MS ?? 180000);
+let adminMetricsCache: { metrics: Awaited<ReturnType<typeof getAdminMetrics>>; fetchedAt: number } | null = null;
+let adminMetricsRefresh: Promise<typeof adminMetricsCache> | null = null;
+let adminComplianceLiveCache: { result: Awaited<ReturnType<typeof autopostComplianceService.checkAndRepair>>; fetchedAt: number } | null = null;
+let adminComplianceLiveRefresh: Promise<typeof adminComplianceLiveCache> | null = null;
 
 const withTimeout = <T>(promise: Promise<T>, ms: number, label: string) =>
   Promise.race<T>([
@@ -49,15 +57,65 @@ const withTimeout = <T>(promise: Promise<T>, ms: number, label: string) =>
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms)),
   ]);
 
+const refreshAdminMetricsCache = async () => {
+  if (adminMetricsRefresh) return adminMetricsRefresh;
+  adminMetricsRefresh = getAdminMetrics()
+    .then(metrics => {
+      adminMetricsCache = { metrics, fetchedAt: Date.now() };
+      return adminMetricsCache;
+    })
+    .finally(() => {
+      adminMetricsRefresh = null;
+    });
+  return adminMetricsRefresh;
+};
+
+const refreshAdminComplianceLiveCache = async () => {
+  if (adminComplianceLiveRefresh) return adminComplianceLiveRefresh;
+  adminComplianceLiveRefresh = autopostComplianceService
+    .checkAndRepair('admin_dashboard_live')
+    .then(result => {
+      adminComplianceLiveCache = { result, fetchedAt: Date.now() };
+      return adminComplianceLiveCache;
+    })
+    .finally(() => {
+      adminComplianceLiveRefresh = null;
+    });
+  return adminComplianceLiveRefresh;
+};
+
+setTimeout(() => {
+  refreshAdminMetricsCache().catch(error => {
+    console.warn('[admin-metrics] prewarm failed', error instanceof Error ? error.message : String(error));
+  });
+}, 1000);
+
 router.get('/admin/metrics', requireFirebase, requireAdmin, async (_req, res, next) => {
   try {
-    const metrics = await getAdminMetrics();
+    const now = Date.now();
+    const ageMs = adminMetricsCache ? now - adminMetricsCache.fetchedAt : Number.POSITIVE_INFINITY;
+    if (adminMetricsCache && ageMs < ADMIN_METRICS_STALE_MS) {
+      if (ageMs > ADMIN_METRICS_FRESH_MS) {
+        refreshAdminMetricsCache().catch(error => {
+          console.warn('[admin-metrics] background refresh failed', error instanceof Error ? error.message : String(error));
+        });
+      }
+      res.set({
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
+      });
+      return res.json({ metrics: adminMetricsCache.metrics, cache: { ageMs, refreshing: Boolean(adminMetricsRefresh) } });
+    }
+    const result = await refreshAdminMetricsCache();
+    if (!result) throw new Error('Admin metrics refresh did not return data');
+    const metrics = result.metrics;
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
       Pragma: 'no-cache',
       Expires: '0',
     });
-    res.json({ metrics });
+    res.json({ metrics, cache: { ageMs: 0, refreshing: false } });
   } catch (error) {
     next(error);
   }
@@ -128,10 +186,16 @@ router.get('/admin/compliance/reports', requireFirebase, requireAdmin, async (re
   try {
     const limit = Math.min(Math.max(Number(req.query.limit ?? 20), 1), 100);
     const [alertsSnap, stateSnap] = await Promise.all([
-      firestore.collection('autopostComplianceAlerts').orderBy('createdAt', 'desc').limit(limit).get(),
-      firestore.collection('system').doc('autopostCompliance').get(),
+      firestore.collection('autopostComplianceAlerts').orderBy('createdAt', 'desc').limit(limit).get().catch(error => {
+        console.warn('[admin-compliance] Firestore alert read failed; using live fallback', error instanceof Error ? error.message : String(error));
+        return null;
+      }),
+      firestore.collection('system').doc('autopostCompliance').get().catch(error => {
+        console.warn('[admin-compliance] Firestore state read failed; using live fallback', error instanceof Error ? error.message : String(error));
+        return null;
+      }),
     ]);
-    const reports = alertsSnap.docs.map(doc => {
+    const reports = (alertsSnap?.docs ?? []).map(doc => {
       const data = doc.data() as Record<string, unknown>;
       return {
         id: doc.id,
@@ -144,7 +208,26 @@ router.get('/admin/compliance/reports', requireFirebase, requireAdmin, async (re
         createdAt: timestampToIso(data.createdAt),
       };
     });
-    const state = stateSnap.exists ? (stateSnap.data() as Record<string, unknown>) : {};
+    const state = stateSnap?.exists ? (stateSnap.data() as Record<string, unknown>) : {};
+    let liveResult: Awaited<ReturnType<typeof autopostComplianceService.checkAndRepair>> | null = null;
+    const stateHasLiveSignal = Boolean(state?.lastCheckAt) || Number(state?.lastIssueCount ?? 0) > 0 || Number(state?.lastRemediatedCount ?? 0) > 0;
+    if (!reports.length || !stateHasLiveSignal || req.query.live === '1') {
+      const ageMs = adminComplianceLiveCache ? Date.now() - adminComplianceLiveCache.fetchedAt : Number.POSITIVE_INFINITY;
+      const cached = adminComplianceLiveCache && ageMs < ADMIN_COMPLIANCE_LIVE_CACHE_MS ? adminComplianceLiveCache : await refreshAdminComplianceLiveCache();
+      liveResult = cached?.result ?? null;
+      if (liveResult && !reports.length) {
+        reports.push({
+          id: 'live-compliance',
+          label: 'admin_dashboard_live',
+          issues: liveResult.issues,
+          issueCount: liveResult.issueCount,
+          remediated: liveResult.remediated,
+          emailed: liveResult.emailed,
+          dueResult: liveResult.dueResult ?? null,
+          createdAt: new Date(cached?.fetchedAt ?? Date.now()).toISOString(),
+        });
+      }
+    }
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
       Pragma: 'no-cache',
@@ -153,10 +236,10 @@ router.get('/admin/compliance/reports', requireFirebase, requireAdmin, async (re
     res.json({
       reports,
       state: {
-        lastCheckAt: timestampToIso(state?.lastCheckAt),
+        lastCheckAt: timestampToIso(state?.lastCheckAt) ?? (liveResult ? new Date(adminComplianceLiveCache?.fetchedAt ?? Date.now()).toISOString() : null),
         lastAlertAt: timestampToIso(state?.lastAlertAt),
-        lastIssueCount: Number(state?.lastIssueCount ?? 0),
-        lastRemediatedCount: Number(state?.lastRemediatedCount ?? 0),
+        lastIssueCount: Number(state?.lastIssueCount ?? liveResult?.issueCount ?? 0),
+        lastRemediatedCount: Number(state?.lastRemediatedCount ?? liveResult?.remediated ?? 0),
       },
     });
   } catch (error) {
