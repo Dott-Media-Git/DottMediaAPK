@@ -25,6 +25,7 @@ const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const META_GRAPH_BASE = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
 const THREADS_GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const THREADS_GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
+const LINKEDIN_API_BASE = process.env.LINKEDIN_API_BASE ?? 'https://api.linkedin.com/v2';
 const HISTORY_LIVE_FETCH_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_LIVE_FETCH_TIMEOUT_MS ?? 6000), 1000);
 const HISTORY_DAILY_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_DAILY_TIMEOUT_MS ?? 1000), 500);
 const HISTORY_STORED_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_STORED_TIMEOUT_MS ?? 1000), 500);
@@ -199,6 +200,45 @@ const fetchKnownMetaHistoryPosts = async (knownProfile: LiveHistoryProfile | nul
       console.warn('[social-history-route] live Threads history fetch failed', error instanceof Error ? error.message : String(error));
     }
   }
+  const linkedin = knownProfile.socialAccounts.linkedin;
+  if (linkedin?.accessToken && linkedin?.urn) {
+    try {
+      const response = await axios.get(`${LINKEDIN_API_BASE}/ugcPosts`, {
+        params: {
+          q: 'authors',
+          authors: `List(${linkedin.urn})`,
+          sortBy: 'LAST_MODIFIED',
+          count: 50,
+        },
+        headers: {
+          Authorization: `Bearer ${linkedin.accessToken}`,
+          'X-Restli-Protocol-Version': '2.0.0',
+        },
+        timeout: 30000,
+      });
+      (Array.isArray(response.data?.elements) ? response.data.elements : []).forEach((post: any) => {
+        const remoteId = String(post?.id ?? '').trim();
+        const createdMs = Number(post?.created?.time ?? post?.lastModified?.time ?? 0);
+        const createdAt = createdMs ? toHistoryTimestamp(createdMs) : undefined;
+        if (!remoteId || !createdAt) return;
+        const text = String(post?.specificContent?.['com.linkedin.ugc.ShareContent']?.shareCommentary?.text ?? '');
+        posts.push({
+          id: `linkedin-${remoteId}`,
+          platform: 'linkedin',
+          status: 'posted',
+          caption: text,
+          remoteId,
+          postedAt: createdAt,
+          createdAt,
+          imageUrls: [],
+          permalink: null,
+          source: 'linkedin_live',
+        });
+      });
+    } catch (error) {
+      console.warn('[social-history-route] live LinkedIn history fetch failed', error instanceof Error ? error.message : String(error));
+    }
+  }
   return posts;
 };
 
@@ -225,7 +265,7 @@ const fetchSocialLogHistoryPosts = async (userId: string) => {
     console.warn('[social-history-route] Firestore social log history fetch failed', error instanceof Error ? error.message : String(error));
   }
   try {
-    const logs = await supabaseFallbackService.getSocialLogsByUser(userId, 100);
+    const logs = await supabaseFallbackService.getSocialLogsByUser(userId, 500);
     logs.forEach((log: any, index: number) => {
       posts.push({
         id: `supabase-social-log-${log.responseId ?? log.scheduledPostId ?? index}`,
