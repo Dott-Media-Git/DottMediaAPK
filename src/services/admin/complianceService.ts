@@ -31,6 +31,28 @@ export type ComplianceState = {
   lastRemediatedCount: number;
 };
 
+export type ComplianceRunResult = {
+  ok?: boolean;
+  completed?: boolean;
+  completedAt?: string;
+  issueCount?: number;
+  remediated?: number;
+  autoCorrection?: {
+    handled?: boolean;
+    attempted?: number;
+    remediated?: number;
+    continuedByScheduler?: boolean;
+  };
+  updatedAccounts?: number;
+  updatedChannels?: number;
+  summary?: {
+    processed?: number;
+    posted?: number;
+    failed?: number;
+  };
+  [key: string]: unknown;
+};
+
 export type ComplianceReportsPayload = {
   reports: ComplianceReport[];
   state: ComplianceState;
@@ -49,12 +71,12 @@ export const fetchComplianceReports = async (limit = 20): Promise<ComplianceRepo
   };
 };
 
-export const runComplianceCheck = async () => {
+export const runComplianceCheck = async (): Promise<ComplianceRunResult> => {
   const payload = await adminFetch('/admin/compliance/run', { method: 'POST', body: '{}' });
   return payload.result;
 };
 
-export const runGlobalAutomationNow = async () => {
+export const runGlobalAutomationNow = async (): Promise<ComplianceRunResult> => {
   return adminFetch('/admin/global-run', { method: 'POST', body: '{}' });
 };
 
