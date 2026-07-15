@@ -288,10 +288,28 @@ export async function sendOperationalAlertEmail(to: string | string[], subject: 
   if (!config.smtp.host || !config.smtp.from || !config.smtp.user || !config.smtp.pass) {
     throw new Error('smtp_not_configured');
   }
+  const runNowUrl = body.match(/Run now:\s*(https?:\/\/\S+)/i)?.[1];
+  const escapedBody = body
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br />');
   await transporter.sendMail({
     from: config.smtp.from,
     to,
     subject,
     text: body,
+    html: runNowUrl
+      ? `
+        <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827">
+          <p>${escapedBody}</p>
+          <p>
+            <a href="${runNowUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-weight:700;border-radius:8px;padding:12px 16px">
+              Run now
+            </a>
+          </p>
+        </div>
+      `
+      : undefined,
   });
 }
