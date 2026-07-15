@@ -134,6 +134,68 @@ const mergeActivityHeatmapRow = (
   target.set(date, existing);
 };
 
+const buildDateRange = (limitValue: number) => {
+  const dates: string[] = [];
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (limitValue - 1));
+  for (let index = 0; index < limitValue; index += 1) {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    dates.push(date.toISOString().slice(0, 10));
+  }
+  return dates;
+};
+
+const readActivityHeatmapSocialLogs = async (
+  scope: AnalyticsScope | undefined,
+  limitValue: number,
+  minDate?: string,
+) => {
+  const candidateIds = Array.from(
+    new Set([scope?.scopeId, scope?.userId].map(value => String(value ?? '').trim()).filter(Boolean)),
+  ).filter(value => value !== 'global');
+  if (!candidateIds.length) return [] as ActivityHeatmapDaily[];
+
+  const byDate = new Map<string, ActivityHeatmapDaily>();
+  const minMs = minDate ? Date.parse(`${minDate}T00:00:00.000Z`) : 0;
+  await Promise.all(
+    candidateIds.map(async userId => {
+      try {
+        const logs = await supabaseFallbackService.getSocialLogsByUser(userId, 500);
+        logs.forEach(log => {
+          if (String(log.status ?? '').toLowerCase() !== 'posted') return;
+          const postedMs = (() => {
+            const postedAt = log.postedAt as any;
+            if (!postedAt) return 0;
+            if (typeof postedAt === 'string') return Date.parse(postedAt);
+            if (typeof postedAt?.toMillis === 'function') return postedAt.toMillis();
+            if (typeof postedAt?.seconds === 'number') return postedAt.seconds * 1000;
+            if (typeof postedAt?._seconds === 'number') return postedAt._seconds * 1000;
+            return 0;
+          })();
+          if (!Number.isFinite(postedMs) || postedMs < minMs) return;
+          const date = new Date(postedMs).toISOString().slice(0, 10);
+          mergeActivityHeatmapRow(byDate, date, {
+            views: 1,
+            interactions: 1,
+            outbound: 1,
+          });
+        });
+      } catch (error) {
+        console.warn('Supabase activity heatmap social log fetch failed', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }),
+  );
+
+  return Array.from(byDate.values())
+    .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
+    .slice(-limitValue);
+};
+
 const readActivityHeatmapScope = async (scope: AnalyticsScope | undefined, limitValue: number) => {
   const [webTrafficSnap, outboundSnap, engagementSnap, dailySnap] = await Promise.all([
     webTrafficAnalyticsCollection(scope).orderBy('date', 'desc').limit(limitValue).get(),
@@ -263,11 +325,26 @@ export async function getActivityHeatmap(scope?: AnalyticsScope, days = 14): Pro
     console.warn('Supabase activity heatmap fetch failed', error);
   }
 
+  try {
+    const socialLogRows = await Promise.all(
+      buildScopeCandidates(scope).map(candidate => readActivityHeatmapSocialLogs(candidate, limitValue, minDate)),
+    );
+    socialLogRows.forEach(rows => {
+      rows.forEach(row => mergeActivityHeatmapRow(merged, row.date, row));
+    });
+  } catch (error) {
+    console.warn('Supabase activity heatmap social log merge failed', error);
+  }
+
+  buildDateRange(limitValue).forEach(date => {
+    mergeActivityHeatmapRow(merged, date, {});
+  });
+
   const rows = Array.from(merged.values())
     .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
     .slice(-limitValue);
 
-  return activityHeatmapScore(rows) > 0 ? rows : [];
+  return rows;
 }
 
 async function readSummaryWithFallback<T extends Record<string, unknown>>(
