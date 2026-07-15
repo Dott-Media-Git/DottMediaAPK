@@ -14,10 +14,14 @@ import {
 } from '@services/admin/metricsService';
 import {
   fetchComplianceReports,
+  runComplianceIssueNow,
   runComplianceCheck,
+  runGlobalAutomationNow,
+  type ComplianceRunResult,
   type ComplianceReport,
   type ComplianceState,
 } from '@services/admin/complianceService';
+import { peekCachedValue, writeCachedValue } from '@services/localCache';
 
 const VictoryAxis = (VictoryNative as any).VictoryAxis as React.ComponentType<any>;
 const VictoryBar = (VictoryNative as any).VictoryBar as React.ComponentType<any>;
@@ -26,6 +30,8 @@ const VictoryLine = (VictoryNative as any).VictoryLine as React.ComponentType<an
 const VictoryTheme = (VictoryNative as any).VictoryTheme;
 
 const ADMIN_EMAILS = ['brasioxirin@gmail.com'];
+const ADMIN_METRICS_CACHE_KEY = 'dott.admin.metrics.v1';
+const ADMIN_METRICS_CACHE_MAX_AGE_MS = 1000 * 60 * 20;
 
 const emptyMetrics: AdminMetrics = {
   summary: {
@@ -34,6 +40,10 @@ const emptyMetrics: AdminMetrics = {
     newSignupsThisWeek: 0,
     connectedClients: 0,
   },
+  clients: [],
+  activeClients: [],
+  packageBreakdown: [],
+  packageGrowth: [],
   signupsByDay: [],
   connectedPlatforms: {},
   topActiveAccounts: [],
@@ -90,12 +100,42 @@ const formatTime = (value: string) => {
   return parsed.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 };
 
+type RunNotice = {
+  title: string;
+  message: string;
+  details: string[];
+  expanded: boolean;
+};
+
+const runResultFromPayload = (payload: any): ComplianceRunResult => payload?.autopostResult ?? payload?.result ?? payload ?? {};
+
+const buildRunNotice = (title: string, payload: unknown): RunNotice => {
+  const result = runResultFromPayload(payload);
+  const summary = result.summary ?? {};
+  const details = [
+    typeof result.updatedAccounts === 'number' ? `Accounts touched: ${result.updatedAccounts}` : null,
+    typeof result.updatedChannels === 'number' ? `Channels queued: ${result.updatedChannels}` : null,
+    typeof result.issueCount === 'number' ? `Issues found: ${result.issueCount}` : null,
+    typeof result.remediated === 'number' ? `Issues repaired: ${result.remediated}` : null,
+    typeof summary.processed === 'number' ? `Jobs processed: ${summary.processed}` : null,
+    typeof summary.posted === 'number' ? `Posts sent: ${summary.posted}` : null,
+    typeof summary.failed === 'number' ? `Failed jobs: ${summary.failed}` : null,
+  ].filter(Boolean) as string[];
+  return {
+    title,
+    message: result.completedAt ? `Run done at ${formatTime(result.completedAt)}` : 'Run done',
+    details: details.length ? details : ['Watchdog automation completed and the scheduler remains active.'],
+    expanded: true,
+  };
+};
+
 const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
 
 const knownAccountNames: Record<string, string> = {
   '1zvY9nNyXMcfxdPQEyx0bIdK7r53': 'Bwin / Ball Analytics',
   tCE1FQ1cOFgdupOXP23mPUMQRAz1: 'SheCare Doctor',
   '80bYIeiuukNFtUvXTUobXmfC7pu1': 'Dott HR',
+  cMPZQccGggbhZe9dbvtxFmBehP02: 'Dott Media',
   LVR7p3WzdFM51ds92Kacf6S40og2: 'Dott Energy',
   acmVetCcOiTHeGk5D7eDYieamDF3: 'Car Marketplace',
   D1iNgjLKNRaQhH35M0NmGfw1LVD2: 'Staysphere',
@@ -106,17 +146,29 @@ export const AdminDashboardScreen: React.FC = () => {
   const { state } = useAuth();
   const { t } = useI18n();
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const [metrics, setMetrics] = useState<AdminMetrics>(emptyMetrics);
+  const [metrics, setMetrics] = useState<AdminMetrics>(
+    () => peekCachedValue<AdminMetrics>(ADMIN_METRICS_CACHE_KEY, ADMIN_METRICS_CACHE_MAX_AGE_MS) ?? emptyMetrics,
+  );
+  const [hasCachedMetrics, setHasCachedMetrics] = useState(
+    () => Boolean(peekCachedValue<AdminMetrics>(ADMIN_METRICS_CACHE_KEY, ADMIN_METRICS_CACHE_MAX_AGE_MS)),
+  );
   const [complianceReports, setComplianceReports] = useState<ComplianceReport[]>([]);
   const [complianceState, setComplianceState] = useState<ComplianceState>(emptyComplianceState);
   const [liveSocialRows, setLiveSocialRows] = useState<AdminLiveSocialAccount[]>([]);
   const [liveSocialUpdatedAt, setLiveSocialUpdatedAt] = useState('');
+  const [expandedLiveSocialUserId, setExpandedLiveSocialUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [liveSocialLoading, setLiveSocialLoading] = useState(false);
   const [complianceLoading, setComplianceLoading] = useState(false);
+  const [globalRunLoading, setGlobalRunLoading] = useState(false);
+  const [manualRunKey, setManualRunKey] = useState<string | null>(null);
+  const [runNotice, setRunNotice] = useState<RunNotice | null>(null);
+  const [emailRunStarted, setEmailRunStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [liveSocialError, setLiveSocialError] = useState<string | null>(null);
   const [complianceError, setComplianceError] = useState<string | null>(null);
+  const [showTotalClients, setShowTotalClients] = useState(false);
+  const [showActiveClients, setShowActiveClients] = useState(false);
 
   const isAdminUser = useMemo(() => {
     const email = normalizeLower(state.user?.email);
@@ -124,11 +176,15 @@ export const AdminDashboardScreen: React.FC = () => {
   }, [state.user]);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
+    if (!hasCachedMetrics) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const payload = await fetchAdminMetrics();
       setMetrics(payload);
+      setHasCachedMetrics(true);
+      void writeCachedValue(ADMIN_METRICS_CACHE_KEY, payload);
     } catch (err: any) {
       setError(err?.message ?? t('Unable to load admin metrics.'));
     } finally {
@@ -143,13 +199,14 @@ export const AdminDashboardScreen: React.FC = () => {
     } catch (err: any) {
       setComplianceError(err?.message ?? t('Unable to load compliance reports.'));
     }
-  }, [t]);
+  }, [hasCachedMetrics, t]);
 
   const runCompliance = useCallback(async () => {
     setComplianceLoading(true);
     setComplianceError(null);
     try {
-      await runComplianceCheck();
+      const result = await runComplianceCheck();
+      setRunNotice(buildRunNotice(t('Watchdog run complete'), result));
       const payload = await fetchComplianceReports();
       setComplianceReports(payload.reports);
       setComplianceState(payload.state);
@@ -160,19 +217,64 @@ export const AdminDashboardScreen: React.FC = () => {
     }
   }, [t]);
 
+  const refreshCompliance = useCallback(async () => {
+    const payload = await fetchComplianceReports();
+    setComplianceReports(payload.reports);
+    setComplianceState(payload.state);
+  }, []);
+
   const refreshLiveSocial = useCallback(async () => {
     setLiveSocialLoading(true);
     setLiveSocialError(null);
     try {
       const payload = await fetchAdminLiveSocial(720);
-      setLiveSocialRows(payload.rows ?? []);
+      const rows = payload.rows ?? [];
+      setLiveSocialRows(rows);
       setLiveSocialUpdatedAt(payload.generatedAt ?? '');
+      setExpandedLiveSocialUserId(current => (current && rows.some(row => row.userId === current) ? current : null));
     } catch (err: any) {
       setLiveSocialError(err?.message ?? t('Unable to load live social stats.'));
     } finally {
       setLiveSocialLoading(false);
     }
   }, [t]);
+
+  const runGlobalNow = useCallback(async () => {
+    setGlobalRunLoading(true);
+    setComplianceError(null);
+    try {
+      const result = await runGlobalAutomationNow();
+      setRunNotice(buildRunNotice(t('Global run complete'), result));
+      await Promise.all([refreshCompliance(), refreshLiveSocial()]);
+    } catch (err: any) {
+      setComplianceError(err?.message ?? t('Unable to run global automation now.'));
+    } finally {
+      setGlobalRunLoading(false);
+    }
+  }, [refreshCompliance, refreshLiveSocial, t]);
+
+  const runIssueNow = useCallback(async (issue: ComplianceReport['issues'][number], key: string) => {
+    setManualRunKey(key);
+    setComplianceError(null);
+    try {
+      const result = await runComplianceIssueNow(issue);
+      setRunNotice(buildRunNotice(t('Manual run complete'), result));
+      await refreshCompliance();
+    } catch (err: any) {
+      setComplianceError(err?.message ?? t('Unable to rerun this issue.'));
+    } finally {
+      setManualRunKey(null);
+    }
+  }, [refreshCompliance, t]);
+
+  useEffect(() => {
+    if (!isAdminUser || emailRunStarted) return;
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('watchdogRun') !== '1') return;
+    setEmailRunStarted(true);
+    void runCompliance();
+  }, [emailRunStarted, isAdminUser, runCompliance]);
 
   useEffect(() => {
     if (!isAdminUser) return;
@@ -214,6 +316,19 @@ export const AdminDashboardScreen: React.FC = () => {
     metrics.weeklyPostVolume.length > 0
       ? metrics.weeklyPostVolume.map(point => ({ x: formatShortDate(point.date), y: point.count }))
       : [{ x: t('Now'), y: 0 }];
+  const packageBreakdown = metrics.packageBreakdown ?? [];
+  const packageGrowthRows = metrics.packageGrowth ?? [];
+  const packageGrowthSeries = packageBreakdown
+    .filter(pkg => pkg.total > 0)
+    .slice(0, 5)
+    .map(pkg => ({
+      packageId: pkg.packageId,
+      packageName: pkg.packageName,
+      total: pkg.total,
+      data: packageGrowthRows.length
+        ? packageGrowthRows.map(point => ({ x: formatShortDate(String(point.date)), y: Number(point[pkg.packageId] ?? 0) }))
+        : [{ x: t('Now'), y: pkg.total }],
+    }));
 
   const connectedPlatforms = [
     { key: 'instagram', label: 'Instagram', color: '#F77737' },
@@ -256,6 +371,7 @@ export const AdminDashboardScreen: React.FC = () => {
     },
     { views: 0, interactions: 0, conversions: 0 },
   );
+  const loadedLiveSocialAccounts = liveSocialRows.filter(row => row.status === 'ok').length;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -302,22 +418,59 @@ export const AdminDashboardScreen: React.FC = () => {
             <StatCard label={t('Latest issues')} value={complianceState.lastIssueCount} />
             <StatCard label={t('Repaired accounts')} value={complianceState.lastRemediatedCount} />
           </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={runCompliance}
-            disabled={complianceLoading}
-            style={({ pressed }) => [
-              styles.complianceButton,
-              pressed && !complianceLoading ? styles.complianceButtonPressed : null,
-              complianceLoading ? styles.complianceButtonDisabled : null,
-            ]}
-          >
-            <Text style={styles.complianceButtonText}>
-              {complianceLoading ? t('Running...') : t('Run check')}
-            </Text>
-          </Pressable>
+          <View style={styles.complianceButtonGroup}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={runCompliance}
+              disabled={complianceLoading}
+              style={({ pressed }) => [
+                styles.complianceButton,
+                pressed && !complianceLoading ? styles.complianceButtonPressed : null,
+                complianceLoading ? styles.complianceButtonDisabled : null,
+              ]}
+            >
+              <Text style={styles.complianceButtonText}>
+                {complianceLoading ? t('Running...') : t('Run check')}
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={runGlobalNow}
+              disabled={globalRunLoading}
+              style={({ pressed }) => [
+                styles.complianceButton,
+                styles.globalRunButton,
+                pressed && !globalRunLoading ? styles.complianceButtonPressed : null,
+                globalRunLoading ? styles.complianceButtonDisabled : null,
+              ]}
+            >
+              <Text style={styles.complianceButtonText}>
+                {globalRunLoading ? t('Running...') : t('Global Run')}
+              </Text>
+            </Pressable>
+          </View>
         </View>
         {complianceError ? <Text style={styles.errorText}>{complianceError}</Text> : null}
+        {runNotice ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setRunNotice(current => (current ? { ...current, expanded: !current.expanded } : current))}
+            style={styles.runNotice}
+          >
+            <View style={styles.runNoticeHeader}>
+              <Text style={styles.runNoticeTitle}>{runNotice.title}</Text>
+              <Text style={styles.runNoticeToggle}>{runNotice.expanded ? t('Hide') : t('Show')}</Text>
+            </View>
+            <Text style={styles.runNoticeMessage}>{runNotice.message}</Text>
+            {runNotice.expanded ? (
+              <View style={styles.runNoticeDetails}>
+                {runNotice.details.map(detail => (
+                  <Text key={detail} style={styles.runNoticeDetail}>{detail}</Text>
+                ))}
+              </View>
+            ) : null}
+          </Pressable>
+        ) : null}
         <View style={styles.complianceMetaGrid}>
           <View style={styles.complianceMeta}>
             <Text style={styles.complianceMetaLabel}>{t('Last check')}</Text>
@@ -341,8 +494,10 @@ export const AdminDashboardScreen: React.FC = () => {
         ) : latestIssues.length === 0 ? (
           <Text style={styles.emptyText}>{t('The latest watchdog report has no issues.')}</Text>
         ) : (
-          latestIssues.map((issue, index) => (
-            <View key={`${latestCompliance.id}-${issue.userId}-${issue.channel}-${index}`} style={styles.complianceIssueRow}>
+          latestIssues.map((issue, index) => {
+            const issueKey = `${latestCompliance.id}-${issue.userId}-${issue.channel}-${index}`;
+            return (
+            <View key={issueKey} style={styles.complianceIssueRow}>
               <View
                 style={[
                   styles.complianceSeverity,
@@ -357,8 +512,23 @@ export const AdminDashboardScreen: React.FC = () => {
                 <Text style={styles.complianceIssueReason}>{issue.reason}</Text>
                 <Text style={styles.complianceIssueAction}>{issue.action}</Text>
               </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => runIssueNow(issue, issueKey)}
+                disabled={manualRunKey === issueKey}
+                style={({ pressed }) => [
+                  styles.manualRunButton,
+                  pressed && manualRunKey !== issueKey ? styles.complianceButtonPressed : null,
+                  manualRunKey === issueKey ? styles.complianceButtonDisabled : null,
+                ]}
+              >
+                <Text style={styles.manualRunButtonText}>
+                  {manualRunKey === issueKey ? t('Running') : t('Manual Run')}
+                </Text>
+              </Pressable>
             </View>
-          ))
+          );
+          })
         )}
       </DMCard>
 
@@ -400,6 +570,120 @@ export const AdminDashboardScreen: React.FC = () => {
             barWidth={18}
           />
         </VictoryChart>
+        <View style={styles.clientDropdownWrap}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setShowTotalClients(value => !value)}
+            style={({ pressed }) => [styles.dropdownToggle, pressed ? styles.dropdownTogglePressed : null]}
+          >
+            <Text style={styles.dropdownToggleText}>{t('Total clients list')}</Text>
+            <Text style={styles.dropdownToggleMeta}>{metrics.clients.length}</Text>
+          </Pressable>
+          {showTotalClients ? (
+            <View style={styles.clientList}>
+              {metrics.clients.length === 0 ? (
+                <Text style={styles.emptyText}>{t('No clients found yet.')}</Text>
+              ) : (
+                metrics.clients.map(client => (
+                  <View key={client.userId} style={styles.clientListRow}>
+                    <View style={styles.clientListIdentity}>
+                      <Text style={styles.accountName}>{client.name || client.email || client.userId}</Text>
+                      <Text style={styles.feedTime}>{client.email || client.userId}</Text>
+                    </View>
+                    <Text style={styles.packagePill}>{client.packageName}</Text>
+                  </View>
+                ))
+              )}
+            </View>
+          ) : null}
+
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setShowActiveClients(value => !value)}
+            style={({ pressed }) => [styles.dropdownToggle, pressed ? styles.dropdownTogglePressed : null]}
+          >
+            <Text style={styles.dropdownToggleText}>{t('Active clients list')}</Text>
+            <Text style={styles.dropdownToggleMeta}>{metrics.activeClients.length}</Text>
+          </Pressable>
+          {showActiveClients ? (
+            <View style={styles.clientList}>
+              {metrics.activeClients.length === 0 ? (
+                <Text style={styles.emptyText}>{t('No clients have been active in the last 24 hours.')}</Text>
+              ) : (
+                metrics.activeClients.map(client => (
+                  <View key={client.userId} style={styles.clientListRow}>
+                    <View style={styles.clientListIdentity}>
+                      <Text style={styles.accountName}>{client.name || client.email || client.userId}</Text>
+                      <Text style={styles.feedTime}>{client.email || client.userId}</Text>
+                    </View>
+                    <Text style={styles.packagePill}>{client.packageName}</Text>
+                  </View>
+                ))
+              )}
+            </View>
+          ) : null}
+        </View>
+      </DMCard>
+
+      <DMCard
+        title={t('Packages & Growth')}
+        subtitle={t('Clients per package and package adoption over time')}
+        style={styles.cardShadow}
+      >
+        <View style={styles.packageGrid}>
+          {packageBreakdown.map(pkg => (
+            <View key={pkg.packageId} style={styles.packageCard}>
+              <Text style={styles.statLabel}>{pkg.packageName}</Text>
+              <Text style={styles.statValue}>{pkg.total}</Text>
+              <Text style={styles.statHint}>{t('{{count}} active', { count: pkg.active })}</Text>
+            </View>
+          ))}
+        </View>
+        <SectionHeader title={t('Package growth')} subtitle={t('Cumulative users by package')} />
+        {packageGrowthSeries.length === 0 ? (
+          <Text style={styles.emptyText}>{t('Package growth appears once clients are loaded.')}</Text>
+        ) : (
+          <>
+            <VictoryChart theme={VictoryTheme.material} domainPadding={10}>
+              <VictoryAxis
+                style={{
+                  axis: { stroke: colors.border },
+                  tickLabels: { fill: colors.subtext, fontSize: 10 },
+                  grid: { stroke: 'transparent' },
+                }}
+              />
+              <VictoryAxis
+                dependentAxis
+                style={{
+                  axis: { stroke: colors.border },
+                  tickLabels: { fill: colors.subtext, fontSize: 10 },
+                  grid: { stroke: 'transparent' },
+                }}
+              />
+              {packageGrowthSeries.map((pkg, index) => (
+                <VictoryLine
+                  key={pkg.packageId}
+                  data={pkg.data}
+                  interpolation="monotoneX"
+                  style={{
+                    data: {
+                      stroke: ['#0EA5E9', '#22C55E', '#F59E0B', '#EC4899', '#8B5CF6'][index % 5],
+                      strokeWidth: 3,
+                    },
+                  }}
+                />
+              ))}
+            </VictoryChart>
+            <View style={styles.packageLegend}>
+              {packageGrowthSeries.map((pkg, index) => (
+                <View key={pkg.packageId} style={styles.packageLegendItem}>
+                  <View style={[styles.packageLegendDot, { backgroundColor: ['#0EA5E9', '#22C55E', '#F59E0B', '#EC4899', '#8B5CF6'][index % 5] }]} />
+                  <Text style={styles.feedTime}>{pkg.packageName}</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
       </DMCard>
 
       <DMCard
@@ -441,17 +725,19 @@ export const AdminDashboardScreen: React.FC = () => {
         style={styles.cardShadow}
       >
         {liveSocialError ? <Text style={styles.errorText}>{liveSocialError}</Text> : null}
-        <View style={styles.statGrid}>
-          <StatCard label={t('Total views')} value={formatNumber(liveSocialTotals.views)} />
-          <StatCard label={t('Interactions')} value={formatNumber(liveSocialTotals.interactions)} />
-          <StatCard label={t('Conversions')} value={formatNumber(liveSocialTotals.conversions)} />
-          <StatCard label={t('Accounts loaded')} value={liveSocialRows.filter(row => row.status === 'ok').length} />
+        <View style={styles.liveSocialSummaryLine}>
+          <Text style={styles.liveSocialSummaryText}>
+            {t('{{accounts}} accounts live', { accounts: loadedLiveSocialAccounts })} | {formatNumber(liveSocialTotals.views)} {t('views')} |{' '}
+            {formatNumber(liveSocialTotals.interactions)} {t('interactions')} | {formatNumber(liveSocialTotals.conversions)} {t('conversions')}
+          </Text>
+          {liveSocialLoading ? <ActivityIndicator color={colors.accent} /> : null}
         </View>
         {liveSocialRows.length === 0 ? (
           <Text style={styles.emptyText}>{t('No live account stats loaded yet.')}</Text>
         ) : (
           liveSocialRows.map(row => {
             const stats = row.stats;
+            const isExpanded = expandedLiveSocialUserId === row.userId;
             const platforms = stats?.platforms;
             const channelParts = [
               platforms?.facebook?.connected
@@ -463,22 +749,35 @@ export const AdminDashboardScreen: React.FC = () => {
               platforms?.threads?.connected
                 ? `Threads ${formatNumber(platforms.threads.views)} views / ${formatNumber(platforms.threads.interactions)} int.`
                 : '',
+              platforms?.linkedin?.connected
+                ? `LinkedIn ${formatNumber(platforms.linkedin.views)} views / ${formatNumber(platforms.linkedin.interactions)} int.`
+                : '',
               platforms?.x?.connected
                 ? `X ${formatNumber(platforms.x.views)} views / ${formatNumber(platforms.x.interactions)} int.`
                 : '',
             ].filter(Boolean);
             return (
-              <View key={row.userId} style={styles.liveSocialAccountRow}>
+              <Pressable
+                key={row.userId}
+                style={styles.liveSocialAccountRow}
+                onPress={() => setExpandedLiveSocialUserId(current => (current === row.userId ? null : row.userId))}
+              >
                 <View style={styles.liveSocialAccountHeader}>
                   <View style={styles.liveSocialAccountNameWrap}>
                     <Text style={styles.accountName}>{row.label}</Text>
                     <Text style={styles.feedTime}>{row.email ?? row.scopeId ?? row.userId}</Text>
                   </View>
+                  {stats ? (
+                    <Text style={styles.liveSocialCompactStats}>
+                      {formatNumber(stats.summary.views)} {t('views')} | {formatNumber(stats.summary.interactions)} {t('int.')} |{' '}
+                      {Number(stats.summary.engagementRate ?? 0).toFixed(2)}%
+                    </Text>
+                  ) : null}
                   <Text style={[styles.liveSocialStatus, row.status === 'ok' ? styles.liveSocialStatusOk : styles.liveSocialStatusError]}>
                     {row.status === 'ok' ? t('Live') : t('Error')}
                   </Text>
                 </View>
-                {stats ? (
+                {stats && isExpanded ? (
                   <>
                     <View style={styles.liveSocialMetricGrid}>
                       <View style={styles.liveSocialMetric}>
@@ -496,10 +795,11 @@ export const AdminDashboardScreen: React.FC = () => {
                     </View>
                     <Text style={styles.liveSocialChannels}>{channelParts.length ? channelParts.join(' | ') : t('No connected live channels reported.')}</Text>
                   </>
-                ) : (
+                ) : null}
+                {!stats ? (
                   <Text style={styles.errorText}>{row.error ?? t('Unable to load this account.')}</Text>
-                )}
-              </View>
+                ) : null}
+              </Pressable>
             );
           })
         )}
@@ -716,6 +1016,106 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 6,
   },
+  clientDropdownWrap: {
+    marginTop: 6,
+  },
+  dropdownToggle: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  dropdownTogglePressed: {
+    opacity: 0.82,
+  },
+  dropdownToggleText: {
+    color: colors.text,
+    fontWeight: '700',
+  },
+  dropdownToggleMeta: {
+    minWidth: 34,
+    textAlign: 'center',
+    color: colors.text,
+    fontWeight: '800',
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 999,
+    overflow: 'hidden',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  clientList: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    padding: 10,
+    backgroundColor: colors.backgroundAlt,
+  },
+  clientListRow: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  clientListIdentity: {
+    flex: 1,
+    minWidth: 0,
+  },
+  packagePill: {
+    color: colors.accent,
+    fontSize: 11,
+    fontWeight: '800',
+    backgroundColor: 'rgba(14,165,233,0.12)',
+    borderRadius: 999,
+    overflow: 'hidden',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  packageGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  packageCard: {
+    width: '48%',
+    minHeight: 92,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+  },
+  packageLegend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 2,
+  },
+  packageLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  packageLegendDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+  },
   rowSplit: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -746,6 +1146,27 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 12,
   },
+  liveSocialSummaryLine: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    backgroundColor: colors.backgroundAlt,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  liveSocialSummaryText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
   liveSocialAccountRow: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -762,6 +1183,13 @@ const styles = StyleSheet.create({
   },
   liveSocialAccountNameWrap: {
     flex: 1,
+  },
+  liveSocialCompactStats: {
+    color: colors.subtext,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 3,
+    textAlign: 'right',
   },
   liveSocialStatus: {
     fontSize: 11,
@@ -877,6 +1305,41 @@ const styles = StyleSheet.create({
     color: colors.danger,
     marginBottom: 12,
   },
+  runNotice: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.35)',
+    backgroundColor: 'rgba(34,197,94,0.1)',
+    padding: 12,
+    marginBottom: 12,
+  },
+  runNoticeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  runNoticeTitle: {
+    color: colors.text,
+    fontWeight: '800',
+    flex: 1,
+  },
+  runNoticeToggle: {
+    color: colors.success,
+    fontWeight: '800',
+  },
+  runNoticeMessage: {
+    color: colors.subtext,
+    marginTop: 4,
+  },
+  runNoticeDetails: {
+    marginTop: 8,
+    gap: 4,
+  },
+  runNoticeDetail: {
+    color: colors.text,
+    fontSize: 12,
+  },
   dangerText: {
     color: colors.danger,
   },
@@ -897,6 +1360,12 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     justifyContent: 'space-between',
   },
+  complianceButtonGroup: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'flex-end',
+  },
   complianceButton: {
     minWidth: 120,
     minHeight: 44,
@@ -912,6 +1381,9 @@ const styles = StyleSheet.create({
   },
   complianceButtonDisabled: {
     opacity: 0.5,
+  },
+  globalRunButton: {
+    backgroundColor: colors.success,
   },
   complianceButtonText: {
     color: colors.text,
@@ -964,6 +1436,19 @@ const styles = StyleSheet.create({
   },
   complianceIssueBody: {
     flex: 1,
+  },
+  manualRunButton: {
+    alignSelf: 'center',
+    borderRadius: 8,
+    backgroundColor: colors.accent,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginLeft: 10,
+  },
+  manualRunButtonText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '800',
   },
   complianceIssueTitleRow: {
     flexDirection: 'row',

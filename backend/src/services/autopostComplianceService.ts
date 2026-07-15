@@ -93,7 +93,7 @@ const stateRef = firestore.collection('system').doc('autopostCompliance');
 const timeoutMs = (name: string, fallback: number) => Math.max(Number(process.env[name] ?? fallback), 3000);
 
 const withTimeout = async <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
-  let timer: NodeJS.Timeout | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
@@ -350,8 +350,20 @@ const updateJob = async (userId: string, job: Record<string, unknown>, patch: Re
   }
 };
 
+const adminRunNowUrl = () =>
+  (
+    process.env.AUTOPOST_COMPLIANCE_RUN_NOW_URL ??
+    process.env.DOTT_ADMIN_RUN_NOW_URL ??
+    process.env.PUBLIC_APP_URL ??
+    process.env.APP_URL ??
+    'https://dottmediaapk.web.app'
+  ).replace(/\/$/, '');
+
 const formatIssueEmail = (issues: ComplianceIssue[]) => [
   'Autopost compliance found stalled or failing channels and attempted remediation.',
+  '',
+  `Run now: ${adminRunNowUrl()}/admin?watchdogRun=1`,
+  'Open Admin > Compliance Watchdog and press Global Run or Manual Run beside a flagged issue.',
   '',
   ...issues.map(issue =>
     [
@@ -380,8 +392,69 @@ const triggerDueRunner = (label: string) => {
   );
 };
 
+const summarizeDueResult = (dueResult: unknown) => {
+  const result = dueResult as Record<string, unknown> | null | undefined;
+  return {
+    processed: Number(result?.processed ?? result?.processedJobs ?? 0),
+    posted: Number(result?.posted ?? result?.successful ?? result?.success ?? 0),
+    failed: Number(result?.failed ?? result?.failures ?? 0),
+  };
+};
+
+const forceAccountsDueNow = async (
+  label: string,
+  predicate?: (account: MonitoredAccount, channel: ChannelConfig) => boolean,
+) => {
+  const nowTimestamp = admin.firestore.Timestamp.now();
+  const discovery = await discoverAccounts();
+  let updatedAccounts = 0;
+  let updatedChannels = 0;
+
+  for (const account of discovery.accounts) {
+    const preloadedJob = discovery.jobs.get(account.userId) ?? null;
+    const loaded = preloadedJob ? { job: preloadedJob, errors: [] as string[] } : await loadJob(account.userId);
+    const job = loaded.job;
+    if (!job || job.active === false) continue;
+    const channels = account.pinned ? account.channels : genericChannelsForJob(job);
+    const patch: Record<string, unknown> = {};
+    channels.forEach(channel => {
+      if (predicate && !predicate(account, channel)) return;
+      patch[channel.nextRunField] = nowTimestamp;
+      patch[channel.intervalField] = numberValue(job[channel.intervalField], channel.fallbackIntervalHours);
+      updatedChannels += 1;
+    });
+    if (Object.keys(patch).length > 0) {
+      await updateJob(account.userId, job, patch);
+      updatedAccounts += 1;
+    }
+  }
+
+  const dueResult = await autoPostService.runDueJobs();
+  return {
+    ok: true,
+    completed: true,
+    label,
+    completedAt: new Date().toISOString(),
+    updatedAccounts,
+    updatedChannels,
+    summary: summarizeDueResult(dueResult),
+    dueResult,
+  };
+};
+
 export const autopostComplianceService = {
   accounts: pinnedAccounts,
+
+  async globalRunNow(label = 'admin_global_run') {
+    return forceAccountsDueNow(label);
+  },
+
+  async rerunIssue(issue: Pick<ComplianceIssue, 'userId' | 'channel'>, label = 'admin_issue_rerun') {
+    return forceAccountsDueNow(
+      label,
+      (account, channel) => account.userId === issue.userId && channel.name === issue.channel,
+    );
+  },
 
   async checkAndRepair(label = 'manual') {
     const now = Date.now();
@@ -474,6 +547,12 @@ export const autopostComplianceService = {
       .map(issue => `${issue.userId}:${issue.channel}:${issue.reason}`)
       .sort()
       .join('|');
+    const autoCorrection = {
+      handled: true,
+      attempted: issues.length,
+      remediated,
+      continuedByScheduler: true,
+    };
     let emailed = false;
     if (issues.length) {
       const cooldownMinutes = Math.max(Number(process.env.AUTOPOST_COMPLIANCE_ALERT_COOLDOWN_MINUTES ?? 60), 5);
@@ -575,6 +654,7 @@ export const autopostComplianceService = {
       discoveryErrors: discovery.discoveryErrors,
       issueCount: issues.length,
       remediated,
+      autoCorrection,
       emailed,
       dueResult,
       issues,
