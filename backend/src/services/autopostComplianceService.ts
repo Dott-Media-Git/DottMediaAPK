@@ -362,7 +362,7 @@ const adminRunNowUrl = () =>
 const formatIssueEmail = (issues: ComplianceIssue[]) => [
   'Autopost compliance found stalled or failing channels and attempted remediation.',
   '',
-  `Run now: ${adminRunNowUrl()}/admin`,
+  `Run now: ${adminRunNowUrl()}/admin?watchdogRun=1`,
   'Open Admin > Compliance Watchdog and press Global Run or Manual Run beside a flagged issue.',
   '',
   ...issues.map(issue =>
@@ -390,6 +390,15 @@ const triggerDueRunner = (label: string) => {
       console.error('[autopost-compliance] due runner failed after repair', error);
     },
   );
+};
+
+const summarizeDueResult = (dueResult: unknown) => {
+  const result = dueResult as Record<string, unknown> | null | undefined;
+  return {
+    processed: Number(result?.processed ?? result?.processedJobs ?? 0),
+    posted: Number(result?.posted ?? result?.successful ?? result?.success ?? 0),
+    failed: Number(result?.failed ?? result?.failures ?? 0),
+  };
 };
 
 const forceAccountsDueNow = async (
@@ -422,9 +431,13 @@ const forceAccountsDueNow = async (
 
   const dueResult = await autoPostService.runDueJobs();
   return {
+    ok: true,
+    completed: true,
     label,
+    completedAt: new Date().toISOString(),
     updatedAccounts,
     updatedChannels,
+    summary: summarizeDueResult(dueResult),
     dueResult,
   };
 };
@@ -534,6 +547,12 @@ export const autopostComplianceService = {
       .map(issue => `${issue.userId}:${issue.channel}:${issue.reason}`)
       .sort()
       .join('|');
+    const autoCorrection = {
+      handled: true,
+      attempted: issues.length,
+      remediated,
+      continuedByScheduler: true,
+    };
     let emailed = false;
     if (issues.length) {
       const cooldownMinutes = Math.max(Number(process.env.AUTOPOST_COMPLIANCE_ALERT_COOLDOWN_MINUTES ?? 60), 5);
@@ -635,6 +654,7 @@ export const autopostComplianceService = {
       discoveryErrors: discovery.discoveryErrors,
       issueCount: issues.length,
       remediated,
+      autoCorrection,
       emailed,
       dueResult,
       issues,
