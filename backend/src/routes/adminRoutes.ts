@@ -29,6 +29,10 @@ import { getSecret } from '../services/secretVaultService';
 import { autopostComplianceService } from '../services/autopostComplianceService';
 import { firestore } from '../db/firestore';
 import { getLiveSocialMetrics } from '../services/liveSocialMetricsService';
+import { pollFacebookCommentsOnce } from '../jobs/facebookCommentPollJob';
+import { pollInstagramCommentsOnce } from '../jobs/instagramCommentPollJob';
+import { pollThreadsCommentsOnce } from '../jobs/threadsCommentPollJob';
+import { pollInstagramDmsOnce } from '../jobs/instagramDmPollJob';
 
 const router = Router();
 
@@ -42,7 +46,7 @@ const ADMIN_LIVE_SOCIAL_CLIENTS = [
   { label: 'Gamers 4 Life', userId: 'vzdH1DnfFLVjlY8bBgC26WACmmw2' },
   { label: 'Bwin / Ball Analytics', userId: process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53', scopeId: process.env.BWIN_SCOPE_ID || 'bwinbetug', email: 'ball_analytics' },
 ];
-const ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS ?? 12000);
+const ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS ?? 90000);
 const ADMIN_METRICS_FRESH_MS = Number(process.env.ADMIN_METRICS_FRESH_MS ?? 15000);
 const ADMIN_METRICS_STALE_MS = Number(process.env.ADMIN_METRICS_STALE_MS ?? 180000);
 const ADMIN_COMPLIANCE_LIVE_CACHE_MS = Number(process.env.ADMIN_COMPLIANCE_LIVE_CACHE_MS ?? 180000);
@@ -50,6 +54,7 @@ let adminMetricsCache: { metrics: Awaited<ReturnType<typeof getAdminMetrics>>; f
 let adminMetricsRefresh: Promise<typeof adminMetricsCache> | null = null;
 let adminComplianceLiveCache: { result: Awaited<ReturnType<typeof autopostComplianceService.checkAndRepair>>; fetchedAt: number } | null = null;
 let adminComplianceLiveRefresh: Promise<typeof adminComplianceLiveCache> | null = null;
+const adminLiveSocialAccountCache = new Map<string, { row: any; fetchedAt: number }>();
 
 const withTimeout = <T>(promise: Promise<T>, ms: number, label: string) =>
   Promise.race<T>([
@@ -140,7 +145,7 @@ router.get('/admin/live-social', requireFirebase, requireAdmin, async (req, res,
             ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS,
             `live social ${client.label}`,
           );
-          return {
+          const row = {
             label: client.label,
             userId: client.userId,
             scopeId: client.scopeId ?? client.userId,
@@ -148,7 +153,17 @@ router.get('/admin/live-social', requireFirebase, requireAdmin, async (req, res,
             status: 'ok',
             stats,
           };
+          adminLiveSocialAccountCache.set(client.userId, { row, fetchedAt: Date.now() });
+          return row;
         } catch (error) {
+          const cached = adminLiveSocialAccountCache.get(client.userId);
+          if (cached?.row) {
+            return {
+              ...cached.row,
+              stale: true,
+              staleReason: error instanceof Error ? error.message : String(error),
+            };
+          }
           return {
             label: client.label,
             userId: client.userId,
@@ -171,6 +186,20 @@ router.get('/admin/live-social', requireFirebase, requireAdmin, async (req, res,
     next(error);
   }
 });
+
+const runReplyPollersOnce = async () => {
+  const settled = await Promise.allSettled([
+    pollFacebookCommentsOnce(),
+    pollInstagramCommentsOnce(),
+    pollThreadsCommentsOnce(),
+    pollInstagramDmsOnce(),
+  ]);
+  return settled.map((result, index) => ({
+    poller: ['facebook_comments', 'instagram_comments', 'threads_replies', 'instagram_dms'][index],
+    status: result.status,
+    error: result.status === 'rejected' ? (result.reason instanceof Error ? result.reason.message : String(result.reason)) : null,
+  }));
+};
 
 const timestampToIso = (value: unknown): string | null => {
   if (!value) return null;
@@ -251,6 +280,35 @@ router.post('/admin/compliance/run', requireFirebase, requireAdmin, async (_req,
   try {
     const result = await autopostComplianceService.checkAndRepair('admin_dashboard');
     res.json({ result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/admin/global-run', requireFirebase, requireAdmin, async (_req, res, next) => {
+  try {
+    const [autopostResult, replyPollers] = await Promise.all([
+      autopostComplianceService.globalRunNow('admin_global_run'),
+      runReplyPollersOnce(),
+    ]);
+    res.json({ ok: true, autopostResult, replyPollers });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/admin/compliance/run-issue', requireFirebase, requireAdmin, async (req, res, next) => {
+  try {
+    const userId = String(req.body?.userId ?? '').trim();
+    const channel = String(req.body?.channel ?? '').trim() as 'feed' | 'stories' | 'reels' | 'news';
+    if (!userId || !['feed', 'stories', 'reels', 'news'].includes(channel)) {
+      throw createHttpError(400, 'userId and channel are required');
+    }
+    const [autopostResult, replyPollers] = await Promise.all([
+      autopostComplianceService.rerunIssue({ userId, channel }, 'admin_issue_rerun'),
+      runReplyPollersOnce(),
+    ]);
+    res.json({ ok: true, autopostResult, replyPollers });
   } catch (error) {
     next(error);
   }
