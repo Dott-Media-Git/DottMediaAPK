@@ -53,3 +53,14 @@ export const runComplianceCheck = async () => {
   const payload = await adminFetch('/admin/compliance/run', { method: 'POST', body: '{}' });
   return payload.result;
 };
+
+export const runGlobalAutomationNow = async () => {
+  return adminFetch('/admin/global-run', { method: 'POST', body: '{}' });
+};
+
+export const runComplianceIssueNow = async (issue: Pick<ComplianceIssue, 'userId' | 'channel'>) => {
+  return adminFetch('/admin/compliance/run-issue', {
+    method: 'POST',
+    body: JSON.stringify({ userId: issue.userId, channel: issue.channel }),
+  });
+};
