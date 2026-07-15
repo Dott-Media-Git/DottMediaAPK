@@ -60,6 +60,8 @@ export type AdminLiveSocialAccount = {
   email?: string | null;
   status: 'ok' | 'error';
   error?: string;
+  stale?: boolean;
+  staleReason?: string;
   stats: {
     generatedAt: string;
     lookbackHours: number;
