@@ -14,7 +14,9 @@ import {
 } from '@services/admin/metricsService';
 import {
   fetchComplianceReports,
+  runComplianceIssueNow,
   runComplianceCheck,
+  runGlobalAutomationNow,
   type ComplianceReport,
   type ComplianceState,
 } from '@services/admin/complianceService';
@@ -128,6 +130,8 @@ export const AdminDashboardScreen: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [liveSocialLoading, setLiveSocialLoading] = useState(false);
   const [complianceLoading, setComplianceLoading] = useState(false);
+  const [globalRunLoading, setGlobalRunLoading] = useState(false);
+  const [manualRunKey, setManualRunKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liveSocialError, setLiveSocialError] = useState<string | null>(null);
   const [complianceError, setComplianceError] = useState<string | null>(null);
@@ -180,6 +184,12 @@ export const AdminDashboardScreen: React.FC = () => {
     }
   }, [t]);
 
+  const refreshCompliance = useCallback(async () => {
+    const payload = await fetchComplianceReports();
+    setComplianceReports(payload.reports);
+    setComplianceState(payload.state);
+  }, []);
+
   const refreshLiveSocial = useCallback(async () => {
     setLiveSocialLoading(true);
     setLiveSocialError(null);
@@ -195,6 +205,32 @@ export const AdminDashboardScreen: React.FC = () => {
       setLiveSocialLoading(false);
     }
   }, [t]);
+
+  const runGlobalNow = useCallback(async () => {
+    setGlobalRunLoading(true);
+    setComplianceError(null);
+    try {
+      await runGlobalAutomationNow();
+      await Promise.all([refreshCompliance(), refreshLiveSocial()]);
+    } catch (err: any) {
+      setComplianceError(err?.message ?? t('Unable to run global automation now.'));
+    } finally {
+      setGlobalRunLoading(false);
+    }
+  }, [refreshCompliance, refreshLiveSocial, t]);
+
+  const runIssueNow = useCallback(async (issue: ComplianceReport['issues'][number], key: string) => {
+    setManualRunKey(key);
+    setComplianceError(null);
+    try {
+      await runComplianceIssueNow(issue);
+      await refreshCompliance();
+    } catch (err: any) {
+      setComplianceError(err?.message ?? t('Unable to rerun this issue.'));
+    } finally {
+      setManualRunKey(null);
+    }
+  }, [refreshCompliance, t]);
 
   useEffect(() => {
     if (!isAdminUser) return;
@@ -338,20 +374,37 @@ export const AdminDashboardScreen: React.FC = () => {
             <StatCard label={t('Latest issues')} value={complianceState.lastIssueCount} />
             <StatCard label={t('Repaired accounts')} value={complianceState.lastRemediatedCount} />
           </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={runCompliance}
-            disabled={complianceLoading}
-            style={({ pressed }) => [
-              styles.complianceButton,
-              pressed && !complianceLoading ? styles.complianceButtonPressed : null,
-              complianceLoading ? styles.complianceButtonDisabled : null,
-            ]}
-          >
-            <Text style={styles.complianceButtonText}>
-              {complianceLoading ? t('Running...') : t('Run check')}
-            </Text>
-          </Pressable>
+          <View style={styles.complianceButtonGroup}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={runCompliance}
+              disabled={complianceLoading}
+              style={({ pressed }) => [
+                styles.complianceButton,
+                pressed && !complianceLoading ? styles.complianceButtonPressed : null,
+                complianceLoading ? styles.complianceButtonDisabled : null,
+              ]}
+            >
+              <Text style={styles.complianceButtonText}>
+                {complianceLoading ? t('Running...') : t('Run check')}
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={runGlobalNow}
+              disabled={globalRunLoading}
+              style={({ pressed }) => [
+                styles.complianceButton,
+                styles.globalRunButton,
+                pressed && !globalRunLoading ? styles.complianceButtonPressed : null,
+                globalRunLoading ? styles.complianceButtonDisabled : null,
+              ]}
+            >
+              <Text style={styles.complianceButtonText}>
+                {globalRunLoading ? t('Running...') : t('Global Run')}
+              </Text>
+            </Pressable>
+          </View>
         </View>
         {complianceError ? <Text style={styles.errorText}>{complianceError}</Text> : null}
         <View style={styles.complianceMetaGrid}>
@@ -377,8 +430,10 @@ export const AdminDashboardScreen: React.FC = () => {
         ) : latestIssues.length === 0 ? (
           <Text style={styles.emptyText}>{t('The latest watchdog report has no issues.')}</Text>
         ) : (
-          latestIssues.map((issue, index) => (
-            <View key={`${latestCompliance.id}-${issue.userId}-${issue.channel}-${index}`} style={styles.complianceIssueRow}>
+          latestIssues.map((issue, index) => {
+            const issueKey = `${latestCompliance.id}-${issue.userId}-${issue.channel}-${index}`;
+            return (
+            <View key={issueKey} style={styles.complianceIssueRow}>
               <View
                 style={[
                   styles.complianceSeverity,
@@ -393,8 +448,23 @@ export const AdminDashboardScreen: React.FC = () => {
                 <Text style={styles.complianceIssueReason}>{issue.reason}</Text>
                 <Text style={styles.complianceIssueAction}>{issue.action}</Text>
               </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => runIssueNow(issue, issueKey)}
+                disabled={manualRunKey === issueKey}
+                style={({ pressed }) => [
+                  styles.manualRunButton,
+                  pressed && manualRunKey !== issueKey ? styles.complianceButtonPressed : null,
+                  manualRunKey === issueKey ? styles.complianceButtonDisabled : null,
+                ]}
+              >
+                <Text style={styles.manualRunButtonText}>
+                  {manualRunKey === issueKey ? t('Running') : t('Manual Run')}
+                </Text>
+              </Pressable>
             </View>
-          ))
+          );
+          })
         )}
       </DMCard>
 
@@ -1191,6 +1261,12 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     justifyContent: 'space-between',
   },
+  complianceButtonGroup: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'flex-end',
+  },
   complianceButton: {
     minWidth: 120,
     minHeight: 44,
@@ -1206,6 +1282,9 @@ const styles = StyleSheet.create({
   },
   complianceButtonDisabled: {
     opacity: 0.5,
+  },
+  globalRunButton: {
+    backgroundColor: colors.success,
   },
   complianceButtonText: {
     color: colors.text,
@@ -1258,6 +1337,19 @@ const styles = StyleSheet.create({
   },
   complianceIssueBody: {
     flex: 1,
+  },
+  manualRunButton: {
+    alignSelf: 'center',
+    borderRadius: 8,
+    backgroundColor: colors.accent,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginLeft: 10,
+  },
+  manualRunButtonText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '800',
   },
   complianceIssueTitleRow: {
     flexDirection: 'row',
