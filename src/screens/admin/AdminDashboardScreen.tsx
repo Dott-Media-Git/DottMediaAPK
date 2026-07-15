@@ -17,6 +17,7 @@ import {
   runComplianceIssueNow,
   runComplianceCheck,
   runGlobalAutomationNow,
+  type ComplianceRunResult,
   type ComplianceReport,
   type ComplianceState,
 } from '@services/admin/complianceService';
@@ -99,6 +100,35 @@ const formatTime = (value: string) => {
   return parsed.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 };
 
+type RunNotice = {
+  title: string;
+  message: string;
+  details: string[];
+  expanded: boolean;
+};
+
+const runResultFromPayload = (payload: any): ComplianceRunResult => payload?.autopostResult ?? payload?.result ?? payload ?? {};
+
+const buildRunNotice = (title: string, payload: unknown): RunNotice => {
+  const result = runResultFromPayload(payload);
+  const summary = result.summary ?? {};
+  const details = [
+    typeof result.updatedAccounts === 'number' ? `Accounts touched: ${result.updatedAccounts}` : null,
+    typeof result.updatedChannels === 'number' ? `Channels queued: ${result.updatedChannels}` : null,
+    typeof result.issueCount === 'number' ? `Issues found: ${result.issueCount}` : null,
+    typeof result.remediated === 'number' ? `Issues repaired: ${result.remediated}` : null,
+    typeof summary.processed === 'number' ? `Jobs processed: ${summary.processed}` : null,
+    typeof summary.posted === 'number' ? `Posts sent: ${summary.posted}` : null,
+    typeof summary.failed === 'number' ? `Failed jobs: ${summary.failed}` : null,
+  ].filter(Boolean) as string[];
+  return {
+    title,
+    message: result.completedAt ? `Run done at ${formatTime(result.completedAt)}` : 'Run done',
+    details: details.length ? details : ['Watchdog automation completed and the scheduler remains active.'],
+    expanded: true,
+  };
+};
+
 const normalizeLower = (value: unknown) => String(value ?? '').toLowerCase();
 
 const knownAccountNames: Record<string, string> = {
@@ -132,6 +162,8 @@ export const AdminDashboardScreen: React.FC = () => {
   const [complianceLoading, setComplianceLoading] = useState(false);
   const [globalRunLoading, setGlobalRunLoading] = useState(false);
   const [manualRunKey, setManualRunKey] = useState<string | null>(null);
+  const [runNotice, setRunNotice] = useState<RunNotice | null>(null);
+  const [emailRunStarted, setEmailRunStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [liveSocialError, setLiveSocialError] = useState<string | null>(null);
   const [complianceError, setComplianceError] = useState<string | null>(null);
@@ -173,7 +205,8 @@ export const AdminDashboardScreen: React.FC = () => {
     setComplianceLoading(true);
     setComplianceError(null);
     try {
-      await runComplianceCheck();
+      const result = await runComplianceCheck();
+      setRunNotice(buildRunNotice(t('Watchdog run complete'), result));
       const payload = await fetchComplianceReports();
       setComplianceReports(payload.reports);
       setComplianceState(payload.state);
@@ -210,7 +243,8 @@ export const AdminDashboardScreen: React.FC = () => {
     setGlobalRunLoading(true);
     setComplianceError(null);
     try {
-      await runGlobalAutomationNow();
+      const result = await runGlobalAutomationNow();
+      setRunNotice(buildRunNotice(t('Global run complete'), result));
       await Promise.all([refreshCompliance(), refreshLiveSocial()]);
     } catch (err: any) {
       setComplianceError(err?.message ?? t('Unable to run global automation now.'));
@@ -223,7 +257,8 @@ export const AdminDashboardScreen: React.FC = () => {
     setManualRunKey(key);
     setComplianceError(null);
     try {
-      await runComplianceIssueNow(issue);
+      const result = await runComplianceIssueNow(issue);
+      setRunNotice(buildRunNotice(t('Manual run complete'), result));
       await refreshCompliance();
     } catch (err: any) {
       setComplianceError(err?.message ?? t('Unable to rerun this issue.'));
@@ -231,6 +266,15 @@ export const AdminDashboardScreen: React.FC = () => {
       setManualRunKey(null);
     }
   }, [refreshCompliance, t]);
+
+  useEffect(() => {
+    if (!isAdminUser || emailRunStarted) return;
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('watchdogRun') !== '1') return;
+    setEmailRunStarted(true);
+    void runCompliance();
+  }, [emailRunStarted, isAdminUser, runCompliance]);
 
   useEffect(() => {
     if (!isAdminUser) return;
@@ -407,6 +451,26 @@ export const AdminDashboardScreen: React.FC = () => {
           </View>
         </View>
         {complianceError ? <Text style={styles.errorText}>{complianceError}</Text> : null}
+        {runNotice ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setRunNotice(current => (current ? { ...current, expanded: !current.expanded } : current))}
+            style={styles.runNotice}
+          >
+            <View style={styles.runNoticeHeader}>
+              <Text style={styles.runNoticeTitle}>{runNotice.title}</Text>
+              <Text style={styles.runNoticeToggle}>{runNotice.expanded ? t('Hide') : t('Show')}</Text>
+            </View>
+            <Text style={styles.runNoticeMessage}>{runNotice.message}</Text>
+            {runNotice.expanded ? (
+              <View style={styles.runNoticeDetails}>
+                {runNotice.details.map(detail => (
+                  <Text key={detail} style={styles.runNoticeDetail}>{detail}</Text>
+                ))}
+              </View>
+            ) : null}
+          </Pressable>
+        ) : null}
         <View style={styles.complianceMetaGrid}>
           <View style={styles.complianceMeta}>
             <Text style={styles.complianceMetaLabel}>{t('Last check')}</Text>
@@ -1240,6 +1304,41 @@ const styles = StyleSheet.create({
   errorText: {
     color: colors.danger,
     marginBottom: 12,
+  },
+  runNotice: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.35)',
+    backgroundColor: 'rgba(34,197,94,0.1)',
+    padding: 12,
+    marginBottom: 12,
+  },
+  runNoticeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  runNoticeTitle: {
+    color: colors.text,
+    fontWeight: '800',
+    flex: 1,
+  },
+  runNoticeToggle: {
+    color: colors.success,
+    fontWeight: '800',
+  },
+  runNoticeMessage: {
+    color: colors.subtext,
+    marginTop: 4,
+  },
+  runNoticeDetails: {
+    marginTop: 8,
+    gap: 4,
+  },
+  runNoticeDetail: {
+    color: colors.text,
+    fontSize: 12,
   },
   dangerText: {
     color: colors.danger,
