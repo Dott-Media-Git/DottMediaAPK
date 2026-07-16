@@ -395,11 +395,12 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
     }
 
     const allAccounts = [
-      { label: 'Bwin', uid: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', bwin: true },
-      { label: 'Carmarketug', uid: 'acmVetCcOiTHeGk5D7eDYieamDF3', reels: true },
-      { label: 'Staysphere', uid: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2', reels: true },
-      { label: 'Gamers44life', uid: 'vzdH1DnfFLVjlY8bBgC26WACmmw2', reels: true },
-      { label: 'DottEnergy', uid: 'LVR7p3WzdFM51ds92Kacf6S40og2', reels: false },
+      { label: 'Bwin', uid: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', bwin: true, platforms: ['facebook', 'instagram', 'threads'] },
+      { label: 'DottHR', uid: '80bYIeiuukNFtUvXTUobXmfC7pu1', platforms: ['facebook', 'instagram', 'threads'], reels: false },
+      { label: 'Carmarketug', uid: 'acmVetCcOiTHeGk5D7eDYieamDF3', platforms: ['facebook', 'instagram', 'threads'], reels: true },
+      { label: 'Staysphere', uid: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2', platforms: ['facebook', 'instagram'], reels: true },
+      { label: 'Gamers44life', uid: 'vzdH1DnfFLVjlY8bBgC26WACmmw2', platforms: ['facebook', 'instagram'], reels: true },
+      { label: 'DottEnergy', uid: 'LVR7p3WzdFM51ds92Kacf6S40og2', platforms: ['facebook', 'instagram', 'threads'], reels: false },
     ];
     const requestedAccounts = Array.isArray(req.body?.accounts)
       ? new Set(
@@ -438,7 +439,7 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
             ...job,
             trendContentType: 'news',
             trendContentTypes: ['news'],
-            trendPlatforms: ['facebook', 'instagram'],
+            trendPlatforms: account.platforms,
             storyPlatforms: ['facebook_story', 'instagram_story'],
           };
           result.feed = summarize(await service.executeTrendPosts(account.uid, newsJob));
@@ -446,7 +447,7 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
         } else {
           result.feed = summarize(
             await service.executeJob(account.uid, job, {
-              platforms: ['facebook', 'instagram'],
+              platforms: account.platforms,
               intervalHours: job.intervalHours ?? 1,
               nextRunField: 'nextRun',
               lastRunField: 'lastRunAt',
