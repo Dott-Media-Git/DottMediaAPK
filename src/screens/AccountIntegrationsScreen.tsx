@@ -583,7 +583,12 @@ export const AccountIntegrationsScreen: React.FC = () => {
   const handleManualDisconnect = async (platform: ManualPlatform) => {
     if (!state.user) return;
     setSavingPlatform(platform);
-    setIntegrationNotice(null);
+    setIntegrationNotice({
+      kind: 'success',
+      title: `${t('Disconnecting')} ${PLATFORM_LABELS[platform]}`,
+      message: t('Removing the saved account now. This usually takes a few seconds.'),
+      expanded: true,
+    });
     try {
       const nextAccounts = { ...socialAccounts };
       delete nextAccounts[platform];
@@ -671,7 +676,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
       confirmDisconnect(platform, () => void handleTikTokDisconnect());
       return;
     }
-    confirmDisconnect(platform, () => void handleManualDisconnect(platform as ManualPlatform));
+    void handleManualDisconnect(platform as ManualPlatform);
   };
 
   const getConnectTitle = (platform: PlatformKey) => {
@@ -797,6 +802,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
                     onPress={() => handleDisconnectPress(platform)}
                     style={styles.headerButton}
                     size="compact"
+                    loading={isSaving}
                     disabled={isSaving || (platform === 'youtube' && youtubeLoading) || (platform === 'tiktok' && tiktokLoading)}
                   />
                 ) : (
