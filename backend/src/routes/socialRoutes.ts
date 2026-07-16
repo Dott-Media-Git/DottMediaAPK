@@ -571,11 +571,22 @@ const fetchThreadsMe = async (accessToken: string) => {
 };
 
 const loadStoredSocialAccounts = async (userId: string) => {
-  let userData: { email?: string | null; socialAccounts?: Record<string, any> } = {};
+  let userData: {
+    email?: string | null;
+    socialAccounts?: Record<string, any>;
+    socialDisconnects?: Record<string, boolean>;
+  } = {};
 
   try {
     const userDoc = await firestore.collection('users').doc(userId).get();
-    userData = (userDoc.data() as { email?: string | null; socialAccounts?: Record<string, any> } | undefined) ?? {};
+    userData =
+      (userDoc.data() as
+        | {
+            email?: string | null;
+            socialAccounts?: Record<string, any>;
+            socialDisconnects?: Record<string, boolean>;
+          }
+        | undefined) ?? {};
   } catch (error) {
     console.warn('[social] Firestore social account lookup failed; using fallback store', {
       userId,
@@ -590,6 +601,7 @@ const loadStoredSocialAccounts = async (userId: string) => {
         userData = {
           email: fallback.email ?? userData.email ?? null,
           socialAccounts: fallback.socialAccounts as Record<string, any>,
+          socialDisconnects: userData.socialDisconnects,
         };
       }
     } catch (error) {
@@ -623,9 +635,15 @@ const loadStatusSocialAccounts = async (userId: string, email?: string | null) =
         }
       : null,
   );
+  const socialAccounts = { ...(merged?.socialAccounts ?? stored.socialAccounts ?? {}) };
+  const socialDisconnects = stored.socialDisconnects ?? {};
+  Object.entries(socialDisconnects).forEach(([platform, disconnected]) => {
+    if (disconnected) delete socialAccounts[platform];
+  });
   return {
     email: stored.email ?? email ?? null,
-    socialAccounts: merged?.socialAccounts ?? stored.socialAccounts ?? {},
+    socialAccounts,
+    socialDisconnects,
   };
 };
 
@@ -662,6 +680,66 @@ const persistSocialAccounts = async (
   if (firestoreError && fallbackError) {
     throw fallbackError;
   }
+};
+
+const clearSocialDisconnects = async (userId: string, platforms: string[]) => {
+  const updates = platforms.reduce<Record<string, admin.firestore.FieldValue>>((acc, platform) => {
+    acc[`socialDisconnects.${platform}`] = admin.firestore.FieldValue.delete();
+    return acc;
+  }, {});
+  if (!Object.keys(updates).length) return;
+  try {
+    await firestore.collection('users').doc(userId).update(updates);
+  } catch (error) {
+    console.warn('[social] social disconnect marker cleanup failed', {
+      userId,
+      platforms,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
+
+const disconnectSocialPlatform = async (userId: string, platform: string) => {
+  const stored = await loadStoredSocialAccounts(userId);
+  const socialAccounts = { ...(stored.socialAccounts ?? {}) };
+  delete socialAccounts[platform];
+
+  let firestoreError: unknown = null;
+  let fallbackError: unknown = null;
+
+  try {
+    await firestore.collection('users').doc(userId).update({
+      [`socialAccounts.${platform}`]: admin.firestore.FieldValue.delete(),
+      [`socialDisconnects.${platform}`]: true,
+    });
+  } catch (error) {
+    firestoreError = error;
+    console.warn('[social] Firestore social account disconnect failed; saving pruned fallback store', {
+      userId,
+      platform,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  try {
+    await supabaseFallbackService.upsertSocialAccounts(userId, {
+      email: stored.email ?? null,
+      socialAccounts,
+    });
+  } catch (error) {
+    fallbackError = error;
+    console.warn('[social] fallback social account disconnect failed', {
+      userId,
+      platform,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  if (firestoreError && fallbackError) {
+    throw fallbackError;
+  }
+
+  return socialAccounts;
 };
 
 const mergeAutopostPlatforms = async (userId: string, platformsToAdd: string[]) => {
@@ -1348,6 +1426,25 @@ const credentialsSchema = z.object({
   }),
 });
 
+const disconnectPlatformSchema = z.object({
+  platform: z.enum(['facebook', 'instagram', 'threads', 'linkedin', 'twitter', 'whatsapp']),
+});
+
+router.delete('/social/credentials/:platform', requireFirebase, async (req, res, next) => {
+  try {
+    const { platform } = disconnectPlatformSchema.parse(req.params);
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const socialAccounts = await disconnectSocialPlatform(authUser.uid, platform);
+    res.json({ success: true, platform, socialAccounts });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/social/credentials', requireFirebase, async (req, res, next) => {
   try {
     const payload = credentialsSchema.parse(req.body);
@@ -1428,6 +1525,7 @@ router.post('/social/credentials', requireFirebase, async (req, res, next) => {
     }
 
     await persistSocialAccounts(payload.userId, { socialAccounts: payload.credentials });
+    await clearSocialDisconnects(payload.userId, Object.keys(payload.credentials));
 
     res.json({ success: true });
   } catch (error) {

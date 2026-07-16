@@ -251,6 +251,10 @@ export const saveSocialCredentials = async (userId: string, credentials: any) =>
   return authedFetch('/api/social/credentials', { method: 'POST', body });
 };
 
+export const disconnectSocialPlatform = async (platform: string) => {
+  return authedFetch(`/api/social/credentials/${encodeURIComponent(platform)}`, { method: 'DELETE' });
+};
+
 const toSeconds = (timestamp: any): number | undefined => {
   if (!timestamp) return undefined;
   if (typeof timestamp.seconds === 'number') return timestamp.seconds;

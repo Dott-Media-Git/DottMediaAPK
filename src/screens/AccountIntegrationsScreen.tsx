@@ -14,6 +14,7 @@ import {
   fetchSocialStatus,
   fetchThreadsConnectUrl,
   fetchTwitterConnectUrl,
+  disconnectSocialPlatform,
   saveSocialCredentials,
   type SocialConnectionStatus
 } from '@services/social';
@@ -42,6 +43,12 @@ import {
 
 type ManualPlatform = 'facebook' | 'linkedin' | 'instagram' | 'threads' | 'twitter' | 'whatsapp';
 type PlatformKey = ManualPlatform | 'tiktok' | 'youtube';
+type IntegrationNotice = {
+  kind: 'success' | 'error';
+  title: string;
+  message: string;
+  expanded: boolean;
+};
 
 const PLATFORM_ORDER: PlatformKey[] = ['facebook', 'linkedin', 'instagram', 'threads', 'twitter', 'whatsapp', 'tiktok', 'youtube'];
 const PLATFORM_LABELS: Record<PlatformKey, string> = {
@@ -114,6 +121,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
   const [tiktokRevealToken, setTikTokRevealToken] = useState<string | null>(null);
   const [showTikTokRevealModal, setShowTikTokRevealModal] = useState(false);
   const [pendingOAuthPlatform, setPendingOAuthPlatform] = useState<PlatformKey | null>(null);
+  const [integrationNotice, setIntegrationNotice] = useState<IntegrationNotice | null>(null);
 
   const loadYouTube = async () => {
     setYouTubeLoading(true);
@@ -562,6 +570,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
       setSocialAccounts(nextAccounts);
       setDrafts(prev => ({ ...prev, [platform]: { ...EMPTY_DRAFTS[platform] } }));
       setExpandedPlatform(null);
+      setIntegrationNotice(null);
       await loadSocialStatus();
       Alert.alert(t('Success'), t('Credentials saved.'));
     } catch (error: any) {
@@ -574,17 +583,32 @@ export const AccountIntegrationsScreen: React.FC = () => {
   const handleManualDisconnect = async (platform: ManualPlatform) => {
     if (!state.user) return;
     setSavingPlatform(platform);
+    setIntegrationNotice(null);
     try {
       const nextAccounts = { ...socialAccounts };
       delete nextAccounts[platform];
       const pruned = pruneAccounts(nextAccounts);
-      await saveSocialCredentials(state.user.uid, pruned);
+      await disconnectSocialPlatform(platform);
       setSocialAccounts(pruned);
+      setSocialStatus(prev => (prev ? { ...prev, [platform]: false } : prev));
+      setDrafts(prev => ({ ...prev, [platform]: { ...EMPTY_DRAFTS[platform] } }));
       setExpandedPlatform(null);
       await loadSocialStatus();
-      Alert.alert(t('Success'), t('Disconnected.'));
+      setIntegrationNotice({
+        kind: 'success',
+        title: `${PLATFORM_LABELS[platform]} ${t('disconnected')}`,
+        message: t('The account was removed from Social Integration and will no longer use old saved credentials.'),
+        expanded: true,
+      });
     } catch (error: any) {
-      Alert.alert(t('Error'), error.message ?? t('Failed to disconnect.'));
+      const message = error.message ?? t('Failed to disconnect.');
+      setIntegrationNotice({
+        kind: 'error',
+        title: t('Disconnect failed'),
+        message,
+        expanded: true,
+      });
+      Alert.alert(t('Error'), message);
     } finally {
       setSavingPlatform(null);
     }
@@ -710,6 +734,27 @@ export const AccountIntegrationsScreen: React.FC = () => {
         <Text style={styles.subtext}>{t('Connect a social account to unlock outbound metrics.')}</Text>
       </View>
 
+      {integrationNotice ? (
+        <TouchableOpacity
+          activeOpacity={0.82}
+          style={[
+            styles.integrationNotice,
+            integrationNotice.kind === 'success' ? styles.integrationNoticeSuccess : styles.integrationNoticeError,
+          ]}
+          onPress={() =>
+            setIntegrationNotice(prev => (prev ? { ...prev, expanded: !prev.expanded } : prev))
+          }
+        >
+          <View style={styles.noticeHeader}>
+            <Text style={styles.noticeTitle}>{integrationNotice.title}</Text>
+            <Text style={styles.noticeToggle}>{integrationNotice.expanded ? t('Hide') : t('Show')}</Text>
+          </View>
+          {integrationNotice.expanded ? (
+            <Text style={styles.noticeMessage}>{integrationNotice.message}</Text>
+          ) : null}
+        </TouchableOpacity>
+      ) : null}
+
       <View style={styles.integrationsGrid}>
         {PLATFORM_ORDER.map(platform => {
           const manualPlatform = platform as ManualPlatform;
@@ -748,7 +793,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
                 </View>
                 {connected ? (
                   <DMButton
-                    title={t('Disconnect')}
+                    title={isSaving ? t('Disconnecting...') : t('Disconnect')}
                     onPress={() => handleDisconnectPress(platform)}
                     style={styles.headerButton}
                     size="compact"
@@ -1202,6 +1247,43 @@ const styles = StyleSheet.create({
   integrationsGrid: {
     gap: 12,
     marginBottom: 16,
+  },
+  integrationNotice: {
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    marginBottom: 14,
+  },
+  integrationNoticeSuccess: {
+    backgroundColor: '#173524',
+    borderColor: '#2f8f58',
+  },
+  integrationNoticeError: {
+    backgroundColor: '#3a2020',
+    borderColor: '#a84a4a',
+  },
+  noticeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  noticeTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+    flex: 1,
+  },
+  noticeToggle: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  noticeMessage: {
+    color: colors.text,
+    marginTop: 8,
+    lineHeight: 19,
   },
   integrationCard: {
     backgroundColor: colors.backgroundAlt,
