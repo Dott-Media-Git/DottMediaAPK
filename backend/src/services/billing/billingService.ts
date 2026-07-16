@@ -18,10 +18,12 @@ const paymentTransactionsCollection = firestore.collection('paymentTransactions'
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 const OWNER_MANAGED_BILLING_EXEMPT_USER_IDS = new Set([
-  'LVR7p3WzdFM51ds92Kacf6S40og2',
-  '80bYIeiuukNFtUvXTUobXmfC7pu1',
-  'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
-  'acmVetCcOiTHeGk5D7eDYieamDF3',
+  '1zvY9nNyXMcfxdPQEyx0bIdK7r53', // Bwin / Ball Analytics
+  'LVR7p3WzdFM51ds92Kacf6S40og2', // Dott Energy
+  '80bYIeiuukNFtUvXTUobXmfC7pu1', // Dott Human Resource
+  'D1iNgjLKNRaQhH35M0NmGfw1LVD2', // StaySphere
+  'acmVetCcOiTHeGk5D7eDYieamDF3', // Carmarketplace
+  'vzdH1DnfFLVjlY8bBgC26WACmmw2', // Gamers44life
 ]);
 
 type CheckoutProvider = 'stripe' | 'flutterwave_mobile_money';
