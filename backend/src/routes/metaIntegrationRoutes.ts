@@ -284,14 +284,48 @@ const getThreadsScopes = () => {
 const buildThreadsOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
   const { appId, redirectUri } = getThreadsAppConfig(req);
   const state = createSignedState(userId, { platform: 'threads', orgId: orgId || undefined, email: email || undefined });
-  const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://threads.net/oauth/authorize');
+  const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://www.threads.net/oauth/authorize');
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', getThreadsScopes().join(','));
   url.searchParams.set('state', state);
   url.searchParams.set('return_scopes', 'true');
+  url.searchParams.set('auth_type', 'rerequest');
+  url.searchParams.set('prompt', 'consent');
   return url.toString();
+};
+
+const renderThreadsHandoffHtml = (authorizationUrl: string) => {
+  const safeUrl = JSON.stringify(authorizationUrl);
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Connect Threads</title>
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; display: grid; min-height: 100vh; place-items: center; }
+      main { width: min(460px, calc(100vw - 32px)); background: #111827; border: 1px solid #334155; border-radius: 16px; padding: 24px; box-shadow: 0 24px 80px rgba(0,0,0,.35); }
+      h1 { font-size: 22px; margin: 0 0 10px; }
+      p { color: #cbd5e1; line-height: 1.5; margin: 0 0 18px; }
+      a { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 46px; border-radius: 12px; background: #38bdf8; color: #082f49; font-weight: 700; text-decoration: none; }
+      small { display: block; color: #94a3b8; margin-top: 14px; line-height: 1.4; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Continue to Threads permissions</h1>
+      <p>Dott Media is opening the official Threads authorization screen. Log in if Threads asks, then approve the permissions for Dott-Media.</p>
+      <a id="continueLink" href=${safeUrl}>Continue to Threads</a>
+      <small>If Threads opens your feed after login, come back to this page and press Continue to Threads again.</small>
+    </main>
+    <script>
+      const authorizationUrl = ${safeUrl};
+      setTimeout(() => { window.location.assign(authorizationUrl); }, 700);
+    </script>
+  </body>
+</html>`;
 };
 
 const getInstagramLoginScopes = () => {
@@ -815,7 +849,7 @@ router.post('/integrations/threads/start', requireFirebaseForm, async (req, res,
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
     const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
-    res.redirect(303, buildThreadsOAuthUrl(req, authUser.uid, orgId, authUser.email));
+    res.status(200).send(renderThreadsHandoffHtml(buildThreadsOAuthUrl(req, authUser.uid, orgId, authUser.email)));
   } catch (error) {
     next(error);
   }
