@@ -296,6 +296,18 @@ const buildThreadsOAuthUrl = (req: Request, userId: string, orgId?: string | nul
   return url.toString();
 };
 
+const encodeThreadsHandoffTarget = (value: string) =>
+  Buffer.from(value, 'utf8').toString('base64url');
+
+const decodeThreadsHandoffTarget = (value: string) =>
+  Buffer.from(value, 'base64url').toString('utf8');
+
+const buildThreadsHandoffUrl = (req: Request, authorizationUrl: string) => {
+  const url = new URL(`${getBaseUrl(req)}/integrations/threads/handoff`);
+  url.searchParams.set('target', encodeThreadsHandoffTarget(authorizationUrl));
+  return url.toString();
+};
+
 const renderThreadsHandoffHtml = (authorizationUrl: string) => {
   const safeUrl = JSON.stringify(authorizationUrl);
   return `<!doctype html>
@@ -316,14 +328,10 @@ const renderThreadsHandoffHtml = (authorizationUrl: string) => {
   <body>
     <main>
       <h1>Continue to Threads permissions</h1>
-      <p>Dott Media is opening the official Threads authorization screen. Log in if Threads asks, then approve the permissions for Dott-Media.</p>
+      <p>Dott Media is ready to open the official Threads authorization screen. Log in if Threads asks, then approve the permissions for Dott-Media.</p>
       <a id="continueLink" href=${safeUrl}>Continue to Threads</a>
-      <small>If Threads opens your feed after login, come back to this page and press Continue to Threads again.</small>
+      <small>If Threads opens your normal feed after login, come back to this page and press Continue to Threads again. If it still opens the feed, the Threads account may need to be added as a tester or the app must be live/reviewed for that user.</small>
     </main>
-    <script>
-      const authorizationUrl = ${safeUrl};
-      setTimeout(() => { window.location.assign(authorizationUrl); }, 700);
-    </script>
   </body>
 </html>`;
 };
@@ -838,7 +846,7 @@ router.get('/integrations/threads/connect', requireFirebase, async (req, res, ne
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.redirect(buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email));
+    res.redirect(buildThreadsHandoffUrl(req, buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email)));
   } catch (error) {
     next(error);
   }
@@ -860,9 +868,24 @@ router.get('/integrations/threads/connect-url', requireFirebase, async (req, res
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.json({ url: buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email) });
+    const authorizationUrl = buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
+    res.json({ url: buildThreadsHandoffUrl(req, authorizationUrl), authorizationUrl });
   } catch (error) {
     next(error);
+  }
+});
+
+router.get('/integrations/threads/handoff', (req, res) => {
+  try {
+    const target = typeof req.query.target === 'string' ? req.query.target : '';
+    const authorizationUrl = decodeThreadsHandoffTarget(target);
+    const parsed = new URL(authorizationUrl);
+    if (!['threads.net', 'www.threads.net', 'threads.com', 'www.threads.com'].includes(parsed.hostname)) {
+      throw createHttpError(400, 'Invalid Threads authorization target');
+    }
+    res.status(200).send(renderThreadsHandoffHtml(parsed.toString()));
+  } catch (error) {
+    res.status(400).send(renderCallbackHtml('Threads connection failed', 'Unable to open the Threads authorization handoff. Please start again from Dott Media.'));
   }
 });
 
