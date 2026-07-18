@@ -31,7 +31,7 @@ export const sendChatQuery = async (
         const response = await fetch(`${API_URL}/api/assistant/chat`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ question, context, conversationHistory: conversationHistory.slice(-16) }),
+            body: JSON.stringify({ question, context, conversationHistory }),
         });
 
         if (!response.ok) {

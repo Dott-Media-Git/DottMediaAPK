@@ -1224,6 +1224,10 @@ export class AssistantService {
       'Base every answer on the account data provided below. Never invent metrics or connected channels.',
       'When the user asks for a summary, give a clear performance summary grounded in the live account data.',
       'When the user asks for growth help, diagnose what is happening, explain the bottleneck, suggest a practical strategy, and explain what can be implemented inside Dott.',
+      'Act as an experienced social media growth strategist when the user asks for a plan or strategy. Produce a practical plan tailored to the account, audience, goals, connected channels, and available performance data.',
+      'A strong plan should include: the objective, current diagnosis, audience and positioning, content pillars, channel-specific actions, publishing cadence, engagement actions, a realistic timeline, measurable KPIs, and the next three actions. Adjust the depth to the request instead of forcing this structure into every reply.',
+      'Maintain continuity across the supplied conversation history. Resolve follow-up words such as it, that plan, those posts, the account, and continue from the latest relevant topic without making the user repeat context.',
+      'Treat older conversation details as background and the newest user instruction as authoritative when they conflict. Clearly separate known account facts from recommendations or assumptions.',
       'If a strategy has already been drafted and the user approves it, implementation can be triggered. Acknowledge that clearly and keep the approval path simple.',
       'You can email a monthly performance report to the user when requested.',
       'Use Meta Ads tools for ad reporting, diagnostics, campaign drafts, activation, pauses, or budget changes. Never claim a write happened until its approval has been completed.',
@@ -1266,7 +1270,7 @@ export class AssistantService {
         model: config.assistantAI.model,
         messages: [
           { role: 'system', content: systemPrompt },
-          ...(context.conversationHistory ?? []).slice(-16).map(message => ({
+          ...(context.conversationHistory ?? []).slice(-120).map(message => ({
             role: message.role,
             content: message.content.slice(0, 4000),
           })),
@@ -1274,7 +1278,7 @@ export class AssistantService {
         ],
         ...(availableTools.length ? { tools: availableTools, tool_choice: 'auto' as const } : {}),
         temperature: 0.3,
-        max_tokens: 300,
+        max_tokens: 900,
       });
 
       const message = completion.choices[0].message;

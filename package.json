@@ -2,7 +2,7 @@
   "name": "dott-media-crm",
   "version": "0.1.0",
   "private": true,
-  "main": "node_modules/expo/AppEntry.js",
+  "main": "index.js",
   "scripts": {
     "start": "cross-env NODE_OPTIONS=--openssl-legacy-provider expo start",
     "android": "cross-env NODE_OPTIONS=--openssl-legacy-provider expo run:android",

@@ -46,6 +46,30 @@ const conversationsStorageKey = (userId?: string) => `@dott/conversations/${user
 
 const AssistantContext = createContext<AssistantContextValue | undefined>(undefined);
 
+const buildConversationContext = (conversations: Conversation[], currentMessages: Message[]) => {
+  const orderedConversations = [...conversations].sort(
+    (left, right) => new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime(),
+  );
+  const combined = [...orderedConversations.flatMap(conversation => conversation.messages), ...currentMessages];
+  const deduplicated = combined.filter((message, index) => {
+    if (index === 0) return true;
+    const previous = combined[index - 1];
+    return previous.role !== message.role || previous.content !== message.content;
+  });
+
+  // Keep a broad cross-conversation memory while staying safely inside provider context limits.
+  const selected: Message[] = [];
+  let characterCount = 0;
+  for (let index = deduplicated.length - 1; index >= 0 && selected.length < 120; index -= 1) {
+    const message = deduplicated[index];
+    const content = message.content.slice(0, 4000);
+    if (selected.length > 0 && characterCount + content.length > 60_000) break;
+    selected.unshift({ ...message, content });
+    characterCount += content.length;
+  }
+  return selected;
+};
+
 export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { state: authState } = useAuth();
   const { locale, t } = useI18n();
@@ -200,7 +224,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       };
 
       const effectiveText = attachmentContext?.trim() ? `${text}\n\nAttached files:\n${attachmentContext.trim()}` : text;
-      const response = await sendChatQuery(effectiveText, context, locale, messages);
+      const conversationContext = buildConversationContext(conversations, messages);
+      const response = await sendChatQuery(effectiveText, context, locale, conversationContext);
 
       let botText = '';
 
