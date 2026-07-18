@@ -464,9 +464,9 @@ export class AssistantService {
     return this.isBettingBrand(snapshot) ? 'bet button clicks' : 'conversions';
   }
 
-  private async safeResolve<T>(label: string, action: () => Promise<T>, fallback: T) {
+  private async safeResolve<T>(label: string, action: () => Promise<T>, fallback: T, timeoutOverrideMs?: number) {
     try {
-      const timeoutMs = Number(process.env.ASSISTANT_CONTEXT_TIMEOUT_MS ?? 1_500);
+      const timeoutMs = timeoutOverrideMs ?? Number(process.env.ASSISTANT_CONTEXT_TIMEOUT_MS ?? 1_500);
       return await Promise.race([
         action(),
         new Promise<T>((resolve) => setTimeout(() => resolve(fallback), timeoutMs)),
@@ -656,8 +656,8 @@ export class AssistantService {
     }
 
     const [supabaseProfile, supabaseUser] = await Promise.all([
-      this.safeResolve('Supabase profile', () => supabaseFallbackService.getProfile(context.userId!), null),
-      this.safeResolve('Supabase user', () => supabaseFallbackService.getUser(context.userId!), null),
+      this.safeResolve('Supabase profile', () => supabaseFallbackService.getProfile(context.userId!), null, 8_000),
+      this.safeResolve('Supabase user', () => supabaseFallbackService.getUser(context.userId!), null, 8_000),
     ]);
     const [profileSnap, userSnap] = await Promise.all([
       supabaseProfile ? Promise.resolve(null) : this.safeResolve('Firebase profile fallback', () => firestore.collection('profiles').doc(context.userId!).get(), null),
@@ -695,8 +695,8 @@ export class AssistantService {
       adsAccount,
       metricHistory,
     ] = await Promise.all([
-      this.safeResolve('analytics summary', () => analyticsService.getSummary(context.userId!), emptyAnalyticsSummary()),
-      this.safeResolve('live social metrics', () => getLiveSocialMetrics(context.userId!, { scope: analyticsScope, lookbackHours: 30 * 24 }), emptyLiveSocialMetrics()),
+      this.safeResolve('analytics summary', () => analyticsService.getSummary(context.userId!), emptyAnalyticsSummary(), 8_000),
+      this.safeResolve('live social metrics', () => getLiveSocialMetrics(context.userId!, { scope: analyticsScope, lookbackHours: 30 * 24 }), emptyLiveSocialMetrics(), 8_000),
       this.safeResolve('outbound stats', () => getOutboundStats(analyticsScope), emptyOutboundStats()),
       this.safeResolve('inbound stats', () => getInboundStats(analyticsScope), emptyInboundStats()),
       this.safeResolve('engagement stats', () => getEngagementStats(analyticsScope), emptyEngagementStats()),
@@ -705,17 +705,17 @@ export class AssistantService {
       this.safeResolve('web traffic stats', () => getWebTrafficStats(analyticsScope), emptyWebTrafficStats()),
       this.safeResolve('activity heatmap', () => getActivityHeatmap(analyticsScope, 30), [] as ActivityHeatmapDaily[]),
       this.safeResolve('social daily', () => socialAnalyticsService.getDailySummary(context.userId!, 30), [] as Array<Record<string, unknown>>),
-      this.safeResolve('scheduled posting history', () => supabaseFallbackService.getPostsByUser(context.userId!, 150), []),
-      this.safeResolve('social posting logs', () => supabaseFallbackService.getSocialLogsByUser(context.userId!, 150), []),
-      this.safeResolve('connected social accounts', () => supabaseFallbackService.getSocialAccounts(context.userId!), null),
+      this.safeResolve('scheduled posting history', () => supabaseFallbackService.getPostsByUser(context.userId!, 150), [], 8_000),
+      this.safeResolve('social posting logs', () => supabaseFallbackService.getSocialLogsByUser(context.userId!, 150), [], 8_000),
+      this.safeResolve('connected social accounts', () => supabaseFallbackService.getSocialAccounts(context.userId!), null, 8_000),
       this.safeResolve('Meta Ads account status', () => metaAdsControlService.getConnectionStatus(context.userId!), {
         mcpConnected: false,
         graphConnected: false,
         accountCount: 0,
         selectedAdAccountId: null,
         provider: 'none',
-      }),
-      this.safeResolve('complete 30-day metric history', () => this.loadMetricHistory(context.userId!, scopeId), {}),
+      }, 8_000),
+      this.safeResolve('complete 30-day metric history', () => this.loadMetricHistory(context.userId!, scopeId), {}, 8_000),
     ]);
 
     const socialAccounts = (storedSocialAccounts?.socialAccounts && typeof storedSocialAccounts.socialAccounts === 'object')
