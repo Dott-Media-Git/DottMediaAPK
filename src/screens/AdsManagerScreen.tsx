@@ -3,13 +3,23 @@ import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, TextInp
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '@constants/colors';
 import {
-  boostMetaPost,
+  decideMetaAdsApproval,
   fetchAdRuns,
   fetchBoostRule,
+  fetchMetaAdsApprovals,
+  fetchMetaAdsAudit,
+  fetchMetaAdsConnection,
+  fetchMetaAdsPolicy,
   fetchMetaAdAccounts,
+  requestMetaAdsAction,
   saveBoostRule,
+  saveMetaAdsPolicy,
   type BoostRule,
   type MetaAdAccount,
+  type MetaAdsApproval,
+  type MetaAdsAuditEntry,
+  type MetaAdsConnection,
+  type MetaAdsPolicy,
 } from '@services/metaAds';
 import { useAuth } from '@context/AuthContext';
 
@@ -47,6 +57,18 @@ export const AdsManagerScreen: React.FC = () => {
   const [boosting, setBoosting] = useState(false);
   const [accounts, setAccounts] = useState<MetaAdAccount[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
+  const [connection, setConnection] = useState<MetaAdsConnection | null>(null);
+  const [approvals, setApprovals] = useState<MetaAdsApproval[]>([]);
+  const [audit, setAudit] = useState<MetaAdsAuditEntry[]>([]);
+  const [policySaving, setPolicySaving] = useState(false);
+  const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
+  const [policy, setPolicy] = useState<MetaAdsPolicy>({
+    dailySpendLimitUsd: 100,
+    perActionLimitUsd: 25,
+    requireApproval: true,
+    allowActivation: false,
+    allowBudgetChanges: true,
+  });
   const [manualPostId, setManualPostId] = useState('');
   const [manualCaption, setManualCaption] = useState('');
   const [rule, setRule] = useState<BoostRule>({
@@ -88,7 +110,14 @@ export const AdsManagerScreen: React.FC = () => {
   const load = async () => {
     setLoading(true);
     try {
-      const [ruleResponse, runsResponse] = await Promise.all([fetchBoostRule(), fetchAdRuns(20)]);
+      const [ruleResponse, runsResponse, connectionResponse, policyResponse, approvalsResponse, auditResponse] = await Promise.all([
+        fetchBoostRule(),
+        fetchAdRuns(20),
+        fetchMetaAdsConnection(),
+        fetchMetaAdsPolicy(),
+        fetchMetaAdsApprovals(30),
+        fetchMetaAdsAudit(30),
+      ]);
       setRule(current => ({
         ...current,
         ...ruleResponse.rule,
@@ -105,6 +134,10 @@ export const AdsManagerScreen: React.FC = () => {
         autoBoostCooldownHours: ruleResponse.rule?.autoBoostCooldownHours ?? current.autoBoostCooldownHours,
       }));
       setRuns(runsResponse.runs ?? []);
+      setConnection(connectionResponse.connection);
+      setPolicy(policyResponse.policy);
+      setApprovals(approvalsResponse.approvals ?? []);
+      setAudit(auditResponse.audit ?? []);
       try {
         const accountResponse = await fetchMetaAdAccounts();
         setAccounts(accountResponse.accounts ?? []);
@@ -170,7 +203,7 @@ export const AdsManagerScreen: React.FC = () => {
     }
     setBoosting(true);
     try {
-      await boostMetaPost({
+      await requestMetaAdsAction('create_campaign_draft', {
         platform: 'facebook',
         postId,
         caption: manualCaption.trim(),
@@ -178,15 +211,42 @@ export const AdsManagerScreen: React.FC = () => {
         dailyBudgetUsd: budgetUsdFromRule(rule),
         durationHours: rule.durationHours,
         whatsappNumber: rule.whatsappNumber,
-      });
+      }, 'ads_manager');
       setManualPostId('');
       setManualCaption('');
       await load();
-      Alert.alert('Ads Manager', 'Boost created.');
+      Alert.alert('Ads Manager', 'Paused campaign draft sent for approval.');
     } catch (error: any) {
       Alert.alert('Ads Manager', error.message ?? 'Failed to boost post');
     } finally {
       setBoosting(false);
+    }
+  };
+
+  const handleSavePolicy = async () => {
+    setPolicySaving(true);
+    try {
+      const response = await saveMetaAdsPolicy(policy);
+      setPolicy(response.policy);
+      Alert.alert('Ads safety', 'Spending and approval controls saved.');
+      await load();
+    } catch (error: any) {
+      Alert.alert('Ads safety', error.message ?? 'Failed to save controls');
+    } finally {
+      setPolicySaving(false);
+    }
+  };
+
+  const handleApproval = async (id: string, decision: 'approve' | 'reject') => {
+    setApprovalBusy(id);
+    try {
+      await decideMetaAdsApproval(id, decision);
+      await load();
+      Alert.alert('Ads approval', decision === 'approve' ? 'Approved and executed.' : 'Request rejected.');
+    } catch (error: any) {
+      Alert.alert('Ads approval', error.message ?? 'Failed to process approval');
+    } finally {
+      setApprovalBusy(null);
     }
   };
 
@@ -208,6 +268,86 @@ export const AdsManagerScreen: React.FC = () => {
         <TouchableOpacity style={styles.iconButton} onPress={() => void load()}>
           <Ionicons name="refresh-outline" size={20} color={colors.text} />
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.panel}>
+        <View style={styles.headerRow}>
+          <View style={styles.flexCopy}>
+            <Text style={styles.sectionTitle}>Meta Ads AI Connector</Text>
+            <Text style={styles.helper}>Dotti uses Meta MCP when authorized and automatically falls back to the connected Meta Marketing API.</Text>
+          </View>
+          <View style={[styles.statusBadge, connection?.provider !== 'none' && styles.statusBadgeActive]}>
+            <Text style={styles.statusBadgeText}>{connection?.provider === 'meta_mcp' ? 'MCP LIVE' : connection?.provider === 'meta_graph' ? 'GRAPH LIVE' : 'NOT CONNECTED'}</Text>
+          </View>
+        </View>
+        <View style={styles.connectionGrid}>
+          <View style={styles.metricBox}>
+            <Text style={styles.metricValue}>{connection?.accountCount ?? 0}</Text>
+            <Text style={styles.helper}>Ad accounts</Text>
+          </View>
+          <View style={styles.metricBox}>
+            <Text style={styles.metricValue}>{connection?.mcpConnected ? 'Yes' : 'Fallback'}</Text>
+            <Text style={styles.helper}>Official MCP</Text>
+          </View>
+        </View>
+        <Text style={styles.helper}>Endpoint: {connection?.endpoint ?? 'https://mcp.facebook.com/ads'}</Text>
+        {!connection?.graphConnected ? <Text style={styles.warning}>Connect Facebook in Social Connections with ads permissions, then return here and refresh.</Text> : null}
+      </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.sectionTitle}>Safety & Spending Controls</Text>
+        <Text style={styles.helper}>Every Dotti write request is checked against these limits and recorded in the audit trail.</Text>
+        <Text style={styles.label}>Maximum daily spend USD</Text>
+        <TextInput
+          style={styles.input}
+          value={String(policy.dailySpendLimitUsd)}
+          onChangeText={value => setPolicy(current => ({ ...current, dailySpendLimitUsd: parseUsdBudget(value) }))}
+          keyboardType="decimal-pad"
+        />
+        <Text style={styles.label}>Maximum spend per action USD</Text>
+        <TextInput
+          style={styles.input}
+          value={String(policy.perActionLimitUsd)}
+          onChangeText={value => setPolicy(current => ({ ...current, perActionLimitUsd: parseUsdBudget(value) }))}
+          keyboardType="decimal-pad"
+        />
+        <View style={styles.switchRow}>
+          <View style={styles.flexCopy}><Text style={styles.accountName}>Require approval</Text><Text style={styles.helper}>Keep all ad changes in the approval queue.</Text></View>
+          <Switch value={policy.requireApproval} onValueChange={value => setPolicy(current => ({ ...current, requireApproval: value }))} />
+        </View>
+        <View style={styles.switchRow}>
+          <View style={styles.flexCopy}><Text style={styles.accountName}>Allow ad activation</Text><Text style={styles.helper}>Dotti may request publishing after your confirmation.</Text></View>
+          <Switch value={policy.allowActivation} onValueChange={value => setPolicy(current => ({ ...current, allowActivation: value }))} />
+        </View>
+        <View style={styles.switchRow}>
+          <View style={styles.flexCopy}><Text style={styles.accountName}>Allow budget changes</Text><Text style={styles.helper}>Budget edits still require confirmation.</Text></View>
+          <Switch value={policy.allowBudgetChanges} onValueChange={value => setPolicy(current => ({ ...current, allowBudgetChanges: value }))} />
+        </View>
+        <TouchableOpacity style={[styles.saveButton, policySaving && styles.disabled]} onPress={handleSavePolicy} disabled={policySaving}>
+          <Ionicons name="shield-checkmark-outline" size={18} color="#ffffff" />
+          <Text style={styles.saveText}>{policySaving ? 'Saving...' : 'Save Safety Controls'}</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.sectionTitle}>Pending Approvals</Text>
+        {approvals.filter(item => item.status === 'pending').length ? approvals.filter(item => item.status === 'pending').map(item => (
+          <View key={item.id} style={styles.approvalCard}>
+            <View style={styles.flexCopy}>
+              <Text style={styles.accountName}>{item.action.replace(/_/g, ' ')}</Text>
+              <Text style={styles.helper}>{item.payload?.adId || item.payload?.postId || item.payload?.adSetId || 'Dotti Ads request'} · {item.source}</Text>
+              {item.payload?.dailyBudgetUsd ? <Text style={styles.helper}>Budget: ${Number(item.payload.dailyBudgetUsd).toFixed(2)}/day</Text> : null}
+            </View>
+            <View style={styles.approvalActions}>
+              <TouchableOpacity style={styles.rejectButton} disabled={approvalBusy === item.id} onPress={() => void handleApproval(item.id, 'reject')}>
+                <Text style={styles.rejectText}>Reject</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.approveButton} disabled={approvalBusy === item.id} onPress={() => void handleApproval(item.id, 'approve')}>
+                <Text style={styles.saveText}>{approvalBusy === item.id ? 'Working...' : 'Approve'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )) : <Text style={styles.helper}>No actions are waiting for approval.</Text>}
       </View>
 
       <View style={styles.panel}>
@@ -420,6 +560,19 @@ export const AdsManagerScreen: React.FC = () => {
           <Text style={styles.helper}>No boost runs recorded yet.</Text>
         )}
       </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.sectionTitle}>Ads Activity Log</Text>
+        {audit.length ? audit.slice(0, 20).map(entry => (
+          <View key={entry.id} style={styles.runRow}>
+            <View style={styles.flexCopy}>
+              <Text style={styles.accountName}>{entry.action.replace(/_/g, ' ')}</Text>
+              <Text style={styles.helper}>{entry.createdAt ? new Date(entry.createdAt).toLocaleString() : 'Just now'}</Text>
+            </View>
+            <Text style={[styles.auditStatus, entry.status === 'completed' || entry.status === 'success' ? styles.auditSuccess : null]}>{entry.status}</Text>
+          </View>
+        )) : <Text style={styles.helper}>No controlled ad actions recorded yet.</Text>}
+      </View>
     </ScrollView>
   );
 };
@@ -429,6 +582,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, gap: 14 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  flexCopy: { flex: 1, minWidth: 0 },
   title: { color: colors.text, fontSize: 24, fontWeight: '700' },
   subtitle: { color: colors.subtext, marginTop: 4, lineHeight: 20 },
   iconButton: {
@@ -444,6 +598,12 @@ const styles = StyleSheet.create({
   sectionTitle: { color: colors.text, fontSize: 17, fontWeight: '700' },
   helper: { color: colors.subtext, fontSize: 13, lineHeight: 18 },
   warning: { color: '#f59e0b', fontSize: 13, lineHeight: 18 },
+  statusBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.cardOverlay, borderWidth: 1, borderColor: colors.border },
+  statusBadgeActive: { borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.12)' },
+  statusBadgeText: { color: colors.text, fontSize: 10, fontWeight: '800' },
+  connectionGrid: { flexDirection: 'row', gap: 10 },
+  metricBox: { flex: 1, borderRadius: 8, padding: 12, backgroundColor: colors.cardOverlay, borderWidth: 1, borderColor: colors.border },
+  metricValue: { color: colors.text, fontSize: 20, fontWeight: '800', marginBottom: 2 },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   segment: { flexDirection: 'row', borderWidth: 1, borderColor: colors.border, borderRadius: 8, overflow: 'hidden' },
   segmentButton: { flex: 1, paddingVertical: 10, alignItems: 'center' },
@@ -455,6 +615,13 @@ const styles = StyleSheet.create({
   accountRowActive: { borderColor: colors.accent },
   accountText: { flex: 1 },
   accountName: { color: colors.text, fontWeight: '700' },
+  approvalCard: { borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, gap: 12, backgroundColor: colors.cardOverlay },
+  approvalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
+  rejectButton: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#ef4444' },
+  rejectText: { color: '#ef4444', fontWeight: '700' },
+  approveButton: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, backgroundColor: colors.accent },
+  auditStatus: { color: colors.subtext, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
+  auditSuccess: { color: '#22c55e' },
   platformGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   platformChip: {
     flexDirection: 'row',

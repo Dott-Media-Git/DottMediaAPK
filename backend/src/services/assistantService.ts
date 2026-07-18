@@ -23,6 +23,7 @@ import { SocialAnalyticsService } from '../packages/services/socialAnalyticsServ
 import { AssistantStrategyService } from './assistantStrategyService';
 import { KnowledgeBaseService } from './knowledgeBaseService';
 import { getLiveSocialMetrics, type LiveSocialMetrics } from './liveSocialMetricsService';
+import { metaAdsControlService, type MetaAdsAction } from './metaAdsControlService';
 
 const openai = new OpenAI({ apiKey: config.openAI.apiKey });
 const analyticsService = new AnalyticsService();
@@ -125,6 +126,8 @@ type AssistantContext = {
   subscriptionStatus?: string;
   connectedChannels?: string[];
   locale?: Locale;
+  assistantTone?: string;
+  assistantVoice?: string;
   analytics?: {
     leads?: number;
     engagement?: number;
@@ -333,6 +336,57 @@ export class AssistantService {
     return (hasReport && hasMonthly) || (hasReport && hasEmail);
   }
 
+  private extractEmailAddresses(question: string): string[] {
+    const emails = Array.from(
+      new Set(
+        (question.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).map(email => email.toLowerCase())
+      )
+    );
+    return emails;
+  }
+
+  private normalizeAssistantTone(value?: string) {
+    const normalized = `${value ?? ''}`.trim().toLowerCase();
+    if (normalized.includes('fresh')) return 'fresh';
+    if (normalized.includes('friendly')) return 'friendly';
+    if (normalized.includes('formal')) return 'formal';
+    if (normalized.includes('casual')) return 'casual';
+    if (normalized.includes('playful')) return 'playful';
+    return '';
+  }
+
+  private normalizeAssistantVoice(value?: string) {
+    const normalized = `${value ?? ''}`.trim().toLowerCase();
+    if (normalized.includes('female') || normalized.includes('woman')) return 'female';
+    if (normalized.includes('male') || normalized.includes('man')) return 'male';
+    if (normalized.includes('any') || normalized.includes('neutral')) return 'neutral';
+    return '';
+  }
+
+  private buildPersonalityPrompt(context: AssistantContext) {
+    const tone = this.normalizeAssistantTone(context.assistantTone);
+    const voice = this.normalizeAssistantVoice(context.assistantVoice);
+    const parts: string[] = [];
+
+    if (tone === 'fresh') {
+      parts.push('Use a fresh, upbeat tone that feels modern, approachable, and energetic. Keep the response light, optimistic, and easy to read.');
+    } else if (tone === 'friendly') {
+      parts.push('Use a friendly, warm tone that feels helpful and encouraging.');
+    } else if (tone === 'formal') {
+      parts.push('Use a professional, polished tone with clear, businesslike language.');
+    } else if (tone === 'casual') {
+      parts.push('Use a casual, conversational tone that feels relaxed and easygoing.');
+    }
+
+    if (voice === 'female') {
+      parts.push('Adopt a womanly voice with empathy, gentle confidence, and thoughtful phrasing.');
+    } else if (voice === 'male') {
+      parts.push('Adopt a manly voice with confident, direct phrasing and constructive energy.');
+    }
+
+    return parts.filter(Boolean).join(' ');
+  }
+
   private resolveLocale(value?: string): Locale {
     if (value && LOCALE_RESPONSE_LANGUAGE[value]) return value;
     return 'en';
@@ -463,7 +517,7 @@ export class AssistantService {
       skipped: number;
       platformCounts: Record<string, number>;
     };
-    const totals = rows.reduce(
+    const totals: PostingActivityTotals = rows.reduce<PostingActivityTotals>(
       (acc: PostingActivityTotals, row) => {
         acc.posted += Number(row.postsPosted ?? 0);
         acc.failed += Number(row.postsFailed ?? 0);
@@ -485,7 +539,7 @@ export class AssistantService {
     const topPlatforms = Object.entries(totals.platformCounts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
-      .map(([platform, count]) => `${platform} ${this.formatWholeNumber(count)}`)
+      .map(([platform, count]) => `${platform} ${this.formatWholeNumber(Number(count))}`)
       .join(', ');
 
     return `Posting in the last 7 days: ${this.formatWholeNumber(totals.posted)} posted, ${this.formatWholeNumber(
@@ -1019,9 +1073,11 @@ export class AssistantService {
 
     if (context.userId && this.shouldSendMonthlyReport(question)) {
       try {
+        const emails = this.extractEmailAddresses(question);
         const result = await strategyService.sendMonthlyReport({
           userId: context.userId,
           email: context.userEmail ?? null,
+          emails: emails.length ? emails : undefined,
           company: context.company,
         });
         return { type: 'text', text: result.message };
@@ -1080,6 +1136,7 @@ export class AssistantService {
                   'FollowUps',
                   'WebLeads',
                   'AccountIntegrations',
+                  'AdsManager',
                   'Controls',
                   'Support',
                   'Admin',
@@ -1109,6 +1166,37 @@ export class AssistantService {
           },
         },
       },
+      {
+        type: 'function',
+        function: {
+          name: 'meta_ads_report',
+          description: 'Get live Meta Ads performance, campaign status, spend, clicks, messages, leads, and diagnostics for the authenticated account',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'request_meta_ads_action',
+          description: 'Create a controlled Meta Ads request. Every write is placed in the Ads Manager approval queue before execution.',
+          parameters: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', enum: ['create_campaign_draft', 'activate_ad', 'pause_ad', 'update_budget'] },
+              postId: { type: 'string' },
+              adId: { type: 'string' },
+              adSetId: { type: 'string' },
+              adAccountId: { type: 'string' },
+              caption: { type: 'string' },
+              imageUrl: { type: 'string' },
+              dailyBudgetUsd: { type: 'number' },
+              durationHours: { type: 'number' },
+              whatsappNumber: { type: 'string' },
+            },
+            required: ['action'],
+          },
+        },
+      },
     ];
 
     const responseLanguage = LOCALE_RESPONSE_LANGUAGE[locale] ?? 'English';
@@ -1126,16 +1214,20 @@ export class AssistantService {
         : '';
     const accountContextBlock = accountSnapshot ? this.buildAccountContextBlock(accountSnapshot) : '';
 
+    const personalityPrompt = this.buildPersonalityPrompt(context);
     const systemPrompt = [
       'You are Dott Assistant, an OpenAI-powered business assistant inside the Dott Media app.',
       'Only answer questions about the authenticated user account, its connected channels, automation, performance, posting history, audience, business goals, growth strategy, and navigation inside Dott.',
+      personalityPrompt,
       'If the user asks for anything unrelated to their account or business, reply briefly that you can only help with their account and business inside Dott.',
       'Base every answer on the account data provided below. Never invent metrics or connected channels.',
       'When the user asks for a summary, give a clear performance summary grounded in the live account data.',
       'When the user asks for growth help, diagnose what is happening, explain the bottleneck, suggest a practical strategy, and explain what can be implemented inside Dott.',
       'If a strategy has already been drafted and the user approves it, implementation can be triggered. Acknowledge that clearly and keep the approval path simple.',
       'You can email a monthly performance report to the user when requested.',
-      'Use the app tools only when the user asks to navigate or asks for a metric-specific account insight.',
+      'Use Meta Ads tools for ad reporting, diagnostics, campaign drafts, activation, pauses, or budget changes. Never claim a write happened until its approval has been completed.',
+      'All Meta Ads write actions go to an approval queue. Tell the user to review the request in Ads Manager.',
+      'Use the app tools only when the user asks to navigate, asks for a metric-specific account insight, or requests a Meta Ads operation.',
       'Keep answers professional, direct, and useful. Use short paragraphs. Stay concise unless the user asks for a detailed breakdown.',
       `Respond in ${responseLanguage}.`,
       accountSnapshot?.company ? `User Company: ${accountSnapshot.company}` : context.company ? `User Company: ${context.company}` : '',
@@ -1188,6 +1280,29 @@ export class AssistantService {
           if (toolCall.function.name === 'get_insights' && accountSnapshot) {
             const metric = typeof (params as { metric?: unknown })?.metric === 'string' ? (params as { metric?: string }).metric : undefined;
             return { type: 'text', text: this.buildMetricInsight(accountSnapshot, metric) };
+          }
+
+          if (toolCall.function.name === 'meta_ads_report' && context.userId) {
+            try {
+              const report = await metaAdsControlService.reportingSummary(context.userId);
+              return { type: 'text', text: report.text };
+            } catch (error) {
+              return { type: 'text', text: `I could not load Meta Ads reporting yet: ${error instanceof Error ? error.message : String(error)}. Check the Meta connection in Ads Manager.` };
+            }
+          }
+
+          if (toolCall.function.name === 'request_meta_ads_action' && context.userId) {
+            const actionParams = (params ?? {}) as Record<string, any>;
+            const action = actionParams.action as MetaAdsAction;
+            if (action === 'create_campaign_draft' && !String(actionParams.postId ?? '').trim()) {
+              return { type: 'text', text: 'I can prepare that paused campaign draft, but I need the Facebook post ID first. You can also paste it in Ads Manager.' };
+            }
+            try {
+              const approval = await metaAdsControlService.requestAction(context.userId, action, actionParams, 'dotti');
+              return { type: 'text', text: `I created approval request ${approval.id}. Review it in Ads Manager before Meta receives the change.` };
+            } catch (error) {
+              return { type: 'text', text: `I did not submit that Meta Ads change: ${error instanceof Error ? error.message : String(error)}` };
+            }
           }
 
           return {

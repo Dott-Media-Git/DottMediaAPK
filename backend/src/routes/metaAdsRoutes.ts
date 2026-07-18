@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth.js';
 import { metaAdsService } from '../services/metaAdsService.js';
+import { metaAdsControlService } from '../services/metaAdsControlService.js';
 
 const router = Router();
 
@@ -47,6 +48,25 @@ const boostPostSchema = z.object({
   dailyBudgetMinor: z.number().int().positive().optional(),
   durationHours: z.number().int().positive().optional(),
   whatsappNumber: z.string().optional(),
+});
+
+const policySchema = z.object({
+  dailySpendLimitUsd: z.number().positive().max(100000).optional(),
+  perActionLimitUsd: z.number().positive().max(100000).optional(),
+  requireApproval: z.boolean().optional(),
+  allowActivation: z.boolean().optional(),
+  allowBudgetChanges: z.boolean().optional(),
+});
+
+const connectionSchema = z.object({
+  accessToken: z.string().min(10).optional(),
+  selectedAdAccountId: z.string().optional(),
+});
+
+const actionSchema = z.object({
+  action: z.enum(['create_campaign_draft', 'activate_ad', 'pause_ad', 'update_budget', 'mcp_tool']),
+  payload: z.record(z.string(), z.any()).default({}),
+  source: z.string().max(40).default('ads_manager'),
 });
 
 router.get('/meta-ads/ad-accounts', requireFirebase, async (req, res, next) => {
@@ -125,6 +145,101 @@ router.get('/meta-ads/performance', requireFirebase, async (req, res, next) => {
     const limit = Number(req.query.limit ?? 25);
     const performance = await metaAdsService.getPerformance(userId, limit);
     res.json({ performance });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/meta-ads/connection', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = (req as AuthedRequest).authUser?.uid;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    res.json({ connection: await metaAdsControlService.getConnectionStatus(userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/meta-ads/mcp/tools', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = (req as AuthedRequest).authUser?.uid;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    res.json(await metaAdsControlService.listMcpTools(userId));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/meta-ads/connection', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = (req as AuthedRequest).authUser?.uid;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const payload = connectionSchema.parse(req.body ?? {});
+    res.json({ ok: true, connection: await metaAdsControlService.saveConnection(userId, payload) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/meta-ads/policy', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = (req as AuthedRequest).authUser?.uid;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    res.json({ policy: await metaAdsControlService.getPolicy(userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/meta-ads/policy', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = (req as AuthedRequest).authUser?.uid;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const payload = policySchema.parse(req.body ?? {});
+    res.json({ ok: true, policy: await metaAdsControlService.savePolicy(userId, payload) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/meta-ads/actions', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = (req as AuthedRequest).authUser?.uid;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const payload = actionSchema.parse(req.body ?? {});
+    const approval = await metaAdsControlService.requestAction(userId, payload.action, payload.payload, payload.source);
+    res.status(202).json({ ok: true, approval });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/meta-ads/approvals', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = (req as AuthedRequest).authUser?.uid;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    res.json({ approvals: await metaAdsControlService.listApprovals(userId, Number(req.query.limit ?? 30)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/meta-ads/approvals/:id/:decision', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = (req as AuthedRequest).authUser?.uid;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const decision = z.enum(['approve', 'reject']).parse(req.params.decision);
+    res.json({ ok: true, approval: await metaAdsControlService.decideApproval(userId, req.params.id, decision) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/meta-ads/audit', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = (req as AuthedRequest).authUser?.uid;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    res.json({ audit: await metaAdsControlService.listAudit(userId, Number(req.query.limit ?? 50)) });
   } catch (error) {
     next(error);
   }
