@@ -1019,4 +1019,57 @@ export const metaAdsService = {
       rows,
     };
   },
+
+  async updateAdStatus(userId: string, adId: string, status: 'ACTIVE' | 'PAUSED') {
+    const [rule, socialAccounts] = await Promise.all([
+      resolveRuleWithFallback(userId),
+      loadUserSocialAccountsWithFallback(userId),
+    ]);
+    const accessToken = String(
+      rule?.accessToken ||
+        socialAccounts.facebook?.userAccessToken ||
+        socialAccounts.facebook?.accessToken ||
+        process.env.META_GRAPH_TOKEN ||
+        '',
+    ).trim();
+    if (!accessToken) throw createHttpError(400, 'Missing Meta token with ads_management');
+    const normalizedAdId = String(adId ?? '').trim();
+    if (!normalizedAdId) throw createHttpError(400, 'Missing Meta ad ID');
+    const response = await axios.post(`${GRAPH_BASE}/${normalizedAdId}`, null, {
+      params: { status, access_token: accessToken },
+      timeout: 30000,
+    });
+    await adRunsCollection.doc(normalizedAdId).set(
+      { status, effectiveStatus: status, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+      { merge: true },
+    );
+    return { adId: normalizedAdId, status, success: Boolean(response.data?.success ?? true) };
+  },
+
+  async updateAdSetDailyBudget(userId: string, adSetId: string, dailyBudgetUsd: number) {
+    const [rule, socialAccounts] = await Promise.all([
+      resolveRuleWithFallback(userId),
+      loadUserSocialAccountsWithFallback(userId),
+    ]);
+    const accessToken = String(
+      rule?.accessToken ||
+        socialAccounts.facebook?.userAccessToken ||
+        socialAccounts.facebook?.accessToken ||
+        process.env.META_GRAPH_TOKEN ||
+        '',
+    ).trim();
+    if (!accessToken) throw createHttpError(400, 'Missing Meta token with ads_management');
+    const normalizedAdSetId = String(adSetId ?? '').trim();
+    if (!normalizedAdSetId) throw createHttpError(400, 'Missing Meta ad set ID');
+    const normalizedBudget = toUsdBudget(dailyBudgetUsd);
+    const response = await axios.post(`${GRAPH_BASE}/${normalizedAdSetId}`, null, {
+      params: { daily_budget: budgetMinorFromUsd(normalizedBudget), access_token: accessToken },
+      timeout: 30000,
+    });
+    return {
+      adSetId: normalizedAdSetId,
+      dailyBudgetUsd: normalizedBudget,
+      success: Boolean(response.data?.success ?? true),
+    };
+  },
 };

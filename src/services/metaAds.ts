@@ -8,6 +8,7 @@ async function authedFetch(path: string, options: RequestInit = {}) {
   const token = await getIdToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache',
     ...(options.headers as Record<string, string>),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -98,6 +99,42 @@ export type AdPerformance = {
   rows: AdPerformanceRow[];
 };
 
+export type MetaAdsConnection = {
+  endpoint: string;
+  mcpConnected: boolean;
+  mcpError?: string | null;
+  graphConnected: boolean;
+  accountCount: number;
+  selectedAdAccountId?: string | null;
+  provider: 'meta_mcp' | 'meta_graph' | 'none';
+};
+
+export type MetaAdsPolicy = {
+  dailySpendLimitUsd: number;
+  perActionLimitUsd: number;
+  requireApproval: boolean;
+  allowActivation: boolean;
+  allowBudgetChanges: boolean;
+};
+
+export type MetaAdsApproval = {
+  id: string;
+  action: 'create_campaign_draft' | 'activate_ad' | 'pause_ad' | 'update_budget' | 'mcp_tool';
+  payload: Record<string, any>;
+  source: string;
+  status: string;
+  createdAt?: string | null;
+  errorMessage?: string;
+};
+
+export type MetaAdsAuditEntry = {
+  id: string;
+  action: string;
+  status: string;
+  details?: Record<string, any>;
+  createdAt?: string | null;
+};
+
 export const fetchMetaAdAccounts = async () =>
   authedFetch('/api/meta-ads/ad-accounts') as Promise<{ accounts: MetaAdAccount[] }>;
 
@@ -131,3 +168,30 @@ export const fetchAdRuns = async (limit = 25) =>
 
 export const fetchAdPerformance = async (limit = 12) =>
   authedFetch(`/api/meta-ads/performance?limit=${limit}`) as Promise<{ performance: AdPerformance }>;
+
+export const fetchMetaAdsConnection = async () =>
+  authedFetch('/api/meta-ads/connection') as Promise<{ connection: MetaAdsConnection }>;
+
+export const fetchMetaAdsMcpTools = async () =>
+  authedFetch('/api/meta-ads/mcp/tools') as Promise<{ connected: boolean; tools: Array<{ name: string; description?: string; inputSchema?: Record<string, any> }>; message?: string }>;
+
+export const saveMetaAdsConnection = async (payload: { accessToken?: string; selectedAdAccountId?: string }) =>
+  authedFetch('/api/meta-ads/connection', { method: 'POST', body: JSON.stringify(payload) }) as Promise<{ ok: boolean; connection: MetaAdsConnection }>;
+
+export const fetchMetaAdsPolicy = async () =>
+  authedFetch('/api/meta-ads/policy') as Promise<{ policy: MetaAdsPolicy }>;
+
+export const saveMetaAdsPolicy = async (policy: Partial<MetaAdsPolicy>) =>
+  authedFetch('/api/meta-ads/policy', { method: 'POST', body: JSON.stringify(policy) }) as Promise<{ ok: boolean; policy: MetaAdsPolicy }>;
+
+export const requestMetaAdsAction = async (action: MetaAdsApproval['action'], payload: Record<string, any>, source = 'ads_manager') =>
+  authedFetch('/api/meta-ads/actions', { method: 'POST', body: JSON.stringify({ action, payload, source }) }) as Promise<{ ok: boolean; approval: MetaAdsApproval }>;
+
+export const fetchMetaAdsApprovals = async (limit = 30) =>
+  authedFetch(`/api/meta-ads/approvals?limit=${limit}`) as Promise<{ approvals: MetaAdsApproval[] }>;
+
+export const decideMetaAdsApproval = async (id: string, decision: 'approve' | 'reject') =>
+  authedFetch(`/api/meta-ads/approvals/${encodeURIComponent(id)}/${decision}`, { method: 'POST' }) as Promise<{ ok: boolean; approval: MetaAdsApproval }>;
+
+export const fetchMetaAdsAudit = async (limit = 50) =>
+  authedFetch(`/api/meta-ads/audit?limit=${limit}`) as Promise<{ audit: MetaAdsAuditEntry[] }>;
