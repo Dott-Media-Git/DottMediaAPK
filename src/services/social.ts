@@ -225,7 +225,7 @@ export const fetchSocialStatus = async (): Promise<{ status: SocialConnectionSta
   return authedFetch('/api/social/status');
 };
 
-export const fetchMetaConnectUrl = async (platform?: 'facebook' | 'instagram'): Promise<{ url?: string }> => {
+export const fetchMetaConnectUrl = async (platform?: 'facebook' | 'instagram' | 'ads'): Promise<{ url?: string }> => {
   const query = platform ? `?platform=${encodeURIComponent(platform)}` : '';
   return authedFetch(`/integrations/meta/connect-url${query}`);
 };
@@ -249,6 +249,10 @@ export const fetchTwitterConnectUrl = async (): Promise<{ url?: string }> => {
 export const saveSocialCredentials = async (userId: string, credentials: any) => {
   const body = JSON.stringify({ userId, credentials });
   return authedFetch('/api/social/credentials', { method: 'POST', body });
+};
+
+export const disconnectSocialPlatform = async (platform: string) => {
+  return authedFetch(`/api/social/credentials/${encodeURIComponent(platform)}`, { method: 'DELETE' });
 };
 
 const toSeconds = (timestamp: any): number | undefined => {

@@ -4,12 +4,13 @@ import path from 'path';
 import axios from 'axios';
 import admin from 'firebase-admin';
 import createHttpError from 'http-errors';
-import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
+import { requireFirebase, requireFirebaseForm, AuthedRequest } from '../middleware/firebaseAuth';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
 import { firestore } from '../db/firestore';
 import { autoPostService } from '../services/autoPostService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
+import { oauthSuccessRedirect } from '../utils/oauthRedirect';
 
 const router = Router();
 
@@ -46,7 +47,7 @@ type InstagramProfile = {
   media_count?: number;
 };
 
-type MetaConnectPlatform = 'facebook' | 'instagram' | 'all';
+type MetaConnectPlatform = 'facebook' | 'instagram' | 'ads' | 'all';
 
 type ConnectedMetaAsset = {
   id: string;
@@ -125,18 +126,14 @@ const getThreadsAppConfig = (req: Request) => {
   const renderEnv = resolveRenderEnv();
   const appId =
     process.env.THREADS_APP_ID ??
-    process.env.INSTAGRAM_APP_ID ??
     process.env.META_APP_ID ??
     renderEnv.THREADS_APP_ID ??
-    renderEnv.INSTAGRAM_APP_ID ??
     renderEnv.META_APP_ID ??
     '';
   const appSecret =
     process.env.THREADS_APP_SECRET ??
-    process.env.INSTAGRAM_APP_SECRET ??
     process.env.META_APP_SECRET ??
     renderEnv.THREADS_APP_SECRET ??
-    renderEnv.INSTAGRAM_APP_SECRET ??
     renderEnv.META_APP_SECRET ??
     '';
   const redirectUri = process.env.THREADS_REDIRECT_URI ?? renderEnv.THREADS_REDIRECT_URI ?? `${getBaseUrl(req)}${THREADS_CALLBACK_PATH}`;
@@ -200,6 +197,14 @@ const defaultInstagramScopes = [
   'business_management',
 ];
 
+const defaultAdsScopes = [
+  'ads_read',
+  'ads_management',
+  'business_management',
+  'pages_show_list',
+  'pages_read_engagement',
+];
+
 const getScopes = (platform: MetaConnectPlatform = 'all') => {
   const renderEnv = resolveRenderEnv();
   const platformEnvKey =
@@ -207,7 +212,9 @@ const getScopes = (platform: MetaConnectPlatform = 'all') => {
       ? 'META_FACEBOOK_SCOPES'
       : platform === 'instagram'
         ? 'META_INSTAGRAM_SCOPES'
-        : 'META_APP_SCOPES';
+        : platform === 'ads'
+          ? 'META_ADS_SCOPES'
+          : 'META_APP_SCOPES';
   const raw =
     process.env[platformEnvKey] ??
     renderEnv[platformEnvKey] ??
@@ -220,10 +227,12 @@ const getScopes = (platform: MetaConnectPlatform = 'all') => {
 
   if (platform === 'facebook') return defaultFacebookScopes;
   if (platform === 'instagram') return defaultInstagramScopes;
+  if (platform === 'ads') return defaultAdsScopes;
   return uniqueScopes(defaultFacebookScopes, defaultInstagramScopes);
 };
 
 const getBusinessLoginConfigId = (platform: MetaConnectPlatform = 'all') => {
+  if (platform === 'ads') return '';
   const renderEnv = resolveRenderEnv();
   const platformEnvKey =
     platform === 'facebook'
@@ -247,7 +256,7 @@ const shouldIncludeScopeWithBusinessConfig = () =>
 
 const normalizeMetaConnectPlatform = (value: unknown): MetaConnectPlatform => {
   const platform = String(value ?? '').toLowerCase();
-  if (platform === 'facebook' || platform === 'instagram') return platform;
+  if (platform === 'facebook' || platform === 'instagram' || platform === 'ads') return platform;
   return 'all';
 };
 
@@ -287,14 +296,56 @@ const getThreadsScopes = () => {
 const buildThreadsOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
   const { appId, redirectUri } = getThreadsAppConfig(req);
   const state = createSignedState(userId, { platform: 'threads', orgId: orgId || undefined, email: email || undefined });
-  const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://threads.net/oauth/authorize');
+  const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://www.threads.net/oauth/authorize');
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', getThreadsScopes().join(','));
   url.searchParams.set('state', state);
   url.searchParams.set('return_scopes', 'true');
+  url.searchParams.set('auth_type', 'rerequest');
+  url.searchParams.set('prompt', 'consent');
   return url.toString();
+};
+
+const encodeThreadsHandoffTarget = (value: string) =>
+  Buffer.from(value, 'utf8').toString('base64url');
+
+const decodeThreadsHandoffTarget = (value: string) =>
+  Buffer.from(value, 'base64url').toString('utf8');
+
+const buildThreadsHandoffUrl = (req: Request, authorizationUrl: string) => {
+  const url = new URL(`${getBaseUrl(req)}/integrations/threads/handoff`);
+  url.searchParams.set('target', encodeThreadsHandoffTarget(authorizationUrl));
+  return url.toString();
+};
+
+const renderThreadsHandoffHtml = (authorizationUrl: string) => {
+  const safeUrl = JSON.stringify(authorizationUrl);
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Connect Threads</title>
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; display: grid; min-height: 100vh; place-items: center; }
+      main { width: min(460px, calc(100vw - 32px)); background: #111827; border: 1px solid #334155; border-radius: 16px; padding: 24px; box-shadow: 0 24px 80px rgba(0,0,0,.35); }
+      h1 { font-size: 22px; margin: 0 0 10px; }
+      p { color: #cbd5e1; line-height: 1.5; margin: 0 0 18px; }
+      a { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 46px; border-radius: 12px; background: #38bdf8; color: #082f49; font-weight: 700; text-decoration: none; }
+      small { display: block; color: #94a3b8; margin-top: 14px; line-height: 1.4; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Continue to Threads permissions</h1>
+      <p>Dott Media is ready to open the official Threads authorization screen. Log in if Threads asks, then approve the permissions for Dott-Media.</p>
+      <a id="continueLink" href=${safeUrl}>Continue to Threads</a>
+      <small>If Threads opens your normal feed after login, come back to this page and press Continue to Threads again. If it still opens the feed, the Threads account may need to be added as a tester or the app must be live/reviewed for that user.</small>
+    </main>
+  </body>
+</html>`;
 };
 
 const getInstagramLoginScopes = () => {
@@ -726,6 +777,18 @@ router.get('/integrations/meta/connect', requireFirebase, async (req, res, next)
   }
 });
 
+router.post('/integrations/meta/start', requireFirebaseForm, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
+    const platform = normalizeMetaConnectPlatform(req.body?.platform);
+    const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
+    res.redirect(303, buildOAuthUrl(req, authUser.uid, platform, orgId, authUser.email));
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/integrations/meta/connect-url', requireFirebase, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
@@ -795,7 +858,18 @@ router.get('/integrations/threads/connect', requireFirebase, async (req, res, ne
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.redirect(buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email));
+    res.redirect(buildThreadsHandoffUrl(req, buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email)));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/integrations/threads/start', requireFirebaseForm, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
+    const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
+    res.status(200).send(renderThreadsHandoffHtml(buildThreadsOAuthUrl(req, authUser.uid, orgId, authUser.email)));
   } catch (error) {
     next(error);
   }
@@ -806,9 +880,24 @@ router.get('/integrations/threads/connect-url', requireFirebase, async (req, res
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.json({ url: buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email) });
+    const authorizationUrl = buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
+    res.json({ url: buildThreadsHandoffUrl(req, authorizationUrl), authorizationUrl });
   } catch (error) {
     next(error);
+  }
+});
+
+router.get('/integrations/threads/handoff', (req, res) => {
+  try {
+    const target = typeof req.query.target === 'string' ? req.query.target : '';
+    const authorizationUrl = decodeThreadsHandoffTarget(target);
+    const parsed = new URL(authorizationUrl);
+    if (!['threads.net', 'www.threads.net', 'threads.com', 'www.threads.com'].includes(parsed.hostname)) {
+      throw createHttpError(400, 'Invalid Threads authorization target');
+    }
+    res.status(200).send(renderThreadsHandoffHtml(parsed.toString()));
+  } catch (error) {
+    res.status(400).send(renderCallbackHtml('Threads connection failed', 'Unable to open the Threads authorization handoff. Please start again from Dott Media.'));
   }
 });
 
@@ -861,7 +950,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
 
     const connectedPlatforms: string[] = [];
 
-    if (requestedPlatform === 'facebook' || requestedPlatform === 'all') {
+    if (requestedPlatform === 'facebook' || requestedPlatform === 'ads' || requestedPlatform === 'all') {
       currentAccounts.facebook = {
         accessToken: selectedPage.access_token,
         userAccessToken,
@@ -869,6 +958,14 @@ router.get('/integrations/meta/callback', async (req, res) => {
         pageName: selectedPage.name ?? currentAccounts.facebook?.pageName,
       };
       connectedPlatforms.push('facebook');
+    }
+
+    if (requestedPlatform === 'ads') {
+      currentAccounts.metaAds = {
+        connected: true,
+        userAccessToken,
+        connectedAt: new Date().toISOString(),
+      };
     }
 
     const instagramAccount = selectedPage.instagram_business_account;
@@ -929,14 +1026,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
       .filter(Boolean)
       .join(', ');
 
-    res
-      .status(200)
-      .send(
-        renderCallbackHtml(
-          'Meta connected',
-          `${connectedChannels || 'Facebook'} is now connected. You can close this window and return to Dott Media.`,
-        ),
-      );
+    res.redirect(303, oauthSuccessRedirect(requestedPlatform === 'ads' ? 'ads' : requestedPlatform === 'instagram' ? 'instagram' : 'facebook'));
   } catch (error) {
     console.error('[meta] connection failed', error);
     res
@@ -1024,14 +1114,7 @@ router.get('/integrations/instagram/callback', async (req, res) => {
       });
     }
 
-    res
-      .status(200)
-      .send(
-        renderCallbackHtml(
-          'Instagram connected',
-          `Instagram${profile.username ? ` (@${profile.username})` : ''} is now connected. You can close this window and return to Dott Media.`,
-        ),
-      );
+    res.redirect(303, oauthSuccessRedirect('instagram'));
   } catch (error) {
     console.error('[instagram] connection failed', error);
     res
@@ -1112,14 +1195,7 @@ router.get('/integrations/threads/callback', async (req, res) => {
       });
     }
 
-    res
-      .status(200)
-      .send(
-        renderCallbackHtml(
-          'Threads connected',
-          `Threads${profile.username ? ` (@${profile.username})` : ''} is now connected. You can close this window and return to Dott Media.`,
-        ),
-      );
+    res.redirect(303, oauthSuccessRedirect('threads'));
   } catch (error) {
     console.error('[threads] connection failed', error);
     res

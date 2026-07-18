@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '@constants/colors';
 import {
@@ -22,6 +22,7 @@ import {
   type MetaAdsPolicy,
 } from '@services/metaAds';
 import { useAuth } from '@context/AuthContext';
+import { fetchMetaConnectUrl } from '@services/social';
 
 const DEFAULT_WHATSAPP = '+447463010235';
 const SHECARE_USER_ID = 'tCE1FQ1cOFgdupOXP23mPUMQRAz1';
@@ -61,6 +62,7 @@ export const AdsManagerScreen: React.FC = () => {
   const [approvals, setApprovals] = useState<MetaAdsApproval[]>([]);
   const [audit, setAudit] = useState<MetaAdsAuditEntry[]>([]);
   const [policySaving, setPolicySaving] = useState(false);
+  const [connectingAds, setConnectingAds] = useState(false);
   const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
   const [policy, setPolicy] = useState<MetaAdsPolicy>({
     dailySpendLimitUsd: 100,
@@ -250,6 +252,18 @@ export const AdsManagerScreen: React.FC = () => {
     }
   };
 
+  const handleConnectAds = async () => {
+    setConnectingAds(true);
+    try {
+      const response = await fetchMetaConnectUrl('ads');
+      if (!response.url) throw new Error('Meta did not return an authorization URL');
+      await Linking.openURL(response.url);
+    } catch (error: any) {
+      Alert.alert('Connect Meta Ads', error.message ?? 'Unable to start Meta Ads authorization');
+      setConnectingAds(false);
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.loading}>
@@ -292,6 +306,11 @@ export const AdsManagerScreen: React.FC = () => {
         </View>
         <Text style={styles.helper}>Endpoint: {connection?.endpoint ?? 'https://mcp.facebook.com/ads'}</Text>
         {!connection?.graphConnected ? <Text style={styles.warning}>Connect Facebook in Social Connections with ads permissions, then return here and refresh.</Text> : null}
+        <TouchableOpacity style={[styles.connectButton, connectingAds && styles.disabled]} onPress={() => void handleConnectAds()} disabled={connectingAds}>
+          <Ionicons name="logo-facebook" size={19} color="#ffffff" />
+          <Text style={styles.saveText}>{connectingAds ? 'Opening Meta...' : connection?.graphConnected ? 'Connect Another Ads Account' : 'Connect Meta Ads Account'}</Text>
+        </TouchableOpacity>
+        <Text style={styles.helper}>You will sign in with Meta, approve Ads access, and then return here to choose an ad account.</Text>
       </View>
 
       <View style={styles.panel}>
@@ -620,6 +639,7 @@ const styles = StyleSheet.create({
   rejectButton: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#ef4444' },
   rejectText: { color: '#ef4444', fontWeight: '700' },
   approveButton: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, backgroundColor: colors.accent },
+  connectButton: { minHeight: 46, borderRadius: 9, backgroundColor: '#1877F2', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingHorizontal: 16 },
   auditStatus: { color: colors.subtext, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
   auditSuccess: { color: '#22c55e' },
   platformGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
