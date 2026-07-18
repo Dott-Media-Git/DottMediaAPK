@@ -10,12 +10,21 @@ type Message = {
   content: string;
 };
 
+export type Conversation = {
+  id: string;
+  title: string;
+  messages: Message[];
+  updatedAt: string;
+};
+
 type AssistantContextValue = {
   enabled: boolean;
   hydrated: boolean;
   currentScreen?: string;
   isChatOpen: boolean;
   messages: Message[];
+  conversations: Conversation[];
+  activeConversationId?: string;
   isTyping: boolean;
   assistantTone: string;
   assistantVoice: string;
@@ -23,13 +32,17 @@ type AssistantContextValue = {
   setAssistantTone: (tone: string) => Promise<void>;
   setAssistantVoice: (voice: string) => Promise<void>;
   toggleChat: (isOpen: boolean) => void;
+  startNewChat: () => void;
+  openConversation: (id: string) => void;
+  deleteConversation: (id: string) => Promise<void>;
   trackScreen: (screenName: string) => void;
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (text: string, attachmentContext?: string) => Promise<void>;
 };
 
 const STORAGE_KEY = '@dott/assistant-enabled';
 const STORAGE_KEY_ASSISTANT_TONE = '@dott/assistant-tone';
 const STORAGE_KEY_ASSISTANT_VOICE = '@dott/assistant-voice';
+const conversationsStorageKey = (userId?: string) => `@dott/conversations/${userId || 'guest'}`;
 
 const AssistantContext = createContext<AssistantContextValue | undefined>(undefined);
 
@@ -41,6 +54,9 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [currentScreen, setCurrentScreen] = useState<string>();
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string>();
+  const [conversationsHydrated, setConversationsHydrated] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [assistantTone, setAssistantToneValue] = useState('fresh');
   const [assistantVoice, setAssistantVoiceValue] = useState('neutral');
@@ -65,6 +81,35 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       .finally(() => setHydrated(true));
   }, []);
 
+  useEffect(() => {
+    setConversationsHydrated(false);
+    AsyncStorage.getItem(conversationsStorageKey(authState.user?.uid))
+      .then(value => {
+        const parsed = value ? JSON.parse(value) : [];
+        setConversations(Array.isArray(parsed) ? parsed : []);
+        setMessages([]);
+        setActiveConversationId(undefined);
+      })
+      .catch(() => setConversations([]))
+      .finally(() => setConversationsHydrated(true));
+  }, [authState.user?.uid]);
+
+  useEffect(() => {
+    if (!conversationsHydrated || messages.length === 0) return;
+    const id = activeConversationId ?? `chat-${Date.now()}`;
+    if (!activeConversationId) setActiveConversationId(id);
+    const firstUserMessage = messages.find(message => message.role === 'user')?.content ?? 'New conversation';
+    const title = firstUserMessage.replace(/\s+/g, ' ').trim().slice(0, 52) || 'New conversation';
+    setConversations(current => {
+      const next = [
+        { id, title, messages, updatedAt: new Date().toISOString() },
+        ...current.filter(conversation => conversation.id !== id),
+      ].slice(0, 50);
+      void AsyncStorage.setItem(conversationsStorageKey(authState.user?.uid), JSON.stringify(next));
+      return next;
+    });
+  }, [messages, activeConversationId, conversationsHydrated, authState.user?.uid]);
+
   const toggleAssistant = async (nextValue?: boolean) => {
     const resolved = typeof nextValue === 'boolean' ? nextValue : !enabled;
     setEnabled(resolved);
@@ -83,6 +128,27 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const toggleChat = (isOpen: boolean) => {
     setIsChatOpen(isOpen);
+  };
+
+  const startNewChat = () => {
+    setMessages([]);
+    setIsTyping(false);
+    setActiveConversationId(undefined);
+  };
+
+  const openConversation = (id: string) => {
+    const conversation = conversations.find(item => item.id === id);
+    if (!conversation) return;
+    setActiveConversationId(id);
+    setMessages(conversation.messages);
+    setIsTyping(false);
+  };
+
+  const deleteConversation = async (id: string) => {
+    const next = conversations.filter(item => item.id !== id);
+    setConversations(next);
+    await AsyncStorage.setItem(conversationsStorageKey(authState.user?.uid), JSON.stringify(next));
+    if (activeConversationId === id) startNewChat();
   };
 
   const handleToolCall = (action: string, params: any) => {
@@ -108,7 +174,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return 'Action performed.';
   };
 
-  const sendMessage = async (text: string) => {
+  const sendMessage = async (text: string, attachmentContext?: string) => {
     const userMsg: Message = { role: 'user', content: text };
     setMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
@@ -133,7 +199,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         assistantVoice,
       };
 
-      const response = await sendChatQuery(text, context, locale);
+      const effectiveText = attachmentContext?.trim() ? `${text}\n\nAttached files:\n${attachmentContext.trim()}` : text;
+      const response = await sendChatQuery(effectiveText, context, locale);
 
       let botText = '';
 
@@ -164,6 +231,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       currentScreen,
       isChatOpen,
       messages,
+      conversations,
+      activeConversationId,
       isTyping,
       assistantTone,
       assistantVoice,
@@ -171,10 +240,13 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setAssistantTone,
       setAssistantVoice,
       toggleChat,
+      startNewChat,
+      openConversation,
+      deleteConversation,
       trackScreen: setCurrentScreen,
       sendMessage,
     }),
-    [enabled, hydrated, currentScreen, isChatOpen, messages, isTyping, assistantTone, assistantVoice, toggleAssistant, setAssistantTone, setAssistantVoice, toggleChat, sendMessage]
+    [enabled, hydrated, currentScreen, isChatOpen, messages, conversations, activeConversationId, isTyping, assistantTone, assistantVoice]
   );
 
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;
