@@ -96,6 +96,8 @@ const buildScopeCandidates = (scope?: AnalyticsScope): AnalyticsScope[] => {
   return candidates;
 };
 
+const supabasePrimary = (process.env.PRIMARY_DATA_STORE ?? 'supabase').toLowerCase() === 'supabase';
+
 const activityHeatmapScore = (rows: ActivityHeatmapDaily[]) =>
   rows.reduce(
     (acc, row) =>
@@ -356,6 +358,19 @@ async function readSummaryWithFallback<T extends Record<string, unknown>>(
   const candidates = buildScopeCandidates(scope);
   let firstSeen: T | null = null;
 
+  if (supabasePrimary && supabaseMetric) {
+    for (const candidate of candidates) {
+      try {
+        const primary = (await supabaseFallbackService.getMetricSummary(supabaseMetric, candidate)) as T | null;
+        if (!primary) continue;
+        if (!firstSeen) firstSeen = primary;
+        if (hasPositiveMetric(primary, positiveKeys)) return primary;
+      } catch (error) {
+        console.warn(`[analytics] supabase primary summary fetch failed for ${supabaseMetric}`, error);
+      }
+    }
+  }
+
   for (const candidate of candidates) {
     try {
       const snap = await summaryDocFactory(candidate).get();
@@ -370,7 +385,7 @@ async function readSummaryWithFallback<T extends Record<string, unknown>>(
     }
   }
 
-  if (supabaseMetric) {
+  if (supabaseMetric && !supabasePrimary) {
     for (const candidate of candidates) {
       try {
         const fallback = (await supabaseFallbackService.getMetricSummary(
@@ -1516,6 +1531,37 @@ export async function getWebTrafficStats(scope?: AnalyticsScope): Promise<WebTra
       });
       return result;
     }
+    if (supabasePrimary) {
+      try {
+        const fallbackRows = await supabaseFallbackService.getMetricDailyRows('dashboardDaily', { userId }, 14);
+        const history = fallbackRows.map(row => {
+          const counters = row.counters as Record<string, unknown>;
+          const samples = Number(counters.samples ?? 1) || 1;
+          return {
+            date: row.date,
+            leads: Math.round(Number(counters.leads ?? 0) / samples),
+            engagement: Math.round(Number(counters.engagement ?? 0) / samples),
+            conversions: Math.round(Number(counters.conversions ?? 0) / samples),
+            feedbackScore: Number(((Number(counters.feedbackScore ?? 0) / samples) || 0).toFixed(1)),
+          };
+        }).reverse();
+        if (history.length) {
+          const divisor = history.length;
+          return {
+            leads: Math.round(history.reduce((sum, day) => sum + day.leads, 0) / divisor),
+            engagement: Math.round(history.reduce((sum, day) => sum + day.engagement, 0) / divisor),
+            conversions: Math.round(history.reduce((sum, day) => sum + day.conversions, 0) / divisor),
+            feedbackScore: Math.min(5, Number((history.reduce((sum, day) => sum + day.feedbackScore, 0) / divisor).toFixed(1))),
+            jobBreakdown: { active: 0, queued: 0, failed: 0 },
+            recentJobs: [],
+            history,
+          };
+        }
+      } catch (error) {
+        console.warn('[analytics] Supabase primary dashboard summary failed; trying Firebase fallback', error);
+      }
+    }
+
     try {
       const fallbackSummary = (await supabaseFallbackService.getMetricSummary(
         'webTraffic',

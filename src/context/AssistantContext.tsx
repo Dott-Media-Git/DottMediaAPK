@@ -200,7 +200,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       };
 
       const effectiveText = attachmentContext?.trim() ? `${text}\n\nAttached files:\n${attachmentContext.trim()}` : text;
-      const response = await sendChatQuery(effectiveText, context, locale);
+      const response = await sendChatQuery(effectiveText, context, locale, messages);
 
       let botText = '';
 
