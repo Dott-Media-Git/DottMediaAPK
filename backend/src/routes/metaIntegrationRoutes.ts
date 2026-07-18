@@ -47,7 +47,7 @@ type InstagramProfile = {
   media_count?: number;
 };
 
-type MetaConnectPlatform = 'facebook' | 'instagram' | 'all';
+type MetaConnectPlatform = 'facebook' | 'instagram' | 'ads' | 'all';
 
 type ConnectedMetaAsset = {
   id: string;
@@ -197,6 +197,14 @@ const defaultInstagramScopes = [
   'business_management',
 ];
 
+const defaultAdsScopes = [
+  'ads_read',
+  'ads_management',
+  'business_management',
+  'pages_show_list',
+  'pages_read_engagement',
+];
+
 const getScopes = (platform: MetaConnectPlatform = 'all') => {
   const renderEnv = resolveRenderEnv();
   const platformEnvKey =
@@ -204,7 +212,9 @@ const getScopes = (platform: MetaConnectPlatform = 'all') => {
       ? 'META_FACEBOOK_SCOPES'
       : platform === 'instagram'
         ? 'META_INSTAGRAM_SCOPES'
-        : 'META_APP_SCOPES';
+        : platform === 'ads'
+          ? 'META_ADS_SCOPES'
+          : 'META_APP_SCOPES';
   const raw =
     process.env[platformEnvKey] ??
     renderEnv[platformEnvKey] ??
@@ -217,10 +227,12 @@ const getScopes = (platform: MetaConnectPlatform = 'all') => {
 
   if (platform === 'facebook') return defaultFacebookScopes;
   if (platform === 'instagram') return defaultInstagramScopes;
+  if (platform === 'ads') return defaultAdsScopes;
   return uniqueScopes(defaultFacebookScopes, defaultInstagramScopes);
 };
 
 const getBusinessLoginConfigId = (platform: MetaConnectPlatform = 'all') => {
+  if (platform === 'ads') return '';
   const renderEnv = resolveRenderEnv();
   const platformEnvKey =
     platform === 'facebook'
@@ -244,7 +256,7 @@ const shouldIncludeScopeWithBusinessConfig = () =>
 
 const normalizeMetaConnectPlatform = (value: unknown): MetaConnectPlatform => {
   const platform = String(value ?? '').toLowerCase();
-  if (platform === 'facebook' || platform === 'instagram') return platform;
+  if (platform === 'facebook' || platform === 'instagram' || platform === 'ads') return platform;
   return 'all';
 };
 
@@ -938,7 +950,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
 
     const connectedPlatforms: string[] = [];
 
-    if (requestedPlatform === 'facebook' || requestedPlatform === 'all') {
+    if (requestedPlatform === 'facebook' || requestedPlatform === 'ads' || requestedPlatform === 'all') {
       currentAccounts.facebook = {
         accessToken: selectedPage.access_token,
         userAccessToken,
@@ -946,6 +958,14 @@ router.get('/integrations/meta/callback', async (req, res) => {
         pageName: selectedPage.name ?? currentAccounts.facebook?.pageName,
       };
       connectedPlatforms.push('facebook');
+    }
+
+    if (requestedPlatform === 'ads') {
+      currentAccounts.metaAds = {
+        connected: true,
+        userAccessToken,
+        connectedAt: new Date().toISOString(),
+      };
     }
 
     const instagramAccount = selectedPage.instagram_business_account;
@@ -1006,7 +1026,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
       .filter(Boolean)
       .join(', ');
 
-    res.redirect(303, oauthSuccessRedirect(state.platform === 'instagram' ? 'instagram' : 'facebook'));
+    res.redirect(303, oauthSuccessRedirect(requestedPlatform === 'ads' ? 'ads' : requestedPlatform === 'instagram' ? 'instagram' : 'facebook'));
   } catch (error) {
     console.error('[meta] connection failed', error);
     res

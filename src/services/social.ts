@@ -225,7 +225,7 @@ export const fetchSocialStatus = async (): Promise<{ status: SocialConnectionSta
   return authedFetch('/api/social/status');
 };
 
-export const fetchMetaConnectUrl = async (platform?: 'facebook' | 'instagram'): Promise<{ url?: string }> => {
+export const fetchMetaConnectUrl = async (platform?: 'facebook' | 'instagram' | 'ads'): Promise<{ url?: string }> => {
   const query = platform ? `?platform=${encodeURIComponent(platform)}` : '';
   return authedFetch(`/integrations/meta/connect-url${query}`);
 };
