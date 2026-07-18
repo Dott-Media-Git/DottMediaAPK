@@ -50,10 +50,17 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [listening, setListening] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [voiceState, setVoiceState] = useState<'connecting' | 'listening' | 'thinking' | 'speaking'>('connecting');
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [voiceMuted, setVoiceMuted] = useState(false);
   const [typedWelcome, setTypedWelcome] = useState('');
   const { width } = useWindowDimensions();
   const compact = width < 700;
   const scrollRef = useRef<ScrollView>(null);
+  const recognitionRef = useRef<any>(null);
+  const voiceModeRef = useRef(false);
+  const voiceMutedRef = useRef(false);
   const firstName = state.crmData?.companyName || state.user?.email?.split('@')[0] || '';
   const welcomeText = firstName ? `${t('Hello')}, ${firstName}` : t('Hello, I am Dotti');
 
@@ -73,6 +80,20 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
     scrollRef.current?.scrollToEnd({ animated: true });
   }, [messages, isTyping]);
 
+  useEffect(() => {
+    voiceModeRef.current = voiceMode;
+  }, [voiceMode]);
+
+  useEffect(() => {
+    voiceMutedRef.current = voiceMuted;
+  }, [voiceMuted]);
+
+  useEffect(() => () => {
+    voiceModeRef.current = false;
+    recognitionRef.current?.abort?.();
+    (globalThis as any)?.speechSynthesis?.cancel?.();
+  }, []);
+
   const submit = async (value = input) => {
     const text = value.trim();
     if ((!text && attachments.length === 0) || isTyping) return;
@@ -84,7 +105,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
     setInput('');
     setAttachments([]);
     setAttachmentMenuOpen(false);
-    await sendMessage(visibleText, attachmentContext);
+    return sendMessage(visibleText, attachmentContext);
   };
 
   const chooseWebFiles = (kind: 'document' | 'image') => {
@@ -132,23 +153,102 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
     Alert.alert('Document sharing', 'Document selection is available in Dotti web. Gallery images are available here.');
   };
 
-  const toggleVoice = () => {
-    if (listening) return;
+  const closeVoiceConversation = () => {
+    voiceModeRef.current = false;
+    setVoiceMode(false);
+    setListening(false);
+    setVoiceTranscript('');
+    recognitionRef.current?.abort?.();
+    recognitionRef.current = null;
+    (globalThis as any)?.speechSynthesis?.cancel?.();
+  };
+
+  const speakReply = (text: string) => {
+    const browser = globalThis as any;
+    const synth = browser.speechSynthesis;
+    if (!synth || voiceMutedRef.current) {
+      setTimeout(() => voiceModeRef.current && startVoiceListening(), 250);
+      return;
+    }
+    synth.cancel();
+    const utterance = new browser.SpeechSynthesisUtterance(text);
+    const preferredVoice = synth.getVoices?.().find((voice: any) => /female|samantha|zira|google uk english female/i.test(voice.name))
+      || synth.getVoices?.().find((voice: any) => /^en/i.test(voice.lang));
+    if (preferredVoice) utterance.voice = preferredVoice;
+    utterance.lang = preferredVoice?.lang || 'en-US';
+    utterance.rate = 1.02;
+    utterance.pitch = 1.03;
+    utterance.onstart = () => setVoiceState('speaking');
+    utterance.onend = () => setTimeout(() => voiceModeRef.current && startVoiceListening(), 300);
+    utterance.onerror = () => setTimeout(() => voiceModeRef.current && startVoiceListening(), 300);
+    synth.speak(utterance);
+  };
+
+  const runVoiceTurn = async (transcript: string) => {
+    const cleanTranscript = transcript.trim();
+    if (!cleanTranscript || !voiceModeRef.current) return;
+    setListening(false);
+    setVoiceTranscript(cleanTranscript);
+    setVoiceState('thinking');
+    const reply = await sendMessage(cleanTranscript);
+    if (!voiceModeRef.current) return;
+    speakReply(reply);
+  };
+
+  const startVoiceListening = () => {
+    if (!voiceModeRef.current) return;
     const browser = globalThis as any;
     const Recognition = browser.SpeechRecognition || browser.webkitSpeechRecognition;
-    if (!Recognition) return Alert.alert('Voice chat', 'Voice transcription is available in Chrome, Edge, and supported mobile browsers.');
+    if (!Recognition) {
+      closeVoiceConversation();
+      return Alert.alert('Voice chat', 'Live voice conversation is available in Chrome, Edge, and supported mobile browsers.');
+    }
+    browser.speechSynthesis?.cancel?.();
+    recognitionRef.current?.abort?.();
     const recognition = new Recognition();
+    recognitionRef.current = recognition;
     recognition.lang = 'en-US';
     recognition.interimResults = true;
     recognition.continuous = false;
-    recognition.onstart = () => setListening(true);
+    let finalTranscript = '';
+    recognition.onstart = () => {
+      setListening(true);
+      setVoiceState('listening');
+      setVoiceTranscript('');
+    };
     recognition.onresult = (event: any) => {
       const transcript = Array.from(event.results ?? []).map((result: any) => result?.[0]?.transcript ?? '').join('');
-      setInput(transcript);
+      setVoiceTranscript(transcript);
+      const lastResult = event.results?.[event.results.length - 1];
+      if (lastResult?.isFinal && transcript.trim()) finalTranscript = transcript.trim();
     };
-    recognition.onerror = () => setListening(false);
-    recognition.onend = () => setListening(false);
-    recognition.start();
+    recognition.onerror = (event: any) => {
+      setListening(false);
+      if (event?.error !== 'aborted' && event?.error !== 'no-speech') setVoiceTranscript('I could not hear that. Trying again…');
+    };
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+      if (!voiceModeRef.current) return;
+      if (finalTranscript) void runVoiceTurn(finalTranscript);
+      else setTimeout(() => voiceModeRef.current && startVoiceListening(), 450);
+    };
+    try {
+      recognition.start();
+    } catch {
+      setTimeout(() => voiceModeRef.current && startVoiceListening(), 500);
+    }
+  };
+
+  const openVoiceConversation = () => {
+    if (Platform.OS !== 'web') return Alert.alert('Voice conversation', 'Live voice conversation is currently available in the Dotti web app.');
+    const browser = globalThis as any;
+    if (!(browser.SpeechRecognition || browser.webkitSpeechRecognition)) return Alert.alert('Voice chat', 'Use Chrome, Edge, or another supported browser for live voice conversation.');
+    voiceModeRef.current = true;
+    setVoiceMode(true);
+    setVoiceState('connecting');
+    setVoiceTranscript('');
+    setTimeout(startVoiceListening, 220);
   };
 
   return (
@@ -267,7 +367,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
             onSubmitEditing={() => void submit()}
             blurOnSubmit={false}
           />
-          <TouchableOpacity style={[styles.composerToolButton, listening && styles.voiceButtonActive]} onPress={toggleVoice} accessibilityLabel="Talk to Dotti">
+          <TouchableOpacity style={[styles.composerToolButton, listening && styles.voiceButtonActive]} onPress={openVoiceConversation} accessibilityLabel="Start a voice conversation with Dotti">
             <Ionicons name={listening ? 'mic' : 'mic-outline'} size={21} color={listening ? '#FFFFFF' : colors.text} />
           </TouchableOpacity>
           <TouchableOpacity
@@ -303,6 +403,30 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
             </ScrollView>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      <Modal visible={voiceMode} animationType="fade" onRequestClose={closeVoiceConversation}>
+        <LinearGradient colors={['#080B14', '#11172A', '#080B14']} style={styles.voiceScreen}>
+          <View style={styles.voiceHeader}>
+            <TouchableOpacity style={styles.voiceHeaderButton} onPress={closeVoiceConversation} accessibilityLabel="Close voice conversation"><Ionicons name="chevron-down" size={24} color="#FFFFFF" /></TouchableOpacity>
+            <View style={styles.voiceHeaderTitle}><Text style={styles.voiceTitle}>Voice with Dotti</Text><Text style={styles.voicePrivacy}>Hands-free conversation</Text></View>
+            <TouchableOpacity style={[styles.voiceHeaderButton, voiceMuted && styles.voiceHeaderButtonActive]} onPress={() => { const next = !voiceMuted; setVoiceMuted(next); voiceMutedRef.current = next; if (next) { (globalThis as any)?.speechSynthesis?.cancel?.(); setTimeout(() => voiceModeRef.current && startVoiceListening(), 180); } }} accessibilityLabel={voiceMuted ? 'Unmute Dotti' : 'Mute Dotti'}><Ionicons name={voiceMuted ? 'volume-mute' : 'volume-high'} size={21} color="#FFFFFF" /></TouchableOpacity>
+          </View>
+          <View style={styles.voiceBody}>
+            <View style={[styles.voiceHalo, voiceState === 'listening' && styles.voiceHaloListening, voiceState === 'speaking' && styles.voiceHaloSpeaking]}>
+              <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.voiceOrb}><Ionicons name={voiceState === 'listening' ? 'mic' : 'sparkles'} size={38} color="#FFFFFF" /></LinearGradient>
+            </View>
+            <Text style={styles.voiceStateLabel}>{voiceState === 'connecting' ? 'Connecting…' : voiceState === 'listening' ? 'Listening…' : voiceState === 'thinking' ? 'Dotti is thinking…' : voiceMuted ? 'Response ready' : 'Dotti is speaking…'}</Text>
+            <Text style={styles.voiceTranscript} numberOfLines={5}>{voiceTranscript || (voiceState === 'listening' ? 'Go ahead, I’m listening.' : 'Starting your conversation with Dotti…')}</Text>
+            <View style={styles.voiceWave}>{[12, 22, 34, 25, 42, 29, 18, 37, 24, 14].map((height, index) => <View key={index} style={[styles.voiceWaveBar, { height: voiceState === 'listening' || voiceState === 'speaking' ? height : 8 }]} />)}</View>
+          </View>
+          <View style={styles.voiceFooter}>
+            <TouchableOpacity style={styles.voiceSecondaryButton} onPress={() => { recognitionRef.current?.abort?.(); setTimeout(() => voiceModeRef.current && startVoiceListening(), 250); }}><Ionicons name="refresh" size={22} color="#FFFFFF" /></TouchableOpacity>
+            <TouchableOpacity style={styles.voiceEndButton} onPress={closeVoiceConversation}><Ionicons name="call" size={25} color="#FFFFFF" /></TouchableOpacity>
+            <TouchableOpacity style={styles.voiceSecondaryButton} onPress={() => { if (voiceState === 'speaking') { (globalThis as any)?.speechSynthesis?.cancel?.(); setTimeout(() => voiceModeRef.current && startVoiceListening(), 150); } }}><Ionicons name="play-skip-forward" size={22} color="#FFFFFF" /></TouchableOpacity>
+          </View>
+          <Text style={styles.voiceHint}>Speak naturally. Dotti replies aloud and listens again automatically.</Text>
+        </LinearGradient>
       </Modal>
     </KeyboardAvoidingView>
   );
@@ -388,4 +512,24 @@ const styles = StyleSheet.create({
   historyItemDate: { color: colors.subtext, fontSize: 10, marginTop: 4 },
   deleteHistoryButton: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   emptyHistory: { minHeight: 270, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 30 },
+  voiceScreen: { flex: 1, paddingTop: Platform.OS === 'web' ? 24 : 50, paddingBottom: 28 },
+  voiceHeader: { height: 62, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22 },
+  voiceHeaderButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.09)' },
+  voiceHeaderButtonActive: { backgroundColor: colors.accent },
+  voiceHeaderTitle: { flex: 1, alignItems: 'center' },
+  voiceTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+  voicePrivacy: { color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 3 },
+  voiceBody: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 26 },
+  voiceHalo: { width: 184, height: 184, borderRadius: 92, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(118,82,255,0.10)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.09)' },
+  voiceHaloListening: { backgroundColor: 'rgba(72,187,255,0.15)', borderColor: 'rgba(72,187,255,0.35)', transform: [{ scale: 1.04 }] },
+  voiceHaloSpeaking: { backgroundColor: 'rgba(155,92,255,0.18)', borderColor: 'rgba(155,92,255,0.4)', transform: [{ scale: 1.06 }] },
+  voiceOrb: { width: 112, height: 112, borderRadius: 56, alignItems: 'center', justifyContent: 'center', shadowColor: colors.accent, shadowOpacity: 0.6, shadowRadius: 30, shadowOffset: { width: 0, height: 10 } },
+  voiceStateLabel: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', marginTop: 35 },
+  voiceTranscript: { color: 'rgba(255,255,255,0.68)', fontSize: 17, lineHeight: 26, textAlign: 'center', maxWidth: 620, minHeight: 58, marginTop: 14 },
+  voiceWave: { height: 50, flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 25 },
+  voiceWaveBar: { width: 4, borderRadius: 4, backgroundColor: colors.accentSecondary },
+  voiceFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 28, paddingHorizontal: 20 },
+  voiceSecondaryButton: { width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.11)' },
+  voiceEndButton: { width: 68, height: 68, borderRadius: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EF4444', transform: [{ rotate: '135deg' }] },
+  voiceHint: { color: 'rgba(255,255,255,0.45)', fontSize: 11, textAlign: 'center', marginTop: 18, paddingHorizontal: 20 },
 });

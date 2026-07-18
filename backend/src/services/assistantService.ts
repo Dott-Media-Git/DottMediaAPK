@@ -28,6 +28,8 @@ import { metaAdsControlService, type MetaAdsAction } from './metaAdsControlServi
 const assistantAI = new OpenAI({
   apiKey: config.assistantAI.apiKey,
   baseURL: config.assistantAI.baseURL,
+  timeout: Number(process.env.ASSISTANT_AI_TIMEOUT_MS ?? 20_000),
+  maxRetries: 1,
 });
 const analyticsService = new AnalyticsService();
 const socialAnalyticsService = new SocialAnalyticsService();
@@ -458,7 +460,11 @@ export class AssistantService {
 
   private async safeResolve<T>(label: string, action: () => Promise<T>, fallback: T) {
     try {
-      return await action();
+      const timeoutMs = Number(process.env.ASSISTANT_CONTEXT_TIMEOUT_MS ?? 1_500);
+      return await Promise.race([
+        action(),
+        new Promise<T>((resolve) => setTimeout(() => resolve(fallback), timeoutMs)),
+      ]);
     } catch (error) {
       console.warn(`[assistant] failed to load ${label}`, (error as Error).message);
       return fallback;
@@ -1205,7 +1211,11 @@ export class AssistantService {
     const responseLanguage = LOCALE_RESPONSE_LANGUAGE[locale] ?? 'English';
     let knowledge: Array<{ title: string; summary: string; url?: string }> = [];
     try {
-      knowledge = await knowledgeBase.getRelevantSnippets(question, 3);
+      knowledge = await this.safeResolve(
+        'knowledge snippets',
+        () => knowledgeBase.getRelevantSnippets(question, 3),
+        [],
+      );
     } catch (error) {
       console.warn('Failed to load knowledge snippets', (error as Error).message);
     }
@@ -1219,7 +1229,7 @@ export class AssistantService {
 
     const personalityPrompt = this.buildPersonalityPrompt(context);
     const systemPrompt = [
-      'You are Dott Assistant, an OpenAI-powered business assistant inside the Dott Media app.',
+      'You are Dotti, an AI-powered business assistant inside the Dott Media app.',
       'Only answer questions about the authenticated user account, its connected channels, automation, performance, posting history, audience, business goals, growth strategy, and navigation inside Dott.',
       personalityPrompt,
       'If the user asks for anything unrelated to their account or business, reply briefly that you can only help with their account and business inside Dott.',
