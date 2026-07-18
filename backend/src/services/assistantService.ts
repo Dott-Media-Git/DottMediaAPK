@@ -25,7 +25,10 @@ import { KnowledgeBaseService } from './knowledgeBaseService';
 import { getLiveSocialMetrics, type LiveSocialMetrics } from './liveSocialMetricsService';
 import { metaAdsControlService, type MetaAdsAction } from './metaAdsControlService';
 
-const openai = new OpenAI({ apiKey: config.openAI.apiKey });
+const assistantAI = new OpenAI({
+  apiKey: config.assistantAI.apiKey,
+  baseURL: config.assistantAI.baseURL,
+});
 const analyticsService = new AnalyticsService();
 const socialAnalyticsService = new SocialAnalyticsService();
 const strategyService = new AssistantStrategyService();
@@ -47,10 +50,10 @@ const extractOpenAIError = (error: unknown) => {
 
 const buildAssistantErrorText = (kind: 'billing' | 'auth' | 'generic') => {
   if (kind === 'billing') {
-    return 'AI is temporarily offline because OpenAI credits/billing are exhausted. Please top up and try again.';
+    return `AI is temporarily offline because ${config.assistantAI.provider} credits or usage limits are exhausted. Please try again shortly.`;
   }
   if (kind === 'auth') {
-    return 'AI is temporarily offline due to an OpenAI authentication issue. Please check the API key and try again.';
+    return `AI is temporarily offline due to a ${config.assistantAI.provider} authentication issue. Please check the API key and try again.`;
   }
   return 'I encountered a temporary issue connecting to my brain. Please try again shortly.';
 };
@@ -1252,8 +1255,8 @@ export class AssistantService {
       .join('\n');
 
     try {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+      const completion = await assistantAI.chat.completions.create({
+        model: config.assistantAI.model,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: question },
