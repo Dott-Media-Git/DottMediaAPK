@@ -162,6 +162,10 @@ type AssistantAccountSnapshot = {
   webTraffic: WebTrafficStats;
   activityHeatmap: ActivityHeatmapDaily[];
   socialDaily: Array<Record<string, unknown>>;
+  postingHistory: Array<Record<string, unknown>>;
+  socialAccounts: Record<string, unknown>;
+  adsAccount: Record<string, unknown>;
+  metricHistory: Record<string, Array<{ date: string; counters: Record<string, unknown> }>>;
 };
 
 const emptyLiveSocialMetrics = (): LiveSocialMetrics => ({
@@ -630,6 +634,22 @@ export class AssistantService {
     }
   }
 
+  private async loadMetricHistory(userId: string, scopeId?: string) {
+    const metrics = ['dashboardDaily', 'webTraffic', 'outbound', 'engagement'] as const;
+    const entries = await Promise.all(metrics.map(async metric => {
+      const [userRows, scopedRows] = await Promise.all([
+        supabaseFallbackService.getMetricDailyRows(metric, { userId }, 30),
+        scopeId
+          ? supabaseFallbackService.getMetricDailyRows(metric, { userId, scopeId }, 30)
+          : Promise.resolve([]),
+      ]);
+      const byDate = new Map(userRows.map(row => [row.date, row]));
+      scopedRows.forEach(row => byDate.set(row.date, row));
+      return [metric, [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-30)] as const;
+    }));
+    return Object.fromEntries(entries);
+  }
+
   private async loadAccountSnapshot(context: AssistantContext): Promise<AssistantAccountSnapshot | null> {
     if (!context.userId) {
       return null;
@@ -669,18 +689,49 @@ export class AssistantService {
       webTraffic,
       activityHeatmap,
       socialDaily,
+      scheduledPosts,
+      socialLogs,
+      storedSocialAccounts,
+      adsAccount,
+      metricHistory,
     ] = await Promise.all([
       this.safeResolve('analytics summary', () => analyticsService.getSummary(context.userId!), emptyAnalyticsSummary()),
-      this.safeResolve('live social metrics', () => getLiveSocialMetrics(context.userId!, { scope: analyticsScope }), emptyLiveSocialMetrics()),
+      this.safeResolve('live social metrics', () => getLiveSocialMetrics(context.userId!, { scope: analyticsScope, lookbackHours: 30 * 24 }), emptyLiveSocialMetrics()),
       this.safeResolve('outbound stats', () => getOutboundStats(analyticsScope), emptyOutboundStats()),
       this.safeResolve('inbound stats', () => getInboundStats(analyticsScope), emptyInboundStats()),
       this.safeResolve('engagement stats', () => getEngagementStats(analyticsScope), emptyEngagementStats()),
       this.safeResolve('follow-up stats', () => getFollowupStats(analyticsScope), emptyFollowupStats()),
       this.safeResolve('web lead stats', () => getWebLeadStats(analyticsScope), emptyWebLeadStats()),
       this.safeResolve('web traffic stats', () => getWebTrafficStats(analyticsScope), emptyWebTrafficStats()),
-      this.safeResolve('activity heatmap', () => getActivityHeatmap(analyticsScope, 14), [] as ActivityHeatmapDaily[]),
-      this.safeResolve('social daily', () => socialAnalyticsService.getDailySummary(context.userId!, 7), [] as Array<Record<string, unknown>>),
+      this.safeResolve('activity heatmap', () => getActivityHeatmap(analyticsScope, 30), [] as ActivityHeatmapDaily[]),
+      this.safeResolve('social daily', () => socialAnalyticsService.getDailySummary(context.userId!, 30), [] as Array<Record<string, unknown>>),
+      this.safeResolve('scheduled posting history', () => supabaseFallbackService.getPostsByUser(context.userId!, 150), []),
+      this.safeResolve('social posting logs', () => supabaseFallbackService.getSocialLogsByUser(context.userId!, 150), []),
+      this.safeResolve('connected social accounts', () => supabaseFallbackService.getSocialAccounts(context.userId!), null),
+      this.safeResolve('Meta Ads account status', () => metaAdsControlService.getConnectionStatus(context.userId!), {
+        mcpConnected: false,
+        graphConnected: false,
+        accountCount: 0,
+        selectedAdAccountId: null,
+        provider: 'none',
+      }),
+      this.safeResolve('complete 30-day metric history', () => this.loadMetricHistory(context.userId!, scopeId), {}),
     ]);
+
+    const socialAccounts = (storedSocialAccounts?.socialAccounts && typeof storedSocialAccounts.socialAccounts === 'object')
+      ? storedSocialAccounts.socialAccounts as Record<string, unknown>
+      : {};
+    const storedChannels = Object.entries(socialAccounts)
+      .filter(([, value]) => Boolean(value && (typeof value !== 'object' || (value as Record<string, unknown>).connected !== false)))
+      .map(([platform]) => platform.toLowerCase());
+    const connectedChannels = Array.from(new Set([
+      ...this.resolveConnectedChannels(userData, context.connectedChannels),
+      ...storedChannels,
+    ]));
+    const postingHistory = [
+      ...scheduledPosts.map(post => ({ source: 'scheduled_posts', ...post })),
+      ...socialLogs.map(log => ({ source: 'social_logs', ...log })),
+    ].slice(0, 250) as Array<Record<string, unknown>>;
 
     return {
       company: context.company ?? crmData.companyName ?? userData.name,
@@ -690,7 +741,7 @@ export class AssistantService {
       businessGoals: context.businessGoals ?? crmData.businessGoals,
       targetAudience: context.targetAudience ?? crmData.targetAudience,
       subscriptionStatus: context.subscriptionStatus ?? profileData.subscriptionStatus,
-      connectedChannels: this.resolveConnectedChannels(userData, context.connectedChannels),
+      connectedChannels,
       analyticsSummary,
       liveSocial,
       outbound,
@@ -701,6 +752,10 @@ export class AssistantService {
       webTraffic,
       activityHeatmap,
       socialDaily,
+      postingHistory,
+      socialAccounts,
+      adsAccount: adsAccount as Record<string, unknown>,
+      metricHistory,
     };
   }
 
@@ -721,6 +776,10 @@ export class AssistantService {
       snapshot.targetAudience ? `Target audience: ${snapshot.targetAudience}` : '',
       snapshot.subscriptionStatus ? `Subscription status: ${snapshot.subscriptionStatus}` : '',
       `Connected channels: ${snapshot.connectedChannels.length ? snapshot.connectedChannels.join(', ') : 'none connected'}`,
+      `Connected social account details: ${Object.keys(snapshot.socialAccounts).length ? JSON.stringify(snapshot.socialAccounts) : 'none stored'}.`,
+      `Meta Ads account: ${JSON.stringify(snapshot.adsAccount)}.`,
+      `Dashboard daily metrics (up to 30 days, oldest to newest): ${JSON.stringify(snapshot.analyticsSummary.history.slice(-30))}.`,
+      `Complete account metric history by category (up to 30 days): ${JSON.stringify(snapshot.metricHistory)}.`,
       this.buildDailyReviewSummary(snapshot),
       this.buildWeeklyPerformanceSummary(snapshot),
       `Live social performance (last ${snapshot.liveSocial.lookbackHours}h): ${this.formatWholeNumber(
@@ -745,6 +804,7 @@ export class AssistantService {
         snapshot.webTraffic.redirectClicks,
       )} web redirect clicks, ${this.formatWholeNumber(snapshot.webLeads.leads)} web leads.`,
       this.buildPostingActivitySummary(snapshot.socialDaily),
+      `Posting history (latest ${Math.min(snapshot.postingHistory.length, 40)} records): ${JSON.stringify(snapshot.postingHistory.slice(0, 40))}.`,
       `Automation/job status: active ${this.formatWholeNumber(snapshot.analyticsSummary.jobBreakdown.active)}, queued ${this.formatWholeNumber(
         snapshot.analyticsSummary.jobBreakdown.queued,
       )}, failed ${this.formatWholeNumber(snapshot.analyticsSummary.jobBreakdown.failed)}. Recent jobs: ${automationLine}.`,
@@ -1222,6 +1282,8 @@ export class AssistantService {
       personalityPrompt,
       'If the user asks for anything unrelated to their account or business, reply briefly that you can only help with their account and business inside Dott.',
       'Base every answer on the account data provided below. Never invent metrics or connected channels.',
+      'You have account-scoped access to the supplied daily and 30-day dashboard metrics, posting history, connected social accounts, and Meta Ads connection. Use the correct time range requested by the user and state clearly when a particular dataset is empty or unavailable.',
+      'For comparisons, trends, plans, and diagnoses, consider the full 30-day series and posting history instead of relying only on today.',
       'When the user asks for a summary, give a clear performance summary grounded in the live account data.',
       'When the user asks for growth help, diagnose what is happening, explain the bottleneck, suggest a practical strategy, and explain what can be implemented inside Dott.',
       'Act as an experienced social media growth strategist when the user asks for a plan or strategy. Produce a practical plan tailored to the account, audience, goals, connected channels, and available performance data.',

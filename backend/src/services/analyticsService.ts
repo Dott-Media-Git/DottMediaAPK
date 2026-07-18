@@ -442,6 +442,35 @@ export class AnalyticsService {
     }
 
     try {
+      const primaryRows = await supabaseFallbackService.getMetricDailyRows('dashboardDaily', { userId }, 30);
+      const history = primaryRows.map(row => {
+        const counters = row.counters as Record<string, unknown>;
+        const samples = Number(counters.samples ?? 1) || 1;
+        return {
+          date: row.date,
+          leads: Math.round(Number(counters.leads ?? 0) / samples),
+          engagement: Math.round(Number(counters.engagement ?? 0) / samples),
+          conversions: Math.round(Number(counters.conversions ?? 0) / samples),
+          feedbackScore: Number(((Number(counters.feedbackScore ?? 0) / samples) || 0).toFixed(1)),
+        };
+      }).reverse();
+      if (history.length) {
+        const divisor = history.length;
+        return {
+          leads: Math.round(history.reduce((sum, day) => sum + day.leads, 0) / divisor),
+          engagement: Math.round(history.reduce((sum, day) => sum + day.engagement, 0) / divisor),
+          conversions: Math.round(history.reduce((sum, day) => sum + day.conversions, 0) / divisor),
+          feedbackScore: Math.min(5, Number((history.reduce((sum, day) => sum + day.feedbackScore, 0) / divisor).toFixed(1))),
+          jobBreakdown: { active: 0, queued: 0, failed: 0 },
+          recentJobs: [],
+          history,
+        };
+      }
+    } catch (error) {
+      console.warn('[analytics] Supabase 30-day dashboard history unavailable; using Firebase fallback', error);
+    }
+
+    try {
       const jobsSnap = await firestore
         .collection('automations')
         .doc(userId)
@@ -476,7 +505,7 @@ export class AnalyticsService {
         .doc(userId)
         .collection('daily')
         .orderBy('date', 'desc')
-        .limit(14)
+        .limit(30)
         .get();
 
       let history = historySnap.docs
@@ -497,7 +526,7 @@ export class AnalyticsService {
         const fallbackRows = await supabaseFallbackService.getMetricDailyRows(
           'dashboardDaily',
           { userId },
-          14,
+          30,
         );
         history = fallbackRows
           .map(row => {
@@ -566,7 +595,7 @@ export class AnalyticsService {
         const fallbackRows = await supabaseFallbackService.getMetricDailyRows(
           'dashboardDaily',
           { userId },
-          14,
+          30,
         );
         const history = fallbackRows
           .map(row => {

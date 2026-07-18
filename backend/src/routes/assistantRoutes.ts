@@ -26,6 +26,8 @@ const isFirestoreQuotaError = (error: unknown) => {
 
 const BodySchema = z.object({
   question: z.string().min(4),
+  conversationId: z.string().min(1).max(100).optional(),
+  conversationTitle: z.string().max(80).optional(),
   conversationHistory: z.array(z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string().min(1).max(4000),
@@ -52,6 +54,55 @@ const BodySchema = z.object({
         .optional(),
     })
     .optional(),
+});
+
+const ConversationIdSchema = z.string().min(1).max(100);
+
+const resolveAssistantUserId = async (authUserId: string) => {
+  const user = await withFallbackTimeout(supabaseFallbackService.getUser(authUserId), null);
+  const historyUserId = typeof user?.data?.historyUserId === 'string' ? user.data.historyUserId.trim() : '';
+  return historyUserId || authUserId;
+};
+
+const boundConversationHistory = (messages: Array<{ role: 'user' | 'assistant'; content: string }>) => {
+  const selected: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  let characters = 0;
+  for (let index = messages.length - 1; index >= 0 && selected.length < 120; index -= 1) {
+    const message = messages[index];
+    const content = message.content.slice(0, 4000);
+    if (selected.length && characters + content.length > 60_000) break;
+    const previous = selected[0];
+    if (!previous || previous.role !== message.role || previous.content !== content) {
+      selected.unshift({ role: message.role, content });
+      characters += content.length;
+    }
+  }
+  return selected;
+};
+
+router.get('/assistant/conversations', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const effectiveUserId = await resolveAssistantUserId(authUser.uid);
+    const conversations = await supabaseFallbackService.getAssistantConversations(effectiveUserId);
+    res.json({ conversations });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete('/assistant/conversations/:conversationId', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const conversationId = ConversationIdSchema.parse(req.params.conversationId);
+    const effectiveUserId = await resolveAssistantUserId(authUser.uid);
+    await supabaseFallbackService.deleteAssistantConversation(effectiveUserId, conversationId);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
@@ -132,12 +183,42 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
       if (!isFirestoreQuotaError(error)) throw error;
       console.warn('[assistant] Firestore usage metering quota exhausted; continuing authenticated request');
     }
+    const cloudConversations = await withFallbackTimeout(
+      supabaseFallbackService.getAssistantConversations(effectiveUserId),
+      [],
+    );
+    const cloudHistory = cloudConversations
+      .flatMap(conversation => conversation.messages)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map(message => ({ role: message.role, content: message.content }));
+    const conversationHistory = boundConversationHistory([
+      ...cloudHistory,
+      ...(parsed.conversationHistory ?? []),
+    ]);
     const answer = await assistant.answer(parsed.question, {
       ...(parsed.context ?? {}),
       userId: effectiveUserId,
       userEmail: authUser.email,
-      conversationHistory: parsed.conversationHistory,
+      conversationHistory,
     });
+    const answerText = typeof answer === 'string'
+      ? answer
+      : typeof answer?.text === 'string'
+        ? answer.text
+        : '';
+    if (answerText) {
+      const conversationId = parsed.conversationId ?? `chat-${Date.now()}`;
+      await withFallbackTimeout(
+        supabaseFallbackService.saveAssistantExchange({
+          userId: effectiveUserId,
+          conversationId,
+          title: parsed.conversationTitle,
+          question: parsed.question,
+          answer: answerText,
+        }),
+        undefined,
+      );
+    }
     res.json({ answer });
   } catch (err) {
     next(err);

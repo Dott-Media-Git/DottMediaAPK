@@ -135,6 +135,11 @@ create index if not exists dott_inbound_messages_channel_received_idx
   on public.dott_inbound_messages (channel, received_at desc);
 create index if not exists dott_inbound_messages_sender_received_idx
   on public.dott_inbound_messages (sender_id, received_at desc);
+create index if not exists dott_inbound_messages_sender_channel_received_idx
+  on public.dott_inbound_messages (sender_id, channel, received_at desc);
+
+alter table public.dott_inbound_messages enable row level security;
+revoke all on table public.dott_inbound_messages from anon, authenticated;
 
 create table if not exists public.dott_social_daily (
   id text primary key,

@@ -210,7 +210,14 @@ export const FloatingAssistant: React.FC = () => {
     pushMessage(userMessage);
     setSending(true);
     try {
-      const answer = await askAssistant(question, context);
+      const answer = await askAssistant(question, {
+        ...context,
+        conversationId: `floating-${state.user?.uid ?? 'guest'}`,
+        conversationTitle: 'Floating chat with Dotti',
+        conversationHistory: messages
+          .filter(message => message.id !== 'welcome')
+          .map(message => ({ role: message.role, content: message.text })),
+      });
       pushMessage({ id: `assistant-${Date.now()}`, role: 'assistant', text: answer });
       if (speakResponse && Platform.OS === 'web') {
         const synth = (globalThis as any)?.speechSynthesis;

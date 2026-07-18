@@ -17,6 +17,9 @@ type AssistantContextPayload = {
   locale?: Locale;
   assistantTone?: string;
   assistantVoice?: string;
+  conversationId?: string;
+  conversationTitle?: string;
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
 };
 
 const buildLocalResponse = (question: string, context: AssistantContextPayload) => {
@@ -94,8 +97,6 @@ export const askAssistant = async (question: string, context: AssistantContextPa
   if (!endpoint) {
     return buildLocalResponse(question, context);
   }
-  const effectiveQuestion = buildEffectiveQuestion(question, context);
-
   try {
     const authorization = await authHeader(context.userId);
     if (!authorization) {
@@ -109,7 +110,10 @@ export const askAssistant = async (question: string, context: AssistantContextPa
         Authorization: authorization
       },
       body: JSON.stringify({
-        question: effectiveQuestion,
+        question,
+        conversationId: context.conversationId,
+        conversationTitle: context.conversationTitle,
+        conversationHistory: context.conversationHistory,
         context: {
           company: context.company,
           orgId: context.orgId,

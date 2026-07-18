@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { sendChatQuery } from '@services/chatService';
+import { deleteSyncedConversation, fetchSyncedConversations, sendChatQuery } from '@services/chatService';
 import { navigationRef } from '@navigation/navigationRef';
 import { useAuth } from './AuthContext';
 import { useI18n } from './I18nContext';
@@ -107,10 +107,30 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     setConversationsHydrated(false);
-    AsyncStorage.getItem(conversationsStorageKey(authState.user?.uid))
-      .then(value => {
-        const parsed = value ? JSON.parse(value) : [];
-        setConversations(Array.isArray(parsed) ? parsed : []);
+    const localPromise = AsyncStorage.getItem(conversationsStorageKey(authState.user?.uid))
+      .then(value => value ? JSON.parse(value) : [])
+      .catch(() => []);
+    const cloudPromise = authState.user?.uid
+      ? fetchSyncedConversations().catch(error => {
+          console.warn('Cloud conversation sync unavailable; using local conversations', error);
+          return [];
+        })
+      : Promise.resolve([]);
+    Promise.all([localPromise, cloudPromise])
+      .then(([localValue, cloudValue]) => {
+        const local = Array.isArray(localValue) ? localValue as Conversation[] : [];
+        const merged = new Map<string, Conversation>();
+        [...local, ...cloudValue].forEach(conversation => {
+          const existing = merged.get(conversation.id);
+          if (!existing || new Date(conversation.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()) {
+            merged.set(conversation.id, conversation);
+          }
+        });
+        const next = [...merged.values()]
+          .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+          .slice(0, 50);
+        setConversations(next);
+        void AsyncStorage.setItem(conversationsStorageKey(authState.user?.uid), JSON.stringify(next));
         setMessages([]);
         setActiveConversationId(undefined);
       })
@@ -172,6 +192,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const next = conversations.filter(item => item.id !== id);
     setConversations(next);
     await AsyncStorage.setItem(conversationsStorageKey(authState.user?.uid), JSON.stringify(next));
+    await deleteSyncedConversation(id).catch(error => console.warn('Cloud conversation delete failed', error));
     if (activeConversationId === id) startNewChat();
   };
 
@@ -199,6 +220,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const sendMessage = async (text: string, attachmentContext?: string) => {
+    const conversationId = activeConversationId ?? `chat-${Date.now()}`;
+    if (!activeConversationId) setActiveConversationId(conversationId);
     const userMsg: Message = { role: 'user', content: text };
     setMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
@@ -225,7 +248,18 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       const effectiveText = attachmentContext?.trim() ? `${text}\n\nAttached files:\n${attachmentContext.trim()}` : text;
       const conversationContext = buildConversationContext(conversations, messages);
-      const response = await sendChatQuery(effectiveText, context, locale, conversationContext);
+      const conversationTitle = (messages.find(message => message.role === 'user')?.content ?? text)
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 52) || 'Chat with Dotti';
+      const response = await sendChatQuery(
+        effectiveText,
+        context,
+        locale,
+        conversationContext,
+        conversationId,
+        conversationTitle,
+      );
 
       let botText = '';
 
