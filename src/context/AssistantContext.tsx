@@ -36,7 +36,7 @@ type AssistantContextValue = {
   openConversation: (id: string) => void;
   deleteConversation: (id: string) => Promise<void>;
   trackScreen: (screenName: string) => void;
-  sendMessage: (text: string, attachmentContext?: string) => Promise<void>;
+  sendMessage: (text: string, attachmentContext?: string) => Promise<string>;
 };
 
 const STORAGE_KEY = '@dott/assistant-enabled';
@@ -213,12 +213,15 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       const botMsg: Message = { role: 'assistant', content: botText };
       setMessages(prev => [...prev, botMsg]);
+      return botText;
     } catch (error) {
+      const fallbackText = t("I'm sorry, I ran into an issue. Please try again.");
       const errorMsg: Message = {
         role: 'assistant',
-        content: t("I'm sorry, I ran into an issue. Please try again."),
+        content: fallbackText,
       };
       setMessages(prev => [...prev, errorMsg]);
+      return fallbackText;
     } finally {
       setIsTyping(false);
     }

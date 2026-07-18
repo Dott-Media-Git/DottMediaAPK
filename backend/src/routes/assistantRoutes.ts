@@ -7,6 +7,13 @@ import { consumeUsage, resolveBillingScope } from '../services/billing/billingSe
 
 const router = Router();
 const assistant = new AssistantService();
+const assistantLookupTimeoutMs = Number(process.env.ASSISTANT_LOOKUP_TIMEOUT_MS ?? 1_200);
+
+const withFallbackTimeout = <T>(action: Promise<T>, fallback: T) =>
+  Promise.race([
+    action,
+    new Promise<T>(resolve => setTimeout(() => resolve(fallback), assistantLookupTimeoutMs)),
+  ]);
 
 const isFirestoreQuotaError = (error: unknown) => {
   const candidate = error as { code?: number | string; message?: string };
@@ -50,15 +57,24 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
     }
     let historyUserId: string | undefined;
     try {
-      const userDoc = await firestore.collection('users').doc(authUser.uid).get();
-      historyUserId = (userDoc.data()?.historyUserId as string | undefined)?.trim();
+      const userDoc = await withFallbackTimeout(
+        firestore.collection('users').doc(authUser.uid).get(),
+        null,
+      );
+      if (!userDoc) {
+        console.warn('[assistant] Firestore user lookup timed out; using authenticated user ID');
+      }
+      historyUserId = (userDoc?.data()?.historyUserId as string | undefined)?.trim();
     } catch (error) {
       if (!isFirestoreQuotaError(error)) throw error;
       console.warn('[assistant] Firestore user lookup quota exhausted; using authenticated user ID');
     }
     const effectiveUserId = historyUserId || authUser.uid;
     try {
-      await consumeUsage(resolveBillingScope(authUser.uid, parsed.context?.orgId, authUser.email), 'aiReplies', 1);
+      await withFallbackTimeout(
+        consumeUsage(resolveBillingScope(authUser.uid, parsed.context?.orgId, authUser.email), 'aiReplies', 1),
+        undefined,
+      );
     } catch (error) {
       if (!isFirestoreQuotaError(error)) throw error;
       console.warn('[assistant] Firestore usage metering quota exhausted; continuing authenticated request');
