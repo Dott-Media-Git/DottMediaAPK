@@ -1318,12 +1318,14 @@ export class AssistantService {
       .filter(Boolean)
       .join('\n');
 
-    const explicitAdsRequest = /\b(meta ads?|facebook ads?|instagram ads?|ads manager|ad account|ad spend|ad budget|pause (?:an? )?ad|activate (?:an? )?ad|ad performance|campaign reporting)\b/i.test(question);
+    const explicitAdsReportRequest = /\b(ad spend|ad performance|ads? report(?:ing)?|campaign reporting|impressions|click-through rate|\bctr\b)\b/i.test(question);
+    const explicitAdsActionRequest = /\b(create (?:an? )?ad|campaign draft|pause (?:an? )?ad|activate (?:an? )?ad|change (?:the )?ad budget|update (?:the )?ad budget)\b/i.test(question);
     const explicitNavigationRequest = /\b(open|go to|navigate|take me to|show me)\b/i.test(question);
     const availableTools = tools.filter(tool => {
       const name = tool.function.name;
       if (name === 'navigate') return explicitNavigationRequest;
-      if (name === 'meta_ads_report' || name === 'request_meta_ads_action') return explicitAdsRequest;
+      if (name === 'meta_ads_report') return explicitAdsReportRequest;
+      if (name === 'request_meta_ads_action') return explicitAdsActionRequest;
       return false;
     });
 
