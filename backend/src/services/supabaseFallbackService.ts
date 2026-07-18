@@ -1078,6 +1078,28 @@ class SupabaseFallbackService {
     };
   }
 
+  async getUser(userId: string) {
+    if (!this.isConfigured() || !userId) return null;
+    let row: any = null;
+    try {
+      row = await this.getSingleRow<any>('dott_users', { user_id: `eq.${userId}` });
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      const rows = await this.databaseQuery<any>('select * from public.dott_users where user_id = $1 limit 1', [userId]);
+      row = rows[0] ?? null;
+    }
+    if (!row) return null;
+    return {
+      userId: row.user_id,
+      email: row.email ?? null,
+      name: row.name ?? null,
+      photoURL: row.photo_url ?? null,
+      authProvider: row.auth_provider ?? null,
+      isAdmin: Boolean(row.is_admin),
+      data: row.data && typeof row.data === 'object' ? row.data : {},
+    };
+  }
+
   async getSocialAccountsByIdentifiers(userIds: string[] = [], emails: string[] = []) {
     if (!this.isConfigured()) return null;
     const normalizedUserIds = Array.from(new Set(userIds.map(value => value.trim()).filter(Boolean)));

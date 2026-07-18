@@ -24,6 +24,7 @@ import { AssistantStrategyService } from './assistantStrategyService';
 import { KnowledgeBaseService } from './knowledgeBaseService';
 import { getLiveSocialMetrics, type LiveSocialMetrics } from './liveSocialMetricsService';
 import { metaAdsControlService, type MetaAdsAction } from './metaAdsControlService';
+import { supabaseFallbackService } from './supabaseFallbackService';
 
 const assistantAI = new OpenAI({
   apiKey: config.assistantAI.apiKey,
@@ -133,6 +134,7 @@ type AssistantContext = {
   locale?: Locale;
   assistantTone?: string;
   assistantVoice?: string;
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
   analytics?: {
     leads?: number;
     engagement?: number;
@@ -633,14 +635,22 @@ export class AssistantService {
       return null;
     }
 
+    const [supabaseProfile, supabaseUser] = await Promise.all([
+      this.safeResolve('Supabase profile', () => supabaseFallbackService.getProfile(context.userId!), null),
+      this.safeResolve('Supabase user', () => supabaseFallbackService.getUser(context.userId!), null),
+    ]);
     const [profileSnap, userSnap] = await Promise.all([
-      this.safeResolve('profile', () => firestore.collection('profiles').doc(context.userId!).get(), null),
-      this.safeResolve('user', () => firestore.collection('users').doc(context.userId!).get(), null),
+      supabaseProfile ? Promise.resolve(null) : this.safeResolve('Firebase profile fallback', () => firestore.collection('profiles').doc(context.userId!).get(), null),
+      supabaseUser ? Promise.resolve(null) : this.safeResolve('Firebase user fallback', () => firestore.collection('users').doc(context.userId!).get(), null),
     ]);
 
-    const profileData = (profileSnap?.data() as Record<string, any> | undefined) ?? {};
+    const profileData = supabaseProfile
+      ? ({ ...(supabaseProfile.data as Record<string, any>), crmData: supabaseProfile.crmData, user: supabaseProfile.userData, subscriptionStatus: supabaseProfile.subscriptionStatus } as Record<string, any>)
+      : ((profileSnap?.data() as Record<string, any> | undefined) ?? {});
     const crmData = (profileData.crmData as Record<string, any> | undefined) ?? {};
-    const userData = (userSnap?.data() as Record<string, any> | undefined) ?? {};
+    const userData = supabaseUser
+      ? ({ ...(supabaseUser.data as Record<string, any>), email: supabaseUser.email, name: supabaseUser.name } as Record<string, any>)
+      : ((userSnap?.data() as Record<string, any> | undefined) ?? {});
     const scopeId =
       context.orgId?.trim() || `${crmData.orgId ?? ''}`.trim() || `${userData.orgId ?? ''}`.trim() || undefined;
     const analyticsScope = {
@@ -1119,10 +1129,6 @@ export class AssistantService {
       }
     }
 
-    if (accountSnapshot && this.shouldProvideWeeklySummary(question)) {
-      return { type: 'text', text: this.buildMetricInsight(accountSnapshot) };
-    }
-
     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       {
         type: 'function',
@@ -1154,24 +1160,6 @@ export class AssistantService {
               },
             },
             required: ['screen'],
-          },
-        },
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'get_insights',
-          description: 'Get specific analytical insights about performance',
-          parameters: {
-            type: 'object',
-            properties: {
-              metric: {
-                type: 'string',
-                enum: ['views', 'interactions', 'outbound', 'conversions', 'account_summary'],
-                description: 'The metric to analyze',
-              },
-            },
-            required: ['metric'],
           },
         },
       },
@@ -1269,6 +1257,10 @@ export class AssistantService {
         model: config.assistantAI.model,
         messages: [
           { role: 'system', content: systemPrompt },
+          ...(context.conversationHistory ?? []).slice(-16).map(message => ({
+            role: message.role,
+            content: message.content.slice(0, 4000),
+          })),
           { role: 'user', content: question },
         ],
         tools,
@@ -1288,11 +1280,6 @@ export class AssistantService {
             params = JSON.parse(toolCall.function.arguments || '{}');
           } catch (parseError) {
             console.error('Failed to parse tool arguments', parseError);
-          }
-
-          if (toolCall.function.name === 'get_insights' && accountSnapshot) {
-            const metric = typeof (params as { metric?: unknown })?.metric === 'string' ? (params as { metric?: string }).metric : undefined;
-            return { type: 'text', text: this.buildMetricInsight(accountSnapshot, metric) };
           }
 
           if (toolCall.function.name === 'meta_ads_report' && context.userId) {

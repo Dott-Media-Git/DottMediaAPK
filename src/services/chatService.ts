@@ -11,7 +11,8 @@ export type ChatResponse =
 export const sendChatQuery = async (
     question: string,
     context: any,
-    locale: Locale = 'en'
+    locale: Locale = 'en',
+    conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [],
 ): Promise<ChatResponse> => {
     const auth = getAuth();
     const token = await auth.currentUser?.getIdToken();
@@ -30,7 +31,7 @@ export const sendChatQuery = async (
         const response = await fetch(`${API_URL}/api/assistant/chat`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ question, context }),
+            body: JSON.stringify({ question, context, conversationHistory: conversationHistory.slice(-16) }),
         });
 
         if (!response.ok) {
