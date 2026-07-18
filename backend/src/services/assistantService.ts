@@ -1252,6 +1252,15 @@ export class AssistantService {
       .filter(Boolean)
       .join('\n');
 
+    const explicitAdsRequest = /\b(meta ads?|facebook ads?|instagram ads?|ads manager|ad account|ad spend|ad budget|pause (?:an? )?ad|activate (?:an? )?ad|ad performance|campaign reporting)\b/i.test(question);
+    const explicitNavigationRequest = /\b(open|go to|navigate|take me to|show me)\b/i.test(question);
+    const availableTools = tools.filter(tool => {
+      const name = tool.function.name;
+      if (name === 'navigate') return explicitNavigationRequest;
+      if (name === 'meta_ads_report' || name === 'request_meta_ads_action') return explicitAdsRequest;
+      return false;
+    });
+
     try {
       const completion = await assistantAI.chat.completions.create({
         model: config.assistantAI.model,
@@ -1263,8 +1272,7 @@ export class AssistantService {
           })),
           { role: 'user', content: question },
         ],
-        tools,
-        tool_choice: 'auto',
+        ...(availableTools.length ? { tools: availableTools, tool_choice: 'auto' as const } : {}),
         temperature: 0.3,
         max_tokens: 300,
       });
