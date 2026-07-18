@@ -92,7 +92,8 @@ export const FloatingAssistant: React.FC = () => {
     }
   ]);
 
-  const canDisplay = hydrated && enabled && Boolean(state.user);
+  const isMainChatActive = currentScreen === 'DottiChat';
+  const canDisplay = hydrated && enabled && Boolean(state.user) && !isMainChatActive;
   const hasUserMessage = useMemo(() => messages.some(message => message.role === 'user'), [messages]);
   const welcomeMessageText = messages[0]?.id === 'welcome' ? messages[0].text : '';
   const dottiState = useMemo(
