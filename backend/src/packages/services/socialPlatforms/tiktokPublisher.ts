@@ -49,7 +49,7 @@ const tikTokApi = async <T = any>(accessToken: string, path: string, payload: Re
 };
 
 const chooseChunkSize = (size: number) => {
-  if (size <= MIN_CHUNK_BYTES) return size;
+  if (size <= MAX_CHUNK_BYTES) return size;
   return Math.min(Math.max(DEFAULT_CHUNK_BYTES, MIN_CHUNK_BYTES), MAX_CHUNK_BYTES);
 };
 
@@ -83,7 +83,6 @@ const shouldFallbackToFileUpload = (error: any) => {
 
 const pickPrivacyLevel = (creatorInfo: CreatorInfo | null) => {
   const options = Array.isArray(creatorInfo?.privacy_level_options) ? creatorInfo?.privacy_level_options : [];
-  if (options.includes('PUBLIC_TO_EVERYONE')) return 'PUBLIC_TO_EVERYONE';
   if (options.includes('SELF_ONLY')) return 'SELF_ONLY';
   if (options.length) return options[0];
   return 'SELF_ONLY';
