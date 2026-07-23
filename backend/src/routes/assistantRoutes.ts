@@ -197,7 +197,9 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
     ]);
     const answer = await assistant.answer(parsed.question, {
       ...(parsed.context ?? {}),
-      userId: effectiveUserId,
+      // Conversation history may live under a legacy ID, but account data must
+      // always be scoped exactly like the Dashboard: to the authenticated user.
+      userId: authUser.uid,
       userEmail: authUser.email,
       conversationHistory,
     });
