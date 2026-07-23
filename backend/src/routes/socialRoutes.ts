@@ -32,6 +32,10 @@ const HISTORY_STORED_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_STORED_TIM
 const HISTORY_SOCIAL_LOG_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_SOCIAL_LOG_TIMEOUT_MS ?? 1500), 500);
 const HISTORY_USER_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_USER_LOOKUP_TIMEOUT_MS ?? 1000), 500);
 const SOCIAL_STATUS_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.SOCIAL_STATUS_LOOKUP_TIMEOUT_MS ?? 12000), 1000);
+const SOCIAL_INTEGRATION_STATUS_TIMEOUT_MS = Math.max(
+  Number(process.env.SOCIAL_INTEGRATION_STATUS_TIMEOUT_MS ?? 30000),
+  5000,
+);
 
 const router = Router();
 
@@ -1175,18 +1179,26 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
     );
     const accounts = userData?.socialAccounts ?? {};
     const allowDefaults = canUsePrimarySocialDefaults(userData, authUser.uid);
-    let youtube: Awaited<ReturnType<typeof getYouTubeIntegration>> | null = null;
-    let tiktok: Awaited<ReturnType<typeof getTikTokIntegration>> | null = null;
-    try {
-      youtube = await withFallbackTimeout('youtube status lookup', getYouTubeIntegration(authUser.uid), SOCIAL_STATUS_LOOKUP_TIMEOUT_MS, null);
-    } catch (error) {
-      console.warn('[social-status-route] youtube lookup failed', error);
-    }
-    try {
-      tiktok = await withFallbackTimeout('tiktok status lookup', getTikTokIntegration(authUser.uid), SOCIAL_STATUS_LOOKUP_TIMEOUT_MS, null);
-    } catch (error) {
-      console.warn('[social-status-route] tiktok lookup failed', error);
-    }
+    const [youtube, tiktok] = await Promise.all([
+      withFallbackTimeout(
+        'youtube status lookup',
+        getYouTubeIntegration(authUser.uid),
+        SOCIAL_INTEGRATION_STATUS_TIMEOUT_MS,
+        null,
+      ).catch(error => {
+        console.warn('[social-status-route] youtube lookup failed', error);
+        return null;
+      }),
+      withFallbackTimeout(
+        'tiktok status lookup',
+        getTikTokIntegration(authUser.uid),
+        SOCIAL_INTEGRATION_STATUS_TIMEOUT_MS,
+        null,
+      ).catch(error => {
+        console.warn('[social-status-route] tiktok lookup failed', error);
+        return null;
+      }),
+    ]);
 
     const status = {
       facebook:
