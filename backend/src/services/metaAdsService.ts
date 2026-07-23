@@ -261,11 +261,11 @@ const loadAdRunsWithFallback = async (userId: string, limit: number) => {
     const snap = await adRunsCollection.where('userId', '==', userId).limit(limit).get();
     return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Record<string, any>);
   } catch (error) {
-    if (userId === SHECARE_USER_ID) {
-      console.warn('[meta-ads] using Shecare Meta-only performance fallback', error instanceof Error ? error.message : String(error));
-      return [];
-    }
-    throw error;
+    console.warn('[meta-ads] using Meta-only performance fallback', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
   }
 };
 
