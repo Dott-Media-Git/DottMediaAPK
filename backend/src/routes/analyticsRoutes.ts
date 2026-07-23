@@ -10,6 +10,7 @@ import {
   getEngagementStats,
   getFollowupStats,
   getWebLeadStats,
+  recordLiveSocialHeatmapSnapshot,
 } from '../services/analyticsService';
 import { getLiveSocialMetrics } from '../services/liveSocialMetricsService';
 import { canUseOutboundPipeline } from '../utils/socialAccess';
@@ -265,6 +266,17 @@ router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
     const stats = await getLiveSocialMetrics(authUser.uid, {
       lookbackHours,
       scope: { userId: authUser.uid, scopeId, email: authUser.email },
+    });
+    await recordLiveSocialHeatmapSnapshot(
+      { userId: authUser.uid, scopeId, email: authUser.email },
+      {
+        views: stats.summary.views,
+        interactions: stats.summary.interactions,
+        outbound: 0,
+        conversions: stats.summary.conversions,
+      },
+    ).catch(error => {
+      console.warn('[socialLive] daily heatmap snapshot persistence failed', error);
     });
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
