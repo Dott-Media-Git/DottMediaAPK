@@ -149,6 +149,42 @@ const buildDateRange = (limitValue: number) => {
   return dates;
 };
 
+const analyticsDateKey = (date = new Date()) => {
+  const timeZone = process.env.ANALYTICS_TIME_ZONE?.trim() || 'Africa/Kampala';
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+    const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${value.year}-${value.month}-${value.day}`;
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+};
+
+export async function recordLiveSocialHeatmapSnapshot(
+  scope: AnalyticsScope,
+  counters: Pick<ActivityHeatmapDaily, 'views' | 'interactions' | 'outbound' | 'conversions'>,
+) {
+  const date = analyticsDateKey();
+  const rows = buildScopeCandidates(scope).map(candidate => ({
+    scopeKey: resolveAnalyticsScopeKey(candidate),
+    userId: candidate.userId ?? scope.userId ?? null,
+    metric: 'liveSocialSnapshot',
+    date,
+    counters: {
+      views: Math.max(Number(counters.views ?? 0), 0),
+      interactions: Math.max(Number(counters.interactions ?? 0), 0),
+      outbound: Math.max(Number(counters.outbound ?? 0), 0),
+      conversions: Math.max(Number(counters.conversions ?? 0), 0),
+    },
+  }));
+  await supabaseFallbackService.upsertMetricDailyRows(rows);
+}
+
 const readActivityHeatmapSocialLogs = async (
   scope: AnalyticsScope | undefined,
   limitValue: number,
@@ -255,11 +291,12 @@ const readActivityHeatmapSupabaseScope = async (
   minDate?: string,
 ) => {
   const byDate = new Map<string, ActivityHeatmapDaily>();
-  const [webTrafficRows, outboundRows, engagementRows, dashboardRows] = await Promise.all([
+  const [webTrafficRows, outboundRows, engagementRows, dashboardRows, liveSocialRows] = await Promise.all([
     supabaseFallbackService.getMetricDailyRows('webTraffic', scope, limitValue, minDate),
     supabaseFallbackService.getMetricDailyRows('outbound', scope, limitValue, minDate),
     supabaseFallbackService.getMetricDailyRows('engagement', scope, limitValue, minDate),
     supabaseFallbackService.getMetricDailyRows('dashboardDaily', scope, limitValue, minDate),
+    supabaseFallbackService.getMetricDailyRows('liveSocialSnapshot', scope, limitValue, minDate),
   ]);
 
   webTrafficRows.forEach(row => {
@@ -293,6 +330,15 @@ const readActivityHeatmapSupabaseScope = async (
       interactions: Math.round(Number((row.counters as any)?.engagement ?? 0) / samples),
       outbound: Math.round(Number((row.counters as any)?.conversions ?? 0) / samples),
       conversions: Math.round(Number((row.counters as any)?.conversions ?? 0) / samples),
+    });
+  });
+
+  liveSocialRows.forEach(row => {
+    mergeActivityHeatmapRow(byDate, row.date, {
+      views: Number((row.counters as any)?.views ?? 0),
+      interactions: Number((row.counters as any)?.interactions ?? 0),
+      outbound: Number((row.counters as any)?.outbound ?? 0),
+      conversions: Number((row.counters as any)?.conversions ?? 0),
     });
   });
 
@@ -442,35 +488,6 @@ export class AnalyticsService {
     }
 
     try {
-      const primaryRows = await supabaseFallbackService.getMetricDailyRows('dashboardDaily', { userId }, 30);
-      const history = primaryRows.map(row => {
-        const counters = row.counters as Record<string, unknown>;
-        const samples = Number(counters.samples ?? 1) || 1;
-        return {
-          date: row.date,
-          leads: Math.round(Number(counters.leads ?? 0) / samples),
-          engagement: Math.round(Number(counters.engagement ?? 0) / samples),
-          conversions: Math.round(Number(counters.conversions ?? 0) / samples),
-          feedbackScore: Number(((Number(counters.feedbackScore ?? 0) / samples) || 0).toFixed(1)),
-        };
-      }).reverse();
-      if (history.length) {
-        const divisor = history.length;
-        return {
-          leads: Math.round(history.reduce((sum, day) => sum + day.leads, 0) / divisor),
-          engagement: Math.round(history.reduce((sum, day) => sum + day.engagement, 0) / divisor),
-          conversions: Math.round(history.reduce((sum, day) => sum + day.conversions, 0) / divisor),
-          feedbackScore: Math.min(5, Number((history.reduce((sum, day) => sum + day.feedbackScore, 0) / divisor).toFixed(1))),
-          jobBreakdown: { active: 0, queued: 0, failed: 0 },
-          recentJobs: [],
-          history,
-        };
-      }
-    } catch (error) {
-      console.warn('[analytics] Supabase 30-day dashboard history unavailable; using Firebase fallback', error);
-    }
-
-    try {
       const jobsSnap = await firestore
         .collection('automations')
         .doc(userId)
@@ -505,7 +522,7 @@ export class AnalyticsService {
         .doc(userId)
         .collection('daily')
         .orderBy('date', 'desc')
-        .limit(30)
+        .limit(14)
         .get();
 
       let history = historySnap.docs
@@ -526,7 +543,7 @@ export class AnalyticsService {
         const fallbackRows = await supabaseFallbackService.getMetricDailyRows(
           'dashboardDaily',
           { userId },
-          30,
+          14,
         );
         history = fallbackRows
           .map(row => {
@@ -595,7 +612,7 @@ export class AnalyticsService {
         const fallbackRows = await supabaseFallbackService.getMetricDailyRows(
           'dashboardDaily',
           { userId },
-          30,
+          14,
         );
         const history = fallbackRows
           .map(row => {
