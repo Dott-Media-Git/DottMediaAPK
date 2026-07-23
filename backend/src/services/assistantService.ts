@@ -1482,6 +1482,16 @@ export class AssistantService {
       }
 
       console.error('OpenAI Error:', { status, code, message });
+      if (accountContextBlock) {
+        return {
+          type: 'text',
+          text: [
+            'I can still help using your live account data while the AI reasoning provider reconnects:',
+            '',
+            accountContextBlock,
+          ].join('\\n'),
+        };
+      }
       if (kind !== 'generic') {
         return { type: 'text', text: buildAssistantErrorText(kind) };
       }
