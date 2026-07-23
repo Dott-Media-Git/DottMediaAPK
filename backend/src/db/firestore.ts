@@ -47,6 +47,17 @@ const loadServiceAccount = (): ServiceAccount => {
     }
   }
 
+  const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n').trim();
+  if (projectId && clientEmail && privateKey) {
+    return {
+      projectId,
+      clientEmail,
+      privateKey,
+    } as ServiceAccount;
+  }
+
   if (process.env.ALLOW_MOCK_AUTH === 'true') {
     console.warn('[firestore] FIREBASE_SERVICE_ACCOUNT_JSON missing, running with mock Firestore');
     return {} as ServiceAccount;
