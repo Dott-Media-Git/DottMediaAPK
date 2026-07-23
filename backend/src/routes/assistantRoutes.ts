@@ -25,7 +25,7 @@ const isFirestoreQuotaError = (error: unknown) => {
 };
 
 const BodySchema = z.object({
-  question: z.string().min(4),
+  question: z.string().trim().min(1).max(12000),
   conversationId: z.string().min(1).max(100).optional(),
   conversationTitle: z.string().max(80).optional(),
   conversationHistory: z.array(z.object({
