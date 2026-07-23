@@ -106,10 +106,10 @@ export const config = {
       accessToken: process.env.THREADS_ACCESS_TOKEN ?? '',
     },
   },
-  linkedin: required({
-    accessToken: process.env.LINKEDIN_ACCESS_TOKEN,
-    organizationId: process.env.LINKEDIN_ORGANIZATION_ID,
-  }),
+  linkedin: {
+    accessToken: process.env.LINKEDIN_ACCESS_TOKEN ?? '',
+    organizationId: process.env.LINKEDIN_ORGANIZATION_ID ?? '',
+  },
   tiktok: {
     accessToken: process.env.TIKTOK_ACCESS_TOKEN ?? '',
     openId: process.env.TIKTOK_OPEN_ID ?? '',
