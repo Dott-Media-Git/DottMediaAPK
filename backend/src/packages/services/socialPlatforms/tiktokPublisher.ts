@@ -83,6 +83,7 @@ const shouldFallbackToFileUpload = (error: any) => {
 
 const pickPrivacyLevel = (creatorInfo: CreatorInfo | null) => {
   const options = Array.isArray(creatorInfo?.privacy_level_options) ? creatorInfo?.privacy_level_options : [];
+  if (options.includes('PUBLIC_TO_EVERYONE')) return 'PUBLIC_TO_EVERYONE';
   if (options.includes('SELF_ONLY')) return 'SELF_ONLY';
   if (options.length) return options[0];
   return 'SELF_ONLY';
