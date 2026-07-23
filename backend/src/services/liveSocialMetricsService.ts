@@ -1354,13 +1354,6 @@ const fetchLinkedInMetric = async (shareUrn: string, accessToken: string) => {
 };
 
 const applyPostedActivityFallback = (metric: PlatformLiveMetric) => {
-  if (!metric.connected && metric.postsAnalyzed <= 0) return;
-  if (metric.views <= 0 && metric.postsAnalyzed > 0) {
-    metric.views = metric.postsAnalyzed;
-  }
-  if (metric.interactions <= 0 && metric.postsAnalyzed > 0) {
-    metric.interactions = metric.postsAnalyzed;
-  }
   metric.engagementRate = formatRate(metric.interactions, metric.views);
 };
 
@@ -1399,7 +1392,7 @@ const fetchOwnXTimelineMetrics = async (credentials: {
 
 export async function getLiveSocialMetrics(
   userId: string,
-  options?: { lookbackHours?: number; scope?: AnalyticsScope },
+  options?: { lookbackHours?: number; scope?: AnalyticsScope; forceRefresh?: boolean },
 ): Promise<LiveSocialMetrics> {
   const lookbackHours = Math.max(options?.lookbackHours ?? LOOKBACK_HOURS_DEFAULT, 1);
   const scopeKey = resolveAnalyticsScopeKey(options?.scope);
@@ -1408,7 +1401,7 @@ export async function getLiveSocialMetrics(
   const cacheKey = `${userId}:${scopeKey}:${lookbackHours}`;
   const now = Date.now();
   const cached = liveMetricsCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
+  if (!options?.forceRefresh && cached && cached.expiresAt > now) {
     return cached.data;
   }
 
