@@ -38,6 +38,7 @@ import {
 } from '@services/analytics';
 import { isMainDottMediaAccount } from '@services/accountAccess';
 import { askAssistant } from '@services/assistant';
+import { AssistantMarkdown } from '@components/AssistantMarkdown';
 
 type Message = {
   id: string;
@@ -296,7 +297,7 @@ export const FloatingAssistant: React.FC = () => {
 
     const canUseOutboundPipeline = isMainDottMediaAccount(state.user);
     void Promise.all([
-      fetchLiveSocialStats(state.user.uid, analyticsScopeId, 24),
+      fetchLiveSocialStats(state.user.uid, analyticsScopeId, 30 * 24),
       fetchAnalytics(state.user.uid),
       canUseOutboundPipeline ? fetchOutboundStats(state.user.uid, analyticsScopeId) : Promise.resolve(null),
       fetchInboundStats(state.user.uid, analyticsScopeId),
@@ -446,9 +447,13 @@ export const FloatingAssistant: React.FC = () => {
                     style={[styles.messageBubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}
                   >
                     <Text style={styles.messageLabel}>{message.role === 'user' ? t('You') : t('Dotti')}</Text>
-                    <Text style={styles.messageText}>
-                      {message.id === 'welcome' && !hasUserMessage ? typedWelcomeText : message.text}
-                    </Text>
+                    {message.role === 'assistant' && !(message.id === 'welcome' && !hasUserMessage) ? (
+                      <AssistantMarkdown>{message.text}</AssistantMarkdown>
+                    ) : (
+                      <Text style={styles.messageText}>
+                        {message.id === 'welcome' && !hasUserMessage ? typedWelcomeText : message.text}
+                      </Text>
+                    )}
                   </View>
                 ))}
                 {sending ? (
@@ -705,7 +710,7 @@ const buildPerformanceSummary = (
 
 const whole = (value: number | undefined | null) => Math.round(Number(value ?? 0));
 
-const rate = (value: number | undefined | null) => `${Math.round(Number(value ?? 0) * 100)}%`;
+const rate = (value: number | undefined | null) => `${Number(value ?? 0).toFixed(2)}%`;
 
 const buildAccountSnapshot = ({
   companyName,
@@ -764,10 +769,10 @@ const buildAccountSnapshot = ({
     businessGoals ? `Business goals: ${businessGoals}.` : '',
     targetAudience ? `Target audience: ${targetAudience}.` : '',
     liveSocial
-      ? `Today live: ${whole(liveSocial.summary.views)} views, ${whole(liveSocial.summary.interactions)} interactions, ${whole(
+      ? `Live social performance (last ${whole(liveSocial.lookbackHours)} hours): ${whole(liveSocial.summary.views)} views, ${whole(liveSocial.summary.interactions)} interactions, ${whole(
           liveSocial.summary.conversions,
         )} conversions, engagement rate ${rate(liveSocial.summary.engagementRate)}.`
-      : 'Today live: unavailable.',
+      : 'Live social performance: unavailable.',
     liveSocial
       ? `Web: ${whole(liveSocial.web.visitors)} visitors, ${whole(liveSocial.web.interactions)} interactions, ${whole(
           liveSocial.web.redirectClicks,

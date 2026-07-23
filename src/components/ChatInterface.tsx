@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '@constants/colors';
 import { useAssistant } from '@context/AssistantContext';
 import { useI18n } from '@context/I18nContext';
+import { AssistantMarkdown } from '@components/AssistantMarkdown';
 
 const { height } = Dimensions.get('window');
 
@@ -123,7 +124,7 @@ export const ChatInterface: React.FC = () => {
                                 {msg.role === 'user' ? (
                                     <Text style={styles.userText}>{msg.content}</Text>
                                 ) : (
-                                    <Text style={styles.botText}>{msg.content}</Text>
+                                    <AssistantMarkdown>{msg.content}</AssistantMarkdown>
                                 )}
                             </View>
                         </View>
