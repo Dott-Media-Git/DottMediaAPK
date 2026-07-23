@@ -594,22 +594,31 @@ const loadStoredSocialAccounts = async (userId: string) => {
     });
   }
 
-  if (!userData.socialAccounts || Object.keys(userData.socialAccounts).length === 0) {
-    try {
-      const fallback = await supabaseFallbackService.getSocialAccounts(userId);
-      if (fallback?.socialAccounts) {
-        userData = {
-          email: fallback.email ?? userData.email ?? null,
-          socialAccounts: fallback.socialAccounts as Record<string, any>,
-          socialDisconnects: userData.socialDisconnects,
-        };
-      }
-    } catch (error) {
-      console.warn('[social] fallback social account lookup failed', {
-        userId,
-        error: error instanceof Error ? error.message : String(error),
+  // Supabase is the durable primary store when Firestore is unavailable or
+  // quota-limited. Always merge it: a partially populated Firestore document
+  // must not hide valid connections that were successfully persisted there.
+  try {
+    const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+    if (fallback?.socialAccounts) {
+      const mergedAccounts = { ...(userData.socialAccounts ?? {}) };
+      Object.entries(fallback.socialAccounts as Record<string, any>).forEach(([platform, account]) => {
+        const existing = mergedAccounts[platform];
+        mergedAccounts[platform] =
+          existing && typeof existing === 'object' && account && typeof account === 'object'
+            ? { ...existing, ...account }
+            : account;
       });
+      userData = {
+        email: fallback.email ?? userData.email ?? null,
+        socialAccounts: mergedAccounts,
+        socialDisconnects: userData.socialDisconnects,
+      };
     }
+  } catch (error) {
+    console.warn('[social] fallback social account lookup failed', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   return userData;
@@ -638,7 +647,9 @@ const loadStatusSocialAccounts = async (userId: string, email?: string | null) =
   const socialAccounts = { ...(merged?.socialAccounts ?? stored.socialAccounts ?? {}) };
   const socialDisconnects = stored.socialDisconnects ?? {};
   Object.entries(socialDisconnects).forEach(([platform, disconnected]) => {
-    if (disconnected) delete socialAccounts[platform];
+    // A successful fallback-store connection supersedes an old Firestore-only
+    // disconnect marker. Explicit disconnects remove the fallback credential.
+    if (disconnected && !stored.socialAccounts?.[platform]) delete socialAccounts[platform];
   });
   return {
     email: stored.email ?? email ?? null,
