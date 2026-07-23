@@ -2,6 +2,7 @@ import admin from 'firebase-admin';
 import axios from 'axios';
 import createHttpError from 'http-errors';
 import { firestore } from '../db/firestore.js';
+import { supabaseFallbackService } from './supabaseFallbackService.js';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -197,14 +198,21 @@ const buildShecareFallbackRule = (userId: string): BoostRule => ({
 
 const resolveRuleWithFallback = async (userId: string) => {
   try {
-    return await resolveRule(userId);
+    const stored = await resolveRule(userId);
+    if (stored) return stored;
   } catch (error) {
-    if (userId === SHECARE_USER_ID) {
-      console.warn('[meta-ads] using Shecare boost-rule fallback', error instanceof Error ? error.message : String(error));
-      return buildShecareFallbackRule(userId);
-    }
-    throw error;
+    console.warn('[meta-ads] Firestore boost-rule lookup failed; checking durable social account store', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
+  const socialAccounts = await loadUserSocialAccountsWithFallback(userId);
+  const durableRule = socialAccounts.metaAds?.boostRule;
+  if (durableRule?.adAccountId) {
+    return { userId, enabled: false, mode: 'manual', ...durableRule } as BoostRule;
+  }
+  if (userId === SHECARE_USER_ID) return buildShecareFallbackRule(userId);
+  return null;
 };
 
 const loadUserSocialAccounts = async (userId: string) => {
@@ -213,30 +221,39 @@ const loadUserSocialAccounts = async (userId: string) => {
 };
 
 const loadUserSocialAccountsWithFallback = async (userId: string) => {
+  let socialAccounts: Record<string, any> = {};
   try {
-    return await loadUserSocialAccounts(userId);
+    socialAccounts = await loadUserSocialAccounts(userId);
   } catch (error) {
-    if (userId === SHECARE_USER_ID) {
-      console.warn('[meta-ads] using Shecare social-account fallback', error instanceof Error ? error.message : String(error));
-      const token = String(process.env.META_GRAPH_TOKEN || '').trim();
-      return {
-        facebook: {
-          connected: Boolean(token),
-          pageId: SHECARE_PAGE_ID,
-          pageName: 'Shecare-Doctor',
-          userAccessToken: token,
-          accessToken: token,
-        },
-        instagram: {
-          connected: Boolean(token),
-          accountId: SHECARE_INSTAGRAM_ACTOR_ID,
-          username: 'shecaredoctor',
-          accessToken: token,
-        },
-      };
-    }
-    throw error;
+    console.warn('[meta-ads] Firestore social-account lookup failed; checking Supabase', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
+  const fallback = await supabaseFallbackService.getSocialAccounts(userId).catch(() => null);
+  if (fallback?.socialAccounts) {
+    socialAccounts = { ...socialAccounts, ...(fallback.socialAccounts as Record<string, any>) };
+  }
+  if (Object.keys(socialAccounts).length) return socialAccounts;
+  if (userId === SHECARE_USER_ID) {
+    const token = String(process.env.META_GRAPH_TOKEN || '').trim();
+    return {
+      facebook: {
+        connected: Boolean(token),
+        pageId: SHECARE_PAGE_ID,
+        pageName: 'Shecare-Doctor',
+        userAccessToken: token,
+        accessToken: token,
+      },
+      instagram: {
+        connected: Boolean(token),
+        accountId: SHECARE_INSTAGRAM_ACTOR_ID,
+        username: 'shecaredoctor',
+        accessToken: token,
+      },
+    };
+  }
+  return {};
 };
 
 const loadAdRunsWithFallback = async (userId: string, limit: number) => {
@@ -576,7 +593,8 @@ export const metaAdsService = {
   async listAdAccounts(userId: string) {
     const socialAccounts = await loadUserSocialAccountsWithFallback(userId);
     const accessToken = String(
-      socialAccounts.facebook?.userAccessToken ||
+      socialAccounts.metaAds?.accessToken ||
+        socialAccounts.facebook?.userAccessToken ||
         socialAccounts.facebook?.accessToken ||
         (userId === SHECARE_USER_ID ? process.env.META_GRAPH_TOKEN : '') ||
         '',
@@ -636,7 +654,7 @@ export const metaAdsService = {
 
   async upsertBoostRule(userId: string, payload: Partial<BoostRule>) {
     const socialAccounts = await loadUserSocialAccountsWithFallback(userId);
-    const existing = await boostRulesCollection.doc(userId).get();
+    const existing = await boostRulesCollection.doc(userId).get().catch(() => null);
     const whatsappNumber = normalizeWhatsappNumber(payload.whatsappNumber);
     const dailyBudgetUsd = budgetUsdFromRule(payload);
     const update: BoostRule = {
@@ -646,7 +664,13 @@ export const metaAdsService = {
       adAccountId: normalizeAdAccountId(payload.adAccountId),
       pageId: String(payload.pageId || socialAccounts.facebook?.pageId || '').trim(),
       instagramActorId: String(payload.instagramActorId || socialAccounts.instagram?.accountId || '').trim(),
-      accessToken: String(payload.accessToken || socialAccounts.facebook?.userAccessToken || socialAccounts.facebook?.accessToken || '').trim(),
+      accessToken: String(
+        payload.accessToken ||
+          socialAccounts.metaAds?.accessToken ||
+          socialAccounts.facebook?.userAccessToken ||
+          socialAccounts.facebook?.accessToken ||
+          '',
+      ).trim(),
       whatsappNumber: whatsappNumber || null,
       whatsappLink: payload.whatsappLink || buildWhatsappLink(whatsappNumber, 'Hello, I would like private support.'),
       dailyBudgetUsd,
@@ -665,14 +689,35 @@ export const metaAdsService = {
       audience: payload.audience,
       updatedAt: admin.firestore.Timestamp.now(),
     };
-    await boostRulesCollection.doc(userId).set(
-      {
-        ...update,
-        ...(existing.exists ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    try {
+      await boostRulesCollection.doc(userId).set(
+        {
+          ...update,
+          ...(existing?.exists ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (error) {
+      console.warn('[meta-ads] Firestore boost-rule save failed; using Supabase durable store', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    await supabaseFallbackService.upsertSocialAccounts(userId, {
+      socialAccounts: {
+        ...socialAccounts,
+        metaAds: {
+          ...(socialAccounts.metaAds ?? {}),
+          accessToken: update.accessToken,
+          selectedAdAccountId: update.adAccountId,
+          boostRule: {
+            ...update,
+            updatedAt: new Date().toISOString(),
+          },
+        },
       },
-      { merge: true },
-    );
+    });
     const { accessToken: _accessToken, ...safeRule } = update;
     return safeRule;
   },
@@ -831,6 +876,7 @@ export const metaAdsService = {
     ]);
     const accessToken = String(
       rule?.accessToken ||
+        socialAccounts.metaAds?.accessToken ||
         socialAccounts.facebook?.userAccessToken ||
         socialAccounts.facebook?.accessToken ||
         process.env.META_GRAPH_TOKEN ||
