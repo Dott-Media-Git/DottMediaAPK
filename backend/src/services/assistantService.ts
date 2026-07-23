@@ -166,6 +166,15 @@ type AssistantAccountSnapshot = {
   socialAccounts: Record<string, unknown>;
   adsAccount: Record<string, unknown>;
   metricHistory: Record<string, Array<{ date: string; counters: Record<string, unknown> }>>;
+  dashboardPerformance: {
+    availableDays: number;
+    views: number;
+    interactions: number;
+    outbound: number;
+    conversions: number;
+    redirectClicks: number;
+    engagementRate: number;
+  };
 };
 
 const emptyLiveSocialMetrics = (): LiveSocialMetrics => ({
@@ -453,6 +462,33 @@ export class AssistantService {
 
   private formatWholeNumber(value: number) {
     return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.max(0, Number(value ?? 0)));
+  }
+
+  private buildDashboardPerformance(rows: ActivityHeatmapDaily[]) {
+    const populatedRows = rows.filter(
+      row =>
+        Number(row.views ?? 0) > 0 ||
+        Number(row.interactions ?? 0) > 0 ||
+        Number(row.outbound ?? 0) > 0 ||
+        Number(row.conversions ?? 0) > 0 ||
+        Number(row.redirectClicks ?? 0) > 0,
+    );
+    const totals = populatedRows.reduce(
+      (summary, row) => ({
+        views: summary.views + Number(row.views ?? 0),
+        interactions: summary.interactions + Number(row.interactions ?? 0),
+        outbound: summary.outbound + Number(row.outbound ?? 0),
+        conversions: summary.conversions + Number(row.conversions ?? 0),
+        redirectClicks: summary.redirectClicks + Number(row.redirectClicks ?? 0),
+      }),
+      { views: 0, interactions: 0, outbound: 0, conversions: 0, redirectClicks: 0 },
+    );
+    return {
+      availableDays: populatedRows.length,
+      ...totals,
+      engagementRate:
+        totals.views > 0 ? Number(((totals.interactions / totals.views) * 100).toFixed(2)) : 0,
+    };
   }
 
   private isBettingBrand(snapshot: Pick<AssistantAccountSnapshot, 'company' | 'businessGoals'>) {
@@ -762,6 +798,7 @@ export class AssistantService {
       socialAccounts,
       adsAccount: adsAccount as Record<string, unknown>,
       metricHistory,
+      dashboardPerformance: this.buildDashboardPerformance(activityHeatmap),
     };
   }
 
@@ -775,6 +812,13 @@ export class AssistantService {
       : 'none';
 
     return [
+      `AUTHORITATIVE DASHBOARD PERFORMANCE (Supabase-primary, same aggregation shown in the Dashboard, ${snapshot.dashboardPerformance.availableDays} available days): ${this.formatWholeNumber(
+        snapshot.dashboardPerformance.views,
+      )} views, ${this.formatWholeNumber(snapshot.dashboardPerformance.interactions)} interactions, ${snapshot.dashboardPerformance.engagementRate.toFixed(
+        2,
+      )}% engagement, ${this.formatWholeNumber(snapshot.dashboardPerformance.outbound)} outbound, ${this.formatWholeNumber(
+        snapshot.dashboardPerformance.conversions,
+      )} conversions, ${this.formatWholeNumber(snapshot.dashboardPerformance.redirectClicks)} redirect clicks.`,
       snapshot.company ? `Account company: ${snapshot.company}` : '',
       snapshot.email ? `Primary email: ${snapshot.email}` : '',
       snapshot.phone ? `Primary phone: ${snapshot.phone}` : '',
@@ -788,7 +832,7 @@ export class AssistantService {
       `Complete account metric history by category (up to 30 days): ${JSON.stringify(snapshot.metricHistory)}.`,
       this.buildDailyReviewSummary(snapshot),
       this.buildWeeklyPerformanceSummary(snapshot),
-      `Live social performance (last ${snapshot.liveSocial.lookbackHours}h): ${this.formatWholeNumber(
+      `Direct connected-channel snapshot (last ${snapshot.liveSocial.lookbackHours}h; secondary breakdown, do not substitute this for the authoritative Dashboard total): ${this.formatWholeNumber(
         snapshot.liveSocial.summary.views,
       )} views, ${this.formatWholeNumber(snapshot.liveSocial.summary.interactions)} interactions, engagement rate ${snapshot.liveSocial.summary.engagementRate.toFixed(
         2,
@@ -1288,6 +1332,9 @@ export class AssistantService {
       personalityPrompt,
       'If the user asks for anything unrelated to their account or business, reply briefly that you can only help with their account and business inside Dott.',
       'Base every answer on the account data provided below. Never invent metrics or connected channels.',
+      'For a general account-performance, views, interactions, engagement, or Dashboard question, always report AUTHORITATIVE DASHBOARD PERFORMANCE first. It is the Supabase-primary aggregation used by the visible Dashboard.',
+      'Never replace the authoritative Dashboard totals with the smaller direct connected-channel snapshot. Only use that snapshot when the user explicitly asks for a recent channel-by-channel or direct Meta/social breakdown, and label its time range and scope.',
+      'If the Dashboard total and the direct connected-channel snapshot differ, state that they are different datasets instead of presenting either one as the other.',
       'You have account-scoped access to the supplied daily and 30-day dashboard metrics, posting history, connected social accounts, and Meta Ads connection. Use the correct time range requested by the user and state clearly when a particular dataset is empty or unavailable.',
       'For comparisons, trends, plans, and diagnoses, consider the full 30-day series and posting history instead of relying only on today.',
       'When the user asks for a summary, give a clear performance summary grounded in the live account data.',
