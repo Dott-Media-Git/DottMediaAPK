@@ -676,6 +676,7 @@ export class AssistantService {
     const analyticsScope = {
       userId: context.userId,
       scopeId,
+      email: context.userEmail,
     };
 
     const [
@@ -696,7 +697,12 @@ export class AssistantService {
       metricHistory,
     ] = await Promise.all([
       this.safeResolve('analytics summary', () => analyticsService.getSummary(context.userId!), emptyAnalyticsSummary(), 8_000),
-      this.safeResolve('live social metrics', () => getLiveSocialMetrics(context.userId!, { scope: analyticsScope, lookbackHours: 30 * 24 }), emptyLiveSocialMetrics(), 8_000),
+      this.safeResolve(
+        'live social metrics',
+        () => getLiveSocialMetrics(context.userId!, { scope: analyticsScope, lookbackHours: 30 * 24 }),
+        emptyLiveSocialMetrics(),
+        45_000,
+      ),
       this.safeResolve('outbound stats', () => getOutboundStats(analyticsScope), emptyOutboundStats()),
       this.safeResolve('inbound stats', () => getInboundStats(analyticsScope), emptyInboundStats()),
       this.safeResolve('engagement stats', () => getEngagementStats(analyticsScope), emptyEngagementStats()),

@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { DrawerScreenProps } from '@react-navigation/drawer';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors } from '@constants/colors';
+import { AssistantMarkdown } from '@components/AssistantMarkdown';
 import { useAssistant } from '@context/AssistantContext';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
@@ -322,7 +323,11 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
                 ) : null}
                 <View style={[styles.message, message.role === 'user' ? styles.userMessage : styles.assistantMessage]}>
                   {message.role === 'assistant' ? <Text style={styles.messageAuthor}>Dotti</Text> : null}
-                  <Text style={styles.messageText}>{message.content}</Text>
+                  {message.role === 'assistant' ? (
+                    <AssistantMarkdown>{message.content}</AssistantMarkdown>
+                  ) : (
+                    <Text style={styles.messageText}>{message.content}</Text>
+                  )}
                 </View>
               </View>
             ))}
