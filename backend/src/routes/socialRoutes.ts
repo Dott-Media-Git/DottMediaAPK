@@ -31,7 +31,7 @@ const HISTORY_DAILY_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_DAILY_TIMEO
 const HISTORY_STORED_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_STORED_TIMEOUT_MS ?? 1000), 500);
 const HISTORY_SOCIAL_LOG_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_SOCIAL_LOG_TIMEOUT_MS ?? 1500), 500);
 const HISTORY_USER_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_USER_LOOKUP_TIMEOUT_MS ?? 1000), 500);
-const SOCIAL_STATUS_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.SOCIAL_STATUS_LOOKUP_TIMEOUT_MS ?? 1500), 500);
+const SOCIAL_STATUS_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.SOCIAL_STATUS_LOOKUP_TIMEOUT_MS ?? 12000), 1000);
 
 const router = Router();
 
@@ -577,8 +577,16 @@ const loadStoredSocialAccounts = async (userId: string) => {
     socialDisconnects?: Record<string, boolean>;
   } = {};
 
-  try {
-    const userDoc = await firestore.collection('users').doc(userId).get();
+  // Start both stores together. Waiting for Firestore before consulting
+  // Supabase made the status endpoint miss valid fallback credentials whenever
+  // Firestore was quota-limited or slow.
+  const [firestoreResult, fallbackResult] = await Promise.allSettled([
+    firestore.collection('users').doc(userId).get(),
+    supabaseFallbackService.getSocialAccounts(userId),
+  ]);
+
+  if (firestoreResult.status === 'fulfilled') {
+    const userDoc = firestoreResult.value;
     userData =
       (userDoc.data() as
         | {
@@ -587,18 +595,18 @@ const loadStoredSocialAccounts = async (userId: string) => {
             socialDisconnects?: Record<string, boolean>;
           }
         | undefined) ?? {};
-  } catch (error) {
+  } else {
     console.warn('[social] Firestore social account lookup failed; using fallback store', {
       userId,
-      error: error instanceof Error ? error.message : String(error),
+      error: firestoreResult.reason instanceof Error ? firestoreResult.reason.message : String(firestoreResult.reason),
     });
   }
 
   // Supabase is the durable primary store when Firestore is unavailable or
   // quota-limited. Always merge it: a partially populated Firestore document
   // must not hide valid connections that were successfully persisted there.
-  try {
-    const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+  if (fallbackResult.status === 'fulfilled') {
+    const fallback = fallbackResult.value;
     if (fallback?.socialAccounts) {
       const mergedAccounts = { ...(userData.socialAccounts ?? {}) };
       Object.entries(fallback.socialAccounts as Record<string, any>).forEach(([platform, account]) => {
@@ -614,10 +622,10 @@ const loadStoredSocialAccounts = async (userId: string) => {
         socialDisconnects: userData.socialDisconnects,
       };
     }
-  } catch (error) {
+  } else {
     console.warn('[social] fallback social account lookup failed', {
       userId,
-      error: error instanceof Error ? error.message : String(error),
+      error: fallbackResult.reason instanceof Error ? fallbackResult.reason.message : String(fallbackResult.reason),
     });
   }
 
