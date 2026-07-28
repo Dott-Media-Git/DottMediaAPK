@@ -12,7 +12,7 @@ const router = Router();
 
 const CALLBACK_PATH = '/integrations/linkedin/callback';
 const LINKEDIN_API = 'https://api.linkedin.com';
-const DEFAULT_SCOPES = ['openid', 'profile', 'w_member_social'];
+const DEFAULT_SCOPES = ['openid', 'profile', 'w_member_social', 'r_member_postAnalytics'];
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '');
 
