@@ -208,9 +208,27 @@ router.get('/integrations/tiktok/connect-url', ...userGate, async (req, res, nex
 router.get('/integrations/tiktok/callback', async (req, res) => {
   const code = typeof req.query.code === 'string' ? req.query.code : '';
   const stateParam = typeof req.query.state === 'string' ? req.query.state : '';
+  const oauthError = typeof req.query.error === 'string' ? req.query.error : '';
+  const oauthErrorDescription =
+    typeof req.query.error_description === 'string' ? req.query.error_description : '';
+  const oauthLogId = typeof req.query.log_id === 'string' ? req.query.log_id : '';
   const state = verifySignedState(stateParam);
-  if (!code || !state) {
-    res.status(400).send(renderCallbackHtml('TikTok connection failed', 'Invalid OAuth state or missing code.'));
+  if (oauthError) {
+    const detail = oauthErrorDescription || oauthError;
+    const supportId = oauthLogId ? ` TikTok reference: ${oauthLogId}.` : '';
+    res.status(400).send(renderCallbackHtml('TikTok connection failed', `${detail}.${supportId}`));
+    return;
+  }
+  if (!state) {
+    res
+      .status(400)
+      .send(renderCallbackHtml('TikTok connection failed', 'The secure OAuth session expired. Return to Dott Media and tap Connect TikTok again.'));
+    return;
+  }
+  if (!code) {
+    res
+      .status(400)
+      .send(renderCallbackHtml('TikTok connection failed', 'TikTok did not return an authorization code. Confirm this account is a target user for the app sandbox, then retry.'));
     return;
   }
 
