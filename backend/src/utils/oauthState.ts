@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from 'crypto';
 import { config } from '../config';
 
-const STATE_TTL_MS = 15 * 60 * 1000;
+const STATE_TTL_MS = 60 * 60 * 1000;
 
 type StatePayload = {
   userId: string;
