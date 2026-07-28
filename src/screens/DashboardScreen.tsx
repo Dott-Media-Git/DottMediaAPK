@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Modal,
   Pressable,
@@ -314,6 +315,14 @@ export const DashboardScreen: React.FC = () => {
         setCacheReady(true);
       }
     } else {
+      setAnalytics(createEmptyAnalytics(state.crmData?.analytics));
+      setOutboundStats(emptyOutboundStats);
+      setLiveSocialStats(emptyLiveSocialStats);
+      setTodayLiveSocialStats(emptyLiveSocialStats);
+      setActivityHeatmapRows([]);
+      setActivityHeatmapRestRows([]);
+      setRollingPerformanceRows([]);
+      setAdPerformance(emptyAdPerformance);
       setCacheReady(false);
       setHasCachedSnapshot(false);
     }
@@ -610,15 +619,25 @@ export const DashboardScreen: React.FC = () => {
     const refreshAdPerformance = async () => {
       setAdPerformanceLoading(true);
       try {
-        const response = await fetchAdPerformance(12);
+        let response: Awaited<ReturnType<typeof fetchAdPerformance>> | null = null;
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            response = await fetchAdPerformance(12);
+            break;
+          } catch (error) {
+            lastError = error;
+            if (attempt < 3) {
+              await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+            }
+          }
+        }
+        if (!response) throw lastError ?? new Error('Ad performance is temporarily unavailable');
         if (mounted) {
           setAdPerformance(response.performance ?? emptyAdPerformance);
         }
       } catch (error) {
         console.warn('Failed to refresh ad performance', error);
-        if (mounted) {
-          setAdPerformance(emptyAdPerformance);
-        }
       } finally {
         if (mounted) setAdPerformanceLoading(false);
       }
@@ -1138,6 +1157,12 @@ export const DashboardScreen: React.FC = () => {
         if (nextWidth > 0 && nextWidth !== dashboardWidth) setDashboardWidth(nextWidth);
       }}
     >
+      {loading || liveSocialLoading || adPerformanceLoading ? (
+        <View style={styles.loadingBanner}>
+          <ActivityIndicator size="small" color={colors.accent} />
+          <Text style={styles.loadingBannerText}>{t('Loading live dashboard data...')}</Text>
+        </View>
+      ) : null}
       <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.hero}>
         <Text style={styles.heroEyebrow}>{t('Live cockpit')}</Text>
         <Text style={styles.heroTitle}>{t('Analytics overview')}</Text>
@@ -1486,6 +1511,19 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background
+  },
+  loadingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  loadingBannerText: {
+    color: colors.subtext,
+    fontSize: 13,
+    fontWeight: '600',
   },
   content: {
     padding: 20,
