@@ -992,19 +992,22 @@ export const DashboardScreen: React.FC = () => {
               conversions: Number(todayLiveSocialStats.summary.conversions ?? 0),
             }
           : null;
+        // REST heatmap rows contain the corrected, persisted daily social
+        // snapshots. Prefer them for completed days instead of taking a max
+        // with stale realtime/cache rows that may contain rolling totals.
+        const completedDayViews = rest
+          ? Number(rest.views ?? 0)
+          : Math.max(Number(live?.views ?? 0), Number(fallback?.views ?? 0));
+        const completedDayInteractions = rest
+          ? Number(rest.interactions ?? 0)
+          : Math.max(Number(live?.interactions ?? 0), Number(fallback?.interactions ?? 0));
         const merged = {
-          views: Math.max(
-            Number(live?.views ?? 0),
-            Number(rest?.views ?? 0),
-            Number(fallback?.views ?? 0),
-            Number(todayLive?.views ?? 0),
-          ),
-          interactions: Math.max(
-            Number(live?.interactions ?? 0),
-            Number(rest?.interactions ?? 0),
-            Number(fallback?.interactions ?? 0),
-            Number(todayLive?.interactions ?? 0),
-          ),
+          views: isToday
+            ? Math.max(completedDayViews, Number(todayLive?.views ?? 0))
+            : completedDayViews,
+          interactions: isToday
+            ? Math.max(completedDayInteractions, Number(todayLive?.interactions ?? 0))
+            : completedDayInteractions,
           outbound: Math.max(
             Number(live?.outbound ?? 0),
             Number(rest?.outbound ?? 0),

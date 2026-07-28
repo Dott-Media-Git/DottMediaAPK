@@ -363,11 +363,29 @@ export async function getActivityHeatmap(scope?: AnalyticsScope, days = 14): Pro
   }
 
   try {
-    const supabaseRows = await Promise.all(
-      buildScopeCandidates(scope).map(candidate => readActivityHeatmapSupabaseScope(candidate, limitValue, minDate)),
-    );
+    const candidates = buildScopeCandidates(scope);
+    const [supabaseRows, liveSocialRows] = await Promise.all([
+      Promise.all(candidates.map(candidate => readActivityHeatmapSupabaseScope(candidate, limitValue, minDate))),
+      Promise.all(
+        candidates.map(candidate =>
+          supabaseFallbackService.getMetricDailyRows('liveSocialSnapshot', candidate, limitValue, minDate),
+        ),
+      ),
+    ]);
     supabaseRows.forEach(rows => {
       rows.forEach(row => mergeActivityHeatmapRow(merged, row.date, row));
+    });
+    // A live-social snapshot is a verified point-in-time daily total. Make it
+    // authoritative for social views/interactions so stale Firestore rolling
+    // totals cannot win merely because they are numerically larger.
+    liveSocialRows.forEach(rows => {
+      rows.forEach(row => {
+        const existing = merged.get(row.date);
+        if (!existing) return;
+        existing.views = Math.max(Number((row.counters as any)?.views ?? 0), 0);
+        existing.interactions = Math.max(Number((row.counters as any)?.interactions ?? 0), 0);
+        merged.set(row.date, existing);
+      });
     });
   } catch (error) {
     console.warn('Supabase activity heatmap fetch failed', error);
