@@ -267,17 +267,22 @@ router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
       lookbackHours,
       scope: { userId: authUser.uid, scopeId, email: authUser.email },
     });
-    await recordLiveSocialHeatmapSnapshot(
-      { userId: authUser.uid, scopeId, email: authUser.email },
-      {
-        views: stats.summary.views,
-        interactions: stats.summary.interactions,
-        outbound: 0,
-        conversions: stats.summary.conversions,
-      },
-    ).catch(error => {
-      console.warn('[socialLive] daily heatmap snapshot persistence failed', error);
-    });
+    // Only a calendar-day-sized request may update today's snapshot. Persisting
+    // rolling 30-day totals here makes the Daily Reviews card show lifetime-like
+    // values and also contaminates today's heatmap row.
+    if (lookbackHours !== undefined && lookbackHours <= 26) {
+      await recordLiveSocialHeatmapSnapshot(
+        { userId: authUser.uid, scopeId, email: authUser.email },
+        {
+          views: stats.summary.views,
+          interactions: stats.summary.interactions,
+          outbound: 0,
+          conversions: stats.summary.conversions,
+        },
+      ).catch(error => {
+        console.warn('[socialLive] daily heatmap snapshot persistence failed', error);
+      });
+    }
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
       Pragma: 'no-cache',

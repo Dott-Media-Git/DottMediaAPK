@@ -2,6 +2,7 @@ import { Router, Request } from 'express';
 import { z } from 'zod';
 import axios from 'axios';
 import createHttpError from 'http-errors';
+import admin from 'firebase-admin';
 import { config } from '../config';
 import { requireFirebase, requireFirebaseForm, AuthedRequest } from '../middleware/firebaseAuth';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
@@ -34,6 +35,45 @@ const getBaseUrl = (req: Request) => {
 
 const computeRedirectUri = (req: Request) => `${getBaseUrl(req)}${CALLBACK_PATH}`;
 const computeConnectUrl = (req: Request) => `${getBaseUrl(req)}/integrations/tiktok/connect`;
+
+const ensureTikTokAutopostPlatform = async (userId: string) => {
+  const fallbackJob = await supabaseFallbackService.getAutopostJob(userId).catch(() => null);
+  if (fallbackJob) {
+    const platforms = Array.from(
+      new Set([
+        ...(Array.isArray(fallbackJob.platforms) ? fallbackJob.platforms.map(value => String(value)) : []),
+        'tiktok',
+      ]),
+    );
+    const currentNextRun = Date.parse(String(fallbackJob.nextRun ?? ''));
+    await supabaseFallbackService.upsertAutopostJob(userId, {
+      ...fallbackJob,
+      active: true,
+      platforms,
+      nextRun:
+        Number.isFinite(currentNextRun) && currentNextRun > Date.now()
+          ? fallbackJob.nextRun
+          : new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    });
+  }
+  await firestore
+    .collection('autopostJobs')
+    .doc(userId)
+    .set(
+      {
+        active: true,
+        platforms: admin.firestore.FieldValue.arrayUnion('tiktok'),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    )
+    .catch(error => {
+      console.warn('[tiktok] Firestore autopost merge failed; Supabase schedule remains active', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+};
 
 const getScopes = () => {
   const raw = process.env.TIKTOK_SCOPES?.trim();
@@ -99,32 +139,6 @@ const requireOrgAdminIfPresent = async (req: Request, _res: unknown, next: (err?
 const adminGate = [requireFirebase, requireOrgAdminIfPresent];
 const userGate = [requireFirebase];
 
-const getSupabaseTikTok = async (userId: string) => {
-  const row = await supabaseFallbackService.getSocialAccounts(userId);
-  const accounts = (row?.socialAccounts ?? {}) as Record<string, any>;
-  return accounts.tiktok && typeof accounts.tiktok === 'object' ? accounts.tiktok as Record<string, any> : null;
-};
-
-const upsertSupabaseTikTok = async (
-  userId: string,
-  email: string | null | undefined,
-  payload: Record<string, unknown>,
-) => {
-  const existing = await supabaseFallbackService.getSocialAccounts(userId);
-  const accounts = (existing?.socialAccounts ?? {}) as Record<string, unknown>;
-  await supabaseFallbackService.upsertSocialAccounts(userId, {
-    email: email ?? existing?.email ?? null,
-    socialAccounts: {
-      ...accounts,
-      tiktok: {
-        ...((accounts.tiktok as Record<string, unknown> | undefined) ?? {}),
-        ...payload,
-        connected: true,
-        updatedAt: new Date().toISOString(),
-      },
-    },
-  });
-};
 router.get('/integrations/tiktok/config', ...userGate, async (req, res, next) => {
   try {
     const computedRedirectUri = computeRedirectUri(req);
@@ -149,21 +163,7 @@ router.get('/integrations/tiktok/status', ...userGate, async (req, res, next) =>
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    let status = await getTikTokIntegration(userId).catch(() => null);
-    if (!status?.connected) {
-      const fallback = await getSupabaseTikTok(userId);
-      status = fallback
-        ? {
-            userId,
-            provider: 'tiktok' as const,
-            openId: fallback.openId ?? null,
-            scope: fallback.scope ?? null,
-            connected: Boolean(fallback.accessToken),
-            refreshTokenRevealPending: false,
-            updatedAt: fallback.updatedAt ?? null,
-          }
-        : null;
-    }
+    const status = await getTikTokIntegration(userId);
     res.json({ status });
   } catch (error) {
     next(error);
@@ -254,18 +254,8 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
   }
 
   try {
-    const accessTokenExpiresAt = expiresIn ? Date.now() + expiresIn * 1000 : null;
-    const refreshTokenExpiresAt = refreshExpiresIn ? Date.now() + refreshExpiresIn * 1000 : null;
     const existing = await getTikTokIntegration(state.userId).catch(() => null);
-    const supabaseExisting = await getSupabaseTikTok(state.userId).catch(() => null);
-
-    await upsertSupabaseTikTok(
-      state.userId,
-      typeof state.email === 'string' ? state.email : null,
-      { accessToken, refreshToken, accessTokenExpiresAt, refreshTokenExpiresAt, openId, scope },
-    );
-
-    if (!existing?.connected && !supabaseExisting?.accessToken) {
+    if (!existing?.connected) {
       const userSnap = await firestore.collection('users').doc(state.userId).get().catch(() => null);
       const userData = userSnap?.exists ? userSnap.data() : {};
       await consumeUsage(
@@ -276,18 +266,18 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
         ),
         'connectedSocials',
         1,
-      ).catch(error => console.warn('[tiktok] usage metering deferred', error));
+      );
     }
-
     await upsertTikTokIntegration(state.userId, {
       accessToken,
       refreshToken,
-      accessTokenExpiresAt,
-      refreshTokenExpiresAt,
+      accessTokenExpiresAt: expiresIn ? Date.now() + expiresIn * 1000 : null,
+      refreshTokenExpiresAt: refreshExpiresIn ? Date.now() + refreshExpiresIn * 1000 : null,
       openId,
       scope,
       revealToken: true,
-    }).catch(error => console.warn('[tiktok] Firestore mirror deferred; Supabase is authoritative', error));
+    });
+    await ensureTikTokAutopostPlatform(state.userId);
   } catch (error) {
     console.error('[tiktok] failed to store integration', error);
     res.status(500).send(renderCallbackHtml('TikTok connection failed', 'Unable to store access token.'));
@@ -320,6 +310,7 @@ router.post('/integrations/tiktok/token', ...userGate, async (req, res, next) =>
       scope: payload.scope,
       revealToken: true,
     });
+    await ensureTikTokAutopostPlatform(userId);
     res.json({ ok: true });
   } catch (error) {
     next(error);

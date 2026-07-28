@@ -102,20 +102,6 @@ type InboundMessageRecord = {
   payload?: Record<string, unknown>;
 };
 
-export type AssistantConversationMessage = {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  createdAt: string;
-};
-
-export type AssistantConversationRecord = {
-  id: string;
-  title: string;
-  messages: AssistantConversationMessage[];
-  updatedAt: string;
-};
-
 type MetricCounterTree = Record<string, unknown>;
 
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
@@ -655,94 +641,6 @@ class SupabaseFallbackService {
     }
   }
 
-  async getAssistantConversations(userId: string, messageLimit = 1000): Promise<AssistantConversationRecord[]> {
-    if (!this.isConfigured() || !userId) return [];
-    const rows = await this.request<any[]>('GET', 'dott_inbound_messages', {
-      params: {
-        select: 'id,message,profile_name,received_at,payload',
-        channel: 'eq.dotti_assistant',
-        sender_id: `eq.${userId}`,
-        status: 'neq.deleted',
-        order: 'received_at.asc',
-        limit: Math.min(Math.max(messageLimit, 1), 2000),
-      },
-    });
-    const conversations = new Map<string, AssistantConversationRecord>();
-    for (const row of Array.isArray(rows) ? rows : []) {
-      const payload = row.payload && typeof row.payload === 'object' ? row.payload as Record<string, unknown> : {};
-      const conversationId = String(payload.conversationId ?? '').trim();
-      const role = payload.role === 'assistant' ? 'assistant' : payload.role === 'user' ? 'user' : null;
-      const content = String(row.message ?? '').trim();
-      if (!conversationId || !role || !content) continue;
-      const createdAt = toIsoString(row.received_at) ?? NOW();
-      const current = conversations.get(conversationId) ?? {
-        id: conversationId,
-        title: String(payload.title ?? 'Chat with Dotti').trim() || 'Chat with Dotti',
-        messages: [],
-        updatedAt: createdAt,
-      };
-      current.messages.push({ id: String(row.id), role, content, createdAt });
-      current.updatedAt = createdAt;
-      if (payload.title) current.title = String(payload.title);
-      conversations.set(conversationId, current);
-    }
-    return [...conversations.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 50);
-  }
-
-  async saveAssistantExchange(input: {
-    userId: string;
-    conversationId: string;
-    title?: string;
-    question: string;
-    answer: string;
-  }) {
-    if (!this.isConfigured() || !input.userId || !input.conversationId) return;
-    const safeConversationId = input.conversationId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100) || `chat-${Date.now()}`;
-    const title = String(input.title ?? input.question).replace(/\s+/g, ' ').trim().slice(0, 80) || 'Chat with Dotti';
-    const timestamp = Date.now();
-    await Promise.all([
-      this.addInboundMessage({
-        id: `dotti:${input.userId}:${safeConversationId}:${timestamp}:user`,
-        channel: 'dotti_assistant',
-        senderId: input.userId,
-        recipientId: 'dotti',
-        message: input.question.slice(0, 12000),
-        messageType: 'text',
-        profileName: 'user',
-        status: 'stored',
-        receivedAt: new Date(timestamp),
-        payload: { conversationId: safeConversationId, title, role: 'user' },
-      }),
-      this.addInboundMessage({
-        id: `dotti:${input.userId}:${safeConversationId}:${timestamp + 1}:assistant`,
-        channel: 'dotti_assistant',
-        senderId: input.userId,
-        recipientId: input.userId,
-        message: input.answer.slice(0, 20000),
-        messageType: 'text',
-        profileName: 'assistant',
-        status: 'stored',
-        receivedAt: new Date(timestamp + 1),
-        payload: { conversationId: safeConversationId, title, role: 'assistant' },
-      }),
-    ]);
-  }
-
-  async deleteAssistantConversation(userId: string, conversationId: string) {
-    if (!this.isConfigured() || !userId || !conversationId) return;
-    const safeConversationId = conversationId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100);
-    if (!safeConversationId) return;
-    await this.request('PATCH', 'dott_inbound_messages', {
-      params: {
-        channel: 'eq.dotti_assistant',
-        sender_id: `eq.${userId}`,
-        id: `like.dotti:${userId}:${safeConversationId}:*`,
-      },
-      prefer: 'return=minimal',
-      body: { status: 'deleted', updated_at: NOW() },
-    });
-  }
-
   async incrementSocialDaily(payload: SocialDailyIncrement) {
     if (!this.isConfigured()) return;
     const id = `${payload.userId}_${payload.date}`;
@@ -1093,12 +991,37 @@ class SupabaseFallbackService {
     }
   }
 
-  async upsertSocialAccounts(userId: string, payload: { email?: string | null; socialAccounts?: Record<string, unknown> }) {
+  async upsertSocialAccounts(
+    userId: string,
+    payload: { email?: string | null; socialAccounts?: Record<string, unknown>; replace?: boolean },
+  ) {
     if (!this.isConfigured() || !userId) return;
+    let existingAccounts: Record<string, unknown> = {};
+    let existingEmail: string | null = null;
+    if (!payload.replace) {
+      try {
+        const existing = await this.getSingleRow<any>('dott_social_accounts', { user_id: `eq.${userId}` });
+        existingAccounts =
+          existing?.accounts && typeof existing.accounts === 'object'
+            ? (existing.accounts as Record<string, unknown>)
+            : {};
+        existingEmail = existing?.email ?? null;
+      } catch (error) {
+        console.warn('[supabase-fallback] unable to load existing social accounts before merge', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     const row = {
       user_id: userId,
-      email: payload.email ?? null,
-      accounts: sanitizeJson(payload.socialAccounts ?? {}) ?? {},
+      email: payload.email ?? existingEmail,
+      accounts:
+        sanitizeJson(
+          payload.replace
+            ? payload.socialAccounts ?? {}
+            : { ...existingAccounts, ...(payload.socialAccounts ?? {}) },
+        ) ?? {},
       updated_at: NOW(),
     };
     try {
