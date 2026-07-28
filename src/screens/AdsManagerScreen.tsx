@@ -112,13 +112,16 @@ export const AdsManagerScreen: React.FC = () => {
   const load = async () => {
     setLoading(true);
     try {
-      const [ruleResponse, runsResponse, connectionResponse, policyResponse, approvalsResponse, auditResponse] = await Promise.all([
+      const [ruleResponse, accountResponse] = await Promise.all([
         fetchBoostRule(),
-        fetchAdRuns(20),
-        fetchMetaAdsConnection(),
-        fetchMetaAdsPolicy(),
-        fetchMetaAdsApprovals(30),
-        fetchMetaAdsAudit(30),
+        fetchMetaAdAccounts(),
+      ]);
+      const [runsResponse, connectionResponse, policyResponse, approvalsResponse, auditResponse] = await Promise.all([
+        fetchAdRuns(20).catch(() => ({ runs: [] })),
+        fetchMetaAdsConnection().catch(() => null),
+        fetchMetaAdsPolicy().catch(() => null),
+        fetchMetaAdsApprovals(30).catch(() => ({ approvals: [] })),
+        fetchMetaAdsAudit(30).catch(() => ({ audit: [] })),
       ]);
       setRule(current => ({
         ...current,
@@ -135,17 +138,12 @@ export const AdsManagerScreen: React.FC = () => {
         minCandidateAgeMinutes: ruleResponse.rule?.minCandidateAgeMinutes ?? current.minCandidateAgeMinutes,
         autoBoostCooldownHours: ruleResponse.rule?.autoBoostCooldownHours ?? current.autoBoostCooldownHours,
       }));
+      setAccounts(accountResponse.accounts ?? []);
       setRuns(runsResponse.runs ?? []);
-      setConnection(connectionResponse.connection);
-      setPolicy(policyResponse.policy);
+      setConnection(connectionResponse?.connection ?? null);
+      if (policyResponse?.policy) setPolicy(policyResponse.policy);
       setApprovals(approvalsResponse.approvals ?? []);
       setAudit(auditResponse.audit ?? []);
-      try {
-        const accountResponse = await fetchMetaAdAccounts();
-        setAccounts(accountResponse.accounts ?? []);
-      } catch (error) {
-        console.warn('Failed to load Meta ad accounts', error);
-      }
     } catch (error: any) {
       Alert.alert('Ads Manager', error.message ?? 'Failed to load ads settings');
     } finally {
