@@ -1353,6 +1353,53 @@ const fetchLinkedInMetric = async (shareUrn: string, accessToken: string) => {
   });
 };
 
+const fetchLinkedInCreatorAnalytics = async (accessToken: string, cutoffMs: number) => {
+  if (!accessToken) return null;
+  const start = new Date(cutoffMs);
+  const end = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const datePart = (value: Date) =>
+    `(day:${value.getUTCDate()},month:${value.getUTCMonth() + 1},year:${value.getUTCFullYear()})`;
+  const dateRange = `(start:${datePart(start)},end:${datePart(end)})`;
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'LinkedIn-Version': process.env.LINKEDIN_API_VERSION?.trim() || '202607',
+    'X-Restli-Protocol-Version': '2.0.0',
+  };
+  const fetchMetric = async (queryType: 'IMPRESSION' | 'REACTION' | 'COMMENT' | 'RESHARE') => {
+    const response = await axios.get('https://api.linkedin.com/rest/memberCreatorPostAnalytics', {
+      headers,
+      params: {
+        q: 'me',
+        queryType,
+        aggregation: 'TOTAL',
+        dateRange,
+      },
+      timeout: 30000,
+    });
+    const elements = Array.isArray(response.data?.elements) ? response.data.elements : [];
+    return elements.reduce((total: number, element: any) => total + toNumber(element?.count), 0);
+  };
+  try {
+    const [impressions, reactions, comments, reshares] = await Promise.all([
+      fetchMetric('IMPRESSION'),
+      fetchMetric('REACTION'),
+      fetchMetric('COMMENT'),
+      fetchMetric('RESHARE'),
+    ]);
+    return {
+      views: impressions,
+      interactions: reactions + comments + reshares,
+    };
+  } catch (error) {
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+    console.warn('[socialLive] LinkedIn creator analytics unavailable; using social-action fallback', {
+      status,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+};
+
 const applyPostedActivityFallback = (metric: PlatformLiveMetric) => {
   metric.engagementRate = formatRate(metric.interactions, metric.views);
 };
@@ -1709,9 +1756,15 @@ export async function getLiveSocialMetrics(
     }
 
     if (accounts.linkedin?.accessToken && linkedinIds.length > 0) {
-      const rows = await Promise.all(linkedinIds.map(id => fetchLinkedInMetric(id, accounts.linkedin?.accessToken ?? '')));
-      output.platforms.linkedin.views = sum(rows.map(row => row.views));
-      output.platforms.linkedin.interactions = sum(rows.map(row => row.interactions));
+      const creatorAnalytics = await fetchLinkedInCreatorAnalytics(accounts.linkedin.accessToken, cutoffMs);
+      const rows = await Promise.all(
+        creatorAnalytics
+          ? []
+          : linkedinIds.map(id => fetchLinkedInMetric(id, accounts.linkedin?.accessToken ?? '')),
+      );
+      output.platforms.linkedin.views = creatorAnalytics?.views ?? sum(rows.map(row => row.views));
+      output.platforms.linkedin.interactions =
+        creatorAnalytics?.interactions ?? sum(rows.map(row => row.interactions));
       output.platforms.linkedin.engagementRate = formatRate(
         output.platforms.linkedin.interactions,
         output.platforms.linkedin.views,

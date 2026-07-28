@@ -12,11 +12,17 @@ const transporter = nodemailer.createTransport({
 });
 
 const brevoApiKey = process.env.BREVO_API_KEY?.trim() ?? '';
-const brevoSenderEmail =
+const configuredBrevoSenderEmail =
   process.env.BREVO_SENDER_EMAIL?.trim() ||
   config.smtp.from?.match(/<([^>]+)>/)?.[1] ||
   config.smtp.from?.trim() ||
-  'info@dott-media.org';
+  '';
+// Brevo rejects the old dott.media sender because that domain is not
+// authenticated. Keep every transactional/report email on the verified domain.
+const brevoSenderEmail =
+  configuredBrevoSenderEmail.toLowerCase().endsWith('@dott.media')
+    ? 'info@dott-media.org'
+    : configuredBrevoSenderEmail || 'info@dott-media.org';
 const brevoSenderName = process.env.BREVO_SENDER_NAME?.trim() || 'Dott Media';
 const brevoSmsSender = (process.env.BREVO_SMS_SENDER?.trim() || 'DottMedia').slice(0, 11);
 
