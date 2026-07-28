@@ -74,8 +74,16 @@ const callMcp = async (accessToken: string, method: string, params: Record<strin
 };
 
 const getConnection = async (userId: string) => {
-  const snap = await connections.doc(userId).get();
-  const connection = snap.exists ? snap.data() ?? {} : {};
+  let connection: Record<string, any> = {};
+  try {
+    const snap = await connections.doc(userId).get();
+    connection = snap.exists ? snap.data() ?? {} : {};
+  } catch (error) {
+    console.warn('[meta-ads-mcp] Firestore connection lookup failed; using Graph/Supabase status', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   const secret = await getSecret(userId, 'meta_ads_mcp_token', { decrypt: true }).catch(() => null);
   return { ...connection, accessToken: (secret as { value?: string } | null)?.value ?? '' };
 };
@@ -139,9 +147,10 @@ export const metaAdsControlService = {
     return { connected: true, tools };
   },
   async getConnectionStatus(userId: string) {
-    const [connection, accounts] = await Promise.all([
+    const [connection, accounts, rule] = await Promise.all([
       getConnection(userId),
       metaAdsService.listAdAccounts(userId).catch(() => []),
+      metaAdsService.getBoostRule(userId).catch(() => null),
     ]);
     const mcpAccessToken = String(connection.accessToken ?? '').trim();
     let mcpConnected = false;
@@ -160,7 +169,7 @@ export const metaAdsControlService = {
       mcpError,
       graphConnected: accounts.length > 0,
       accountCount: accounts.length,
-      selectedAdAccountId: connection.selectedAdAccountId ?? null,
+      selectedAdAccountId: connection.selectedAdAccountId ?? rule?.adAccountId ?? null,
       provider: mcpConnected ? 'meta_mcp' : accounts.length ? 'meta_graph' : 'none',
     };
   },
