@@ -547,7 +547,6 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
 }> = [
   {
     userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
-    email: 'xbrasio@gmail.com',
     facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1120716914467835',
     instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '17841448754415534',
     threadsAccountId: '28808899498698518',

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View, RefreshControl } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View, RefreshControl } from 'react-native';
 import * as NavigationNative from '@react-navigation/native';
 import * as VictoryNative from 'victory-native';
 import { colors } from '@constants/colors';
@@ -93,12 +93,14 @@ export const PostingHistoryScreen: React.FC = () => {
   );
   const [history, setHistory] = useState<SocialHistory>(initialHistory);
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [historyCacheReady, setHistoryCacheReady] = useState(Boolean(state.user?.uid));
   const [hasCachedHistory, setHasCachedHistory] = useState(Boolean(initialHistory.posts.length || Object.keys(initialHistory.summary?.perPlatform ?? {}).length));
 
   const load = useCallback(
     async (options?: { silent?: boolean; force?: boolean }) => {
       if (!state.user) return;
+      setLoading(true);
       if (!options?.silent && (!hasCachedHistory || options?.force)) {
         setRefreshing(true);
       }
@@ -109,6 +111,7 @@ export const PostingHistoryScreen: React.FC = () => {
       } catch (error) {
         console.warn('Failed to load history', error);
       } finally {
+        setLoading(false);
         if (!options?.silent) {
           setRefreshing(false);
         }
@@ -306,6 +309,12 @@ export const PostingHistoryScreen: React.FC = () => {
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load({ force: true })} />}
     >
+      {loading ? (
+        <View style={styles.loadingBanner}>
+          <ActivityIndicator size="small" color={colors.accent} />
+          <Text style={styles.loadingBannerText}>{t('Loading posting history...')}</Text>
+        </View>
+      ) : null}
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>{t('Posted Today')}</Text>
@@ -423,6 +432,15 @@ export const PostingHistoryScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { padding: 20, paddingBottom: 80 },
+  loadingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  loadingBannerText: { color: colors.subtext, fontSize: 13, fontWeight: '600' },
   card: {
     backgroundColor: colors.backgroundAlt,
     borderRadius: 16,
