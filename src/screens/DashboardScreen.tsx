@@ -222,6 +222,7 @@ export const DashboardScreen: React.FC = () => {
   const { state } = useAuth();
   const { t, locale } = useI18n();
   const { width: viewportWidth } = useWindowDimensions();
+  const [dashboardWidth, setDashboardWidth] = useState(viewportWidth);
   const orgId = (state.user as any)?.orgId ?? state.crmData?.orgId;
   const isBwinbetAccount = useMemo(() => {
     const primary = normalizeLower(state.user?.email);
@@ -774,8 +775,6 @@ export const DashboardScreen: React.FC = () => {
 
     const applyHeatmapRow = (row?: Partial<ActivityHeatmapDaily>) => {
       if (!row) return;
-      summary.views = Math.max(summary.views, Number(row.views ?? 0));
-      summary.interactions = Math.max(summary.interactions, Number(row.interactions ?? 0));
       summary.outbound = Math.max(summary.outbound, Number(row.outbound ?? 0));
       summary.conversions = Math.max(summary.conversions, Number(row.conversions ?? 0));
       summary.redirectClicks = Math.max(summary.redirectClicks, Number(row.redirectClicks ?? 0));
@@ -786,8 +785,6 @@ export const DashboardScreen: React.FC = () => {
 
     const todayHistory = historySeries.find(row => row.date === todayDateKey);
     if (todayHistory) {
-      summary.views = Math.max(summary.views, Number(todayHistory.leads ?? 0));
-      summary.interactions = Math.max(summary.interactions, Number(todayHistory.engagement ?? 0));
       summary.outbound = Math.max(summary.outbound, Number(todayHistory.conversions ?? 0));
       summary.conversions = Math.max(summary.conversions, Number(todayHistory.conversions ?? 0));
     }
@@ -1088,7 +1085,7 @@ export const DashboardScreen: React.FC = () => {
   }, [heatmapChartData, heatmapGrouping]);
 
   const chartWidth = useMemo(() => {
-    const base = Math.max(viewportWidth - 88, 320);
+    const base = Math.max(dashboardWidth - 80, 320);
     if (heatmapGrouping === 'day') {
       if (selectedRange.days <= 7) return base;
       return Math.max(base, heatmapChartData.length * 54);
@@ -1097,7 +1094,7 @@ export const DashboardScreen: React.FC = () => {
       return Math.max(base, heatmapChartData.length * 140);
     }
     return Math.max(base, heatmapChartData.length * 180);
-  }, [heatmapChartData.length, heatmapGrouping, selectedRange.days, viewportWidth]);
+  }, [dashboardWidth, heatmapChartData.length, heatmapGrouping, selectedRange.days]);
 
   const barWidth =
     heatmapGrouping === 'year' ? 56 : heatmapGrouping === 'month' ? 44 : selectedRange.days <= 7 ? 30 : 24;
@@ -1133,7 +1130,14 @@ export const DashboardScreen: React.FC = () => {
 
   return (
     <>
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      onLayout={event => {
+        const nextWidth = Math.round(event.nativeEvent.layout.width);
+        if (nextWidth > 0 && nextWidth !== dashboardWidth) setDashboardWidth(nextWidth);
+      }}
+    >
       <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.hero}>
         <Text style={styles.heroEyebrow}>{t('Live cockpit')}</Text>
         <Text style={styles.heroTitle}>{t('Analytics overview')}</Text>
@@ -1219,7 +1223,7 @@ export const DashboardScreen: React.FC = () => {
                   </Text>
                 </View>
                 <Text style={styles.livePlatformMetrics}>
-                  {t('Views')}: {formatCount(row.views)} | {t('Interactions')}: {formatCount(row.interactions)} | {t('Engagement')}:{' '}
+                  {row.key === 'linkedin' ? t('Impressions') : t('Views')}: {formatCount(row.views)} | {t('Interactions')}: {formatCount(row.interactions)} | {t('Engagement')}:{' '}
                   {row.engagementRate.toFixed(2)}% | {t('Conversions')}: {formatCount(row.conversions)}
                   {row.key === 'threads' && Number(row.followers ?? 0) > 0
                     ? ` | ${t('Followers')}: ${formatCount(Number(row.followers ?? 0))}`
