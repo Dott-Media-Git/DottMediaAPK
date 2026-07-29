@@ -1536,19 +1536,23 @@ export class AssistantService {
         }
       }
 
+      const responseText =
+        message.content ||
+        (locale === 'fr'
+          ? "Je ne suis pas sur de pouvoir aider encore, mais j'apprends."
+          : locale === 'de'
+            ? 'Ich bin mir nicht sicher, ob ich dabei helfen kann, aber ich lerne dazu.'
+            : locale === 'ar'
+              ? 'لست متاكدا انني استطيع المساعدة بعد، لكنني اتعلم.'
+            : locale === 'zh'
+              ? '我还不确定是否能帮到你，但我会继续学习。'
+              : "I'm not sure how to help with that, but I'm learning!");
+      const includesPaidPerformance = /\b(meta ads?|paid (?:ads?|performance)|ad spend|impressions|\bctr\b)\b/i.test(responseText);
       return {
         type: 'text',
-        text:
-          message.content ||
-          (locale === 'fr'
-            ? "Je ne suis pas sur de pouvoir aider encore, mais j'apprends."
-            : locale === 'de'
-              ? 'Ich bin mir nicht sicher, ob ich dabei helfen kann, aber ich lerne dazu.'
-              : locale === 'ar'
-                ? 'لست متاكدا انني استطيع المساعدة بعد، لكنني اتعلم.'
-              : locale === 'zh'
-                ? '我还不确定是否能帮到你，但我会继续学习。'
-                : "I'm not sure how to help with that, but I'm learning!"),
+        text: liveAdsContext && includeAdsPerformance && !includesPaidPerformance
+          ? `${responseText}\n\nPaid ads performance\n${liveAdsContext}`
+          : responseText,
       };
     } catch (error) {
       const { status, code, message } = extractOpenAIError(error);
