@@ -621,18 +621,11 @@ const DottiAvatar: React.FC<{ state: DottiState; size?: number }> = ({ state, si
 };
 
 const buildSiteDottiMouthPath = (state: DottiState) => {
-  if (state === 'listening' as DottiState || state === 'focused') return 'M55 73 C55 67 65 67 65 73 C65 79 55 79 55 73Z';
+  if (state === 'focused') return 'M55 73 C55 67 65 67 65 73 C65 79 55 79 55 73Z';
   if (state === 'thinking') return 'M53 76 Q60 69 67 76';
   if (state === 'excited' || state === 'closing') return 'M48 70 Q60 84 72 70 Q60 91 48 70Z';
   if (state === 'empathetic') return 'M51 74 Q60 79 69 74';
   return 'M49 70 Q60 82 71 70';
-};
-
-const buildDottiMouthPath = (smile: number) => {
-  const width = 20 + Math.max(0, smile) * 4;
-  const dip = 6 + smile * 10;
-  const thickness = 6 + Math.max(0, smile) * 3;
-  return `M ${-width} 0 Q 0 ${dip} ${width} 0 Q 0 ${dip + thickness} ${-width} 0 Z`;
 };
 
 const resolveDottiState = ({
