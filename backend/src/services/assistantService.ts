@@ -815,6 +815,7 @@ export class AssistantService {
       followups,
       webLeads,
       webTraffic,
+      activityHeatmap,
       socialDaily,
       postingHistory,
       socialAccounts,
