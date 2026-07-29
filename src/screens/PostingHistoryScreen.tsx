@@ -96,16 +96,19 @@ export const PostingHistoryScreen: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [historyCacheReady, setHistoryCacheReady] = useState(Boolean(state.user?.uid));
   const [hasCachedHistory, setHasCachedHistory] = useState(Boolean(initialHistory.posts.length || Object.keys(initialHistory.summary?.perPlatform ?? {}).length));
+  const requestVersionRef = useRef(0);
 
   const load = useCallback(
     async (options?: { silent?: boolean; force?: boolean }) => {
       if (!state.user) return;
+      const requestVersion = ++requestVersionRef.current;
       setLoading(true);
       if (!options?.silent && (!hasCachedHistory || options?.force)) {
         setRefreshing(true);
       }
       try {
         const payload = await fetchSocialHistory({ noCache: options?.force });
+        if (requestVersion !== requestVersionRef.current) return;
         setHistory(payload);
         setHasCachedHistory(true);
       } catch (error) {
