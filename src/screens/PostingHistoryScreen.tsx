@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View, RefreshControl } from 'react-native';
 import * as NavigationNative from '@react-navigation/native';
 import * as VictoryNative from 'victory-native';
@@ -111,9 +111,11 @@ export const PostingHistoryScreen: React.FC = () => {
       } catch (error) {
         console.warn('Failed to load history', error);
       } finally {
-        setLoading(false);
-        if (!options?.silent) {
-          setRefreshing(false);
+        if (requestVersion === requestVersionRef.current) {
+          setLoading(false);
+          if (!options?.silent) {
+            setRefreshing(false);
+          }
         }
       }
     },
