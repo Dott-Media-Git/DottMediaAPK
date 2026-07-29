@@ -58,6 +58,27 @@ const BodySchema = z.object({
 
 const ConversationIdSchema = z.string().min(1).max(100);
 
+type StoredAssistantConversation = {
+  messages: Array<{ role: 'user' | 'assistant'; content: string; createdAt: string }>;
+};
+
+const conversationStore = supabaseFallbackService as typeof supabaseFallbackService & {
+  getAssistantConversations?: (userId: string) => Promise<StoredAssistantConversation[]>;
+  deleteAssistantConversation?: (userId: string, conversationId: string) => Promise<void>;
+  saveAssistantExchange?: (input: {
+    userId: string;
+    conversationId: string;
+    title?: string;
+    question: string;
+    answer: string;
+  }) => Promise<void>;
+};
+
+const getAssistantConversations = async (userId: string) =>
+  typeof conversationStore.getAssistantConversations === 'function'
+    ? conversationStore.getAssistantConversations(userId)
+    : [];
+
 const resolveAssistantUserId = async (authUserId: string) => {
   const user = await withFallbackTimeout(supabaseFallbackService.getUser(authUserId), null);
   const historyUserId = typeof user?.data?.historyUserId === 'string' ? user.data.historyUserId.trim() : '';
@@ -85,7 +106,7 @@ router.get('/assistant/conversations', requireFirebase, async (req, res, next) =
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
     const effectiveUserId = await resolveAssistantUserId(authUser.uid);
-    const conversations = await supabaseFallbackService.getAssistantConversations(effectiveUserId);
+    const conversations = await getAssistantConversations(effectiveUserId);
     res.json({ conversations });
   } catch (error) {
     next(error);
@@ -98,7 +119,9 @@ router.delete('/assistant/conversations/:conversationId', requireFirebase, async
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
     const conversationId = ConversationIdSchema.parse(req.params.conversationId);
     const effectiveUserId = await resolveAssistantUserId(authUser.uid);
-    await supabaseFallbackService.deleteAssistantConversation(effectiveUserId, conversationId);
+    if (typeof conversationStore.deleteAssistantConversation === 'function') {
+      await conversationStore.deleteAssistantConversation(effectiveUserId, conversationId);
+    }
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -184,7 +207,7 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
       console.warn('[assistant] Firestore usage metering quota exhausted; continuing authenticated request');
     }
     const cloudConversations = await withFallbackTimeout(
-      supabaseFallbackService.getAssistantConversations(effectiveUserId),
+      getAssistantConversations(effectiveUserId),
       [],
     );
     const cloudHistory = cloudConversations
@@ -210,16 +233,18 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
         : '';
     if (answerText) {
       const conversationId = parsed.conversationId ?? `chat-${Date.now()}`;
-      await withFallbackTimeout(
-        supabaseFallbackService.saveAssistantExchange({
+      if (typeof conversationStore.saveAssistantExchange === 'function') {
+        await withFallbackTimeout(
+          conversationStore.saveAssistantExchange({
           userId: effectiveUserId,
           conversationId,
           title: parsed.conversationTitle,
           question: parsed.question,
           answer: answerText,
-        }),
-        undefined,
-      );
+          }),
+          undefined,
+        );
+      }
     }
     res.json({ answer });
   } catch (err) {
