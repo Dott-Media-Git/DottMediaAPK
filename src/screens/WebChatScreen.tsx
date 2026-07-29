@@ -20,6 +20,7 @@ import { DrawerScreenProps } from '@react-navigation/drawer';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors } from '@constants/colors';
 import { AssistantMarkdown } from '@components/AssistantMarkdown';
+import { DottiAvatar } from '@components/FloatingAssistant';
 import { useAssistant } from '@context/AssistantContext';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
@@ -264,9 +265,9 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
           <Ionicons name="menu-outline" size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.brandRow}>
-          <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.brandMark}>
-            <Ionicons name="sparkles" size={16} color="#FFFFFF" />
-          </LinearGradient>
+          <View style={styles.brandHead}>
+            <DottiAvatar state={isTyping ? 'thinking' : listening ? 'focused' : 'happy'} size={44} />
+          </View>
           <View>
             <Text style={styles.brandTitle}>Dotti</Text>
             <View style={styles.statusRow}>
@@ -444,6 +445,7 @@ const styles = StyleSheet.create({
   menuButton: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardOverlay, marginRight: 18, ...(Platform.OS === 'web' ? { cursor: 'pointer' } as any : null) },
   brandRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 11 },
   brandMark: { width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  brandHead: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
   brandTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
   statusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success },

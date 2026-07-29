@@ -533,7 +533,7 @@ const DOTTI_CONFIG: Record<DottiState, { blush: number; bob: number; brow: numbe
   closing: { blush: 0.62, bob: 0.65, brow: -2, mouth: 0.8, eye: 1 },
 };
 
-const DottiAvatar: React.FC<{ state: DottiState; size?: number }> = ({ state, size = 62 }) => {
+export const DottiAvatar: React.FC<{ state: DottiState; size?: number }> = ({ state, size = 62 }) => {
   const cfg = DOTTI_CONFIG[state] ?? DOTTI_CONFIG.idle;
   const float = useRef(new Animated.Value(0)).current;
   const [blink, setBlink] = useState(false);
