@@ -1557,7 +1557,8 @@ export class AssistantService {
             'I can still help using your live account data while the AI reasoning provider reconnects:',
             '',
             accountContextBlock,
-          ].join('\n'),
+            liveAdsReport ? `Paid ads: ${liveAdsReport.text}` : '',
+          ].filter(Boolean).join('\n'),
         };
       }
       if (kind !== 'generic') {
