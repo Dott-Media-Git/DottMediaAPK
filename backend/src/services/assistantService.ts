@@ -1257,7 +1257,15 @@ export class AssistantService {
       /\b(account|overall|business|marketing)\s+(performance|results|metrics|stats)\b/i.test(question) ||
       /\bhow(?:'s| is| are)\b[\s\S]{0,50}\b(account|business|performance|performing)\b/i.test(question);
     const asksForAdsPerformance = /\b(ad spend|ad performance|ads? report(?:ing)?|campaign reporting|impressions|click-through rate|\bctr\b)\b/i.test(question);
-    const includeAdsPerformance = asksForOverallPerformance || asksForAdsPerformance;
+    const adsConnection = accountSnapshot?.adsAccount ?? {};
+    const hasConnectedAdsAccount = Boolean(
+      accountSnapshot?.connectedChannels.some(channel => ['metaads', 'meta_ads', 'ads'].includes(channel.toLowerCase())) ||
+      adsConnection.graphConnected ||
+      adsConnection.mcpConnected ||
+      Number(adsConnection.accountCount ?? 0) > 0 ||
+      adsConnection.selectedAdAccountId,
+    );
+    const includeAdsPerformance = (asksForOverallPerformance || asksForAdsPerformance) && hasConnectedAdsAccount;
     const liveAdsReport = context.userId && includeAdsPerformance
       ? await this.safeResolve<Awaited<ReturnType<typeof metaAdsControlService.reportingSummary>> | null>(
           'live Meta Ads performance',
