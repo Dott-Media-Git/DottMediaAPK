@@ -267,6 +267,33 @@ router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
       lookbackHours,
       scope: { userId: authUser.uid, scopeId, email: authUser.email },
     });
+    // Persist every successful connected-channel pull as the current live
+    // account summary. This is separate from daily heatmap rows, so rolling
+    // totals stay fresh without contaminating individual calendar days.
+    const summaryScopes = [
+      { userId: authUser.uid, scopeId, email: authUser.email },
+      { userId: authUser.uid, email: authUser.email },
+    ];
+    const seenScopeKeys = new Set<string>();
+    await supabaseFallbackService.upsertMetricSummaries(
+      summaryScopes
+        .map(scope => ({ scope, scopeKey: resolveAnalyticsScopeKey(scope) }))
+        .filter(({ scopeKey }) => Boolean(scopeKey) && !seenScopeKeys.has(scopeKey) && Boolean(seenScopeKeys.add(scopeKey)))
+        .map(({ scope, scopeKey }) => ({
+          scopeKey,
+          userId: scope.userId,
+          metric: 'liveSocialCurrent',
+          counters: {
+            views: Number(stats.summary.views ?? 0),
+            interactions: Number(stats.summary.interactions ?? 0),
+            engagementRate: Number(stats.summary.engagementRate ?? 0),
+            conversions: Number(stats.summary.conversions ?? 0),
+            lookbackHours: Number(stats.lookbackHours ?? lookbackHours ?? 0),
+          },
+        })),
+    ).catch(error => {
+      console.warn('[socialLive] current live summary persistence failed', error);
+    });
     // Only a calendar-day-sized request may update today's snapshot. Persisting
     // rolling 30-day totals here makes the Daily Reviews card show lifetime-like
     // values and also contaminates today's heatmap row.
