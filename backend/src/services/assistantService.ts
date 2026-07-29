@@ -1263,9 +1263,16 @@ export class AssistantService {
           'live Meta Ads performance',
           () => metaAdsControlService.reportingSummary(context.userId!),
           null,
-          15_000,
+          45_000,
         )
       : null;
+    const liveAdsContext = liveAdsReport
+      ? (() => {
+          const performance = liveAdsReport.performance;
+          const summary = performance.summary;
+          return `Meta Ads (${performance.lookbackDays} days, ${performance.currency}): ${summary.spend.toFixed(2)} spent, ${this.formatWholeNumber(summary.impressions)} impressions, ${this.formatWholeNumber(summary.reach)} reach, ${this.formatWholeNumber(summary.clicks)} clicks, ${this.formatWholeNumber(summary.inlineLinkClicks)} link clicks, ${this.formatWholeNumber(summary.messages)} messages, ${this.formatWholeNumber(summary.leads)} leads, ${summary.ctr.toFixed(2)}% CTR; ${this.formatWholeNumber(summary.active)} active, ${this.formatWholeNumber(summary.paused)} paused, ${this.formatWholeNumber(summary.failed)} needing attention, ${this.formatWholeNumber(summary.other)} other-status ads.`;
+        })()
+      : '';
 
     if (context.userId && this.shouldSendMonthlyReport(question)) {
       try {
