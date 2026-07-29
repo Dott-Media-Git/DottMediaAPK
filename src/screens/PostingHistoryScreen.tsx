@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View, RefreshControl } from 'react-native';
 import * as NavigationNative from '@react-navigation/native';
 import * as VictoryNative from 'victory-native';
@@ -96,24 +96,29 @@ export const PostingHistoryScreen: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [historyCacheReady, setHistoryCacheReady] = useState(Boolean(state.user?.uid));
   const [hasCachedHistory, setHasCachedHistory] = useState(Boolean(initialHistory.posts.length || Object.keys(initialHistory.summary?.perPlatform ?? {}).length));
+  const requestVersionRef = useRef(0);
 
   const load = useCallback(
     async (options?: { silent?: boolean; force?: boolean }) => {
       if (!state.user) return;
+      const requestVersion = ++requestVersionRef.current;
       setLoading(true);
       if (!options?.silent && (!hasCachedHistory || options?.force)) {
         setRefreshing(true);
       }
       try {
         const payload = await fetchSocialHistory({ noCache: options?.force });
+        if (requestVersion !== requestVersionRef.current) return;
         setHistory(payload);
         setHasCachedHistory(true);
       } catch (error) {
         console.warn('Failed to load history', error);
       } finally {
-        setLoading(false);
-        if (!options?.silent) {
-          setRefreshing(false);
+        if (requestVersion === requestVersionRef.current) {
+          setLoading(false);
+          if (!options?.silent) {
+            setRefreshing(false);
+          }
         }
       }
     },
