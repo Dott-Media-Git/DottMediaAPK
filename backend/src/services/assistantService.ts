@@ -724,6 +724,12 @@ export class AssistantService {
       [],
       10_000,
     );
+    const persistedLiveSummary = await this.safeResolve(
+      'current live social summary',
+      () => supabaseFallbackService.getMetricSummary('liveSocialCurrent', { userId: context.userId! }),
+      null,
+      5_000,
+    ) as Record<string, unknown> | null;
     const activityHeatmap: ActivityHeatmapDaily[] = liveSocialRows.length
       ? liveSocialRows.map(row => ({
           date: row.date,
@@ -742,7 +748,7 @@ export class AssistantService {
 
     const [
       analyticsSummary,
-      liveSocial,
+      liveSocial: resolvedLiveSocial,
       outbound,
       inbound,
       engagement,
@@ -783,6 +789,30 @@ export class AssistantService {
       this.safeResolve('complete 30-day metric history', () => this.loadMetricHistory(context.userId!, scopeId), {}, 3_500),
     ]);
 
+    const persistedViews = Number(persistedLiveSummary?.views ?? 0);
+    const persistedInteractions = Number(persistedLiveSummary?.interactions ?? 0);
+    const resolvedLiveSocial = persistedViews > 0 || persistedInteractions > 0
+      ? {
+          ...liveSocial,
+          lookbackHours: Math.max(Number(persistedLiveSummary?.lookbackHours ?? liveSocial.lookbackHours), 1),
+          summary: {
+            views: persistedViews,
+            interactions: persistedInteractions,
+            engagementRate: Number(persistedLiveSummary?.engagementRate ?? 0),
+            conversions: Number(persistedLiveSummary?.conversions ?? 0),
+          },
+        }
+      : liveSocial;
+    const heatmapPerformance = this.buildDashboardPerformance(activityHeatmap);
+    const dashboardPerformance = persistedViews > 0 || persistedInteractions > 0
+      ? {
+          ...heatmapPerformance,
+          views: persistedViews,
+          interactions: persistedInteractions,
+          engagementRate: Number(persistedLiveSummary?.engagementRate ?? 0),
+          conversions: Number(persistedLiveSummary?.conversions ?? heatmapPerformance.conversions),
+        }
+      : heatmapPerformance;
     const socialAccounts = (storedSocialAccounts?.socialAccounts && typeof storedSocialAccounts.socialAccounts === 'object')
       ? storedSocialAccounts.socialAccounts as Record<string, unknown>
       : {};
@@ -808,7 +838,7 @@ export class AssistantService {
       subscriptionStatus: context.subscriptionStatus ?? profileData.subscriptionStatus,
       connectedChannels,
       analyticsSummary,
-      liveSocial,
+      liveSocial: resolvedLiveSocial,
       outbound,
       inbound,
       engagement,
@@ -821,7 +851,7 @@ export class AssistantService {
       socialAccounts,
       adsAccount: adsAccount as Record<string, unknown>,
       metricHistory,
-      dashboardPerformance: this.buildDashboardPerformance(activityHeatmap),
+      dashboardPerformance,
     };
   }
 
