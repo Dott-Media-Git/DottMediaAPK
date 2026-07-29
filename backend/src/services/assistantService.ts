@@ -715,6 +715,16 @@ export class AssistantService {
       email: context.userEmail,
     };
 
+    // Load the authoritative dashboard series before slower channel enrichment.
+    // Running every external query together can starve this request and make
+    // Dotti incorrectly report zeros even while the Dashboard has live data.
+    const activityHeatmap = await this.safeResolve(
+      'activity heatmap',
+      () => getActivityHeatmap(analyticsScope, 30),
+      [] as ActivityHeatmapDaily[],
+      10_000,
+    );
+
     const [
       analyticsSummary,
       liveSocial,
@@ -724,7 +734,6 @@ export class AssistantService {
       followups,
       webLeads,
       webTraffic,
-      activityHeatmap,
       socialDaily,
       scheduledPosts,
       socialLogs,
@@ -745,7 +754,6 @@ export class AssistantService {
       this.safeResolve('follow-up stats', () => getFollowupStats(analyticsScope), emptyFollowupStats()),
       this.safeResolve('web lead stats', () => getWebLeadStats(analyticsScope), emptyWebLeadStats()),
       this.safeResolve('web traffic stats', () => getWebTrafficStats(analyticsScope), emptyWebTrafficStats()),
-      this.safeResolve('activity heatmap', () => getActivityHeatmap(analyticsScope, 30), [] as ActivityHeatmapDaily[]),
       this.safeResolve('social daily', () => socialAnalyticsService.getDailySummary(context.userId!, 30), [] as Array<Record<string, unknown>>),
       this.safeResolve('scheduled posting history', () => supabaseFallbackService.getPostsByUser(context.userId!, 150), [], 3_500),
       this.safeResolve('social posting logs', () => supabaseFallbackService.getSocialLogsByUser(context.userId!, 150), [], 3_500),
@@ -792,7 +800,6 @@ export class AssistantService {
       followups,
       webLeads,
       webTraffic,
-      activityHeatmap,
       socialDaily,
       postingHistory,
       socialAccounts,
