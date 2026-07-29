@@ -1434,6 +1434,7 @@ export class AssistantService {
         ? `Legacy CRM snapshot: Leads=${context.analytics.leads ?? 'n/a'}, Engagement=${context.analytics.engagement ?? 'n/a'}%, Conversions=${context.analytics.conversions ?? 'n/a'}`
         : '',
       accountContextBlock ? `Live account data:\n${accountContextBlock}` : '',
+      liveAdsReport ? `LIVE META ADS PERFORMANCE (connected account, live 30-day report): ${liveAdsReport.text}` : '',
       knowledgeBlock,
     ]
       .filter(Boolean)
