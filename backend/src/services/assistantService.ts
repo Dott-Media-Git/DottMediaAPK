@@ -879,7 +879,7 @@ export class AssistantService {
       snapshot.targetAudience ? `Target audience: ${snapshot.targetAudience}` : '',
       snapshot.subscriptionStatus ? `Subscription status: ${snapshot.subscriptionStatus}` : '',
       `Connected channels: ${snapshot.connectedChannels.length ? snapshot.connectedChannels.join(', ') : 'none connected'}`,
-      Connected social account records: ${Object.keys(snapshot.socialAccounts).length ? Object.keys(snapshot.socialAccounts).join(', ') : 'none stored'}.,
+      `Connected social account records: ${Object.keys(snapshot.socialAccounts).length ? Object.keys(snapshot.socialAccounts).join(', ') : 'none stored'}.`,
       `Meta Ads account: ${JSON.stringify(snapshot.adsAccount)}.`,
       `Dashboard daily metrics (up to 30 days, oldest to newest): ${JSON.stringify(snapshot.analyticsSummary.history.slice(-30))}.`,
       `Complete account metric history by category (up to 30 days): ${JSON.stringify(snapshot.metricHistory)}.`,
