@@ -574,7 +574,7 @@ export const DottiAvatar: React.FC<{ state: DottiState; size?: number }> = ({ st
 
   return (
     <Animated.View style={[styles.dottiAvatar, { width: size, height: size, transform: [{ translateY }] }]}>
-      <Svg width={size} height={size} viewBox="0 0 120 112">
+      <Svg width={size} height={size} viewBox="0 0 120 108" preserveAspectRatio="xMidYMid meet">
         <Defs>
           <RadialGradient id="siteDottiShell" cx="34%" cy="24%" r="82%">
             <Stop offset="0%" stopColor="#FFFFFF" />
@@ -587,22 +587,14 @@ export const DottiAvatar: React.FC<{ state: DottiState; size?: number }> = ({ st
             <Stop offset="100%" stopColor="#02030C" />
           </RadialGradient>
         </Defs>
-        <Ellipse cx="60" cy="101" rx="41" ry="8" fill="#6953FF" opacity="0.18" />
-        <Path d="M59 25 L62 8" stroke="#8C72FF" strokeWidth="4" strokeLinecap="round" />
-        <Circle cx="63" cy="7" r="7" fill="#8C72FF" stroke="#DDD7FF" strokeWidth="2" />
-        <Path d="M13 57 C13 24 31 15 60 15 C89 15 107 24 107 57 C107 88 89 101 60 101 C31 101 13 88 13 57Z" fill="url(#siteDottiShell)" stroke="#FFFFFF" strokeOpacity="0.82" strokeWidth="3" />
-        <Circle cx="12" cy="60" r="8" fill="#A68CEA" stroke="#F9F9FF" strokeWidth="2" />
-        <Circle cx="108" cy="60" r="8" fill="#A68CEA" stroke="#F9F9FF" strokeWidth="2" />
-        <Path d="M23 33 C33 24 87 24 97 33 C102 42 102 75 96 84 C84 94 36 94 24 84 C18 75 18 42 23 33Z" fill="url(#siteDottiPanel)" stroke="#6FE0FF" strokeOpacity="0.16" strokeWidth="2" />
-        <Ellipse cx="43" cy="55" rx={excited ? 8 : 6.5} ry={eyeHeight} fill="#53D6FF" />
-        <Ellipse cx="77" cy="55" rx={excited ? 8 : 6.5} ry={eyeHeight} fill="#53D6FF" />
-        {!blink && !sleepy && !excited ? (
-          <>
-            <Circle cx="41" cy="52" r="1.8" fill="#FFFFFF" opacity="0.9" />
-            <Circle cx="75" cy="52" r="1.8" fill="#FFFFFF" opacity="0.9" />
-          </>
-        ) : null}
-        <Path d={buildSiteDottiMouthPath(state)} fill={excited ? '#53D6FF22' : 'none'} stroke="#AAF7FF" strokeWidth="2.8" strokeLinecap="round" />
+        <Path d="M60 24 L63 8" stroke="#8C72FF" strokeWidth="4" strokeLinecap="round" />
+        <Circle cx="64" cy="7" r="7" fill="#8C72FF" stroke="#DDD7FF" strokeWidth="2" />
+        <Circle cx="10" cy="59" r="8" fill="#A68CEA" stroke="#F9F9FF" strokeWidth="2" />
+        <Circle cx="110" cy="59" r="8" fill="#A68CEA" stroke="#F9F9FF" strokeWidth="2" />
+        <Rect x="9" y="16" width="102" height="84" rx="40" ry="36" fill="url(#siteDottiShell)" stroke="#FFFFFF" strokeOpacity="0.82" strokeWidth="3" />
+        <Rect x="20" y="26" width="80" height="64" rx="29" ry="26" fill="url(#siteDottiPanel)" stroke="#6FE0FF" strokeOpacity="0.16" strokeWidth="2" />
+        <Ellipse cx="43" cy="54" rx={excited ? 7.5 : 6.5} ry={eyeHeight} fill="#53D6FF" />
+        <Ellipse cx="77" cy="54" rx={excited ? 7.5 : 6.5} ry={eyeHeight} fill="#53D6FF" />        <Path d={buildSiteDottiMouthPath(state)} fill={excited ? '#53D6FF22' : 'none'} stroke="#AAF7FF" strokeWidth="2.8" strokeLinecap="round" />
         {state === 'thinking' || state === 'analyzing' ? (
           <G opacity="0.9">
             <Circle cx="102" cy="27" r="3" fill="#6EE9FF" />
