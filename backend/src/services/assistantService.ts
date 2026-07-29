@@ -748,7 +748,7 @@ export class AssistantService {
 
     const [
       analyticsSummary,
-      liveSocial: resolvedLiveSocial,
+      liveSocial,
       outbound,
       inbound,
       engagement,
