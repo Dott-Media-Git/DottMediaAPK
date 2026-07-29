@@ -1252,6 +1252,20 @@ export class AssistantService {
   async answer(question: string, context: AssistantContext) {
     const locale = this.resolveLocale(context.locale);
     const accountSnapshot = await this.loadAccountSnapshot(context);
+    const asksForOverallPerformance =
+      /\b(review|check|show|summari[sz]e|analy[sz]e|tell me about)\b[\s\S]{0,60}\b(performance|results|metrics|stats)\b/i.test(question) ||
+      /\b(account|overall|business|marketing)\s+(performance|results|metrics|stats)\b/i.test(question) ||
+      /\bhow(?:'s| is| are)\b[\s\S]{0,50}\b(account|business|performance|performing)\b/i.test(question);
+    const asksForAdsPerformance = /\b(ad spend|ad performance|ads? report(?:ing)?|campaign reporting|impressions|click-through rate|\bctr\b)\b/i.test(question);
+    const includeAdsPerformance = asksForOverallPerformance || asksForAdsPerformance;
+    const liveAdsReport = context.userId && includeAdsPerformance
+      ? await this.safeResolve<Awaited<ReturnType<typeof metaAdsControlService.reportingSummary>> | null>(
+          'live Meta Ads performance',
+          () => metaAdsControlService.reportingSummary(context.userId!),
+          null,
+          15_000,
+        )
+      : null;
 
     if (context.userId && this.shouldSendMonthlyReport(question)) {
       try {
@@ -1386,6 +1400,7 @@ export class AssistantService {
       'If the user asks for anything unrelated to their account or business, reply briefly that you can only help with their account and business inside Dott.',
       'Base every answer on the account data provided below. Never invent metrics or connected channels.',
       'For a general account-performance, views, interactions, engagement, or Dashboard question, always report AUTHORITATIVE DASHBOARD PERFORMANCE first. It is the Supabase-primary aggregation used by the visible Dashboard.',
+      'When LIVE META ADS PERFORMANCE is supplied for a general performance review, always include its spend, impressions, reach/click results, messages, leads, CTR, and campaign status after the organic performance. Clearly label organic and paid results separately.',
       'Never replace the authoritative Dashboard totals with the smaller direct connected-channel snapshot. Only use that snapshot when the user explicitly asks for a recent channel-by-channel or direct Meta/social breakdown, and label its time range and scope.',
       'If the Dashboard total and the direct connected-channel snapshot differ, state that they are different datasets instead of presenting either one as the other.',
       'You have account-scoped access to the supplied daily and 30-day dashboard metrics, posting history, connected social accounts, and Meta Ads connection. Use the correct time range requested by the user and state clearly when a particular dataset is empty or unavailable.',
@@ -1419,6 +1434,7 @@ export class AssistantService {
         ? `Legacy CRM snapshot: Leads=${context.analytics.leads ?? 'n/a'}, Engagement=${context.analytics.engagement ?? 'n/a'}%, Conversions=${context.analytics.conversions ?? 'n/a'}`
         : '',
       accountContextBlock ? `Live account data:\n${accountContextBlock}` : '',
+      liveAdsReport ? `LIVE META ADS PERFORMANCE (connected account, live 30-day report): ${liveAdsReport.text}` : '',
       knowledgeBlock,
     ]
       .filter(Boolean)
@@ -1542,7 +1558,8 @@ export class AssistantService {
             'I can still help using your live account data while the AI reasoning provider reconnects:',
             '',
             accountContextBlock,
-          ].join('\n'),
+            liveAdsReport ? `Paid ads: ${liveAdsReport.text}` : '',
+          ].filter(Boolean).join('\n'),
         };
       }
       if (kind !== 'generic') {
