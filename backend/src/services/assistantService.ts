@@ -879,7 +879,7 @@ export class AssistantService {
       snapshot.targetAudience ? `Target audience: ${snapshot.targetAudience}` : '',
       snapshot.subscriptionStatus ? `Subscription status: ${snapshot.subscriptionStatus}` : '',
       `Connected channels: ${snapshot.connectedChannels.length ? snapshot.connectedChannels.join(', ') : 'none connected'}`,
-      `Connected social account details: ${Object.keys(snapshot.socialAccounts).length ? JSON.stringify(snapshot.socialAccounts) : 'none stored'}.`,
+      Connected social account records: ${Object.keys(snapshot.socialAccounts).length ? Object.keys(snapshot.socialAccounts).join(', ') : 'none stored'}.,
       `Meta Ads account: ${JSON.stringify(snapshot.adsAccount)}.`,
       `Dashboard daily metrics (up to 30 days, oldest to newest): ${JSON.stringify(snapshot.analyticsSummary.history.slice(-30))}.`,
       `Complete account metric history by category (up to 30 days): ${JSON.stringify(snapshot.metricHistory)}.`,
@@ -1559,14 +1559,17 @@ export class AssistantService {
 
       console.error('OpenAI Error:', { status, code, message });
       if (accountContextBlock) {
+        const dashboard = accountSnapshot?.dashboardPerformance;
+        const organicFallback = dashboard
+          ? `Organic performance: ${this.formatWholeNumber(dashboard.views)} views, ${this.formatWholeNumber(dashboard.interactions)} interactions, ${dashboard.engagementRate.toFixed(2)}% engagement, ${this.formatWholeNumber(dashboard.conversions)} conversions.`
+          : 'Organic performance is temporarily unavailable.';
         return {
           type: 'text',
           text: [
-            'I can still help using your live account data while the AI reasoning provider reconnects:',
-            '',
-            accountContextBlock,
-            liveAdsContext ? `Paid ads: ${liveAdsContext}` : '',
-          ].filter(Boolean).join('\n'),
+            'Here is your live account performance:',
+            organicFallback,
+            liveAdsContext ? `Paid ads: ${liveAdsContext}` : 'Paid ads performance is unavailable for this request.',
+          ].join('\n'),
         };
       }
       if (kind !== 'generic') {
