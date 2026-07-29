@@ -715,15 +715,30 @@ export class AssistantService {
       email: context.userEmail,
     };
 
-    // Load the authoritative dashboard series before slower channel enrichment.
-    // Running every external query together can starve this request and make
-    // Dotti incorrectly report zeros even while the Dashboard has live data.
-    const activityHeatmap = await this.safeResolve(
-      'activity heatmap',
-      () => getActivityHeatmap(analyticsScope, 30),
-      [] as ActivityHeatmapDaily[],
+    // Read the persisted live-social snapshots directly from Supabase first.
+    // These are the authoritative corrected rows used by the Dashboard and do
+    // not depend on slower Firestore or external social API enrichment.
+    const liveSocialRows = await this.safeResolve(
+      'live social daily snapshots',
+      () => supabaseFallbackService.getMetricDailyRows('liveSocialSnapshot', { userId: context.userId! }, 30),
+      [],
       10_000,
     );
+    const activityHeatmap: ActivityHeatmapDaily[] = liveSocialRows.length
+      ? liveSocialRows.map(row => ({
+          date: row.date,
+          views: Number((row.counters as any)?.views ?? 0),
+          interactions: Number((row.counters as any)?.interactions ?? 0),
+          outbound: Number((row.counters as any)?.outbound ?? 0),
+          conversions: Number((row.counters as any)?.conversions ?? 0),
+          redirectClicks: Number((row.counters as any)?.redirectClicks ?? 0),
+        }))
+      : (await this.safeResolve(
+          'activity heatmap',
+          () => getActivityHeatmap(analyticsScope, 30),
+          [] as ActivityHeatmapDaily[],
+          10_000,
+        )) ?? [];
 
     const [
       analyticsSummary,
