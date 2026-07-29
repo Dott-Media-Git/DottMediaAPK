@@ -13,6 +13,8 @@ import {
   recordLiveSocialHeatmapSnapshot,
 } from '../services/analyticsService';
 import { getLiveSocialMetrics } from '../services/liveSocialMetricsService';
+import { supabaseFallbackService } from '../services/supabaseFallbackService';
+import { resolveAnalyticsScopeKey } from '../services/analyticsScope';
 import { canUseOutboundPipeline } from '../utils/socialAccess';
 
 const router = Router();
