@@ -567,83 +567,65 @@ const DottiAvatar: React.FC<{ state: DottiState; size?: number }> = ({ state, si
     return () => clearInterval(interval);
   }, [state]);
 
-  const translateY = float.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, -4 * cfg.bob],
-  });
-  const eyeHeight = blink ? 2 : 13 * cfg.eye;
+  const translateY = float.interpolate({ inputRange: [0, 1], outputRange: [0, -4 * cfg.bob] });
+  const excited = state === 'excited' || state === 'closing';
+  const sleepy = state === 'empathetic';
+  const eyeHeight = blink || sleepy ? 1.8 : excited ? 3.4 : Math.max(5.5, 9.5 * cfg.eye);
 
   return (
-    <Animated.View style={[styles.dottiAvatar, { width: size, height: size + 8, transform: [{ translateY }] }]}>
-      <Svg width={size} height={size + 8} viewBox="0 0 260 300">
+    <Animated.View style={[styles.dottiAvatar, { width: size, height: size, transform: [{ translateY }] }]}>
+      <Svg width={size} height={size} viewBox="0 0 120 112">
         <Defs>
-          <RadialGradient id="dottiBody" cx="42%" cy="32%" r="75%">
+          <RadialGradient id="siteDottiShell" cx="34%" cy="24%" r="82%">
             <Stop offset="0%" stopColor="#FFFFFF" />
-            <Stop offset="48%" stopColor="#F3F7FF" />
-            <Stop offset="100%" stopColor="#DDE8FF" />
+            <Stop offset="58%" stopColor="#D8DAF9" />
+            <Stop offset="100%" stopColor="#8E77E8" />
           </RadialGradient>
-          <RadialGradient id="dottiFace" cx="45%" cy="28%" r="72%">
-            <Stop offset="0%" stopColor="#FFFFFF" />
-            <Stop offset="62%" stopColor="#FFF8F2" />
-            <Stop offset="100%" stopColor="#F0E6DE" />
-          </RadialGradient>
-          <RadialGradient id="dottiEye" cx="40%" cy="38%" r="70%">
-            <Stop offset="0%" stopColor="#FFFFFF" />
-            <Stop offset="24%" stopColor="#78F6FF" />
-            <Stop offset="100%" stopColor="#13294B" />
+          <RadialGradient id="siteDottiPanel" cx="50%" cy="20%" r="82%">
+            <Stop offset="0%" stopColor="#20245C" />
+            <Stop offset="64%" stopColor="#050614" />
+            <Stop offset="100%" stopColor="#02030C" />
           </RadialGradient>
         </Defs>
-        <Ellipse cx="130" cy="270" rx="60" ry="12" fill="#0B1220" opacity="0.16" />
-        <Path d="M54 218 C44 183 46 124 74 82 C101 40 159 35 191 69 C226 106 224 173 207 221 C190 267 75 266 54 218Z" fill="url(#dottiBody)" stroke="#ABC2EE" strokeWidth="5" />
-        <Path d="M72 88 C63 76 60 62 66 50 C73 36 89 35 101 48 C91 59 83 73 80 91" fill="#EAF1FF" stroke="#ABC2EE" strokeWidth="5" />
-        <Path d="M188 88 C197 76 200 62 194 50 C187 36 171 35 159 48 C169 59 177 73 180 91" fill="#EAF1FF" stroke="#ABC2EE" strokeWidth="5" />
-        <Circle cx="130" cy="151" r="73" fill="url(#dottiFace)" stroke="#F0DCD1" strokeWidth="4" />
-        <Path d="M58 153 C50 166 50 184 59 197" fill="none" stroke="#26324C" strokeWidth="7" strokeLinecap="round" opacity="0.5" />
-        <Path d="M202 153 C210 166 210 184 201 197" fill="none" stroke="#26324C" strokeWidth="7" strokeLinecap="round" opacity="0.5" />
-        <Rect x="49" y="151" width="12" height="43" rx="6" fill="#26324C" opacity="0.72" />
-        <Rect x="199" y="151" width="12" height="43" rx="6" fill="#26324C" opacity="0.72" />
-        <Path d={`M84 ${118 + cfg.brow} C99 ${108 + cfg.brow} 113 ${108 + cfg.brow} 126 ${118 + cfg.brow}`} fill="none" stroke="#25324A" strokeWidth="6" strokeLinecap="round" opacity="0.65" />
-        <Path d={`M135 ${118 - cfg.brow} C149 ${108 - cfg.brow} 165 ${108 - cfg.brow} 179 ${118 - cfg.brow}`} fill="none" stroke="#25324A" strokeWidth="6" strokeLinecap="round" opacity="0.65" />
-        <Ellipse cx="104" cy="148" rx="17" ry={eyeHeight} fill="url(#dottiEye)" />
-        <Ellipse cx="156" cy="148" rx="17" ry={eyeHeight} fill="url(#dottiEye)" />
-        <Rect x="78" y="132" width="51" height="34" rx="13" fill="none" stroke="#1F2937" strokeWidth="5" />
-        <Rect x="131" y="132" width="51" height="34" rx="13" fill="none" stroke="#1F2937" strokeWidth="5" />
-        <Path d="M129 148 C130 146 132 146 131 148" fill="none" stroke="#1F2937" strokeWidth="5" strokeLinecap="round" />
-        <Path d="M76 145 L64 139" fill="none" stroke="#1F2937" strokeWidth="5" strokeLinecap="round" />
-        <Path d="M184 145 L196 139" fill="none" stroke="#1F2937" strokeWidth="5" strokeLinecap="round" />
-        {!blink ? (
+        <Ellipse cx="60" cy="101" rx="41" ry="8" fill="#6953FF" opacity="0.18" />
+        <Path d="M59 25 L62 8" stroke="#8C72FF" strokeWidth="4" strokeLinecap="round" />
+        <Circle cx="63" cy="7" r="7" fill="#8C72FF" stroke="#DDD7FF" strokeWidth="2" />
+        <Path d="M13 57 C13 24 31 15 60 15 C89 15 107 24 107 57 C107 88 89 101 60 101 C31 101 13 88 13 57Z" fill="url(#siteDottiShell)" stroke="#FFFFFF" strokeOpacity="0.82" strokeWidth="3" />
+        <Circle cx="12" cy="60" r="8" fill="#A68CEA" stroke="#F9F9FF" strokeWidth="2" />
+        <Circle cx="108" cy="60" r="8" fill="#A68CEA" stroke="#F9F9FF" strokeWidth="2" />
+        <Path d="M23 33 C33 24 87 24 97 33 C102 42 102 75 96 84 C84 94 36 94 24 84 C18 75 18 42 23 33Z" fill="url(#siteDottiPanel)" stroke="#6FE0FF" strokeOpacity="0.16" strokeWidth="2" />
+        <Ellipse cx="43" cy="55" rx={excited ? 8 : 6.5} ry={eyeHeight} fill="#53D6FF" />
+        <Ellipse cx="77" cy="55" rx={excited ? 8 : 6.5} ry={eyeHeight} fill="#53D6FF" />
+        {!blink && !sleepy && !excited ? (
           <>
-            <Circle cx="99" cy="143" r="5" fill="#FFFFFF" opacity="0.9" />
-            <Circle cx="151" cy="143" r="5" fill="#FFFFFF" opacity="0.9" />
+            <Circle cx="41" cy="52" r="1.8" fill="#FFFFFF" opacity="0.9" />
+            <Circle cx="75" cy="52" r="1.8" fill="#FFFFFF" opacity="0.9" />
           </>
         ) : null}
-        <Circle cx="78" cy="174" r="13" fill="#FF8FA5" opacity={cfg.blush} />
-        <Circle cx="182" cy="174" r="13" fill="#FF8FA5" opacity={cfg.blush} />
-        <Path d={buildDottiMouthPath(cfg.mouth)} fill="#26324C" transform="translate(130 201)" opacity="0.88" />
-        {state === 'analyzing' || state === 'thinking' ? (
-          <G opacity="0.82">
-            <Circle cx="206" cy="84" r="8" fill="#55D6BE" />
-            <Circle cx="222" cy="70" r="5" fill="#7C5CFF" />
-            <Rect x="214" y="92" width="22" height="6" rx="3" fill="#F7B955" />
+        <Path d={buildSiteDottiMouthPath(state)} fill={excited ? '#53D6FF22' : 'none'} stroke="#AAF7FF" strokeWidth="2.8" strokeLinecap="round" />
+        {state === 'thinking' || state === 'analyzing' ? (
+          <G opacity="0.9">
+            <Circle cx="102" cy="27" r="3" fill="#6EE9FF" />
+            <Circle cx="110" cy="19" r="2" fill="#B680FF" />
           </G>
         ) : null}
-        {state === 'thinking' ? (
-          <G opacity="0.9">
-            <Circle cx="196" cy="57" r="9" fill="#FFFFFF" stroke="#7C5CFF" strokeWidth="4" />
-            <Circle cx="216" cy="38" r="14" fill="#FFFFFF" stroke="#7C5CFF" strokeWidth="4" />
-            <Circle cx="238" cy="27" r="8" fill="#FFFFFF" stroke="#7C5CFF" strokeWidth="4" />
-            <Path d="M91 184 C106 196 151 196 168 184" fill="none" stroke="#26324C" strokeWidth="5" strokeLinecap="round" opacity="0.45" />
-          </G>
-        ) : null}
-        {state === 'closing' || state === 'excited' ? (
-          <G opacity="0.9">
-            <Path d="M48 96 L56 110 L72 113 L60 124 L63 140 L48 132 L34 140 L37 124 L25 113 L41 110Z" fill="#F7B955" />
-            <Circle cx="213" cy="111" r="7" fill="#55D6BE" />
+        {excited ? (
+          <G fill="#6EE9FF">
+            <Circle cx="9" cy="27" r="2.5" />
+            <Circle cx="111" cy="40" r="2" />
           </G>
         ) : null}
       </Svg>
     </Animated.View>
   );
+};
+
+const buildSiteDottiMouthPath = (state: DottiState) => {
+  if (state === 'listening' as DottiState || state === 'focused') return 'M55 73 C55 67 65 67 65 73 C65 79 55 79 55 73Z';
+  if (state === 'thinking') return 'M53 76 Q60 69 67 76';
+  if (state === 'excited' || state === 'closing') return 'M48 70 Q60 84 72 70 Q60 91 48 70Z';
+  if (state === 'empathetic') return 'M51 74 Q60 79 69 74';
+  return 'M49 70 Q60 82 71 70';
 };
 
 const buildDottiMouthPath = (smile: number) => {
