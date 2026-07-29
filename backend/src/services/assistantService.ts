@@ -1441,7 +1441,7 @@ export class AssistantService {
         ? `Legacy CRM snapshot: Leads=${context.analytics.leads ?? 'n/a'}, Engagement=${context.analytics.engagement ?? 'n/a'}%, Conversions=${context.analytics.conversions ?? 'n/a'}`
         : '',
       accountContextBlock ? `Live account data:\n${accountContextBlock}` : '',
-      liveAdsReport ? `LIVE META ADS PERFORMANCE (connected account, live 30-day report): ${liveAdsReport.text}` : '',
+      liveAdsContext ? `LIVE META ADS PERFORMANCE (connected account): ${liveAdsContext}` : '',
       knowledgeBlock,
     ]
       .filter(Boolean)
@@ -1565,7 +1565,7 @@ export class AssistantService {
             'I can still help using your live account data while the AI reasoning provider reconnects:',
             '',
             accountContextBlock,
-            liveAdsReport ? `Paid ads: ${liveAdsReport.text}` : '',
+            liveAdsContext ? `Paid ads: ${liveAdsContext}` : '',
           ].filter(Boolean).join('\n'),
         };
       }
