@@ -38,20 +38,16 @@ const DEFAULT_VIDEO_FACEBOOK_CAPTION =
   "Dott Media in motion.\n\nAI-powered systems, smarter marketing, stronger branding, and business automation that keeps working for you.\n\nVisit: www.dott-media.org\nMessage us for a walkthrough.\n\n#DottMedia #AIAutomation #BusinessGrowth #BrandSystems #DigitalMedia #MarketingAutomation";
 const LINKEDIN_API = 'https://api.linkedin.com/v2';
 const PUBLISHED_IMAGE_FILENAMES = new Set([
-  'services-ai-workflows.jpeg',
-  'best-ai-automation-services.jpeg',
-  'best-ai-tech-services.jpeg',
-  'special-deals-first-service.jpeg',
-  'social-ai-connectivity.jpeg',
-  'ai-drive-business-growth.png',
-  'increase-business-efficiency-speed.png',
-  'boost-sales-ai-sales-agent.png',
-  'bot-efficiency-reduced-workload.png',
-  'ai-sales-agent-team.png',
-  'ai-sales-agent-close-faster.png',
-  'meet-your-new-ai-sales-agent.png',
+  'dotti-grow-online-market.png',
+  'dotti-grow-online-retail.png',
+  'dotti-grow-online-fashion.png',
+  'dotti-global-agriculture.png',
+  'dotti-international-market.png',
+  'dotti-ads-performance.png',
+  'dotti-automotive-sales.png',
+  'dotti-real-estate-sales.png',
 ]);
-const FALLBACK_IMAGE_FILENAME = 'services-ai-workflows.jpeg';
+const FALLBACK_IMAGE_FILENAME = 'dotti-grow-online-market.png';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,244 +55,75 @@ const __dirname = path.dirname(__filename);
 const STATIC_CAMPAIGN_ITEMS = [
   {
     type: 'image',
-    slug: 'services-ai-workflows',
-    filename: 'services-ai-workflows.jpeg',
+    slug: 'dotti-grow-online-market',
+    filename: 'dotti-grow-online-market.png',
     instagramCaption:
-      "Tech. Automation. Branding.\n\nDott Media helps businesses scale with AI workflow integration, websites, apps, automation, branding, and media production.\n\nDM us to get started. Link in bio.\n\n#DottMedia #Automation #Branding #AIForBusiness #WebDevelopment #AppDevelopment #BusinessGrowth",
+      "Grow your business online with Dotti. Reach more customers, build stronger relationships, and turn digital attention into sales with an AI sales and marketing agent working beside you.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
     facebookCaption:
-      "Tech. Automation. Branding.\n\nDott Media helps businesses scale with AI workflow integration, websites, apps, automation, branding, and media production.\n\nGet started: www.dott-media.org\nMessage us for a quote.\n\n#DottMedia #Automation #Branding #AIForBusiness #WebDevelopment #AppDevelopment #BusinessGrowth",
+      "Grow your business online with Dotti. Reach more customers, build stronger relationships, and turn digital attention into sales with an AI sales and marketing agent working beside you.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
   },
   {
     type: 'image',
-    slug: 'best-ai-automation-services',
-    filename: 'best-ai-automation-services.jpeg',
+    slug: 'dotti-grow-online-retail',
+    filename: 'dotti-grow-online-retail.png',
     instagramCaption:
-      "Best AI automation services for brands that want to move faster.\n\nWe help businesses save time and grow with AI-powered tools and automation workflows.\n\nDM us for the 10% offer. Link in bio.\n\n#DottMedia #AIAutomation #MarketingAutomation #BusinessAutomation #AIServices #DigitalGrowth",
+      "Take your retail business online with Dotti. Stay visible, engage customers faster, and create more opportunities to sell beyond your physical location.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
     facebookCaption:
-      "Best AI automation services for brands that want to move faster.\n\nWe help businesses save time and grow with AI-powered tools and automation workflows.\n\nGet up to 10% off selected services.\nVisit: www.dott-media.org\n\n#DottMedia #AIAutomation #MarketingAutomation #BusinessAutomation #AIServices #DigitalGrowth",
+      "Take your retail business online with Dotti. Stay visible, engage customers faster, and create more opportunities to sell beyond your physical location.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
   },
   {
     type: 'image',
-    slug: 'best-ai-tech-services',
-    filename: 'best-ai-tech-services.jpeg',
+    slug: 'dotti-grow-online-fashion',
+    filename: 'dotti-grow-online-fashion.png',
     instagramCaption:
-      "Best AI and tech services for modern brands.\n\nFrom workflow integration to websites, automation, and brand identity, Dott Media builds systems that help you grow.\n\nSend us a DM for a quote.\n\n#DottMedia #TechServices #AIServices #BrandIdentity #WebAndAppDevelopment #GrowthSystems",
+      "Your products deserve a wider audience. Dotti helps fashion and retail brands create content, connect with customers, nurture leads, and grow online sales.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
     facebookCaption:
-      "Best AI and tech services for modern brands.\n\nFrom workflow integration to websites, automation, and brand identity, Dott Media builds systems that help you grow.\n\nSend a quote request today: www.dott-media.org\n\n#DottMedia #TechServices #AIServices #BrandIdentity #WebAndAppDevelopment #GrowthSystems",
+      "Your products deserve a wider audience. Dotti helps fashion and retail brands create content, connect with customers, nurture leads, and grow online sales.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
   },
   {
     type: 'image',
-    slug: 'special-deals-first-service',
-    filename: 'special-deals-first-service.jpeg',
+    slug: 'dotti-global-agriculture',
+    filename: 'dotti-global-agriculture.png',
     instagramCaption:
-      "Dott Media can help you grow faster with AI-powered tools, automation, branding, and content systems.\n\nSpecial deals are available on your first service.\n\nLink in bio.\n\n#DottMedia #SpecialOffer #AIForBusiness #CreativeMedia #DigitalMarketing #AutomationAgency",
+      "From the farm to global customers: Dotti helps agricultural businesses improve visibility, build trusted connections, and create stronger online sales opportunities.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
     facebookCaption:
-      "Dott Media can help you grow faster with AI-powered tools, automation, branding, and content systems.\n\nSpecial deals are available on your first service.\nVisit: www.dott-media.org\n\n#DottMedia #SpecialOffer #AIForBusiness #CreativeMedia #DigitalMarketing #AutomationAgency",
+      "From the farm to global customers: Dotti helps agricultural businesses improve visibility, build trusted connections, and create stronger online sales opportunities.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
   },
   {
     type: 'image',
-    slug: 'social-ai-connectivity',
-    filename: 'social-ai-connectivity.jpeg',
+    slug: 'dotti-international-market',
+    filename: 'dotti-international-market.png',
     instagramCaption:
-      "One AI system can connect your socials, automate your workflows, and keep your brand moving around the clock.\n\nDott Media builds growth systems for modern businesses.\n\nDM us to set yours up.\n\n#DottMedia #AIForBusiness #Automation #SocialMediaSystems #GrowthSystems #DigitalStrategy",
+      "Grow beyond borders with Dotti. Reach international customers, build trust, and turn better online visibility into stronger sales for your business.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
     facebookCaption:
-      "One AI system can connect your socials, automate your workflows, and keep your brand moving around the clock.\n\nDott Media builds growth systems for modern businesses.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AIForBusiness #Automation #SocialMediaSystems #GrowthSystems #DigitalStrategy",
+      "Grow beyond borders with Dotti. Reach international customers, build trust, and turn better online visibility into stronger sales for your business.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
   },
   {
     type: 'image',
-    slug: 'ai-drive-business-growth',
-    filename: 'ai-drive-business-growth.png',
+    slug: 'dotti-ads-performance',
+    filename: 'dotti-ads-performance.png',
     instagramCaption:
-      "Let AI drive your business growth.\n\nDott Media builds AI sales agents that help you speed up sales, automate repetitive work, and drive growth while you stay focused on closing bigger opportunities.\n\nDM us to get started. Link in bio.\n\n#DottMedia #AISalesAgent #BusinessGrowth #SalesAutomation #AIForBusiness #GrowthSystems",
+      "Marketing works better when the results are visible. Dotti brings connected ad performance, reach, impressions, clicks, and customer messages into one clear workspace.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
     facebookCaption:
-      "Let AI drive your business growth.\n\nDott Media builds AI sales agents that help you speed up sales, automate repetitive work, and drive growth while you stay focused on bigger opportunities.\n\nLearn more: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AISalesAgent #BusinessGrowth #SalesAutomation #AIForBusiness #GrowthSystems",
+      "Marketing works better when the results are visible. Dotti brings connected ad performance, reach, impressions, clicks, and customer messages into one clear workspace. The figures shown are an account snapshot, not guaranteed results.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
   },
   {
     type: 'image',
-    slug: 'increase-business-efficiency-speed',
-    filename: 'increase-business-efficiency-speed.png',
+    slug: 'dotti-automotive-sales',
+    filename: 'dotti-automotive-sales.png',
     instagramCaption:
-      "Increase business efficiency and speed with an AI sales agent.\n\nLet AI handle follow-up, qualification, and repetitive sales tasks so your team can move faster and close more.\n\nDM us for a walkthrough. Link in bio.\n\n#DottMedia #AISalesAgent #BusinessEfficiency #SalesGrowth #Automation #AIForBusiness",
+      "Sell more vehicles with less friction. Dotti helps automotive businesses capture enquiries, follow up automatically, support customers, and move qualified buyers toward the right car.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
     facebookCaption:
-      "Increase business efficiency and speed with an AI sales agent.\n\nLet AI handle follow-up, qualification, and repetitive sales tasks so your team can move faster and close more.\n\nVisit: www.dott-media.org\nMessage us for a walkthrough.\n\n#DottMedia #AISalesAgent #BusinessEfficiency #SalesGrowth #Automation #AIForBusiness",
+      "Sell more vehicles with less friction. Dotti helps automotive businesses capture enquiries, follow up automatically, support customers, and move qualified buyers toward the right car.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
   },
   {
     type: 'image',
-    slug: 'boost-sales-ai-sales-agent',
-    filename: 'boost-sales-ai-sales-agent.png',
+    slug: 'dotti-real-estate-sales',
+    filename: 'dotti-real-estate-sales.png',
     instagramCaption:
-      "Boost your sales with an AI sales agent.\n\nMore leads. More sales. More revenue.\n\nDott Media helps brands automate conversations, qualification, and follow-up so conversions can keep moving around the clock.\n\nDM us to set yours up.\n\n#DottMedia #AISalesAgent #LeadGeneration #SalesGrowth #RevenueGrowth #Automation",
+      "Close more real-estate opportunities and build lasting client relationships. Dotti helps generate leads, automate follow-up, support prospects, and keep every deal moving.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
     facebookCaption:
-      "Boost your sales with an AI sales agent.\n\nMore leads. More sales. More revenue.\n\nDott Media helps brands automate conversations, qualification, and follow-up so conversions keep moving around the clock.\n\nVisit: www.dott-media.org\nMessage us to set yours up.\n\n#DottMedia #AISalesAgent #LeadGeneration #SalesGrowth #RevenueGrowth #Automation",
-  },
-  {
-    type: 'image',
-    slug: 'bot-efficiency-reduced-workload',
-    filename: 'bot-efficiency-reduced-workload.png',
-    instagramCaption:
-      "Bot efficiency. Reduced workload.\n\nOur AI sales agents take care of time-consuming tasks so your team can focus on strategy, service, and closing deals.\n\nDM us to see how it fits your business.\n\n#DottMedia #AISalesAgent #Productivity #WorkflowAutomation #BusinessSystems #AIForBusiness",
-    facebookCaption:
-      "Bot efficiency. Reduced workload.\n\nOur AI sales agents take care of time-consuming tasks so your team can focus on strategy, service, and closing deals.\n\nVisit: www.dott-media.org\nMessage us to see how it fits your business.\n\n#DottMedia #AISalesAgent #Productivity #WorkflowAutomation #BusinessSystems #AIForBusiness",
-  },
-  {
-    type: 'image',
-    slug: 'ai-sales-agent-team',
-    filename: 'ai-sales-agent-team.png',
-    instagramCaption:
-      "AI sales agent. Sell smarter. Close faster. 24/7.\n\nEngage, qualify, and close deals with a system that keeps working even when your team is offline.\n\nDM us for a demo. Link in bio.\n\n#DottMedia #AISalesAgent #CloseFaster #SalesSystems #AIForBusiness #DigitalGrowth",
-    facebookCaption:
-      "AI sales agent. Sell smarter. Close faster. 24/7.\n\nEngage, qualify, and close deals with a system that keeps working even when your team is offline.\n\nLearn more: www.dott-media.org\nMessage us for a demo.\n\n#DottMedia #AISalesAgent #CloseFaster #SalesSystems #AIForBusiness #DigitalGrowth",
-  },
-  {
-    type: 'image',
-    slug: 'ai-sales-agent-close-faster',
-    filename: 'ai-sales-agent-close-faster.png',
-    instagramCaption:
-      "AI sales agent for brands that want to sell smarter and close faster.\n\nDott Media helps you engage leads instantly, qualify opportunities, and keep conversations active 24/7.\n\nDM us to build yours.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadQualification #AlwaysOnSales #BusinessGrowth",
-    facebookCaption:
-      "AI sales agent for brands that want to sell smarter and close faster.\n\nDott Media helps you engage leads instantly, qualify opportunities, and keep conversations active 24/7.\n\nVisit: www.dott-media.org\nMessage us to build yours.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadQualification #AlwaysOnSales #BusinessGrowth",
-  },
-  {
-    type: 'image',
-    slug: 'meet-your-new-ai-sales-agent',
-    filename: 'meet-your-new-ai-sales-agent.png',
-    instagramCaption:
-      "Meet your new AI sales agent.\n\nNever miss a lead. Close more deals. Book meetings faster.\n\nDott Media builds sales systems that qualify prospects, answer objections, and keep your pipeline moving 24/7.\n\nDM us to get started.\n\n#DottMedia #AISalesAgent #CloseMoreDeals #LeadConversion #SalesSystems #Automation",
-    facebookCaption:
-      "Meet your new AI sales agent.\n\nNever miss a lead. Close more deals. Book meetings faster.\n\nDott Media builds sales systems that qualify prospects, answer objections, and keep your pipeline moving 24/7.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AISalesAgent #CloseMoreDeals #LeadConversion #SalesSystems #Automation",
-  },
-  {
-    type: 'image',
-    slug: 'ai-automates-sales-tasks',
-    filename: 'ai-automates-sales-tasks.png',
-    instagramCaption:
-      "AI that automates sales tasks effortlessly.\n\nLet Dott Media handle the repetitive work so your team can focus on closing.\n\nDM us to set yours up. Link in bio.\n\n#DottMedia #AISalesAgent #SalesAutomation #WorkflowAutomation #BusinessGrowth",
-    facebookCaption:
-      "AI that automates sales tasks effortlessly.\n\nLet Dott Media handle the repetitive work so your team can focus on closing.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AISalesAgent #SalesAutomation #WorkflowAutomation #BusinessGrowth",
-  },
-  {
-    type: 'image',
-    slug: 'ai-automates-sales-tasks-2',
-    filename: 'ai-automates-sales-tasks-2.png',
-    instagramCaption:
-      "Automate follow-ups, qualification, and outreach with AI.\n\nDott Media builds sales systems that keep your pipeline moving.\n\nDM us to get started.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadGeneration #BusinessSystems",
-    facebookCaption:
-      "Automate follow-ups, qualification, and outreach with AI.\n\nDott Media builds sales systems that keep your pipeline moving.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadGeneration #BusinessSystems",
-  },
-  {
-    type: 'image',
-    slug: 'ai-handles-heavy-lifting',
-    filename: 'ai-handles-heavy-lifting.png',
-    instagramCaption:
-      "AI handles the heavy lifting.\n\nFree your team to focus on strategy while automation runs the day-to-day.\n\nDM us to build yours. Link in bio.\n\n#DottMedia #Automation #AISalesAgent #Productivity #BusinessGrowth",
-    facebookCaption:
-      "AI handles the heavy lifting.\n\nFree your team to focus on strategy while automation runs the day-to-day.\n\nVisit: www.dott-media.org\nMessage us to build yours.\n\n#DottMedia #Automation #AISalesAgent #Productivity #BusinessGrowth",
-  },
-  {
-    type: 'image',
-    slug: 'ai-sales-team-transformation',
-    filename: 'ai-sales-team-transformation.png',
-    instagramCaption:
-      "Transform your sales team with AI.\n\nFrom faster response times to smarter qualification, Dott Media builds systems that scale.\n\nDM us to start. Link in bio.\n\n#DottMedia #AISalesAgent #SalesGrowth #Automation #DigitalTransformation",
-    facebookCaption:
-      "Transform your sales team with AI.\n\nFrom faster response times to smarter qualification, Dott Media builds systems that scale.\n\nVisit: www.dott-media.org\nMessage us to start.\n\n#DottMedia #AISalesAgent #SalesGrowth #Automation #DigitalTransformation",
-  },
-  {
-    type: 'image',
-    slug: 'empowering-sales-ai-innovation',
-    filename: 'empowering-sales-ai-innovation.png',
-    instagramCaption:
-      "Empower sales with AI innovation.\n\nDott Media builds AI agents that qualify, engage, and convert leads around the clock.\n\nDM us to learn more.\n\n#DottMedia #AISalesAgent #Innovation #LeadConversion #SalesAutomation",
-    facebookCaption:
-      "Empower sales with AI innovation.\n\nDott Media builds AI agents that qualify, engage, and convert leads around the clock.\n\nVisit: www.dott-media.org\nMessage us to learn more.\n\n#DottMedia #AISalesAgent #Innovation #LeadConversion #SalesAutomation",
-  },
-  {
-    type: 'image',
-    slug: 'revolutionize-sales-ai-power',
-    filename: 'revolutionize-sales-ai-power.png',
-    instagramCaption:
-      "Revolutionize sales with AI power.\n\nBuild a system that works 24/7 and never misses a lead.\n\nDM us to set it up. Link in bio.\n\n#DottMedia #AISalesAgent #SalesSystems #AlwaysOn #BusinessGrowth",
-    facebookCaption:
-      "Revolutionize sales with AI power.\n\nBuild a system that works 24/7 and never misses a lead.\n\nVisit: www.dott-media.org\nMessage us to set it up.\n\n#DottMedia #AISalesAgent #SalesSystems #AlwaysOn #BusinessGrowth",
-  },
-  {
-    type: 'image',
-    slug: 'revolutionize-your-sales-ai',
-    filename: 'revolutionize-your-sales-ai.png',
-    instagramCaption:
-      "Revolutionize your sales with AI.\n\nFrom outreach to follow-up, Dott Media builds smart systems that close.\n\nDM us to get started.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadGeneration #GrowthSystems",
-    facebookCaption:
-      "Revolutionize your sales with AI.\n\nFrom outreach to follow-up, Dott Media builds smart systems that close.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #AISalesAgent #SalesAutomation #LeadGeneration #GrowthSystems",
-  },
-  {
-    type: 'image',
-    slug: 'revolutionize-your-sales-ai-2',
-    filename: 'revolutionize-your-sales-ai-2.png',
-    instagramCaption:
-      "AI sales systems that sell smarter and close faster.\n\nDott Media keeps your pipeline active 24/7.\n\nDM us for a walkthrough. Link in bio.\n\n#DottMedia #AISalesAgent #CloseFaster #SalesGrowth #Automation",
-    facebookCaption:
-      "AI sales systems that sell smarter and close faster.\n\nDott Media keeps your pipeline active 24/7.\n\nVisit: www.dott-media.org\nMessage us for a walkthrough.\n\n#DottMedia #AISalesAgent #CloseFaster #SalesGrowth #Automation",
-  },
-  {
-    type: 'image',
-    slug: 'ai-business-growth-family',
-    filename: 'ai-business-growth-family.png',
-    instagramCaption:
-      "AI-powered business growth without sacrificing family time.\n\nDott Media builds automation that gives you time back.\n\nDM us to get started. Link in bio.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #BusinessGrowth",
-    facebookCaption:
-      "AI-powered business growth without sacrificing family time.\n\nDott Media builds automation that gives you time back.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #BusinessGrowth",
-  },
-  {
-    type: 'image',
-    slug: 'family-time-ai-assistance',
-    filename: 'family-time-ai-assistance.png',
-    instagramCaption:
-      "Spend more time with family.\n\nLet AI handle the heavy lifting so your team can focus on what matters.\n\nDM us to build yours.\n\n#DottMedia #Automation #AISalesAgent #Productivity #FamilyTime",
-    facebookCaption:
-      "Spend more time with family.\n\nLet AI handle the heavy lifting so your team can focus on what matters.\n\nVisit: www.dott-media.org\nMessage us to build yours.\n\n#DottMedia #Automation #AISalesAgent #Productivity #FamilyTime",
-  },
-  {
-    type: 'image',
-    slug: 'father-son-sunset-jog',
-    filename: 'father-son-sunset-jog.png',
-    instagramCaption:
-      "Be present for the moments that matter.\n\nDott Media automates the busywork so you can focus on life and growth.\n\nDM us to get started.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #GrowthSystems",
-    facebookCaption:
-      "Be present for the moments that matter.\n\nDott Media automates the busywork so you can focus on life and growth.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #GrowthSystems",
-  },
-  {
-    type: 'image',
-    slug: 'riding-sunset-with-mom',
-    filename: 'riding-sunset-with-mom.png',
-    instagramCaption:
-      "Don’t miss the moments that matter.\n\nLet AI handle follow-ups and scheduling while you focus on your family.\n\nDM us to build yours.\n\n#DottMedia #Automation #AISalesAgent #FamilyFirst #BusinessGrowth",
-    facebookCaption:
-      "Don’t miss the moments that matter.\n\nLet AI handle follow-ups and scheduling while you focus on your family.\n\nVisit: www.dott-media.org\nMessage us to build yours.\n\n#DottMedia #Automation #AISalesAgent #FamilyFirst #BusinessGrowth",
-  },
-  {
-    type: 'image',
-    slug: 'riding-sunset-with-mom-2',
-    filename: 'riding-sunset-with-mom-2.png',
-    instagramCaption:
-      "More time for what matters.\n\nDott Media builds AI systems that free your schedule and grow your business.\n\nDM us to start.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #GrowthSystems",
-    facebookCaption:
-      "More time for what matters.\n\nDott Media builds AI systems that free your schedule and grow your business.\n\nVisit: www.dott-media.org\nMessage us to start.\n\n#DottMedia #Automation #AIForBusiness #WorkLifeBalance #GrowthSystems",
-  },
-  {
-    type: 'image',
-    slug: 'spend-more-time-with-family',
-    filename: 'spend-more-time-with-family.png',
-    instagramCaption:
-      "Spend more time with family while AI handles the busywork.\n\nDott Media automates sales and operations so you can focus on life.\n\nDM us to get started.\n\n#DottMedia #Automation #AIForBusiness #FamilyTime #BusinessGrowth",
-    facebookCaption:
-      "Spend more time with family while AI handles the busywork.\n\nDott Media automates sales and operations so you can focus on life.\n\nVisit: www.dott-media.org\nMessage us to get started.\n\n#DottMedia #Automation #AIForBusiness #FamilyTime #BusinessGrowth",
-  },
-  {
-    type: 'video',
-    slug: 'dott-main-showcase-video',
-    filename: 'dott-main-showcase-video.mp4',
-    instagramCaption: DEFAULT_VIDEO_INSTAGRAM_CAPTION,
-    facebookCaption: DEFAULT_VIDEO_FACEBOOK_CAPTION,
+      "Close more real-estate opportunities and build lasting client relationships. Dotti helps generate leads, automate follow-up, support prospects, and keep every deal moving.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
   },
 ];
 
