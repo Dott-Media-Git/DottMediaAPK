@@ -408,7 +408,7 @@ export const FloatingAssistant: React.FC = () => {
                 </View>
                 {showDotti ? (
                   <View style={styles.dottiSlot} pointerEvents="none">
-                    <DottiAvatar state={dottiState} size={62} />
+                    <DottiAvatar state={sending ? 'thinking' : listening ? 'focused' : 'happy'} size={62} />
                   </View>
                 ) : null}
                 <View style={styles.headerActions}>
