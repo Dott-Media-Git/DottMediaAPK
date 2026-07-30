@@ -581,10 +581,10 @@ export const DottiAvatar: React.FC<{ state: DottiState; size?: number }> = ({ st
             <Stop offset="58%" stopColor="#D8DAF9" />
             <Stop offset="100%" stopColor="#8E77E8" />
           </RadialGradient>
-          <RadialGradient id="siteDottiPanel" cx="42%" cy="24%" r="84%">
-            <Stop offset="0%" stopColor="#8B7AD8" />
-            <Stop offset="62%" stopColor="#6653B5" />
-            <Stop offset="100%" stopColor="#49388D" />
+          <RadialGradient id="siteDottiPanel" cx="50%" cy="20%" r="82%">
+            <Stop offset="0%" stopColor="#20245C" />
+            <Stop offset="64%" stopColor="#050614" />
+            <Stop offset="100%" stopColor="#02030C" />
           </RadialGradient>
         </Defs>
         <Path d="M60 24 L63 8" stroke="#8C72FF" strokeWidth="4" strokeLinecap="round" />
@@ -592,7 +592,7 @@ export const DottiAvatar: React.FC<{ state: DottiState; size?: number }> = ({ st
         <Circle cx="10" cy="59" r="8" fill="#A68CEA" stroke="#F9F9FF" strokeWidth="2" />
         <Circle cx="110" cy="59" r="8" fill="#A68CEA" stroke="#F9F9FF" strokeWidth="2" />
         <Rect x="9" y="16" width="102" height="84" rx="40" ry="36" fill="url(#siteDottiShell)" stroke="#FFFFFF" strokeOpacity="0.82" strokeWidth="3" />
-        <Rect x="20" y="26" width="80" height="64" rx="29" ry="26" fill="url(#siteDottiPanel)" stroke="#B9F4FF" strokeOpacity="0.48" strokeWidth="2" />
+        <Rect x="20" y="26" width="80" height="64" rx="29" ry="26" fill="url(#siteDottiPanel)" stroke="#6FE0FF" strokeOpacity="0.16" strokeWidth="2" />
         <Ellipse cx="43" cy="54" rx={excited ? 7.5 : 6.5} ry={eyeHeight} fill="#53D6FF" />
         <Ellipse cx="77" cy="54" rx={excited ? 7.5 : 6.5} ry={eyeHeight} fill="#53D6FF" />        <Path d={buildSiteDottiMouthPath(state)} fill={excited ? '#53D6FF22' : 'none'} stroke="#AAF7FF" strokeWidth="2.8" strokeLinecap="round" />
         {state === 'thinking' || state === 'analyzing' ? (
