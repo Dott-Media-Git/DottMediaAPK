@@ -19,6 +19,7 @@ export const SignupScreen: React.FC<Props> = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
 
   const getPasswordStrength = (value: string) => {
     if (!value) {
@@ -46,6 +47,19 @@ export const SignupScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const handleCreateAccount = async () => {
+    const trimmedName = name.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+    setError('');
+
+    if (!trimmedName || !normalizedEmail || !password) {
+      setError(t('Please enter your name, email address, and password.'));
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setError(t('Enter a valid email address.'));
+      return;
+    }
+
     try {
       if (strength.level === 'weak') {
         Alert.alert(
@@ -54,11 +68,22 @@ export const SignupScreen: React.FC<Props> = ({ navigation }) => {
         );
         return;
       }
-      await signUp(name.trim(), email.trim().toLowerCase(), password);
+      await signUp(trimmedName, normalizedEmail, password);
       Alert.alert(t('Verify your email'), t('We sent a verification link to your email address.'));
-    } catch (error) {
-      Alert.alert(t('Signup failed'), t('Please try again later.'));
-      console.error(error);
+    } catch (signupError) {
+      const code =
+        typeof signupError === 'object' && signupError !== null && 'code' in signupError
+          ? String((signupError as any).code)
+          : '';
+      const message =
+        code === 'auth/email-already-in-use'
+          ? t('An account already exists for this email. Try logging in instead.')
+          : code === 'auth/network-request-failed'
+            ? t('Network error. Check your connection and try again.')
+            : t('Signup failed. Please try again.');
+      setError(message);
+      Alert.alert(t('Signup failed'), message);
+      console.error(signupError);
     }
   };
 
@@ -100,12 +125,14 @@ export const SignupScreen: React.FC<Props> = ({ navigation }) => {
             </TouchableOpacity>
           }
         />
+        {error ? <Text style={styles.error}>{error}</Text> : null}
         <DMButton title={t('Sign Up')} onPress={handleCreateAccount} loading={state.loading} />
         <TouchableOpacity
           style={styles.footer}
           {...(Platform.OS === 'web' ? ({ href: '/login' } as any) : {})}
           accessibilityRole="link"
           accessibilityLabel={t('Log in')}
+          hitSlop={{ top: 12, right: 20, bottom: 12, left: 20 }}
           onPress={openLogin}
         >
           <Text style={styles.footerText}>
@@ -165,6 +192,11 @@ const styles = StyleSheet.create({
   link: {
     color: colors.accentMuted,
     fontWeight: '600'
+  },
+  error: {
+    color: colors.danger,
+    marginBottom: 12,
+    textAlign: 'center'
   }
 });
 
