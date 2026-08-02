@@ -2,6 +2,12 @@ name: Audit suspicious Firebase auth users
 
 on:
   workflow_dispatch:
+    inputs:
+      delete_confirmed:
+        description: Delete the exact allowlisted test accounts after auditing
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,4 +30,5 @@ jobs:
       - name: List matching auth records
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          DELETE_CONFIRMED_TEST_USERS: ${{ inputs.delete_confirmed }}
         run: node scripts/auditSuspiciousAuthUsers.mjs
