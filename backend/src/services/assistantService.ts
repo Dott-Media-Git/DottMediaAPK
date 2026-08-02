@@ -25,6 +25,7 @@ import { KnowledgeBaseService } from './knowledgeBaseService';
 import { getLiveSocialMetrics, type LiveSocialMetrics } from './liveSocialMetricsService';
 import { metaAdsControlService, type MetaAdsAction } from './metaAdsControlService';
 import { supabaseFallbackService } from './supabaseFallbackService';
+import { assistantCampaignService, type CampaignControlAction } from './assistantCampaignService';
 
 const assistantAI = new OpenAI({
   apiKey: config.assistantAI.apiKey,
@@ -1358,6 +1359,29 @@ export class AssistantService {
       {
         type: 'function',
         function: {
+          name: 'configure_social_campaign',
+          description: 'Configure, reschedule, pause, or resume the authenticated user’s recurring social campaign. Use only when the user explicitly requests a campaign or posting cadence change.',
+          parameters: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', enum: ['configure', 'pause', 'resume'] },
+              campaignName: { type: 'string' },
+              platforms: {
+                type: 'array',
+                items: { type: 'string', enum: ['instagram', 'instagram_story', 'instagram_reels', 'facebook', 'facebook_story', 'linkedin', 'threads', 'x', 'tiktok', 'youtube'] },
+              },
+              postsPerWeek: { type: 'number', minimum: 1, maximum: 35 },
+              contentBrief: { type: 'string', description: 'What the campaign should communicate, including audience, offer, tone, and CTA when provided.' },
+              businessType: { type: 'string' },
+              firstRunAt: { type: 'string', description: 'ISO-8601 first run date/time including timezone. Omit when the user did not specify an exact start time.' },
+            },
+            required: ['action'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
           name: 'meta_ads_report',
           description: 'Get live Meta Ads performance, campaign status, spend, clicks, messages, leads, and diagnostics for the authenticated account',
           parameters: { type: 'object', properties: {} },
@@ -1430,7 +1454,10 @@ export class AssistantService {
       'You can email a monthly performance report to the user when requested.',
       'Use Meta Ads tools for ad reporting, diagnostics, campaign drafts, activation, pauses, or budget changes. Never claim a write happened until its approval has been completed.',
       'All Meta Ads write actions go to an approval queue. Tell the user to review the request in Ads Manager.',
-      'Use the app tools only when the user asks to navigate, asks for a metric-specific account insight, or requests a Meta Ads operation.',
+      'When the user explicitly asks to implement, reschedule, pause, or resume a social posting campaign, use the campaign tool and follow their requested platforms, content brief, frequency, and first run time.',
+      'Never change another account. Never claim a campaign change happened unless the campaign tool returns success.',
+      'If an essential campaign detail is missing, ask one concise follow-up question instead of inventing it.',
+      'Use the app tools only when the user asks to navigate, asks for a metric-specific account insight, requests a campaign control, or requests a Meta Ads operation.',
       'Keep answers professional, direct, and useful. Use short paragraphs. Stay concise unless the user asks for a detailed breakdown.',
       `Respond in ${responseLanguage}.`,
       accountSnapshot?.company ? `User Company: ${accountSnapshot.company}` : context.company ? `User Company: ${context.company}` : '',
@@ -1493,6 +1520,24 @@ export class AssistantService {
             params = JSON.parse(toolCall.function.arguments || '{}');
           } catch (parseError) {
             console.error('Failed to parse tool arguments', parseError);
+          }
+
+          if (toolCall.function.name === 'configure_social_campaign' && context.userId) {
+            try {
+              const campaignParams = (params ?? {}) as Record<string, any>;
+              const result = await assistantCampaignService.configure(context.userId, {
+                action: campaignParams.action as CampaignControlAction,
+                campaignName: campaignParams.campaignName,
+                platforms: campaignParams.platforms,
+                postsPerWeek: campaignParams.postsPerWeek,
+                contentBrief: campaignParams.contentBrief,
+                businessType: campaignParams.businessType,
+                firstRunAt: campaignParams.firstRunAt,
+              });
+              return { type: 'text', text: result.message };
+            } catch (error) {
+              return { type: 'text', text: `I did not change the campaign: ${error instanceof Error ? error.message : String(error)}` };
+            }
           }
 
           if (toolCall.function.name === 'meta_ads_report' && context.userId) {
