@@ -74,12 +74,12 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
         style={styles.hero}
       >
         <Text style={styles.badge}>{t('AI Automation Suite')}</Text>
-        <Text style={styles.heroTitle}>DOTT-MEDIA</Text>
-        <Text style={styles.heroSubtitle}>{t('Command your AI operations cockpit.')}</Text>
+        <Text style={styles.heroTitle}>DOTTI</Text>
+        <Text style={styles.heroSubtitle}>{t('Welcome back — Dotti is ready to help you get things done.')}</Text>
       </LinearGradient>
       <View style={styles.card}>
         <Text style={styles.title}>{t('Welcome back')}</Text>
-        <Text style={styles.subtitle}>{t('Log in to orchestrate your AI-driven CRM.')}</Text>
+        <Text style={styles.subtitle}>{t('Sign in and continue where you left off with Dotti.')}</Text>
         <DMTextInput
           label={t('Email')}
           value={email}
@@ -114,7 +114,7 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
         </TouchableOpacity>
       </View>
       <View style={styles.footer}>
-        <Text style={styles.footerLabel}>{t('New to Dott Media?')}</Text>
+        <Text style={styles.footerLabel}>{t('New to Dotti?')}</Text>
         <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
           <Text style={styles.linkLabel}>{t('Create an account')}</Text>
         </TouchableOpacity>
