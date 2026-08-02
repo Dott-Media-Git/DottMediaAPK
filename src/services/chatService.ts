@@ -30,6 +30,7 @@ export const sendChatQuery = async (
     conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [],
     conversationId?: string,
     conversationTitle?: string,
+    attachments: Array<{ name: string; mimeType: string; size?: number; text?: string; dataUrl?: string }> = [],
 ): Promise<ChatResponse> => {
     const headers = await getHeaders();
 
@@ -37,7 +38,7 @@ export const sendChatQuery = async (
         const response = await fetch(`${API_URL}/api/assistant/chat`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ question, context, conversationHistory, conversationId, conversationTitle }),
+            body: JSON.stringify({ question, context, conversationHistory, conversationId, conversationTitle, attachments: attachments.slice(0, 8) }),
         });
 
         if (!response.ok) {

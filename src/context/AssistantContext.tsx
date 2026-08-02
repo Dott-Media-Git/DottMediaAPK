@@ -36,7 +36,7 @@ type AssistantContextValue = {
   openConversation: (id: string) => void;
   deleteConversation: (id: string) => Promise<void>;
   trackScreen: (screenName: string) => void;
-  sendMessage: (text: string, attachmentContext?: string) => Promise<string>;
+  sendMessage: (text: string, attachments?: Array<{ name: string; mimeType: string; size?: number; text?: string; dataUrl?: string }>) => Promise<string>;
 };
 
 const STORAGE_KEY = '@dott/assistant-enabled';
@@ -219,7 +219,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return 'Action performed.';
   };
 
-  const sendMessage = async (text: string, attachmentContext?: string) => {
+  const sendMessage = async (text: string, attachments?: Array<{ name: string; mimeType: string; size?: number; text?: string; dataUrl?: string }>) => {
     const conversationId = activeConversationId ?? `chat-${Date.now()}`;
     if (!activeConversationId) setActiveConversationId(conversationId);
     const userMsg: Message = { role: 'user', content: text };
@@ -246,19 +246,19 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         assistantVoice,
       };
 
-      const effectiveText = attachmentContext?.trim() ? `${text}\n\nAttached files:\n${attachmentContext.trim()}` : text;
       const conversationContext = buildConversationContext(conversations, messages);
       const conversationTitle = (messages.find(message => message.role === 'user')?.content ?? text)
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 52) || 'Chat with Dotti';
       const response = await sendChatQuery(
-        effectiveText,
+        text,
         context,
         locale,
         conversationContext,
         conversationId,
         conversationTitle,
+        attachments,
       );
 
       let botText = '';

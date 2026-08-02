@@ -41,6 +41,7 @@ type ChatAttachment = {
   size?: number;
   uri?: string;
   text?: string;
+  dataUrl?: string;
 };
 
 export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
@@ -100,10 +101,10 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
     const text = value.trim();
     if ((!text && attachments.length === 0) || isTyping) return;
     const visibleText = text || `Shared ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}`;
-    const attachmentContext = attachments.map(file => {
-      const details = `${file.name} (${file.mimeType}${file.size ? `, ${Math.ceil(file.size / 1024)} KB` : ''})`;
-      return file.text ? `${details}\nContent:\n${file.text.slice(0, 8000)}` : details;
-    }).join('\n\n');
+    const attachmentContext = attachments.map(file => ({
+      name: file.name, mimeType: file.mimeType, size: file.size,
+      text: file.text?.slice(0, 20_000), dataUrl: file.dataUrl,
+    }));
     setInput('');
     setAttachments([]);
     setAttachmentMenuOpen(false);
@@ -124,6 +125,13 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
         mimeType: file.type || 'application/octet-stream',
         size: file.size,
         uri: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+        dataUrl: file.type.startsWith('image/') && file.size <= 8_000_000
+          ? await new Promise<string | undefined>(resolve => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : undefined);
+              reader.onerror = () => resolve(undefined);
+              reader.readAsDataURL(file);
+            }) : undefined,
         text: !file.type.startsWith('image/') && file.size <= 500_000 ? await file.text().catch(() => undefined) : undefined,
       })));
       setAttachments(current => [...current, ...next].slice(0, 8));
@@ -136,7 +144,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
     if (Platform.OS === 'web') return chooseWebFiles('image');
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) return Alert.alert('Gallery access', 'Allow gallery access to share images with Dotti.');
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, quality: 0.8 });
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, quality: 0.8, base64: true });
     if (!result.canceled) {
       setAttachments(current => [...current, ...result.assets.map(asset => ({
         id: asset.assetId || `${asset.uri}-${Math.random()}`,
@@ -144,6 +152,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
         mimeType: asset.mimeType || 'image/jpeg',
         size: asset.fileSize,
         uri: asset.uri,
+        dataUrl: asset.base64 ? `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}` : undefined,
       }))].slice(0, 8));
     }
     setAttachmentMenuOpen(false);
