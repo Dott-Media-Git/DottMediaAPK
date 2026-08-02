@@ -26,6 +26,7 @@ import { getLiveSocialMetrics, type LiveSocialMetrics } from './liveSocialMetric
 import { metaAdsControlService, type MetaAdsAction } from './metaAdsControlService';
 import { supabaseFallbackService } from './supabaseFallbackService';
 import { assistantCampaignService, type CampaignControlAction } from './assistantCampaignService';
+import { assistantSocialActionService } from './assistantSocialActionService';
 
 const assistantAI = new OpenAI({
   apiKey: config.assistantAI.apiKey,
@@ -136,6 +137,7 @@ type AssistantContext = {
   assistantTone?: string;
   assistantVoice?: string;
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  attachments?: Array<{ name: string; mimeType: string; text?: string; url?: string }>;
   analytics?: {
     leads?: number;
     engagement?: number;
@@ -1382,6 +1384,33 @@ export class AssistantService {
       {
         type: 'function',
         function: {
+          name: 'generate_social_image',
+          description: 'Generate a new social image when the user explicitly asks Dotti to create or design an image.',
+          parameters: { type: 'object', properties: { prompt: { type: 'string' }, businessType: { type: 'string' } }, required: ['prompt'] },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'publish_social_post_now',
+          description: 'Immediately publish content to the authenticated account only when the user explicitly asks to post, publish, or send it now.',
+          parameters: { type: 'object', properties: {
+            platforms: { type: 'array', items: { type: 'string', enum: ['facebook', 'instagram', 'linkedin', 'threads', 'x', 'tiktok', 'youtube', 'whatsapp'] } },
+            caption: { type: 'string' }, hashtags: { type: 'string' }, imageUrl: { type: 'string' }, videoUrl: { type: 'string' },
+          }, required: ['platforms', 'caption'] },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'configure_account_replies',
+          description: 'Enable and tailor automatic replies to comments and direct messages for the authenticated account.',
+          parameters: { type: 'object', properties: { enabled: { type: 'boolean' }, instructions: { type: 'string' } }, required: ['enabled'] },
+        },
+      },
+      {
+        type: 'function',
+        function: {
           name: 'meta_ads_report',
           description: 'Get live Meta Ads performance, campaign status, spend, clicks, messages, leads, and diagnostics for the authenticated account',
           parameters: { type: 'object', properties: {} },
@@ -1457,6 +1486,9 @@ export class AssistantService {
       'When the user explicitly asks to implement, reschedule, pause, or resume a social posting campaign, use the campaign tool and follow their requested platforms, content brief, frequency, and first run time.',
       'Never change another account. Never claim a campaign change happened unless the campaign tool returns success.',
       'If an essential campaign detail is missing, ask one concise follow-up question instead of inventing it.',
+      'Inspect attached images and document text directly. Attachment media URLs are valid inputs for creating and publishing content.',
+      'Generate images only when requested. Publish only after an explicit post, publish, or send-now instruction and only to the named connected platforms.',
+      'You can enable and tailor account-scoped replies to comments and direct messages.',
       'Use the app tools only when the user asks to navigate, asks for a metric-specific account insight, requests a campaign control, or requests a Meta Ads operation.',
       'Keep answers professional, direct, and useful. Use short paragraphs. Stay concise unless the user asks for a detailed breakdown.',
       `Respond in ${responseLanguage}.`,
@@ -1477,6 +1509,7 @@ export class AssistantService {
         : '',
       accountContextBlock ? `Live account data:\n${accountContextBlock}` : '',
       liveAdsContext ? `LIVE META ADS PERFORMANCE (connected account): ${liveAdsContext}` : '',
+      context.attachments?.length ? `Attachments:\n${context.attachments.map((item, index) => `${index + 1}. ${item.name} (${item.mimeType})${item.url ? ` URL: ${item.url}` : ''}${item.text ? `\nText: ${item.text.slice(0, 12000)}` : ''}`).join('\n')}` : '',
       knowledgeBlock,
     ]
       .filter(Boolean)
@@ -1485,11 +1518,17 @@ export class AssistantService {
     const explicitAdsReportRequest = /\b(ad spend|ad performance|ads? report(?:ing)?|campaign reporting|impressions|click-through rate|\bctr\b)\b/i.test(question);
     const explicitAdsActionRequest = /\b(create (?:an? )?ad|campaign draft|pause (?:an? )?ad|activate (?:an? )?ad|change (?:the )?ad budget|update (?:the )?ad budget)\b/i.test(question);
     const explicitNavigationRequest = /\b(open|go to|navigate|take me to|show me)\b/i.test(question);
+    const explicitImageRequest = /\b(create|generate|design|make)\b[\s\S]{0,50}\b(image|graphic|poster|visual|artwork)\b/i.test(question);
+    const explicitPublishRequest = /\b(post|publish|send)\b[\s\S]{0,50}\b(now|immediately|to|on)\b/i.test(question);
+    const explicitReplyRequest = /\b(reply|replies|respond)\b[\s\S]{0,60}\b(comment|comments|message|messages|dm|dms)\b/i.test(question);
     const availableTools = tools.filter(tool => {
       const name = tool.function.name;
       if (name === 'navigate') return explicitNavigationRequest;
       if (name === 'meta_ads_report') return explicitAdsReportRequest;
       if (name === 'request_meta_ads_action') return explicitAdsActionRequest;
+      if (name === 'generate_social_image') return explicitImageRequest;
+      if (name === 'publish_social_post_now') return explicitPublishRequest;
+      if (name === 'configure_account_replies') return explicitReplyRequest;
       return false;
     });
 
@@ -1502,7 +1541,18 @@ export class AssistantService {
             role: message.role,
             content: message.content.slice(0, 4000),
           })),
-          { role: 'user', content: question },
+          {
+            role: 'user',
+            content: context.attachments?.some(item => item.url && item.mimeType.startsWith('image/'))
+              ? ([
+                  { type: 'text', text: question },
+                  ...context.attachments.filter(item => item.url && item.mimeType.startsWith('image/')).slice(0, 4).map(item => ({
+                    type: 'image_url' as const,
+                    image_url: { url: item.url as string },
+                  })),
+                ] as any)
+              : question,
+          },
         ],
         ...(availableTools.length ? { tools: availableTools, tool_choice: 'auto' as const } : {}),
         temperature: 0.3,
@@ -1537,6 +1587,51 @@ export class AssistantService {
               return { type: 'text', text: result.message };
             } catch (error) {
               return { type: 'text', text: `I did not change the campaign: ${error instanceof Error ? error.message : String(error)}` };
+            }
+          }
+
+          if (toolCall.function.name === 'generate_social_image' && context.userId) {
+            try {
+              const input = params as { prompt?: string; businessType?: string };
+              const generated = await assistantSocialActionService.generateImage({
+                userId: context.userId,
+                orgId: context.orgId,
+                prompt: String(input.prompt || question),
+                businessType: input.businessType || accountSnapshot?.company || context.company,
+              });
+              return { type: 'text', text: `I created the image.\n\n![Generated social image](${generated.imageUrl})\n\n[Open full image](${generated.imageUrl})` };
+            } catch (error) {
+              return { type: 'text', text: `I could not create the image: ${error instanceof Error ? error.message : String(error)}` };
+            }
+          }
+
+          if (toolCall.function.name === 'publish_social_post_now' && context.userId) {
+            if (!explicitPublishRequest) return { type: 'text', text: 'Please explicitly tell me to publish now and name the platforms.' };
+            try {
+              const input = params as { platforms?: string[]; caption?: string; hashtags?: string; imageUrl?: string; videoUrl?: string };
+              const attachmentUrl = context.attachments?.find(item => item.url)?.url;
+              const result = await assistantSocialActionService.publishNow({
+                userId: context.userId,
+                platforms: input.platforms || [],
+                caption: String(input.caption || ''),
+                hashtags: input.hashtags,
+                imageUrl: input.imageUrl || attachmentUrl,
+                videoUrl: input.videoUrl,
+              });
+              const scheduledCount = Array.isArray(result.scheduled) ? result.scheduled.length : result.scheduled;
+              return { type: 'text', text: `I sent the post to the live publisher for ${(input.platforms || []).join(', ')}. ${scheduledCount} platform post${scheduledCount === 1 ? '' : 's'} were created; Posting History shows each live result.` };
+            } catch (error) {
+              return { type: 'text', text: `I could not publish that post: ${error instanceof Error ? error.message : String(error)}` };
+            }
+          }
+
+          if (toolCall.function.name === 'configure_account_replies' && context.userId) {
+            try {
+              const input = params as { enabled?: boolean; instructions?: string };
+              await assistantSocialActionService.configureReplies({ userId: context.userId, enabled: input.enabled !== false, instructions: input.instructions });
+              return { type: 'text', text: input.enabled === false ? 'Automatic comment and message replies are disabled for this account.' : 'Automatic comment and message replies are live for this account and will follow your reply instructions.' };
+            } catch (error) {
+              return { type: 'text', text: `I could not update account replies: ${error instanceof Error ? error.message : String(error)}` };
             }
           }
 

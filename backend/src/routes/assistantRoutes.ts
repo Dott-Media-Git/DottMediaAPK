@@ -5,6 +5,7 @@ import { firestore } from '../db/firestore';
 import { AssistantService } from '../services/assistantService';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
+import { saveUploadedMediaBuffer } from '../services/generatedMediaService';
 
 const router = Router();
 const assistant = new AssistantService();
@@ -32,6 +33,13 @@ const BodySchema = z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string().min(1).max(4000),
   })).max(200).optional(),
+  attachments: z.array(z.object({
+    name: z.string().min(1).max(180),
+    mimeType: z.string().min(1).max(100),
+    size: z.number().max(8_000_000).optional(),
+    text: z.string().max(20_000).optional(),
+    dataUrl: z.string().max(12_000_000).optional(),
+  })).max(8).optional(),
   context: z
     .object({
       company: z.string().optional(),
@@ -218,12 +226,24 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
       ...cloudHistory,
       ...(parsed.conversationHistory ?? []),
     ]);
+    const resolvedAttachments = await Promise.all((parsed.attachments ?? []).map(async attachment => {
+      let url: string | undefined;
+      const match = attachment.dataUrl?.match(/^data:([^;]+);base64,(.+)$/s);
+      if (match && match[1] === attachment.mimeType && attachment.mimeType.startsWith('image/')) {
+        const buffer = Buffer.from(match[2], 'base64');
+        if (buffer.length <= 8_000_000) {
+          url = await saveUploadedMediaBuffer(buffer, 'images', attachment.mimeType.split('/')[1]?.replace('jpeg', 'jpg') || 'png');
+        }
+      }
+      return { name: attachment.name, mimeType: attachment.mimeType, text: attachment.text, url };
+    }));
     const answer = await assistant.answer(parsed.question, {
       ...(parsed.context ?? {}),
       // Conversation history may live under a legacy ID, but account data must
       // always be scoped exactly like the Dashboard: to the authenticated user.
       userId: authUser.uid,
       userEmail: authUser.email,
+      attachments: resolvedAttachments,
       conversationHistory,
     });
     const answerText = typeof answer === 'string'
