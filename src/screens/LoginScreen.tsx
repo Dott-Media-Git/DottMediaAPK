@@ -44,6 +44,14 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
+  const openSignup = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.location.assign('/signup');
+      return;
+    }
+    navigation.navigate('Signup');
+  };
+
   const handleSignIn = async () => {
     try {
       setError('');
@@ -115,7 +123,12 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
       </View>
       <View style={styles.footer}>
         <Text style={styles.footerLabel}>{t('New to Dotti?')}</Text>
-        <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
+        <TouchableOpacity
+          {...(Platform.OS === 'web' ? ({ href: '/signup' } as any) : {})}
+          accessibilityRole="link"
+          accessibilityLabel={t('Create an account')}
+          onPress={openSignup}
+        >
           <Text style={styles.linkLabel}>{t('Create an account')}</Text>
         </TouchableOpacity>
       </View>
