@@ -69,6 +69,22 @@ const createAnalytics = (): CRMAnalytics => ({
 
 const delay = (ms = 650) => new Promise(resolve => setTimeout(resolve, ms));
 
+const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
+  Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]);
+
+const settlePostSignupTask = async (label: string, task: Promise<unknown>) => {
+  try {
+    await withTimeout(task, 8000, label);
+  } catch (error) {
+    console.warn(`Post-signup task did not complete: ${label}`, error);
+  }
+};
+
 const mapFirebaseUser = (user: FirebaseUser): AuthUser => {
   const photoURL = typeof user.photoURL === 'string' ? user.photoURL.trim() : '';
   return {
@@ -273,9 +289,14 @@ export const signUp = async (name: string, email: string, password: string): Pro
   }
   const mappedUser = mapFirebaseUser(credential.user);
   const user = { ...mappedUser, name: name.trim() || mappedUser.name };
-  await ensureProfileDoc(user.uid, user, { subscriptionStatus: 'active', onboardingComplete: true });
-  await upsertUserRecord(user, 'password', true);
-  await requestBrandedVerificationEmail();
+  await Promise.all([
+    settlePostSignupTask(
+      'profile setup',
+      ensureProfileDoc(user.uid, user, { subscriptionStatus: 'active', onboardingComplete: true })
+    ),
+    settlePostSignupTask('user record setup', upsertUserRecord(user, 'password', true)),
+    settlePostSignupTask('verification email', requestBrandedVerificationEmail()),
+  ]);
   return { user };
 };
 
