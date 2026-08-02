@@ -37,6 +37,14 @@ export const SignupScreen: React.FC<Props> = ({ navigation }) => {
 
   const strength = getPasswordStrength(password);
 
+  const openLogin = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.location.assign('/login');
+      return;
+    }
+    navigation.navigate('Login');
+  };
+
   const handleCreateAccount = async () => {
     try {
       if (strength.level === 'weak') {
@@ -93,7 +101,13 @@ export const SignupScreen: React.FC<Props> = ({ navigation }) => {
           }
         />
         <DMButton title={t('Sign Up')} onPress={handleCreateAccount} loading={state.loading} />
-        <TouchableOpacity style={styles.footer} onPress={() => navigation.navigate('Login')}>
+        <TouchableOpacity
+          style={styles.footer}
+          {...(Platform.OS === 'web' ? ({ href: '/login' } as any) : {})}
+          accessibilityRole="link"
+          accessibilityLabel={t('Log in')}
+          onPress={openLogin}
+        >
           <Text style={styles.footerText}>
             {t('Already have an account?')} <Text style={styles.link}>{t('Log in')}</Text>
           </Text>
