@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '@context/AuthContext';
@@ -59,6 +59,14 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+      >
       <LinearGradient
         colors={[colors.accent, colors.accentSecondary]}
         start={{ x: 0, y: 0 }}
@@ -111,6 +119,7 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
           <Text style={styles.linkLabel}>{t('Create an account')}</Text>
         </TouchableOpacity>
       </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 };
@@ -119,8 +128,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    padding: 24,
-    justifyContent: 'center'
+  },
+  scrollView: {
+    flex: 1
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingTop: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 64
   },
   hero: {
     borderRadius: 30,
