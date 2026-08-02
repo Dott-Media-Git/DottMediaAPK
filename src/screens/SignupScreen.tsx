@@ -68,8 +68,8 @@ export const SignupScreen: React.FC<Props> = ({ navigation }) => {
         showsVerticalScrollIndicator={false}
       >
       <LinearGradient colors={[colors.accentSecondary, colors.accent]} style={styles.hero}>
-        <Text style={styles.title}>{t('Create your workspace')}</Text>
-        <Text style={styles.subtitle}>{t('Spin up the same bold CRM aesthetic showcased on dott-media.com.')}</Text>
+        <Text style={styles.title}>{t('Join Dotti')}</Text>
+        <Text style={styles.subtitle}>{t('Welcome to Dotti — let’s get you set up and ready to grow.')}</Text>
       </LinearGradient>
       <View style={styles.form}>
         <DMTextInput label={t('Full name')} value={name} onChangeText={setName} />
