@@ -849,12 +849,13 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
     return new Map<string, { createdAt?: string; lastLoginAt?: string; email?: string; name?: string }>();
   });
 
-  const [socialRows, posts, socialLogs, engagement, outbound] = await Promise.all([
+  const [socialRows, posts, socialLogs, engagement, outbound, fallbackIntegrationsSnap] = await Promise.all([
     timeout(supabaseFallbackService.getAllSocialAccounts(1000), 12000, 'admin social accounts fallback').catch(() => []),
     timeout(supabaseFallbackService.getRecentScheduledPosts(1000), 12000, 'admin scheduled posts fallback').catch(() => []),
     timeout(supabaseFallbackService.getRecentSocialLogs(1000), 12000, 'admin social logs fallback').catch(() => []),
     timeout(supabaseFallbackService.getMetricSummary('engagement'), 8000, 'admin engagement fallback').catch(() => null),
     timeout(supabaseFallbackService.getMetricSummary('outbound'), 8000, 'admin outbound fallback').catch(() => null),
+    timeout(integrationsCollection.get(), 8000, 'admin integration fallback').catch(() => null),
   ]);
 
   const connectedPlatforms: Record<string, number> = {
@@ -885,6 +886,8 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
 
   const accountRows = socialRows.length ? socialRows : KNOWN_CONNECTED_CLIENTS;
 
+  const tiktokOwners = new Set<string>();
+  const youtubeOwners = new Set<string>();
   accountRows.forEach(row => {
     if (!row.userId) return;
     clientEmails.set(row.userId, row.email ?? undefined);
@@ -894,9 +897,22 @@ async function getSupabaseAdminMetrics(): Promise<AdminMetrics> {
       if (hasConnectedAccount((accounts as Record<string, unknown>)[platform])) {
         connectedPlatforms[platform] += 1;
         connectedClients.add(row.userId);
+        if (platform === 'tiktok') tiktokOwners.add(row.userId);
+        if (platform === 'youtube') youtubeOwners.add(row.userId);
       }
     });
   });
+  fallbackIntegrationsSnap?.docs.forEach(doc => {
+    const data = doc.data() as Record<string, any>;
+    const ownerId = String(data.userId ?? doc.id).trim();
+    if (!ownerId) return;
+    if (data.provider === 'tiktok' && data.accessTokenEncrypted) tiktokOwners.add(ownerId);
+    if (data.provider === 'youtube' && data.refreshTokenEncrypted) youtubeOwners.add(ownerId);
+  });
+  connectedPlatforms.tiktok = tiktokOwners.size;
+  connectedPlatforms.youtube = youtubeOwners.size;
+  tiktokOwners.forEach(ownerId => connectedClients.add(ownerId));
+  youtubeOwners.forEach(ownerId => connectedClients.add(ownerId));
 
   const allKnownClients = new Set<string>(accountRows.map(row => row.userId).filter(Boolean));
   posts.forEach(post => {
