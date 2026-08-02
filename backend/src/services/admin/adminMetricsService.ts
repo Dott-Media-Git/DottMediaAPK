@@ -479,11 +479,15 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
   weekStart.setDate(weekStart.getDate() - 6);
   const weekStartTimestamp = admin.firestore.Timestamp.fromDate(weekStart);
 
-  const [usersSnap, authMetadata] = await Promise.all([
+  const [usersSnap, authMetadata, supabaseSocialRows] = await Promise.all([
     usersCollection.get(),
     fetchAuthUserMetadata().catch(error => {
       console.warn('[admin-metrics] Firebase Auth metadata unavailable', (error as Error).message);
       return new Map<string, { createdAt?: string; lastLoginAt?: string; email?: string; name?: string }>();
+    }),
+    supabaseFallbackService.getAllSocialAccounts(1000).catch(error => {
+      console.warn('[admin-metrics] Supabase social account lookup unavailable', (error as Error).message);
+      return [];
     }),
   ]);
   const users = usersSnap.docs.map(doc => {
@@ -561,17 +565,29 @@ async function getFirestoreAdminMetrics(): Promise<AdminMetrics> {
   });
 
   const integrationsSnap = await integrationsCollection.get();
+  const tiktokOwners = new Set<string>();
+  const youtubeOwners = new Set<string>();
   integrationsSnap.docs.forEach(doc => {
     const data = doc.data() as Record<string, any>;
+    const ownerId = String(data.userId ?? doc.id).trim();
     if (data.provider === 'tiktok' && data.accessTokenEncrypted) {
-      connectedPlatforms.tiktok += 1;
-      if (data.userId) connectedClients.add(data.userId as string);
+      if (ownerId) tiktokOwners.add(ownerId);
     }
     if (data.provider === 'youtube' && data.refreshTokenEncrypted) {
-      connectedPlatforms.youtube += 1;
-      if (data.userId) connectedClients.add(data.userId as string);
+      if (ownerId) youtubeOwners.add(ownerId);
     }
   });
+  supabaseSocialRows.forEach(row => {
+    const ownerId = String(row.userId ?? '').trim();
+    if (!ownerId) return;
+    const accounts = row.socialAccounts ?? {};
+    if (hasConnectedAccount((accounts as Record<string, any>).tiktok)) tiktokOwners.add(ownerId);
+    if (hasConnectedAccount((accounts as Record<string, any>).youtube)) youtubeOwners.add(ownerId);
+  });
+  connectedPlatforms.tiktok = tiktokOwners.size;
+  connectedPlatforms.youtube = youtubeOwners.size;
+  tiktokOwners.forEach(ownerId => connectedClients.add(ownerId));
+  youtubeOwners.forEach(ownerId => connectedClients.add(ownerId));
 
   let postsSnap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
   try {
