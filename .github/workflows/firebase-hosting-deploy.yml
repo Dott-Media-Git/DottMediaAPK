@@ -1,0 +1,52 @@
+name: Deploy web app to Firebase Hosting
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "assets/**"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "app.json"
+      - "babel.config.js"
+      - "firebase.json"
+      - ".firebaserc"
+      - ".github/workflows/firebase-hosting-deploy.yml"
+
+concurrency:
+  group: firebase-hosting-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps --ignore-scripts --no-audit --no-fund
+
+      - name: Build web bundle
+        run: npm run build:web
+
+      - name: Deploy Firebase Hosting
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          test -n "$FIREBASE_TOKEN"
+          npx --yes firebase-tools@14.26.0 deploy --only hosting --token "$FIREBASE_TOKEN" --non-interactive
