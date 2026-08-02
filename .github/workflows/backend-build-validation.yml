@@ -1,0 +1,30 @@
+name: Backend build validation
+
+on:
+  pull_request:
+    paths:
+      - "backend/src/**"
+      - "backend/package.json"
+      - "backend/package-lock.json"
+      - ".github/workflows/backend-build-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
