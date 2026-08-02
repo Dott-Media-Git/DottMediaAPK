@@ -1,5 +1,5 @@
-﻿import React, { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useState } from 'react';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { DMTextInput } from '@components/DMTextInput';
@@ -59,6 +59,14 @@ export const SignupScreen: React.FC<Props> = ({ navigation }) => {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+      >
       <LinearGradient colors={[colors.accentSecondary, colors.accent]} style={styles.hero}>
         <Text style={styles.title}>{t('Create your workspace')}</Text>
         <Text style={styles.subtitle}>{t('Spin up the same bold CRM aesthetic showcased on dott-media.com.')}</Text>
@@ -91,6 +99,7 @@ export const SignupScreen: React.FC<Props> = ({ navigation }) => {
           </Text>
         </TouchableOpacity>
       </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 };
@@ -99,8 +108,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    padding: 24,
-    justifyContent: 'center'
+  },
+  scrollView: {
+    flex: 1
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingTop: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 64
   },
   hero: {
     borderRadius: 28,
