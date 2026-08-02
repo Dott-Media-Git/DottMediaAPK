@@ -49,7 +49,7 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
       window.location.assign('/signup');
       return;
     }
-    navigation.navigate('Signup');
+    navigation.push('Signup');
   };
 
   const handleSignIn = async () => {
@@ -127,6 +127,7 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
           {...(Platform.OS === 'web' ? ({ href: '/signup' } as any) : {})}
           accessibilityRole="link"
           accessibilityLabel={t('Create an account')}
+          hitSlop={{ top: 12, right: 20, bottom: 12, left: 20 }}
           onPress={openSignup}
         >
           <Text style={styles.linkLabel}>{t('Create an account')}</Text>
