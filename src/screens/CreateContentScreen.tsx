@@ -187,7 +187,7 @@ export const CreateContentScreen: React.FC = () => {
         duration: 220,
         useNativeDriver: true,
       }).start(() => setNoticeMessage(''));
-    }, 2600);
+    }, 6000);
   };
 
   const showPromptNotice = () => {

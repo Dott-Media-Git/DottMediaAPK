@@ -296,7 +296,7 @@ export const SchedulePostScreen: React.FC = () => {
         duration: 220,
         useNativeDriver: true,
       }).start(() => setNoticeMessage(''));
-    }, 2600);
+    }, 6000);
   };
 
   const assignUploadedVideoUrl = (url: string) => {

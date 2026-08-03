@@ -163,6 +163,7 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
     });
 
     if (publishedId) {
+      await verifyPublishedMedia(credentials.instagram, publishedId, accessToken, true);
       return { remoteId: publishedId };
     }
     throw new Error('No ID returned from Instagram publish');
@@ -212,6 +213,7 @@ export async function publishToInstagramReel(input: ReelPublishInput): Promise<{
     });
 
     if (publishedId) {
+      await verifyPublishedMedia(credentials.instagram, publishedId, accessToken, true);
       return { remoteId: publishedId };
     }
     throw new Error('No ID returned from Instagram Reels publish');
@@ -262,6 +264,7 @@ export async function publishToInstagramStory(input: StoryPublishInput): Promise
     });
 
     if (publishedId) {
+      await verifyPublishedMedia(credentials.instagram, publishedId, accessToken, false);
       return { remoteId: publishedId };
     }
     throw new Error('No ID returned from Instagram Story publish');
@@ -335,4 +338,34 @@ async function publishWithRetry({
     throw lastError;
   }
   return null;
+}
+
+async function verifyPublishedMedia(
+  credentials: NonNullable<SocialAccounts['instagram']>,
+  publishedId: string,
+  accessToken: string,
+  requirePermalink: boolean,
+) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      const response = await http.get(getInstagramMediaStatusUrl(credentials, publishedId), {
+        params: {
+          fields: 'id,permalink,timestamp,media_type,username',
+          access_token: accessToken,
+        },
+      });
+      const media = response.data ?? {};
+      const idMatches = String(media.id ?? '') === String(publishedId);
+      const hasPublicIdentity = Boolean(media.timestamp || media.media_type || media.username);
+      if (idMatches && hasPublicIdentity && (!requirePermalink || media.permalink)) {
+        return media;
+      }
+      lastError = new Error('Instagram returned a container ID but no confirmed public media');
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  throw new Error(formatInstagramError(lastError, 'Instagram did not confirm that the media is publicly visible'));
 }
