@@ -106,28 +106,24 @@ export class SocialSchedulingService {
     const limitKey = `${payload.userId}_${targetDate}`;
     let existingCount: number;
     let postedCount: number;
-    let firestoreAvailable = true;
-    let firestoreReadError: unknown = null;
     try {
-      const [existingSnap, limitDoc] = await withFirestoreDeadline(Promise.all([
-        scheduledPostsCollection
-          .where('userId', '==', payload.userId)
-          .where('targetDate', '==', targetDate)
-          .get(),
-        socialLimitsCollection.doc(limitKey).get(),
-      ]), 'Firestore schedule lookup');
-      existingCount = existingSnap.docs.filter(doc => String(doc.data()?.status ?? 'pending') === 'pending').length;
-      postedCount = (limitDoc.data()?.postedCount as number) ?? 0;
-    } catch (error) {
-      firestoreAvailable = false;
-      firestoreReadError = error;
-      console.warn('[social-schedule] firestore quota/read failed; using Supabase schedule limits', error);
       const [posts, limit] = await Promise.all([
         supabaseFallbackService.getPostsByUser(payload.userId, 500),
         supabaseFallbackService.getSocialLimit(limitKey),
       ]);
       existingCount = posts.filter(post => post.targetDate === targetDate && String(post.status ?? 'pending') === 'pending').length;
       postedCount = limit?.postedCount ?? 0;
+    } catch (error) {
+      console.warn('[social-schedule] Supabase primary lookup failed; using Firebase fallback', error);
+      const [existingSnap, limitDoc] = await withFirestoreDeadline(Promise.all([
+        scheduledPostsCollection
+          .where('userId', '==', payload.userId)
+          .where('targetDate', '==', targetDate)
+          .get(),
+        socialLimitsCollection.doc(limitKey).get(),
+      ]), 'Firebase schedule fallback lookup');
+      existingCount = existingSnap.docs.filter(doc => String(doc.data()?.status ?? 'pending') === 'pending').length;
+      postedCount = (limitDoc.data()?.postedCount as number) ?? 0;
     }
     const maxPerDay = 5;
     if (existingCount >= maxPerDay) {
@@ -246,24 +242,8 @@ export class SocialSchedulingService {
       { merge: true },
     );
 
-    let firestoreError: unknown = firestoreReadError;
-    if (firestoreAvailable) {
-      try {
-        await withFirestoreDeadline(batch.commit(), 'Firestore schedule write');
-      } catch (error) {
-        firestoreError = error;
-        console.warn('[social-schedule] firestore schedule write failed; attempting Supabase fallback', error);
-      }
-    }
-
-    let supabasePostsPersisted = false;
     try {
       await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
-      supabasePostsPersisted = true;
-    } catch (error) {
-      console.warn('[social-schedule] supabase schedule mirror failed', error);
-    }
-    try {
       await supabaseFallbackService.incrementSocialLimit({
         key: limitKey,
         userId: payload.userId,
@@ -271,11 +251,8 @@ export class SocialSchedulingService {
         scheduledCount: docsToCreate.length,
       });
     } catch (error) {
-      console.warn('[social-schedule] supabase social-limit mirror failed', error);
-    }
-
-    if (firestoreError && !supabasePostsPersisted) {
-      throw firestoreError;
+      console.warn('[social-schedule] Supabase primary write failed; using Firebase fallback', error);
+      await withFirestoreDeadline(batch.commit(), 'Firebase schedule fallback write');
     }
 
     return { scheduled: docsToCreate.length, postIds: docsToCreate.map(doc => doc.id), trimmed: docsToCreate.length < requestedTotal, remaining: remaining - docsToCreate.length };

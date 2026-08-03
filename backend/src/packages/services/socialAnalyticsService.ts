@@ -21,6 +21,14 @@ export class SocialAnalyticsService {
     const date = new Date().toISOString().slice(0, 10);
     const docRef = dailyCollection.doc(`${payload.userId}_${date}`);
     try {
+      await supabaseFallbackService.incrementSocialDaily({
+        userId: payload.userId,
+        date,
+        platform: payload.platform,
+        status: payload.status,
+      });
+    } catch (error) {
+      console.warn('[social-analytics] Supabase primary increment failed; using Firebase fallback', error);
       await firestore.runTransaction(async tx => {
         const snap = await tx.get(docRef);
         const snapshotData = snap.data() as Record<string, unknown> | undefined;
@@ -38,26 +46,25 @@ export class SocialAnalyticsService {
         if (payload.status === 'skipped_limit') update.postsSkipped = ((snapshotData?.postsSkipped as number) ?? 0) + 1;
         tx.set(docRef, update, { merge: true });
       });
-    } catch (error) {
-      console.warn('[social-analytics] firestore increment failed; using fallback', error);
-    }
-
-    try {
-      await supabaseFallbackService.incrementSocialDaily({
-        userId: payload.userId,
-        date,
-        platform: payload.platform,
-        status: payload.status,
-      });
-    } catch (error) {
-      console.warn('[social-analytics] supabase increment failed', error);
     }
   }
 
   async getDailySummary(userId: string, limit = 14) {
     const merged = new Map<string, Record<string, unknown>>();
 
+    let supabaseAvailable = true;
     try {
+      const primaryRows = await supabaseFallbackService.getSocialDailySummary(userId, limit);
+      primaryRows.forEach(row => {
+        const key = String(row.date ?? '');
+        if (key) merged.set(key, row);
+      });
+    } catch (error) {
+      supabaseAvailable = false;
+      console.warn('[social-analytics] Supabase primary summary failed; using Firebase fallback', error);
+    }
+
+    if (!supabaseAvailable || merged.size === 0) try {
       let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
       try {
         snap = await dailyCollection.where('userId', '==', userId).orderBy('date', 'desc').limit(limit).get();
@@ -72,30 +79,7 @@ export class SocialAnalyticsService {
         merged.set(key, row);
       });
     } catch (error) {
-      console.warn('[social-analytics] firestore daily summary failed', error);
-    }
-
-    try {
-      const fallbackRows = await supabaseFallbackService.getSocialDailySummary(userId, limit);
-      fallbackRows.forEach(row => {
-        const key = String(row.date ?? '');
-        if (!key) return;
-        const existing = merged.get(key) ?? {};
-        const next = {
-          ...row,
-          postsAttempted: Math.max(Number(existing.postsAttempted ?? 0), Number(row.postsAttempted ?? 0)),
-          postsPosted: Math.max(Number(existing.postsPosted ?? 0), Number(row.postsPosted ?? 0)),
-          postsFailed: Math.max(Number(existing.postsFailed ?? 0), Number(row.postsFailed ?? 0)),
-          postsSkipped: Math.max(Number(existing.postsSkipped ?? 0), Number(row.postsSkipped ?? 0)),
-          perPlatform: {
-            ...((existing.perPlatform as Record<string, number> | undefined) ?? {}),
-            ...((row.perPlatform as Record<string, number> | undefined) ?? {}),
-          },
-        };
-        merged.set(key, next);
-      });
-    } catch (error) {
-      console.warn('[social-analytics] supabase daily summary failed', error);
+      console.warn('[social-analytics] Firebase fallback summary failed', error);
     }
 
     return Array.from(merged.values())

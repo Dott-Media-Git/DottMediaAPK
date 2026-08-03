@@ -31,6 +31,7 @@ const withFirestoreDeadline = <T>(promise: Promise<T>, label: string, timeoutMs 
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs)),
   ]);
 const socialLogsCollection = firestore.collection('socialLogs');
+const supabasePrimary = (process.env.PRIMARY_DATA_STORE ?? 'supabase').toLowerCase() === 'supabase';
 const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId: string; instagramUsername: string }> = {
   acmVetCcOiTHeGk5D7eDYieamDF3: {
     pageId: '1191892417341226',
@@ -325,7 +326,30 @@ export class SocialPostingService {
   async runQueue(limit = 25, onlyUserId?: string) {
     const now = admin.firestore.Timestamp.now();
     const pendingById = new Map<string, ScheduledPost>();
+    let supabaseQueueAvailable = true;
     try {
+      const primaryPosts = await supabaseFallbackService.getPendingScheduledPosts(new Date(now.toMillis()), limit);
+      primaryPosts.forEach((post: any) => {
+        pendingById.set(post.id as string, {
+          id: post.id as string,
+          userId: post.userId as string,
+          platform: post.platform as string,
+          caption: (post.caption as string) ?? '',
+          hashtags: (post.hashtags as string) ?? '',
+          imageUrls: (post.imageUrls as string[]) ?? [],
+          videoUrl: (post.videoUrl as string | undefined) ?? undefined,
+          videoTitle: (post.videoTitle as string | undefined) ?? undefined,
+          targetDate: (post.targetDate as string) ?? new Date().toISOString().slice(0, 10),
+          scheduledFor: post.scheduledFor ? new Date(post.scheduledFor as string | Date) : undefined,
+          source: (post.source as string | undefined) ?? undefined,
+          billingUsageConsumed: Boolean(post.billingUsageConsumed),
+        });
+      });
+    } catch (error) {
+      supabaseQueueAvailable = false;
+      console.warn('[social-posting] Supabase primary queue fetch failed; using Firebase fallback', error);
+    }
+    if (!supabaseQueueAvailable || pendingById.size === 0) try {
       const pendingSnap = await withFirestoreDeadline(
         onlyUserId
           ? scheduledPostsCollection.where('userId', '==', onlyUserId).where('status', '==', 'pending').limit(limit).get()
@@ -353,28 +377,7 @@ export class SocialPostingService {
           });
         });
     } catch (error) {
-      console.warn('[social-posting] firestore pending queue fetch failed', error);
-    }
-    try {
-      const fallbackPosts = await supabaseFallbackService.getPendingScheduledPosts(new Date(now.toMillis()), limit);
-      fallbackPosts.forEach((post: any) => {
-        pendingById.set(post.id as string, {
-          id: post.id as string,
-          userId: post.userId as string,
-          platform: post.platform as string,
-          caption: (post.caption as string) ?? '',
-          hashtags: (post.hashtags as string) ?? '',
-          imageUrls: (post.imageUrls as string[]) ?? [],
-          videoUrl: (post.videoUrl as string | undefined) ?? undefined,
-          videoTitle: (post.videoTitle as string | undefined) ?? undefined,
-          targetDate: (post.targetDate as string) ?? new Date().toISOString().slice(0, 10),
-          scheduledFor: post.scheduledFor ? new Date(post.scheduledFor as string | Date) : undefined,
-          source: (post.source as string | undefined) ?? undefined,
-          billingUsageConsumed: Boolean(post.billingUsageConsumed),
-        });
-      });
-    } catch (error) {
-      console.warn('[social-posting] supabase pending queue fetch failed', error);
+      console.warn('[social-posting] Firebase fallback queue fetch failed', error);
     }
     const posts = Array.from(pendingById.values()).filter(post => !onlyUserId || post.userId === onlyUserId).sort((a, b) => {
       const aTime = a.scheduledFor?.getTime() ?? 0;
@@ -470,29 +473,23 @@ export class SocialPostingService {
         // Fetch user credentials
         let userData: { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
         try {
-          const userDoc = await withFirestoreDeadline(
-            firestore.collection('users').doc(post.userId).get(),
-            'Firestore social account lookup',
-          );
-          userData = userDoc.data() as { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
-          if (userData?.socialAccounts) {
-            void supabaseFallbackService.upsertSocialAccounts(post.userId, {
-              email: userData.email ?? null,
-              socialAccounts: userData.socialAccounts as Record<string, unknown>,
-            }).catch(error => console.warn('[social-posting] supabase social account mirror failed', error));
-          }
+          const primary = await supabaseFallbackService.getSocialAccounts(post.userId);
+          if (primary) userData = primary as { email?: string | null; socialAccounts?: SocialAccounts };
         } catch (error) {
-          console.warn('[social-posting] user lookup failed; using runtime fallback credentials', {
+          console.warn('[social-posting] Supabase primary account lookup failed', {
             userId: post.userId,
             error: error instanceof Error ? error.message : String(error),
           });
+        }
+        if (!userData?.socialAccounts) {
           try {
-            const fallback = await supabaseFallbackService.getSocialAccounts(post.userId);
-            if (fallback) {
-              userData = fallback as { email?: string | null; socialAccounts?: SocialAccounts };
-            }
+            const userDoc = await withFirestoreDeadline(
+              firestore.collection('users').doc(post.userId).get(),
+              'Firebase social account fallback lookup',
+            );
+            userData = userDoc.data() as { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
           } catch (fallbackError) {
-            console.warn('[social-posting] supabase social account lookup failed', fallbackError);
+            console.warn('[social-posting] Firebase social account fallback failed', fallbackError);
           }
         }
         const allowDefaults = canUsePrimarySocialDefaults(userData, post.userId);
@@ -594,60 +591,53 @@ export class SocialPostingService {
         };
 
         if (!post.billingUsageConsumed) {
-          await consumeUsageForUserId(post.userId, 'scheduledPosts', 1);
+          if (!supabasePrimary) await consumeUsageForUserId(post.userId, 'scheduledPosts', 1);
           post.billingUsageConsumed = true;
           try {
-            await scheduledPostsCollection.doc(post.id).set(
-              {
-                billingUsageConsumed: true,
-                billingUsageConsumedAt: admin.firestore.FieldValue.serverTimestamp(),
-              },
-              { merge: true },
-            );
+            await supabaseFallbackService.updateScheduledPost(post.id, {
+              billingUsageConsumed: true,
+              updatedAt: new Date(),
+            } as Record<string, unknown>);
           } catch (error) {
-            console.warn('[social-posting] firestore billing marker update failed', error);
+            console.warn('[social-posting] Supabase billing marker failed; using Firebase fallback', error);
+            await withFirestoreDeadline(scheduledPostsCollection.doc(post.id).set(
+              { billingUsageConsumed: true, billingUsageConsumedAt: admin.firestore.FieldValue.serverTimestamp() },
+              { merge: true },
+            ), 'Firebase billing marker fallback');
           }
-          await supabaseFallbackService.updateScheduledPost(post.id, {
-            billingUsageConsumed: true,
-            updatedAt: new Date(),
-          } as Record<string, unknown>);
         }
         const response = await this.publishWithRetry(publisher, payload);
         try {
-          await scheduledPostsCollection.doc(post.id).update({
+          await supabaseFallbackService.updateScheduledPost(post.id, {
+            status: 'posted',
+            postedAt: new Date(),
+            remoteId: response.remoteId ?? null,
+            updatedAt: new Date(),
+          });
+        } catch (error) {
+          console.warn('[social-posting] Supabase posted update failed; using Firebase fallback', error);
+          await withFirestoreDeadline(scheduledPostsCollection.doc(post.id).update({
             status: 'posted',
             postedAt: admin.firestore.FieldValue.serverTimestamp(),
             remoteId: response.remoteId ?? null,
-          });
-        } catch (error) {
-          console.warn('[social-posting] firestore posted update failed', error);
+          }), 'Firebase posted update fallback');
         }
-        await supabaseFallbackService.updateScheduledPost(post.id, {
-          status: 'posted',
-          postedAt: new Date(),
-          remoteId: response.remoteId ?? null,
-          updatedAt: new Date(),
-        });
         if (!this.isLimitExempt(post)) {
           counts.set(key, currentCount + 1);
           try {
-            await socialLimitsCollection.doc(key).set(
-              {
-                userId: post.userId,
-                date: post.targetDate,
-                postedCount: admin.firestore.FieldValue.increment(1),
-              },
-              { merge: true },
-            );
+            await supabaseFallbackService.incrementSocialLimit({
+              key,
+              userId: post.userId,
+              date: post.targetDate,
+              postedCount: 1,
+            });
           } catch (error) {
-            console.warn('[social-posting] firestore social limit increment failed', error);
+            console.warn('[social-posting] Supabase limit increment failed; using Firebase fallback', error);
+            await withFirestoreDeadline(socialLimitsCollection.doc(key).set(
+              { userId: post.userId, date: post.targetDate, postedCount: admin.firestore.FieldValue.increment(1) },
+              { merge: true },
+            ), 'Firebase social limit fallback');
           }
-          await supabaseFallbackService.incrementSocialLimit({
-            key,
-            userId: post.userId,
-            date: post.targetDate,
-            postedCount: 1,
-          });
         }
         if (
           ['facebook', 'instagram', 'facebook_story', 'instagram_story'].includes(post.platform) &&
@@ -667,19 +657,19 @@ export class SocialPostingService {
       } catch (error) {
         const message = (error as Error).message ?? 'publish_failed';
         try {
-          await scheduledPostsCollection.doc(post.id).update({
+          await supabaseFallbackService.updateScheduledPost(post.id, {
+            status: 'failed',
+            errorMessage: message,
+            updatedAt: new Date(),
+          });
+        } catch (supabaseError) {
+          console.warn('[social-posting] Supabase failed update failed; using Firebase fallback', supabaseError);
+          await withFirestoreDeadline(scheduledPostsCollection.doc(post.id).update({
             status: 'failed',
             errorMessage: message,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-        } catch (firestoreError) {
-          console.warn('[social-posting] firestore failed update failed', firestoreError);
+          }), 'Firebase failed update fallback');
         }
-        await supabaseFallbackService.updateScheduledPost(post.id, {
-          status: 'failed',
-          errorMessage: message,
-          updatedAt: new Date(),
-        });
         await this.log(post, 'failed', undefined, message);
         await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'failed' });
       }
@@ -691,7 +681,15 @@ export class SocialPostingService {
   async getHistory(userId: string, limit = 400) {
     const mergedById = new Map<string, Record<string, unknown>>();
     const fallbackLimit = Math.min(Math.max(limit * 5, limit), 2500);
+    let supabaseHistoryAvailable = true;
     try {
+      const primaryPosts = await supabaseFallbackService.getPostsByUser(userId, fallbackLimit);
+      primaryPosts.forEach((post: any) => mergedById.set(post.id as string, post as Record<string, unknown>));
+    } catch (error) {
+      supabaseHistoryAvailable = false;
+      console.warn('[social-history] Supabase primary history fetch failed; using Firebase fallback', error);
+    }
+    if (!supabaseHistoryAvailable || mergedById.size === 0) try {
       let snap: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>;
       try {
         snap = await scheduledPostsCollection
@@ -710,15 +708,7 @@ export class SocialPostingService {
         mergedById.set(doc.id, { id: doc.id, ...(doc.data() as Record<string, unknown>) });
       });
     } catch (error) {
-      console.warn('[social-history] firestore history fetch failed', error);
-    }
-    try {
-      const fallbackPosts = await supabaseFallbackService.getPostsByUser(userId, fallbackLimit);
-      fallbackPosts.forEach((post: any) => {
-        mergedById.set(post.id as string, post as Record<string, unknown>);
-      });
-    } catch (error) {
-      console.warn('[social-history] supabase history fetch failed', error);
+      console.warn('[social-history] Firebase fallback history fetch failed', error);
     }
     const posts = Array.from(mergedById.values());
     posts.sort((a: any, b: any) => {
@@ -810,27 +800,18 @@ export class SocialPostingService {
     const set = new Map<string, number>();
     const uniqueKeys = Array.from(new Set(entries.map(entry => `${entry.userId}_${entry.targetDate}`)));
     if (!uniqueKeys.length) return set;
-    try {
-      const snaps = await withFirestoreDeadline(
-        Promise.all(uniqueKeys.map(key => socialLimitsCollection.doc(key).get())),
-        'Firestore social limits lookup',
-      );
-      snaps.forEach((doc, index) => {
-        const key = uniqueKeys[index];
-        const postedCount = (doc.data()?.postedCount as number) ?? 0;
-        set.set(key, postedCount);
-      });
-    } catch (error) {
-      console.warn('[social-posting] firestore social limits fetch failed', error);
-    }
     for (const key of uniqueKeys) {
       try {
-        const fallback = await supabaseFallbackService.getSocialLimit(key);
-        if (fallback) {
-          set.set(key, Math.max(set.get(key) ?? 0, fallback.postedCount ?? 0));
-        }
+        const primary = await supabaseFallbackService.getSocialLimit(key);
+        if (primary) set.set(key, primary.postedCount ?? 0);
       } catch (error) {
-        console.warn('[social-posting] supabase social limit fetch failed', error);
+        console.warn('[social-posting] Supabase primary social limit fetch failed; using Firebase fallback', error);
+        try {
+          const doc = await withFirestoreDeadline(socialLimitsCollection.doc(key).get(), 'Firebase social limit fallback');
+          set.set(key, (doc.data()?.postedCount as number) ?? 0);
+        } catch (fallbackError) {
+          console.warn('[social-posting] Firebase social limit fallback failed', fallbackError);
+        }
       }
     }
     return set;
@@ -838,7 +819,17 @@ export class SocialPostingService {
 
   private async log(post: ScheduledPost, status: string, responseId?: string, error?: string) {
     try {
-      await socialLogsCollection.add({
+      await supabaseFallbackService.addSocialLog({
+        userId: post.userId,
+        platform: post.platform,
+        scheduledPostId: post.id,
+        status,
+        responseId,
+        error: error ?? undefined,
+      });
+    } catch (supabaseError) {
+      console.warn('[social-posting] Supabase log failed; using Firebase fallback', supabaseError);
+      await withFirestoreDeadline(socialLogsCollection.add({
         userId: post.userId,
         platform: post.platform,
         scheduledPostId: post.id,
@@ -846,21 +837,7 @@ export class SocialPostingService {
         responseId: responseId ?? null,
         error: error ?? null,
         postedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-    } catch (firestoreError) {
-      console.warn('[social-posting] firestore log write failed', firestoreError);
-    }
-    try {
-      await supabaseFallbackService.addSocialLog({
-        userId: post.userId,
-        platform: post.platform,
-        scheduledPostId: post.id,
-        status,
-        responseId,
-        error,
-      });
-    } catch (supabaseError) {
-      console.warn('[social-posting] supabase log write failed', supabaseError);
+      }), 'Firebase social log fallback');
     }
   }
 

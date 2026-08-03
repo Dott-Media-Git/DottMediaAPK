@@ -42,6 +42,7 @@ type AssistantContextValue = {
 const STORAGE_KEY = '@dott/assistant-enabled';
 const STORAGE_KEY_ASSISTANT_TONE = '@dott/assistant-tone';
 const STORAGE_KEY_ASSISTANT_VOICE = '@dott/assistant-voice';
+const STORAGE_KEY_ALWAYS_ON_MIGRATION = '@dott/assistant-enabled-for-all-v1';
 const conversationsStorageKey = (userId?: string) => `@dott/conversations/${userId || 'guest'}`;
 
 const AssistantContext = createContext<AssistantContextValue | undefined>(undefined);
@@ -86,13 +87,20 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [assistantVoice, setAssistantVoiceValue] = useState('neutral');
 
   useEffect(() => {
-    AsyncStorage.multiGet([STORAGE_KEY, STORAGE_KEY_ASSISTANT_TONE, STORAGE_KEY_ASSISTANT_VOICE])
+    AsyncStorage.multiGet([STORAGE_KEY, STORAGE_KEY_ASSISTANT_TONE, STORAGE_KEY_ASSISTANT_VOICE, STORAGE_KEY_ALWAYS_ON_MIGRATION])
       .then(entries => {
         const enabledValue = entries[0]?.[1];
         const toneValue = entries[1]?.[1];
         const voiceValue = entries[2]?.[1];
+        const migrated = entries[3]?.[1] === 'true';
 
-        if (enabledValue !== null) {
+        if (!migrated) {
+          setEnabled(true);
+          void AsyncStorage.multiSet([
+            [STORAGE_KEY, 'true'],
+            [STORAGE_KEY_ALWAYS_ON_MIGRATION, 'true'],
+          ]);
+        } else if (enabledValue !== null) {
           setEnabled(enabledValue === 'true');
         }
         if (toneValue) {
