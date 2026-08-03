@@ -108,14 +108,14 @@ export class SocialSchedulingService {
     const postedCount = (limitDoc.data()?.postedCount as number) ?? 0;
     const maxPerDay = 5;
     if (existingCount >= maxPerDay) {
-      return { scheduled: [], trimmed: true, reason: 'limit_reached' };
+      return { scheduled: [], postIds: [], trimmed: true, reason: 'limit_reached' };
     }
 
     const requestedTotal = payload.platforms.length * timesPerDay;
     const remaining = Math.max(0, maxPerDay - existingCount - postedCount);
     const totalToSchedule = Math.min(requestedTotal, remaining);
     if (totalToSchedule <= 0) {
-      return { scheduled: [], trimmed: true, reason: 'limit_reached', remaining };
+      return { scheduled: [], postIds: [], trimmed: true, reason: 'limit_reached', remaining };
     }
 
     const slotCount = Math.max(1, Math.ceil(totalToSchedule / payload.platforms.length));
@@ -249,7 +249,7 @@ export class SocialSchedulingService {
       throw firestoreError;
     }
 
-    return { scheduled: docsToCreate.length, trimmed: docsToCreate.length < requestedTotal, remaining: remaining - docsToCreate.length };
+    return { scheduled: docsToCreate.length, postIds: docsToCreate.map(doc => doc.id), trimmed: docsToCreate.length < requestedTotal, remaining: remaining - docsToCreate.length };
   }
 }
 

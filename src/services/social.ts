@@ -149,6 +149,7 @@ export type SchedulePostResponse = {
   remaining?: number;
   posted?: number;
   failed?: number;
+  postIds?: string[];
 };
 
 export const schedulePost = async (payload: any) => {
@@ -158,7 +159,17 @@ export const schedulePost = async (payload: any) => {
 
 export const publishPostNow = async (payload: any) => {
   const body = JSON.stringify(payload);
-  return authedFetch('/api/posts/publish-now', { method: 'POST', body }, 120000) as Promise<SchedulePostResponse & { processed?: number }>;
+  const queued = await authedFetch('/api/posts/publish-now', { method: 'POST', body }, 60000) as SchedulePostResponse & { queued?: number };
+  const ids = queued.postIds ?? [];
+  if (!ids.length) return queued;
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const status = await authedFetch(`/api/posts/publish-status?ids=${encodeURIComponent(ids.join(','))}`, {}, 45000) as {
+      posted: number; failed: number; pending: number; complete: boolean;
+    };
+    if (status.complete) return { ...queued, ...status, processed: status.posted };
+  }
+  throw new Error('Publishing is still taking longer than expected. Check Posting History for the final platform results.');
 };
 
 export type UploadedMediaFile = {
