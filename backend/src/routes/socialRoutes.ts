@@ -1033,11 +1033,12 @@ router.post('/posts/publish-now', requireFirebase, async (req, res, next) => {
       return res.status(403).json({ message: 'Cannot publish for another user' });
     }
     const requestId = randomBytes(16).toString('hex');
+    const orgId = req.header('x-org-id');
     immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: false, posted: 0, failed: 0, pending: payload.platforms.length, posts: [], updatedAt: Date.now() });
     res.status(202).json({ requestId, queued: payload.platforms.length });
     void (async () => {
       try {
-        await consumeUsage(resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email), 'scheduledPosts', Math.max(payload.platforms.length, 1));
+        await consumeUsage(resolveBillingScope(authUser.uid, orgId, authUser.email), 'scheduledPosts', Math.max(payload.platforms.length, 1));
         const scheduled = await socialSchedulingService.schedulePosts({ ...payload, billingUsageConsumed: true });
         const ids = scheduled.postIds ?? [];
         if (!ids.length) throw new Error(scheduled.reason === 'limit_reached' ? 'Today\'s posting limit has been reached.' : 'No posts were queued.');
