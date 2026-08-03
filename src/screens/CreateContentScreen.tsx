@@ -14,8 +14,9 @@ import {
   View
 } from 'react-native';
 import { DMButton } from '@components/DMButton';
+import { PlatformSelector } from '@components/PlatformSelector';
 import { colors } from '@constants/colors';
-import { generateContent, runAutoPostNow, type GeneratedSocialContent } from '@services/social';
+import { generateContent, publishPostNow, type GeneratedSocialContent } from '@services/social';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
 
@@ -134,7 +135,6 @@ export const CreateContentScreen: React.FC = () => {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [postingNow, setPostingNow] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
-  const [lastPostTime, setLastPostTime] = useState<Date | null>(null);
   const [noticeMessage, setNoticeMessage] = useState('');
   const noticeOffset = useRef(new Animated.Value(-120)).current;
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -222,6 +222,10 @@ export const CreateContentScreen: React.FC = () => {
   };
 
   const validatePostNow = () => {
+    if (!state.user) {
+      showNotice(t('Please sign in again before posting.'));
+      return false;
+    }
     if (!normalizedPrompt) {
       showPromptNotice();
       return false;
@@ -299,16 +303,6 @@ export const CreateContentScreen: React.FC = () => {
 
   const handleOpenPreview = async () => {
     if (!validatePostNow()) return;
-    if (lastPostTime && Date.now() - lastPostTime.getTime() < 3 * 60 * 60 * 1000) {
-      const nextRun = new Date(lastPostTime.getTime() + 3 * 60 * 60 * 1000);
-      Alert.alert(
-        t('Auto-post scheduled'),
-        t('The bot just posted. Next auto post will go out around {{time}}.', {
-          time: nextRun.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        })
-      );
-    }
-
     const content = await ensurePreviewContent();
     if (!content) return;
     setPreviewVisible(true);
@@ -318,36 +312,33 @@ export const CreateContentScreen: React.FC = () => {
     const content = await ensurePreviewContent();
     if (!content) return;
     const generatedVideoUrl = content.video_url?.trim() || undefined;
-    const youtubeVideoUrl = youtubeVideoUrls.length
-      ? undefined
-      : youtubeVideoUrlInput.trim() || (hasYoutube ? generatedVideoUrl : undefined);
-    const tiktokVideoUrl = tiktokVideoUrls.length
-      ? undefined
-      : tiktokVideoUrlInput.trim() || (hasTikTok ? generatedVideoUrl : undefined);
-    const instagramReelsVideoUrl = reelsVideoUrls.length
-      ? undefined
-      : reelsVideoUrlInput.trim() || (hasReels ? generatedVideoUrl : undefined);
+    const youtubeVideoUrl = youtubeVideoUrls[0] || youtubeVideoUrlInput.trim() || (hasYoutube ? generatedVideoUrl : undefined);
+    const tiktokVideoUrl = tiktokVideoUrls[0] || tiktokVideoUrlInput.trim() || (hasTikTok ? generatedVideoUrl : undefined);
+    const instagramReelsVideoUrl = reelsVideoUrls[0] || reelsVideoUrlInput.trim() || (hasReels ? generatedVideoUrl : undefined);
 
     setPostingNow(true);
     try {
-      await runAutoPostNow({
-        prompt: normalizedPrompt,
-        businessType,
+      const primaryCaption = selectedPlatforms.length === 1 && selectedPlatforms[0] === 'twitter'
+        ? content.caption_x
+        : selectedPlatforms.some(platform => ['instagram', 'instagram_story', 'instagram_reels', 'threads', 'tiktok', 'facebook_story'].includes(platform))
+          ? content.caption_instagram
+          : content.caption_linkedin;
+      const response = await publishPostNow({
+        userId: state.user?.uid,
         platforms: selectedPlatforms,
+        images: content.images,
+        caption: primaryCaption || normalizedPrompt,
+        hashtags: formatHashtags(content.hashtags_instagram || content.hashtags_generic),
         videoUrl: generatedVideoUrl,
         youtubeVideoUrl,
-        youtubeVideoUrls: youtubeVideoUrls.length ? youtubeVideoUrls : undefined,
         tiktokVideoUrl,
-        tiktokVideoUrls: tiktokVideoUrls.length ? tiktokVideoUrls : undefined,
         instagramReelsVideoUrl,
-        instagramReelsVideoUrls: reelsVideoUrls.length ? reelsVideoUrls : undefined,
         videoTitle: videoTitle.trim() || undefined,
-        generatedContent: content,
       });
-      const postedAt = new Date();
-      setLastPostTime(postedAt);
+      const scheduledCount = Array.isArray(response?.scheduled) ? response.scheduled.length : Number(response?.scheduled ?? 0);
+      if (scheduledCount <= 0) throw new Error(t('Nothing was posted. Please review the selected media and platforms.'));
       setPreviewVisible(false);
-      Alert.alert(t('Posted'), t('Bot is posting now. Next auto post will go out in ~3 hours.'));
+      Alert.alert(t('Posted'), t('Content was sent immediately. Check Posting History for each platform result.'));
     } catch (error: any) {
       Alert.alert(t('Post failed'), error.message ?? t('Unable to post right now.'));
     } finally {
@@ -419,18 +410,7 @@ export const CreateContentScreen: React.FC = () => {
             placeholderTextColor={colors.subtext}
             multiline
           />
-          <Text style={styles.label}>{t('Platforms')}</Text>
-          <View style={styles.row}>
-            {PLATFORM_OPTIONS.map(platform => (
-              <TouchableOpacity
-                key={platform}
-                style={[styles.chip, selectedPlatforms.includes(platform) && styles.chipActive]}
-                onPress={() => togglePlatform(platform)}
-              >
-                <Text style={styles.chipText}>{t(formatPlatformLabel(platform))}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          <PlatformSelector options={PLATFORM_OPTIONS} selected={selectedPlatforms} onToggle={togglePlatform} translate={t} />
 
           {(hasYoutube || hasTikTok || hasReels) && (
             <>
@@ -510,6 +490,17 @@ export const CreateContentScreen: React.FC = () => {
             loading={previewLoading}
             style={{ marginTop: 10 }}
           />
+          <DMButton
+            title={postingNow ? t('Posting now...') : t('Post Now')}
+            onPress={async () => {
+              if (!validatePostNow()) return;
+              await handlePostNow();
+            }}
+            disabled={loading || previewLoading || postingNow}
+            loading={postingNow}
+            style={{ marginTop: 10 }}
+          />
+          <Text style={styles.postNowHint}>{t('Post Now creates the content and sends it immediately to your selected platforms.')}</Text>
         </View>
 
         {result && (
@@ -761,6 +752,7 @@ const styles = StyleSheet.create({
   captionLabel: { color: colors.accent, marginTop: 10, fontWeight: '600' },
   captionText: { color: colors.text, marginTop: 4, lineHeight: 20 },
   videoRow: { color: colors.subtext, marginBottom: 6 },
+  postNowHint: { color: colors.subtext, fontSize: 12, lineHeight: 17, textAlign: 'center', marginTop: 8 },
   errorText: {
     color: colors.warning,
     marginTop: 10,

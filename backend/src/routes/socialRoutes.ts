@@ -1018,6 +1018,32 @@ router.post('/posts/schedule', requireFirebase, async (req, res, next) => {
   }
 });
 
+router.post('/posts/publish-now', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const payload = scheduleSchema.parse({
+      ...(req.body ?? {}),
+      scheduledFor: new Date().toISOString(),
+      timesPerDay: 1,
+    });
+    if (authUser.uid !== payload.userId) {
+      return res.status(403).json({ message: 'Cannot publish for another user' });
+    }
+    await consumeUsage(
+      resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email),
+      'scheduledPosts',
+      Math.max(payload.platforms.length, 1),
+    );
+    const scheduled = await socialSchedulingService.schedulePosts({ ...payload, billingUsageConsumed: true });
+    const scheduledCount = Array.isArray(scheduled.scheduled) ? scheduled.scheduled.length : Number(scheduled.scheduled ?? 0);
+    const published = scheduledCount > 0 ? await socialPostingService.runQueue(100) : { processed: 0 };
+    res.json({ ...scheduled, processed: published.processed });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
