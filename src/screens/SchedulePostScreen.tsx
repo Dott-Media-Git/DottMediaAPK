@@ -504,9 +504,15 @@ export const SchedulePostScreen: React.FC = () => {
           : t('Nothing was posted. Please review the selected media and platforms.'));
         return;
       }
+      const postedCount = Number(result?.posted ?? result?.processed ?? 0);
+      if (postedCount <= 0) {
+        throw new Error(t('The post was prepared but the selected platforms rejected it. Check the connection and media requirements, then try again.'));
+      }
       setPreviewVisible(false);
       resetForm();
-      showNotice(t('Posted now to {{count}} selected platform(s). Check Posting History for the live results.', { count: scheduledCount }));
+      showNotice(result?.failed
+        ? t('Posted to {{count}} platform(s). {{failed}} platform(s) failed; check Posting History.', { count: postedCount, failed: result.failed })
+        : t('Posted. Your image is live on {{count}} selected platform(s).', { count: postedCount }));
     } catch (error: any) {
       Alert.alert(t('Post failed'), error?.message ?? t('Unable to post right now.'));
     } finally {
