@@ -391,12 +391,12 @@ export class SocialPostingService {
     const counts = await this.buildCounts(limitedPosts.map(post => ({ userId: post.userId, targetDate: post.targetDate })));
     let processed = 0;
 
-    for (const post of posts) {
+    const processPost = async (post: ScheduledPost) => {
       const key = `${post.userId}_${post.targetDate}`;
       const currentCount = counts.get(key) ?? 0;
       if (this.isDeprecatedClientCampaignPost(post)) {
         await this.skipDeprecatedClientCampaignPost(post);
-        continue;
+        return;
       }
       const closureState = await getBwinAccountClosureState(post.userId);
       if (closureState?.enabled && (await isBwinAccountClosureActive(post.userId))) {
@@ -417,7 +417,7 @@ export class SocialPostingService {
         });
         await this.log(post, 'failed', undefined, message);
         await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'failed' });
-        continue;
+        return;
       }
       const bwinValidation = validateBwinSportsContent({
         userId: post.userId,
@@ -446,7 +446,7 @@ export class SocialPostingService {
         });
         await this.log(post, 'failed', undefined, message);
         await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'failed' });
-        continue;
+        return;
       }
 
       if (!this.isLimitExempt(post) && currentCount >= MAX_PER_DAY) {
@@ -466,7 +466,7 @@ export class SocialPostingService {
         });
         await this.log(post, 'skipped_limit');
         await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'skipped_limit' });
-        continue;
+        return;
       }
 
       try {
@@ -578,7 +578,7 @@ export class SocialPostingService {
                 : 'Missing Instagram Reels video URL',
           );
           await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'failed' });
-          continue;
+          return;
         }
 
         const publisher = platformPublishers[post.platform] ?? publishToTwitter;
@@ -673,6 +673,12 @@ export class SocialPostingService {
         await this.log(post, 'failed', undefined, message);
         await socialAnalyticsService.incrementDaily({ userId: post.userId, platform: post.platform, status: 'failed' });
       }
+    };
+
+    if (onlyUserId) {
+      await Promise.all(posts.map(post => processPost(post)));
+    } else {
+      for (const post of posts) await processPost(post);
     }
 
     return { processed };
