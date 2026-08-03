@@ -335,8 +335,14 @@ export const CreateContentScreen: React.FC = () => {
         instagramReelsVideoUrl,
         videoTitle: videoTitle.trim() || undefined,
       });
-      const scheduledCount = Array.isArray(response?.scheduled) ? response.scheduled.length : Number(response?.scheduled ?? 0);
-      if (scheduledCount <= 0) throw new Error(t('Nothing was posted. Please review the selected media and platforms.'));
+      const acceptedCount = Number(
+        response?.queued ??
+        (Array.isArray(response?.scheduled) ? response.scheduled.length : response?.scheduled) ??
+        response?.postIds?.length ??
+        response?.posted ??
+        0,
+      );
+      if (acceptedCount <= 0) throw new Error(t('Nothing was posted. Please review the selected media and platforms.'));
       const postedCount = Number(response?.posted ?? response?.processed ?? 0);
       if (postedCount <= 0) throw new Error(t('The selected platforms rejected the post. Check the connection and media requirements, then try again.'));
       setPreviewVisible(false);
