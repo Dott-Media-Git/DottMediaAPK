@@ -34,6 +34,8 @@ const HISTORY_USER_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_USER_
 const SOCIAL_STATUS_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.SOCIAL_STATUS_LOOKUP_TIMEOUT_MS ?? 1500), 500);
 
 const router = Router();
+type ImmediatePublishState = { userId: string; complete: boolean; posted: number; failed: number; pending: number; posts: Array<Record<string, unknown>>; error?: string; updatedAt: number };
+const immediatePublishRequests = new Map<string, ImmediatePublishState>();
 
 type RenderEnv = Record<string, string>;
 type MetaSignedRequestPayload = {
@@ -1030,19 +1032,25 @@ router.post('/posts/publish-now', requireFirebase, async (req, res, next) => {
     if (authUser.uid !== payload.userId) {
       return res.status(403).json({ message: 'Cannot publish for another user' });
     }
-    await consumeUsage(
-      resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email),
-      'scheduledPosts',
-      Math.max(payload.platforms.length, 1),
-    );
-    const scheduled = await socialSchedulingService.schedulePosts({ ...payload, billingUsageConsumed: true });
-    const scheduledCount = Array.isArray(scheduled.scheduled) ? scheduled.scheduled.length : Number(scheduled.scheduled ?? 0);
-    if (scheduledCount > 0) {
-      void socialPostingService.runQueue(250, authUser.uid).catch(error => {
-        console.error('[publish-now] background publish failed', { userId: authUser.uid, error: error instanceof Error ? error.message : String(error) });
-      });
-    }
-    res.status(202).json({ ...scheduled, queued: scheduledCount });
+    const requestId = randomBytes(16).toString('hex');
+    const orgId = req.header('x-org-id');
+    immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: false, posted: 0, failed: 0, pending: payload.platforms.length, posts: [], updatedAt: Date.now() });
+    res.status(202).json({ requestId, queued: payload.platforms.length });
+    void (async () => {
+      try {
+        await consumeUsage(resolveBillingScope(authUser.uid, orgId, authUser.email), 'scheduledPosts', Math.max(payload.platforms.length, 1));
+        const scheduled = await socialSchedulingService.schedulePosts({ ...payload, billingUsageConsumed: true });
+        const ids = scheduled.postIds ?? [];
+        if (!ids.length) throw new Error(scheduled.reason === 'limit_reached' ? 'Today\'s posting limit has been reached.' : 'No posts were queued.');
+        await socialPostingService.runQueue(250, authUser.uid);
+        const history = await socialPostingService.getHistory(authUser.uid, 500);
+        const posts = history.posts.filter(post => ids.includes(String(post.id ?? ''))).map(post => ({ id: post.id, platform: post.platform, status: post.status, errorMessage: post.errorMessage, remoteId: post.remoteId }));
+        const posted = posts.filter(post => post.status === 'posted').length;
+        immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: true, posted, failed: Math.max(ids.length - posted, 0), pending: 0, posts, updatedAt: Date.now() });
+      } catch (error) {
+        immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: true, posted: 0, failed: payload.platforms.length, pending: 0, posts: [], error: error instanceof Error ? error.message : String(error), updatedAt: Date.now() });
+      }
+    })();
   } catch (error) {
     next(error);
   }
@@ -1052,6 +1060,12 @@ router.get('/posts/publish-status', requireFirebase, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const requestId = String(req.query.requestId ?? '').trim();
+    if (requestId) {
+      const state = immediatePublishRequests.get(requestId);
+      if (!state || state.userId !== authUser.uid) return res.status(404).json({ message: 'Publish request not found' });
+      return res.json(state);
+    }
     const ids = String(req.query.ids ?? '').split(',').map(value => value.trim()).filter(Boolean).slice(0, 12);
     if (!ids.length) return res.status(400).json({ message: 'Post IDs are required' });
     const history = await socialPostingService.getHistory(authUser.uid, 500);
