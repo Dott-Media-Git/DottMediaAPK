@@ -158,6 +158,7 @@ export const SchedulePostScreen: React.FC = () => {
   const [previewVisible, setPreviewVisible] = useState(false);
   const [noticeMessage, setNoticeMessage] = useState('');
   const [mediaUploading, setMediaUploading] = useState(false);
+  const [uploadedMedia, setUploadedMedia] = useState<UploadedMediaFile[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const noticeOffset = useRef(new Animated.Value(-120)).current;
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -324,6 +325,10 @@ export const SchedulePostScreen: React.FC = () => {
       }
     }
     if (uploadedImages.length || uploadedVideos.length) {
+      setUploadedMedia(current => [
+        ...current.filter(item => !uploadedFiles.some(uploaded => uploaded.url === item.url)),
+        ...uploadedFiles,
+      ]);
       showNotice(
         t('Media added: {{images}} image(s), {{videos}} video(s).', {
           images: uploadedImages.length,
@@ -477,6 +482,7 @@ export const SchedulePostScreen: React.FC = () => {
     setTiktokVideoUrl('');
     setReelsVideoUrl('');
     setVideoTitle('');
+    setUploadedMedia([]);
   };
 
   const buildPostPayload = () => ({
@@ -497,8 +503,14 @@ export const SchedulePostScreen: React.FC = () => {
     setPostingNow(true);
     try {
       const result = await publishPostNow(buildPostPayload());
-      const scheduledCount = Array.isArray(result?.scheduled) ? result.scheduled.length : Number(result?.scheduled ?? 0);
-      if (scheduledCount <= 0) {
+      const acceptedCount = Number(
+        result?.queued ??
+        (Array.isArray(result?.scheduled) ? result.scheduled.length : result?.scheduled) ??
+        result?.postIds?.length ??
+        result?.posted ??
+        0,
+      );
+      if (acceptedCount <= 0) {
         showNotice(result?.reason === 'limit_reached'
           ? t('Nothing was posted. You have reached today\'s posting limit for this account.')
           : t('Nothing was posted. Please review the selected media and platforms.'));
@@ -739,13 +751,15 @@ export const SchedulePostScreen: React.FC = () => {
               {hasYoutube && (
                 <>
                   <Text style={styles.label}>{t('YouTube Video URL')}</Text>
-                  <TextInput
-                    value={youtubeVideoUrl}
-                    onChangeText={setYoutubeVideoUrl}
-                    placeholder={t('Paste YouTube video URL')}
-                    placeholderTextColor={colors.subtext}
-                    style={styles.input}
-                  />
+                  {!uploadedMedia.some(item => item.kind === 'video' && item.url === youtubeVideoUrl) ? (
+                    <TextInput
+                      value={youtubeVideoUrl}
+                      onChangeText={setYoutubeVideoUrl}
+                      placeholder={t('Paste YouTube video URL')}
+                      placeholderTextColor={colors.subtext}
+                      style={styles.input}
+                    />
+                  ) : null}
                   <Text style={styles.label}>{t('YouTube Title (optional)')}</Text>
                   <TextInput
                     value={videoTitle}
@@ -759,25 +773,29 @@ export const SchedulePostScreen: React.FC = () => {
               {hasTikTok && (
                 <>
                   <Text style={styles.label}>{t('TikTok Video URL')}</Text>
-                  <TextInput
-                    value={tiktokVideoUrl}
-                    onChangeText={setTiktokVideoUrl}
-                    placeholder={t('Paste TikTok video URL')}
-                    placeholderTextColor={colors.subtext}
-                    style={styles.input}
-                  />
+                  {!uploadedMedia.some(item => item.kind === 'video' && item.url === tiktokVideoUrl) ? (
+                    <TextInput
+                      value={tiktokVideoUrl}
+                      onChangeText={setTiktokVideoUrl}
+                      placeholder={t('Paste TikTok video URL')}
+                      placeholderTextColor={colors.subtext}
+                      style={styles.input}
+                    />
+                  ) : null}
                 </>
               )}
               {hasReels && (
                 <>
                   <Text style={styles.label}>{t('Instagram Reels Video URL')}</Text>
-                  <TextInput
-                    value={reelsVideoUrl}
-                    onChangeText={setReelsVideoUrl}
-                    placeholder={t('Paste Instagram Reels video URL')}
-                    placeholderTextColor={colors.subtext}
-                    style={styles.input}
-                  />
+                  {!uploadedMedia.some(item => item.kind === 'video' && item.url === reelsVideoUrl) ? (
+                    <TextInput
+                      value={reelsVideoUrl}
+                      onChangeText={setReelsVideoUrl}
+                      placeholder={t('Paste Instagram Reels video URL')}
+                      placeholderTextColor={colors.subtext}
+                      style={styles.input}
+                    />
+                  ) : null}
                 </>
               )}
             </>
@@ -785,13 +803,15 @@ export const SchedulePostScreen: React.FC = () => {
           {hasOptionalVideoPlatforms && (
             <>
               <Text style={styles.label}>{t('Video URL')}</Text>
-              <TextInput
-                value={videoUrl}
-                onChangeText={setVideoUrl}
-                placeholder={t('Paste video URL')}
-                placeholderTextColor={colors.subtext}
-                style={styles.input}
-              />
+              {!uploadedMedia.some(item => item.kind === 'video' && item.url === videoUrl) ? (
+                <TextInput
+                  value={videoUrl}
+                  onChangeText={setVideoUrl}
+                  placeholder={t('Paste video URL')}
+                  placeholderTextColor={colors.subtext}
+                  style={styles.input}
+                />
+              ) : null}
             </>
           )}
 
@@ -841,6 +861,36 @@ export const SchedulePostScreen: React.FC = () => {
             )}
           </View>
 
+          {uploadedMedia.filter(item => item.kind === 'video').map(file => (
+            <View key={file.url} style={styles.mediaMiniCard}>
+              {isWeb
+                ? React.createElement('video', {
+                    src: file.url,
+                    controls: true,
+                    preload: 'metadata',
+                    style: { width: 132, height: 86, borderRadius: 12, objectFit: 'cover', backgroundColor: '#050713' },
+                  })
+                : <View style={styles.videoMiniPlaceholder}><Text style={styles.videoMiniIcon}>▶</Text></View>}
+              <View style={styles.mediaMiniDetails}>
+                <Text style={styles.mediaMiniName} numberOfLines={1}>{file.name || t('Uploaded video')}</Text>
+                <Text style={styles.mediaMiniMeta}>{t('Video ready')}</Text>
+              </View>
+              <TouchableOpacity
+                accessibilityLabel={t('Remove video')}
+                style={styles.mediaMiniRemove}
+                onPress={() => {
+                  setUploadedMedia(current => current.filter(item => item.url !== file.url));
+                  if (videoUrl === file.url) setVideoUrl('');
+                  if (youtubeVideoUrl === file.url) setYoutubeVideoUrl('');
+                  if (tiktokVideoUrl === file.url) setTiktokVideoUrl('');
+                  if (reelsVideoUrl === file.url) setReelsVideoUrl('');
+                }}
+              >
+                <Text style={styles.mediaMiniRemoveText}>×</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+
           <Text style={styles.label}>{t('Images')}</Text>
           <TextInput
             value={imageUrlInput}
@@ -850,11 +900,27 @@ export const SchedulePostScreen: React.FC = () => {
             style={styles.input}
           />
           <DMButton title={t('Add Image')} onPress={addImage} style={{ marginBottom: 12 }} />
-          {images.map(url => (
-            <Text key={url} style={styles.imageRow}>
-              - {url}
-            </Text>
-          ))}
+          <View style={styles.imageMiniGrid}>
+            {images.map(url => {
+              const uploaded = uploadedMedia.find(item => item.url === url);
+              return (
+                <View key={url} style={styles.imageMiniCard}>
+                  <Image source={{ uri: url }} style={styles.imageMiniPreview} />
+                  <Text style={styles.imageMiniName} numberOfLines={1}>{uploaded?.name || t('Attached image')}</Text>
+                  <TouchableOpacity
+                    accessibilityLabel={t('Remove image')}
+                    style={styles.imageMiniRemove}
+                    onPress={() => {
+                      setImages(current => current.filter(item => item !== url));
+                      setUploadedMedia(current => current.filter(item => item.url !== url));
+                    }}
+                  >
+                    <Text style={styles.mediaMiniRemoveText}>×</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
 
           <Text style={styles.label}>{t('Caption')}</Text>
           <TextInput
@@ -1240,6 +1306,19 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   imageRow: { color: colors.subtext, marginBottom: 4 },
+  imageMiniGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8 },
+  imageMiniCard: { width: 112, borderRadius: 14, padding: 6, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  imageMiniPreview: { width: 98, height: 78, borderRadius: 10, backgroundColor: colors.card },
+  imageMiniName: { color: colors.text, fontSize: 11, marginTop: 6 },
+  imageMiniRemove: { position: 'absolute', right: 2, top: 2, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(5,7,19,0.86)', alignItems: 'center', justifyContent: 'center' },
+  mediaMiniCard: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 8, marginBottom: 10, borderRadius: 14, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  videoMiniPlaceholder: { width: 92, height: 68, borderRadius: 12, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
+  videoMiniIcon: { color: colors.accent, fontSize: 24 },
+  mediaMiniDetails: { flex: 1, minWidth: 0 },
+  mediaMiniName: { color: colors.text, fontWeight: '700' },
+  mediaMiniMeta: { color: colors.subtext, fontSize: 12, marginTop: 3 },
+  mediaMiniRemove: { width: 30, height: 30, borderRadius: 15, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
+  mediaMiniRemoveText: { color: colors.text, fontSize: 20, lineHeight: 22 },
   modalOverlay: {
     flex: 1,
     backgroundColor: colors.overlay,
