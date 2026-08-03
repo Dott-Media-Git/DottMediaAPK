@@ -245,9 +245,14 @@ export class SocialSchedulingService {
       console.warn('[social-schedule] firestore schedule write failed; attempting Supabase fallback', error);
     }
 
-    let supabaseError: unknown = null;
+    let supabasePostsPersisted = false;
     try {
       await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
+      supabasePostsPersisted = true;
+    } catch (error) {
+      console.warn('[social-schedule] supabase schedule mirror failed', error);
+    }
+    try {
       await supabaseFallbackService.incrementSocialLimit({
         key: limitKey,
         userId: payload.userId,
@@ -255,11 +260,10 @@ export class SocialSchedulingService {
         scheduledCount: docsToCreate.length,
       });
     } catch (error) {
-      supabaseError = error;
-      console.warn('[social-schedule] supabase schedule mirror failed', error);
+      console.warn('[social-schedule] supabase social-limit mirror failed', error);
     }
 
-    if (firestoreError && supabaseError) {
+    if (firestoreError && !supabasePostsPersisted) {
       throw firestoreError;
     }
 
