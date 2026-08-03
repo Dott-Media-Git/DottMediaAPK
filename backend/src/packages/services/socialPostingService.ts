@@ -317,19 +317,18 @@ export class SocialPostingService {
     await this.log(post, 'skipped_deprecated', undefined, message);
   }
 
-  async runQueue(limit = 25) {
+  async runQueue(limit = 25, onlyUserId?: string) {
     const now = admin.firestore.Timestamp.now();
     const pendingById = new Map<string, ScheduledPost>();
     try {
-      const pendingSnap = await scheduledPostsCollection
-        .where('status', '==', 'pending')
-        .where('scheduledFor', '<=', now)
-        .orderBy('scheduledFor', 'asc')
-        .limit(limit)
-        .get();
+      const pendingSnap = onlyUserId
+        ? await scheduledPostsCollection.where('userId', '==', onlyUserId).where('status', '==', 'pending').limit(limit).get()
+        : await scheduledPostsCollection.where('status', '==', 'pending').where('scheduledFor', '<=', now).orderBy('scheduledFor', 'asc').limit(limit).get();
 
         pendingSnap.docs.forEach(doc => {
           const data = doc.data();
+          const scheduledFor = data.scheduledFor?.toDate?.() as Date | undefined;
+          if (scheduledFor && scheduledFor.getTime() > now.toMillis()) return;
           pendingById.set(doc.id, {
             id: doc.id,
             userId: data.userId as string,
@@ -340,7 +339,7 @@ export class SocialPostingService {
             videoUrl: (data.videoUrl as string | undefined) ?? undefined,
             videoTitle: (data.videoTitle as string | undefined) ?? undefined,
             targetDate: (data.targetDate as string) ?? new Date().toISOString().slice(0, 10),
-            scheduledFor: data.scheduledFor?.toDate?.() ?? undefined,
+            scheduledFor,
             source: (data.source as string | undefined) ?? undefined,
             billingUsageConsumed: Boolean(data.billingUsageConsumed),
           });
@@ -369,7 +368,7 @@ export class SocialPostingService {
     } catch (error) {
       console.warn('[social-posting] supabase pending queue fetch failed', error);
     }
-    const posts = Array.from(pendingById.values()).sort((a, b) => {
+    const posts = Array.from(pendingById.values()).filter(post => !onlyUserId || post.userId === onlyUserId).sort((a, b) => {
       const aTime = a.scheduledFor?.getTime() ?? 0;
       const bTime = b.scheduledFor?.getTime() ?? 0;
       if (aTime !== bTime) return aTime - bTime;

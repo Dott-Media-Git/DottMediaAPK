@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { SocialAccounts } from '../socialPostingService';
 import { appendCommentToDmCaptionCta } from '../../../services/commentToDmService';
+const http = axios.create({ timeout: Math.max(Number(process.env.SOCIAL_PUBLISH_HTTP_TIMEOUT_MS ?? 20_000), 5_000) });
 
 type PublishInput = {
   caption: string;
@@ -110,7 +111,7 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
     if (input.imageUrls.length > 1) {
       const childContainers: string[] = [];
       for (const imageUrl of input.imageUrls.slice(0, CAROUSEL_MAX_IMAGES)) {
-        const childResponse = await axios.post(`${baseUrl}/media`, {
+        const childResponse = await http.post(`${baseUrl}/media`, {
           image_url: imageUrl,
           is_carousel_item: true,
           access_token: accessToken,
@@ -125,7 +126,7 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
         }
         childContainers.push(childId);
       }
-      const carouselResponse = await axios.post(`${baseUrl}/media`, {
+      const carouselResponse = await http.post(`${baseUrl}/media`, {
         media_type: 'CAROUSEL',
         children: childContainers.join(','),
         caption,
@@ -134,7 +135,7 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
       creationId = carouselResponse.data?.id;
     } else {
       // Step 1: Create Media Container
-      const createMediaResponse = await axios.post(`${baseUrl}/media`, {
+      const createMediaResponse = await http.post(`${baseUrl}/media`, {
         image_url: input.imageUrls[0],
         caption,
         access_token: accessToken,
@@ -185,7 +186,7 @@ export async function publishToInstagramReel(input: ReelPublishInput): Promise<{
   const baseUrl = getInstagramGraphBaseUrl(credentials.instagram);
 
   try {
-    const createMediaResponse = await axios.post(`${baseUrl}/media`, {
+    const createMediaResponse = await http.post(`${baseUrl}/media`, {
       media_type: 'REELS',
       video_url: input.videoUrl,
       caption,
@@ -236,7 +237,7 @@ export async function publishToInstagramStory(input: StoryPublishInput): Promise
   }
 
   try {
-    const createMediaResponse = await axios.post(`${baseUrl}/media`, {
+    const createMediaResponse = await http.post(`${baseUrl}/media`, {
       media_type: 'STORIES',
       ...(hasVideo ? { video_url: mediaUrl } : { image_url: mediaUrl }),
       access_token: accessToken,
@@ -278,7 +279,7 @@ async function waitForMediaReady(
   delayMs = 2000,
 ) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const statusResp = await axios.get(getInstagramMediaStatusUrl(credentials, creationId), {
+    const statusResp = await http.get(getInstagramMediaStatusUrl(credentials, creationId), {
       params: { fields: 'status_code,status', access_token: accessToken },
     });
     const status = statusResp.data?.status_code;
@@ -312,7 +313,7 @@ async function publishWithRetry({
   let lastError: any;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const publishResponse = await axios.post(`${baseUrl}/media_publish`, {
+      const publishResponse = await http.post(`${baseUrl}/media_publish`, {
         creation_id: creationId,
         access_token: accessToken,
       });

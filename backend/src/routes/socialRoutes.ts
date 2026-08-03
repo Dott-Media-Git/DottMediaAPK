@@ -1037,8 +1037,35 @@ router.post('/posts/publish-now', requireFirebase, async (req, res, next) => {
     );
     const scheduled = await socialSchedulingService.schedulePosts({ ...payload, billingUsageConsumed: true });
     const scheduledCount = Array.isArray(scheduled.scheduled) ? scheduled.scheduled.length : Number(scheduled.scheduled ?? 0);
-    const published = scheduledCount > 0 ? await socialPostingService.runQueue(100) : { processed: 0 };
-    res.json({ ...scheduled, processed: published.processed });
+    if (scheduledCount > 0) {
+      void socialPostingService.runQueue(250, authUser.uid).catch(error => {
+        console.error('[publish-now] background publish failed', { userId: authUser.uid, error: error instanceof Error ? error.message : String(error) });
+      });
+    }
+    res.status(202).json({ ...scheduled, queued: scheduledCount });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/posts/publish-status', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const ids = String(req.query.ids ?? '').split(',').map(value => value.trim()).filter(Boolean).slice(0, 12);
+    if (!ids.length) return res.status(400).json({ message: 'Post IDs are required' });
+    const history = await socialPostingService.getHistory(authUser.uid, 500);
+    const posts = history.posts.filter(post => ids.includes(String(post.id ?? ''))).map(post => ({
+      id: post.id,
+      platform: post.platform,
+      status: post.status,
+      errorMessage: post.errorMessage,
+      remoteId: post.remoteId,
+    }));
+    const terminal = new Set(['posted', 'failed', 'skipped_limit', 'skipped_deprecated']);
+    const posted = posts.filter(post => post.status === 'posted').length;
+    const failed = posts.filter(post => terminal.has(String(post.status)) && post.status !== 'posted').length;
+    res.json({ posts, posted, failed, pending: Math.max(ids.length - posted - failed, 0), complete: posts.length === ids.length && posts.every(post => terminal.has(String(post.status))) });
   } catch (error) {
     next(error);
   }

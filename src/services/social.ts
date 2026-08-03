@@ -27,7 +27,7 @@ const mergeAbortSignals = (externalSignal: AbortSignal | null | undefined, timeo
   };
 };
 
-async function authedFetch(path: string, options: RequestInit = {}) {
+async function authedFetch(path: string, options: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   if (!API_BASE) throw new Error('Missing API URL');
   const token = await getIdToken();
   const headers: Record<string, string> = {
@@ -35,7 +35,7 @@ async function authedFetch(path: string, options: RequestInit = {}) {
     ...(options.headers as Record<string, string>),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const timeout = mergeAbortSignals(options.signal, REQUEST_TIMEOUT_MS);
+  const timeout = mergeAbortSignals(options.signal, timeoutMs);
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, { ...options, headers, signal: timeout.signal });
@@ -67,7 +67,7 @@ async function authedMultipartFetch(path: string, body: FormData) {
   const token = await getIdToken();
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
-  const timeout = mergeAbortSignals(null, REQUEST_TIMEOUT_MS);
+  const timeout = mergeAbortSignals(null, 90000);
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
@@ -147,6 +147,9 @@ export type SchedulePostResponse = {
   trimmed?: boolean;
   reason?: string;
   remaining?: number;
+  posted?: number;
+  failed?: number;
+  postIds?: string[];
 };
 
 export const schedulePost = async (payload: any) => {
@@ -156,7 +159,17 @@ export const schedulePost = async (payload: any) => {
 
 export const publishPostNow = async (payload: any) => {
   const body = JSON.stringify(payload);
-  return authedFetch('/api/posts/publish-now', { method: 'POST', body }) as Promise<SchedulePostResponse & { processed?: number }>;
+  const queued = await authedFetch('/api/posts/publish-now', { method: 'POST', body }, 60000) as SchedulePostResponse & { queued?: number };
+  const ids = queued.postIds ?? [];
+  if (!ids.length) return queued;
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const status = await authedFetch(`/api/posts/publish-status?ids=${encodeURIComponent(ids.join(','))}`, {}, 45000) as {
+      posted: number; failed: number; pending: number; complete: boolean;
+    };
+    if (status.complete) return { ...queued, ...status, processed: status.posted };
+  }
+  throw new Error('Publishing is still taking longer than expected. Check Posting History for the final platform results.');
 };
 
 export type UploadedMediaFile = {

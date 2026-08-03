@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { SocialAccounts } from '../socialPostingService';
+const http = axios.create({ timeout: Math.max(Number(process.env.SOCIAL_PUBLISH_HTTP_TIMEOUT_MS ?? 20_000), 5_000) });
 
 type PublishInput = {
   caption: string;
@@ -43,7 +44,7 @@ function formatThreadsError(error: any, fallback: string) {
 async function waitForMediaReady(creationId: string, accessToken: string) {
   for (let attempt = 0; attempt < READY_ATTEMPTS; attempt += 1) {
     try {
-      const statusResp = await axios.get(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${creationId}`, {
+      const statusResp = await http.get(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${creationId}`, {
         params: {
           fields: 'id,status,error_message',
           access_token: accessToken,
@@ -75,7 +76,7 @@ async function publishWithRetry(accountId: string, accessToken: string, creation
   let lastError: unknown;
   for (let attempt = 0; attempt < PUBLISH_RETRIES; attempt += 1) {
     try {
-      const publishResp = await axios.post(
+      const publishResp = await http.post(
         `${GRAPH_BASE_URL}/${GRAPH_VERSION}/${accountId}/threads_publish`,
         null,
         {
@@ -107,7 +108,7 @@ async function createThreadsContainer(
   accessToken: string,
   payload: Record<string, string | number | boolean>,
 ) {
-  const createResp = await axios.post(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${accountId}/threads`, null, {
+  const createResp = await http.post(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${accountId}/threads`, null, {
     params: {
       ...payload,
       access_token: accessToken,
