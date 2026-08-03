@@ -101,6 +101,8 @@ export class SocialSchedulingService {
     const limitKey = `${payload.userId}_${targetDate}`;
     let existingCount: number;
     let postedCount: number;
+    let firestoreAvailable = true;
+    let firestoreReadError: unknown = null;
     try {
       const [existingSnap, limitDoc] = await Promise.all([
         scheduledPostsCollection
@@ -112,6 +114,8 @@ export class SocialSchedulingService {
       existingCount = existingSnap.size;
       postedCount = (limitDoc.data()?.postedCount as number) ?? 0;
     } catch (error) {
+      firestoreAvailable = false;
+      firestoreReadError = error;
       console.warn('[social-schedule] firestore quota/read failed; using Supabase schedule limits', error);
       const [posts, limit] = await Promise.all([
         supabaseFallbackService.getPostsByUser(payload.userId, 500),
@@ -237,12 +241,17 @@ export class SocialSchedulingService {
       { merge: true },
     );
 
-    let firestoreError: unknown = null;
-    try {
-      await batch.commit();
-    } catch (error) {
-      firestoreError = error;
-      console.warn('[social-schedule] firestore schedule write failed; attempting Supabase fallback', error);
+    let firestoreError: unknown = firestoreReadError;
+    if (firestoreAvailable) {
+      try {
+        await Promise.race([
+          batch.commit(),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Firestore schedule write timed out')), 8000)),
+        ]);
+      } catch (error) {
+        firestoreError = error;
+        console.warn('[social-schedule] firestore schedule write failed; attempting Supabase fallback', error);
+      }
     }
 
     let supabasePostsPersisted = false;
