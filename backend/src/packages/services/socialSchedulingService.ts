@@ -98,14 +98,28 @@ export class SocialSchedulingService {
     if (Number.isNaN(scheduledDate.getTime())) throw new Error('Invalid scheduledFor date');
     const targetDate = scheduledDate.toISOString().slice(0, 10);
 
-    const existingSnap = await scheduledPostsCollection
-      .where('userId', '==', payload.userId)
-      .where('targetDate', '==', targetDate)
-      .get();
-
-    const existingCount = existingSnap.size;
-    const limitDoc = await socialLimitsCollection.doc(`${payload.userId}_${targetDate}`).get();
-    const postedCount = (limitDoc.data()?.postedCount as number) ?? 0;
+    const limitKey = `${payload.userId}_${targetDate}`;
+    let existingCount: number;
+    let postedCount: number;
+    try {
+      const [existingSnap, limitDoc] = await Promise.all([
+        scheduledPostsCollection
+          .where('userId', '==', payload.userId)
+          .where('targetDate', '==', targetDate)
+          .get(),
+        socialLimitsCollection.doc(limitKey).get(),
+      ]);
+      existingCount = existingSnap.size;
+      postedCount = (limitDoc.data()?.postedCount as number) ?? 0;
+    } catch (error) {
+      console.warn('[social-schedule] firestore quota/read failed; using Supabase schedule limits', error);
+      const [posts, limit] = await Promise.all([
+        supabaseFallbackService.getPostsByUser(payload.userId, 500),
+        supabaseFallbackService.getSocialLimit(limitKey),
+      ]);
+      existingCount = posts.filter(post => post.targetDate === targetDate).length;
+      postedCount = limit?.postedCount ?? 0;
+    }
     const maxPerDay = 5;
     if (existingCount >= maxPerDay) {
       return { scheduled: [], postIds: [], trimmed: true, reason: 'limit_reached' };
@@ -214,7 +228,7 @@ export class SocialSchedulingService {
     });
 
     batch.set(
-      socialLimitsCollection.doc(`${payload.userId}_${targetDate}`),
+      socialLimitsCollection.doc(limitKey),
       {
         userId: payload.userId,
         date: targetDate,
@@ -235,7 +249,7 @@ export class SocialSchedulingService {
     try {
       await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
       await supabaseFallbackService.incrementSocialLimit({
-        key: `${payload.userId}_${targetDate}`,
+        key: limitKey,
         userId: payload.userId,
         date: targetDate,
         scheduledCount: docsToCreate.length,
