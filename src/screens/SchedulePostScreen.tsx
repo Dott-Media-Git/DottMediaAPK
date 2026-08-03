@@ -16,8 +16,9 @@ import {
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { DMButton } from '@components/DMButton';
+import { PlatformSelector } from '@components/PlatformSelector';
 import { colors } from '@constants/colors';
-import { schedulePost, uploadMediaFiles, type UploadedMediaFile } from '@services/social';
+import { publishPostNow, schedulePost, uploadMediaFiles, type UploadedMediaFile } from '@services/social';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
 
@@ -153,6 +154,7 @@ export const SchedulePostScreen: React.FC = () => {
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
   const [imageUrlInput, setImageUrlInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [postingNow, setPostingNow] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
   const [noticeMessage, setNoticeMessage] = useState('');
   const [mediaUploading, setMediaUploading] = useState(false);
@@ -477,22 +479,48 @@ export const SchedulePostScreen: React.FC = () => {
     setVideoTitle('');
   };
 
+  const buildPostPayload = () => ({
+    userId: state.user!.uid,
+    platforms: selectedPlatforms,
+    images,
+    videoUrl: videoUrl.trim() || undefined,
+    youtubeVideoUrl: youtubeVideoUrl.trim() || undefined,
+    tiktokVideoUrl: tiktokVideoUrl.trim() || undefined,
+    instagramReelsVideoUrl: reelsVideoUrl.trim() || undefined,
+    videoTitle: videoTitle.trim() || undefined,
+    caption: normalizedCaption,
+    hashtags: normalizedHashtags,
+  });
+
+  const postImmediately = async () => {
+    if (!state.user || !validateSchedule()) return;
+    setPostingNow(true);
+    try {
+      const result = await publishPostNow(buildPostPayload());
+      const scheduledCount = Array.isArray(result?.scheduled) ? result.scheduled.length : Number(result?.scheduled ?? 0);
+      if (scheduledCount <= 0) {
+        showNotice(result?.reason === 'limit_reached'
+          ? t('Nothing was posted. You have reached today\'s posting limit for this account.')
+          : t('Nothing was posted. Please review the selected media and platforms.'));
+        return;
+      }
+      setPreviewVisible(false);
+      resetForm();
+      showNotice(t('Posted now to {{count}} selected platform(s). Check Posting History for the live results.', { count: scheduledCount }));
+    } catch (error: any) {
+      Alert.alert(t('Post failed'), error?.message ?? t('Unable to post right now.'));
+    } finally {
+      setPostingNow(false);
+    }
+  };
+
   const submit = async () => {
     if (!state.user) return;
     if (!validateSchedule()) return;
     setLoading(true);
     try {
       const result = await schedulePost({
-        userId: state.user.uid,
-        platforms: selectedPlatforms,
-        images,
-        videoUrl: videoUrl.trim() || undefined,
-        youtubeVideoUrl: youtubeVideoUrl.trim() || undefined,
-        tiktokVideoUrl: tiktokVideoUrl.trim() || undefined,
-        instagramReelsVideoUrl: reelsVideoUrl.trim() || undefined,
-        videoTitle: videoTitle.trim() || undefined,
-        caption: normalizedCaption,
-        hashtags: normalizedHashtags,
+        ...buildPostPayload(),
         scheduledFor: date.toISOString(),
         timesPerDay,
       });
@@ -612,18 +640,7 @@ export const SchedulePostScreen: React.FC = () => {
       </Animated.View>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.card}>
-          <Text style={styles.label}>{t('Platforms')}</Text>
-          <View style={styles.row}>
-            {PLATFORM_OPTIONS.map(platform => (
-              <TouchableOpacity
-                key={platform}
-                style={[styles.chip, selectedPlatforms.includes(platform) && styles.chipActive]}
-                onPress={() => togglePlatform(platform)}
-              >
-                <Text style={styles.chipText}>{t(formatPlatformLabel(platform))}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          <PlatformSelector options={PLATFORM_OPTIONS} selected={selectedPlatforms} onToggle={togglePlatform} translate={t} />
 
           <Text style={styles.label}>{t('Preferred Schedule')}</Text>
           <Text style={styles.helper}>{t('Choose the exact date and time you want this post to go out.')}</Text>
@@ -854,9 +871,17 @@ export const SchedulePostScreen: React.FC = () => {
           <DMButton
             title={loading ? t('Scheduling...') : t('Preview Schedule')}
             onPress={openPreview}
-            disabled={loading}
+            disabled={loading || postingNow}
             loading={loading}
           />
+          <DMButton
+            title={postingNow ? t('Posting now...') : t('Post Now')}
+            onPress={postImmediately}
+            disabled={loading || postingNow || mediaUploading}
+            loading={postingNow}
+            style={{ marginTop: 10 }}
+          />
+          <Text style={styles.actionHint}>{t('Post Now sends this exact content immediately to the selected platforms.')}</Text>
         </View>
       </ScrollView>
 
@@ -1061,6 +1086,13 @@ export const SchedulePostScreen: React.FC = () => {
                 disabled={loading}
                 loading={loading}
               />
+              <DMButton
+                title={postingNow ? t('Posting now...') : t('Post Now Instead')}
+                onPress={postImmediately}
+                disabled={loading || postingNow}
+                loading={postingNow}
+                style={{ marginTop: 10 }}
+              />
             </View>
           </View>
         </View>
@@ -1167,6 +1199,7 @@ const styles = StyleSheet.create({
   },
   dateText: { color: colors.text },
   helper: { color: colors.subtext, marginTop: 4 },
+  actionHint: { color: colors.subtext, fontSize: 12, lineHeight: 17, textAlign: 'center', marginTop: 8 },
   input: {
     borderWidth: 1,
     borderColor: colors.border,

@@ -154,6 +154,11 @@ export const schedulePost = async (payload: any) => {
   return authedFetch('/api/posts/schedule', { method: 'POST', body }) as Promise<SchedulePostResponse>;
 };
 
+export const publishPostNow = async (payload: any) => {
+  const body = JSON.stringify(payload);
+  return authedFetch('/api/posts/publish-now', { method: 'POST', body }) as Promise<SchedulePostResponse & { processed?: number }>;
+};
+
 export type UploadedMediaFile = {
   name: string;
   url: string;
