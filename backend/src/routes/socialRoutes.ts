@@ -1037,8 +1037,9 @@ router.post('/posts/publish-now', requireFirebase, async (req, res, next) => {
     );
     const scheduled = await socialSchedulingService.schedulePosts({ ...payload, billingUsageConsumed: true });
     const scheduledCount = Array.isArray(scheduled.scheduled) ? scheduled.scheduled.length : Number(scheduled.scheduled ?? 0);
-    const published = scheduledCount > 0 ? await socialPostingService.runQueue(100) : { processed: 0 };
-    res.json({ ...scheduled, processed: published.processed });
+    const published = scheduledCount > 0 ? await socialPostingService.runQueue(250, authUser.uid) : { processed: 0 };
+    const posted = Math.min(published.processed, scheduledCount);
+    res.json({ ...scheduled, processed: published.processed, posted, failed: Math.max(scheduledCount - posted, 0) });
   } catch (error) {
     next(error);
   }

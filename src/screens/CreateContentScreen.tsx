@@ -337,8 +337,12 @@ export const CreateContentScreen: React.FC = () => {
       });
       const scheduledCount = Array.isArray(response?.scheduled) ? response.scheduled.length : Number(response?.scheduled ?? 0);
       if (scheduledCount <= 0) throw new Error(t('Nothing was posted. Please review the selected media and platforms.'));
+      const postedCount = Number(response?.posted ?? response?.processed ?? 0);
+      if (postedCount <= 0) throw new Error(t('The selected platforms rejected the post. Check the connection and media requirements, then try again.'));
       setPreviewVisible(false);
-      Alert.alert(t('Posted'), t('Content was sent immediately. Check Posting History for each platform result.'));
+      showNotice(response?.failed
+        ? t('Posted to {{count}} platform(s). {{failed}} platform(s) failed; check Posting History.', { count: postedCount, failed: response.failed })
+        : t('Posted. Your content is live on {{count}} selected platform(s).', { count: postedCount }));
     } catch (error: any) {
       Alert.alert(t('Post failed'), error.message ?? t('Unable to post right now.'));
     } finally {
