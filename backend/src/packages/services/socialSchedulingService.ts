@@ -10,6 +10,11 @@ import {
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
+const withFirestoreDeadline = <T>(promise: Promise<T>, label: string, timeoutMs = 8000) =>
+  Promise.race<T>([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs)),
+  ]);
 
 export type SchedulePayload = {
   userId: string;
@@ -104,13 +109,13 @@ export class SocialSchedulingService {
     let firestoreAvailable = true;
     let firestoreReadError: unknown = null;
     try {
-      const [existingSnap, limitDoc] = await Promise.all([
+      const [existingSnap, limitDoc] = await withFirestoreDeadline(Promise.all([
         scheduledPostsCollection
           .where('userId', '==', payload.userId)
           .where('targetDate', '==', targetDate)
           .get(),
         socialLimitsCollection.doc(limitKey).get(),
-      ]);
+      ]), 'Firestore schedule lookup');
       existingCount = existingSnap.size;
       postedCount = (limitDoc.data()?.postedCount as number) ?? 0;
     } catch (error) {
@@ -244,10 +249,7 @@ export class SocialSchedulingService {
     let firestoreError: unknown = firestoreReadError;
     if (firestoreAvailable) {
       try {
-        await Promise.race([
-          batch.commit(),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Firestore schedule write timed out')), 8000)),
-        ]);
+        await withFirestoreDeadline(batch.commit(), 'Firestore schedule write');
       } catch (error) {
         firestoreError = error;
         console.warn('[social-schedule] firestore schedule write failed; attempting Supabase fallback', error);

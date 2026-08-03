@@ -25,6 +25,11 @@ import { consumeUsageForUserId } from '../../services/billing/billingService';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
+const withFirestoreDeadline = <T>(promise: Promise<T>, label: string, timeoutMs = 8000) =>
+  Promise.race<T>([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs)),
+  ]);
 const socialLogsCollection = firestore.collection('socialLogs');
 const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId: string; instagramUsername: string }> = {
   acmVetCcOiTHeGk5D7eDYieamDF3: {
@@ -321,9 +326,12 @@ export class SocialPostingService {
     const now = admin.firestore.Timestamp.now();
     const pendingById = new Map<string, ScheduledPost>();
     try {
-      const pendingSnap = onlyUserId
-        ? await scheduledPostsCollection.where('userId', '==', onlyUserId).where('status', '==', 'pending').limit(limit).get()
-        : await scheduledPostsCollection.where('status', '==', 'pending').where('scheduledFor', '<=', now).orderBy('scheduledFor', 'asc').limit(limit).get();
+      const pendingSnap = await withFirestoreDeadline(
+        onlyUserId
+          ? scheduledPostsCollection.where('userId', '==', onlyUserId).where('status', '==', 'pending').limit(limit).get()
+          : scheduledPostsCollection.where('status', '==', 'pending').where('scheduledFor', '<=', now).orderBy('scheduledFor', 'asc').limit(limit).get(),
+        'Firestore pending queue lookup',
+      );
 
         pendingSnap.docs.forEach(doc => {
           const data = doc.data();
@@ -462,7 +470,10 @@ export class SocialPostingService {
         // Fetch user credentials
         let userData: { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
         try {
-          const userDoc = await firestore.collection('users').doc(post.userId).get();
+          const userDoc = await withFirestoreDeadline(
+            firestore.collection('users').doc(post.userId).get(),
+            'Firestore social account lookup',
+          );
           userData = userDoc.data() as { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
           if (userData?.socialAccounts) {
             void supabaseFallbackService.upsertSocialAccounts(post.userId, {
@@ -800,7 +811,10 @@ export class SocialPostingService {
     const uniqueKeys = Array.from(new Set(entries.map(entry => `${entry.userId}_${entry.targetDate}`)));
     if (!uniqueKeys.length) return set;
     try {
-      const snaps = await Promise.all(uniqueKeys.map(key => socialLimitsCollection.doc(key).get()));
+      const snaps = await withFirestoreDeadline(
+        Promise.all(uniqueKeys.map(key => socialLimitsCollection.doc(key).get())),
+        'Firestore social limits lookup',
+      );
       snaps.forEach((doc, index) => {
         const key = uniqueKeys[index];
         const postedCount = (doc.data()?.postedCount as number) ?? 0;
