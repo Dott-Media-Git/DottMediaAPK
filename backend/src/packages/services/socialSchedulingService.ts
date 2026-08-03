@@ -116,7 +116,7 @@ export class SocialSchedulingService {
           .get(),
         socialLimitsCollection.doc(limitKey).get(),
       ]), 'Firestore schedule lookup');
-      existingCount = existingSnap.size;
+      existingCount = existingSnap.docs.filter(doc => String(doc.data()?.status ?? 'pending') === 'pending').length;
       postedCount = (limitDoc.data()?.postedCount as number) ?? 0;
     } catch (error) {
       firestoreAvailable = false;
@@ -126,7 +126,7 @@ export class SocialSchedulingService {
         supabaseFallbackService.getPostsByUser(payload.userId, 500),
         supabaseFallbackService.getSocialLimit(limitKey),
       ]);
-      existingCount = posts.filter(post => post.targetDate === targetDate).length;
+      existingCount = posts.filter(post => post.targetDate === targetDate && String(post.status ?? 'pending') === 'pending').length;
       postedCount = limit?.postedCount ?? 0;
     }
     const maxPerDay = 5;
