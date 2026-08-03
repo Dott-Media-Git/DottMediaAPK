@@ -18,6 +18,7 @@ const paymentTransactionsCollection = firestore.collection('paymentTransactions'
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 const OWNER_MANAGED_BILLING_EXEMPT_USER_IDS = new Set([
+  'cMPZQccGggbhZe9dbvtxFmBehP02', // Dott Media main
   '1zvY9nNyXMcfxdPQEyx0bIdK7r53', // Bwin / Ball Analytics
   'LVR7p3WzdFM51ds92Kacf6S40og2', // Dott Energy
   '80bYIeiuukNFtUvXTUobXmfC7pu1', // Dott Human Resource
