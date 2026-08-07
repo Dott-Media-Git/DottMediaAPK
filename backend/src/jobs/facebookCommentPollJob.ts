@@ -29,6 +29,7 @@ const CLIENT_POLL_USER_IDS = [
   'acmVetCcOiTHeGk5D7eDYieamDF3',
   'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
   'vzdH1DnfFLVjlY8bBgC26WACmmw2',
+  'X0ObAFQft0UWZee9IbUyYaeaBfO2',
 ];
 
 const isAlreadyExistsError = (error: unknown) => {

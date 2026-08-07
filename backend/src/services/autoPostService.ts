@@ -81,6 +81,7 @@ type AutoPostJob = {
   lastRunAt?: admin.firestore.Timestamp;
   lastResult?: PostResult[];
   reelsIntervalHours?: number;
+  reelsPlatforms?: string[];
   reelsNextRun?: admin.firestore.Timestamp;
   reelsLastRunAt?: admin.firestore.Timestamp;
   reelsLastResult?: PostResult[];
@@ -132,6 +133,8 @@ type AutoPostJob = {
   xLastWeeklyAwardTweetId?: string;
   active?: boolean;
   recentImageUrls?: string[];
+  sourceImageUrls?: string[];
+  sourceImageCursor?: number;
   recentVideoUrls?: string[];
   fallbackCaption?: string;
   fallbackHashtags?: string;
@@ -760,12 +763,12 @@ export class AutoPostService {
     for (const [userId, job] of dueReels) {
       if (!(await this.claimDueRun(userId, job, 'reels_next_run', now))) continue;
       const outcome = await this.executeJob(userId, job, {
-        platforms: ['instagram_reels'],
+        platforms: this.getReelsPlatforms(job),
         intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
         nextRunField: 'reelsNextRun',
         lastRunField: 'reelsLastRunAt',
         resultField: 'reelsLastResult',
-        useGenericVideoFallback: false,
+        useGenericVideoFallback: true,
       });
       processed += 1;
       const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
@@ -1306,12 +1309,12 @@ export class AutoPostService {
       for (const [userId, job] of dueReels) {
         if (!(await this.claimDueRun(userId, job, 'reels_next_run', now))) continue;
         const outcome = await this.executeJob(userId, job, {
-          platforms: ['instagram_reels'],
+          platforms: this.getReelsPlatforms(job),
           intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
           nextRunField: 'reelsNextRun',
           lastRunField: 'reelsLastRunAt',
           resultField: 'reelsLastResult',
-          useGenericVideoFallback: false,
+          useGenericVideoFallback: true,
         });
         processed += 1;
         const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
@@ -1465,12 +1468,12 @@ export class AutoPostService {
         this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
         if (!(await this.claimDueRun(doc.id, data, 'reels_next_run', now))) continue;
         const outcome = await this.executeJob(doc.id, data, {
-          platforms: ['instagram_reels'],
+          platforms: this.getReelsPlatforms(data),
           intervalHours: this.getReelsIntervalHours(doc.id, data.reelsIntervalHours),
           nextRunField: 'reelsNextRun',
           lastRunField: 'reelsLastRunAt',
           resultField: 'reelsLastResult',
-          useGenericVideoFallback: false,
+          useGenericVideoFallback: true,
         });
         processed += 1;
         const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
@@ -1703,12 +1706,12 @@ export class AutoPostService {
       if (job.reelsNextRun || job.reelsVideoUrl || (job.reelsVideoUrls && job.reelsVideoUrls.length)) {
         const reels = await this.executeJob(userId, job, {
           ...(options.generatedContent ? { generatedContent: options.generatedContent } : {}),
-          platforms: ['instagram_reels'],
+          platforms: this.getReelsPlatforms(job),
           intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
           nextRunField: 'reelsNextRun',
           lastRunField: 'reelsLastRunAt',
           resultField: 'reelsLastResult',
-          useGenericVideoFallback: false,
+          useGenericVideoFallback: true,
         });
         return {
           ...standard,
@@ -1744,12 +1747,12 @@ export class AutoPostService {
     if (job.reelsNextRun || job.reelsVideoUrl || (job.reelsVideoUrls && job.reelsVideoUrls.length)) {
       const reels = await this.executeJob(userId, job, {
         ...(options.generatedContent ? { generatedContent: options.generatedContent } : {}),
-        platforms: ['instagram_reels'],
+        platforms: this.getReelsPlatforms(job),
         intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
         nextRunField: 'reelsNextRun',
         lastRunField: 'reelsLastRunAt',
         resultField: 'reelsLastResult',
-        useGenericVideoFallback: false,
+        useGenericVideoFallback: true,
       });
       return {
         ...standard,
@@ -1785,6 +1788,13 @@ export class AutoPostService {
     const fromJob = (job.platforms ?? []).filter(platform => platform.endsWith('_story'));
     if (fromJob.length) return fromJob;
     return ['instagram_story', 'facebook_story'];
+  }
+
+  private getReelsPlatforms(job: AutoPostJob) {
+    if (Array.isArray(job.reelsPlatforms) && job.reelsPlatforms.length) {
+      return Array.from(new Set(job.reelsPlatforms.filter(Boolean)));
+    }
+    return ['instagram_reels'];
   }
 
   private getTrendPlatforms(job: AutoPostJob) {
@@ -4576,7 +4586,8 @@ export class AutoPostService {
       return true;
     });
     const clientPhotoProfile = needsImages ? clientFallbackProfile : null;
-    const requireAiImages = needsImages ? (isBwinUser || clientPhotoProfile ? false : this.requireAiImages(job)) : false;
+    const hasOwnedSourceImages = needsImages && Array.isArray(job.sourceImageUrls) && job.sourceImageUrls.some(Boolean);
+    const requireAiImages = needsImages ? (isBwinUser || clientPhotoProfile || hasOwnedSourceImages ? false : this.requireAiImages(job)) : false;
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
     const fallbackCopy = this.buildFallbackCopy(job, userId);
 
@@ -4587,7 +4598,7 @@ export class AutoPostService {
         }
       : null;
     let generationError: Error | null = null;
-    if (!generated && clientPhotoProfile) {
+    if (!generated && (clientPhotoProfile || hasOwnedSourceImages)) {
       generated = {
         images: [],
         caption_instagram: '',
@@ -4648,7 +4659,7 @@ export class AutoPostService {
     const recentVideos = this.mergeRecentVideos(this.getRecentVideoHistory(job), scheduledHistory.videoUrls);
     const recentVideoSet = new Set(recentVideos);
     const cursorUpdates: Partial<
-      Pick<AutoPostJob, 'videoCursor' | 'youtubeVideoCursor' | 'tiktokVideoCursor' | 'reelsVideoCursor'>
+      Pick<AutoPostJob, 'videoCursor' | 'youtubeVideoCursor' | 'tiktokVideoCursor' | 'reelsVideoCursor' | 'sourceImageCursor'>
     > = {};
     let usedGenericVideo = false;
     const recentCaptions = this.mergeRecentCaptions(this.getRecentCaptionHistory(job), [
@@ -4669,6 +4680,25 @@ export class AutoPostService {
     let usedDottEnergyProductKey: string | null = null;
     let dottEnergyPostedStoreProduct = false;
     let clientInstagramSourceImageUrls: string[] = [];
+
+    if (hasOwnedSourceImages && !isReelsRun) {
+      const pool = Array.from(new Set((job.sourceImageUrls ?? []).map(url => String(url).trim()).filter(Boolean)));
+      const start = Math.max(Number(job.sourceImageCursor ?? 0), 0) % pool.length;
+      let selectedIndex = start;
+      for (let offset = 0; offset < pool.length; offset += 1) {
+        const candidateIndex = (start + offset) % pool.length;
+        if (!recentSet.has(pool[candidateIndex])) {
+          selectedIndex = candidateIndex;
+          break;
+        }
+      }
+      const selected = pool[selectedIndex];
+      if (selected) {
+        imageUrls = [selected];
+        usedClientSourceImageUrl = selected;
+        cursorUpdates.sourceImageCursor = (selectedIndex + 1) % pool.length;
+      }
+    }
 
     if (clientPhotoProfile?.key === 'carmarketplace' && needsImages) {
       try {
@@ -5230,6 +5260,8 @@ export class AutoPostService {
         typeof cursorUpdates.tiktokVideoCursor === 'number' ? cursorUpdates.tiktokVideoCursor : job.tiktokVideoCursor,
       reelsVideoCursor:
         typeof cursorUpdates.reelsVideoCursor === 'number' ? cursorUpdates.reelsVideoCursor : job.reelsVideoCursor,
+      sourceImageCursor:
+        typeof cursorUpdates.sourceImageCursor === 'number' ? cursorUpdates.sourceImageCursor : job.sourceImageCursor,
     };
     for (const field of instagramAttemptFields) {
       nextRecord[field] = admin.firestore.Timestamp.now();
