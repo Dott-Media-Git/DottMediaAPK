@@ -46,6 +46,11 @@ const PUBLISHED_IMAGE_FILENAMES = new Set([
   'dotti-ads-performance.png',
   'dotti-automotive-sales.png',
   'dotti-real-estate-sales.png',
+  'dotti-campaign-finish-strong.png',
+  'dotti-run-your-sales.png',
+  'dotti-run-your-social.png',
+  'dotti-vlog-sidekick.png',
+  'dotti-influencer-assistant.png',
 ]);
 const FALLBACK_IMAGE_FILENAME = 'dotti-grow-online-market.png';
 
@@ -53,6 +58,31 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const STATIC_CAMPAIGN_ITEMS = [
+  {
+    type: 'image', slug: 'dotti-campaign-finish-strong', filename: 'dotti-campaign-finish-strong.png',
+    instagramCaption: "Campaigns are marathons. Let Dotti keep your message consistent, engage the right people, and help your brand finish strong.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #CampaignManagement #DigitalMarketing #BusinessGrowth",
+    facebookCaption: "Campaigns are marathons. Let Dotti keep your message consistent, engage the right people, and help your brand finish strong.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #CampaignManagement #DigitalMarketing #BusinessGrowth",
+  },
+  {
+    type: 'image', slug: 'dotti-run-your-sales', filename: 'dotti-run-your-sales.png',
+    instagramCaption: "Let Dotti run the busy side of sales while you focus on your business: finding leads, starting conversations, following up, and moving more opportunities toward a close.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #SalesAutomation #LeadGeneration #BusinessGrowth",
+    facebookCaption: "Let Dotti run the busy side of sales while you focus on your business: finding leads, starting conversations, following up, and moving more opportunities toward a close.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #SalesAutomation #LeadGeneration #BusinessGrowth",
+  },
+  {
+    type: 'image', slug: 'dotti-run-your-social', filename: 'dotti-run-your-social.png',
+    instagramCaption: "Keep doing what you love while Dotti keeps your social presence moving with consistent content, audience engagement, and smarter follow-up.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #SocialMediaAutomation #ContentMarketing #BusinessGrowth",
+    facebookCaption: "Keep doing what you love while Dotti keeps your social presence moving with consistent content, audience engagement, and smarter follow-up.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #SocialMediaAutomation #ContentMarketing #BusinessGrowth",
+  },
+  {
+    type: 'image', slug: 'dotti-vlog-sidekick', filename: 'dotti-vlog-sidekick.png',
+    instagramCaption: "Create the moments while Dotti handles the backstage: content ideas, captions, scheduling, posting, and a consistent plan to grow your audience.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #ContentCreator #Vlogging #CreatorTools",
+    facebookCaption: "Create the moments while Dotti handles the backstage: content ideas, captions, scheduling, posting, and a consistent plan to grow your audience.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #ContentCreator #Vlogging #CreatorTools",
+  },
+  {
+    type: 'image', slug: 'dotti-influencer-assistant', filename: 'dotti-influencer-assistant.png',
+    instagramCaption: "Your influence deserves room to grow. Dotti helps plan content, manage conversations, keep your schedule moving, and turn audience attention into real opportunities.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #InfluencerMarketing #CreatorEconomy #ContentAutomation",
+    facebookCaption: "Your influence deserves room to grow. Dotti helps plan content, manage conversations, keep your schedule moving, and turn audience attention into real opportunities.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #InfluencerMarketing #CreatorEconomy #ContentAutomation",
+  },
   {
     type: 'image',
     slug: 'dotti-grow-online-market',
