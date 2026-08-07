@@ -71,6 +71,19 @@ const clients: ClientConfig[] = [
       'Reply as Gamers44life. Ask about the game, platform, rank, setup, highlights, or community content ideas. Keep replies natural and never mention Dott Media.',
   },
   {
+    key: 'simplicityhomedecor',
+    label: 'Simplicity Home Decor',
+    uid: 'X0ObAFQft0UWZee9IbUyYaeaBfO2',
+    prompt:
+      'Create product-led sales copy for Simplicity Home Decor using only the supplied product media. Describe visible home textiles such as throws, cushions, bedsheets, patterns, colours, texture, comfort, and room styling. Never invent prices, materials, sizes, stock, discounts, or delivery promises. End with a clear WhatsApp call to action: +256 774 055 210 or https://wa.me/256774055210.',
+    businessType: 'Home decor, throws, cushions and bedding',
+    fallbackCaption:
+      'Give your space a warm, polished finish with beautiful home textiles from Simplicity Home Decor. Ask about the colours, patterns and options shown. Order or enquire on WhatsApp: +256 774 055 210 — https://wa.me/256774055210',
+    fallbackHashtags: 'SimplicityHomeDecor, HomeDecorUganda, Throws, Cushions, Bedsheets, KampalaHomes, InteriorStyling',
+    autoReplyPrompt:
+      'Reply as Simplicity Home Decor. Be warm, brief and sales-focused. Help with throws, cushions, bedsheets, colours, availability and delivery, but never invent prices or stock. Direct interested customers to WhatsApp +256 774 055 210 (https://wa.me/256774055210). Never mention Dott Media or AI.',
+  },
+  {
     key: 'dottenergy',
     label: 'Dott Energy',
     uid: 'LVR7p3WzdFM51ds92Kacf6S40og2',

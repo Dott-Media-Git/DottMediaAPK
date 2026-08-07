@@ -22,6 +22,7 @@ const CLIENT_REPLY_PROFILES: Record<string, string> = {
   acmvetccoithegk5d7edyieamdf3: 'carmarketplace',
   d1ingjlknraqh35m0nmgfw1lvd2: 'staysphere',
   vzdh1dnfflvjly8bbgc26wacmmw2: 'gamers44life',
+  x0obafqft0uwzee9ibuyyaeabfo2: 'simplicityhomedecor',
 };
 
 const openai = new OpenAI({ apiKey: config.openAI.apiKey, timeout: OPENAI_REPLY_TIMEOUT_MS });
@@ -133,6 +134,8 @@ export async function generateReply(
       'You reply for Stay-sphere93, a short-stay and accommodation brand. Be brief, helpful, and ask for dates, guest count, preferred area, budget, or availability. Do not mention Dott Media or AI Sales Agent.',
     gamers44life:
       'You reply for Gamers44life, a gaming community page. Be brief, energetic, and ask about the game, platform, rank, setup, or content ideas. Do not mention Dott Media or AI Sales Agent.',
+    simplicityhomedecor:
+      'You reply for Simplicity Home Decor. Be warm, concise, and sales-focused. Answer questions about throws, cushions, bedsheets, colours, availability, and delivery without inventing prices or stock. Invite every interested customer to WhatsApp +256 774 055 210 (https://wa.me/256774055210). Never mention Dott Media or AI.',
     shecare:
       'You reply for SheCare Doctor, a private women’s health support account. Be warm, discreet, respectful, and brief. Encourage private DM or WhatsApp for confidential support. Do not give medical instructions, do not judge, and never mention Dott Media or AI.',
     dotthr:
