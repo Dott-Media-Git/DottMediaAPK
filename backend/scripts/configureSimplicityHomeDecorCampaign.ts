@@ -7,6 +7,7 @@ import admin from 'firebase-admin';
 import dotenv from 'dotenv';
 
 import { firestore } from '../src/db/firestore';
+import { autoPostService } from '../src/services/autoPostService';
 import { supabaseFallbackService } from '../src/services/supabaseFallbackService';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: false });
@@ -24,9 +25,14 @@ const mediaDir = readArg('media-dir') || process.env.SIMPLICITY_MEDIA_DIR?.trim(
 const dryRun = process.argv.includes('--dry-run');
 const skipUpload = process.argv.includes('--skip-upload');
 const skipFirestore = process.argv.includes('--skip-firestore');
+const postNow = process.argv.includes('--post-now');
 const supabaseUrl = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
 const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? '').trim();
 const bucket = process.env.CLIENT_CAMPAIGN_BUCKET?.trim() || 'dott-campaign';
+
+if (process.env.FIRESTORE_PREFER_REST === 'true') {
+  firestore.settings({ preferRest: true });
+}
 
 function readArg(name: string) {
   const index = process.argv.indexOf(`--${name}`);
@@ -178,6 +184,28 @@ async function run() {
       reelsNextRun: nextVideoRun.toDate(),
       updatedAt: new Date(),
     });
+
+    if (postNow) {
+      const imageJob = (await firestore.collection('autopostJobs').doc(USER_ID).get()).data() ?? job;
+      const imageResult = await (autoPostService as any).executeJob(USER_ID, imageJob, {
+        platforms: ['facebook', 'instagram'],
+        intervalHours: IMAGE_INTERVAL_HOURS,
+        nextRunField: 'nextRun',
+        lastRunField: 'lastRunAt',
+        resultField: 'lastResult',
+        useGenericVideoFallback: false,
+      });
+      const videoJob = (await firestore.collection('autopostJobs').doc(USER_ID).get()).data() ?? job;
+      const videoResult = await (autoPostService as any).executeJob(USER_ID, videoJob, {
+        platforms: ['instagram_reels', 'facebook'],
+        intervalHours: VIDEO_INTERVAL_HOURS,
+        nextRunField: 'reelsNextRun',
+        lastRunField: 'reelsLastRunAt',
+        resultField: 'reelsLastResult',
+        useGenericVideoFallback: true,
+      });
+      console.log(JSON.stringify({ freshPosts: { image: imageResult, video: videoResult } }));
+    }
   }
 
   console.log(JSON.stringify({
