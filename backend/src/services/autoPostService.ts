@@ -712,23 +712,25 @@ export class AutoPostService {
     });
 
     let { dueStandard, dueReels, dueStories, dueTrends } = buildDueSets();
-    if (!dueStandard.length && !dueReels.length && !dueStories.length && !dueTrends.length) {
-      try {
-        const [standard, reels, stories, trends] = await Promise.all([
-          supabaseFallbackService.getDueAutopostJobs('next_run', new Date(now.toMillis())),
-          supabaseFallbackService.getDueAutopostJobs('reels_next_run', new Date(now.toMillis())),
-          supabaseFallbackService.getDueAutopostJobs('story_next_run', new Date(now.toMillis())),
-          supabaseFallbackService.getDueAutopostJobs('trend_next_run', new Date(now.toMillis())),
-        ]);
-        [...standard, ...reels, ...stories, ...trends].forEach(job => {
-          if (!job?.userId) return;
-          this.cacheJob(job.userId as string, job as AutoPostJob);
-        });
-      } catch (error) {
-        console.warn('[autopost] supabase due-job fetch failed', logSafeError(error));
-      }
-      ({ dueStandard, dueReels, dueStories, dueTrends } = buildDueSets());
+    // Always merge due rows from the durable fallback. Previously this query only
+    // ran when the memory store had no due work at all, so one pinned/in-memory
+    // account could prevent every other Supabase-backed account from being
+    // discovered indefinitely.
+    try {
+      const [standard, reels, stories, trends] = await Promise.all([
+        supabaseFallbackService.getDueAutopostJobs('next_run', new Date(now.toMillis())),
+        supabaseFallbackService.getDueAutopostJobs('reels_next_run', new Date(now.toMillis())),
+        supabaseFallbackService.getDueAutopostJobs('story_next_run', new Date(now.toMillis())),
+        supabaseFallbackService.getDueAutopostJobs('trend_next_run', new Date(now.toMillis())),
+      ]);
+      [...standard, ...reels, ...stories, ...trends].forEach(job => {
+        if (!job?.userId || excludedUserIds.has(job.userId as string)) return;
+        this.cacheJob(job.userId as string, job as AutoPostJob);
+      });
+    } catch (error) {
+      console.warn('[autopost] supabase due-job fetch failed', logSafeError(error));
     }
+    ({ dueStandard, dueReels, dueStories, dueTrends } = buildDueSets());
 
     let processed = 0;
     const results = new Map<
