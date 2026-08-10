@@ -401,6 +401,13 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
       { label: 'Staysphere', uid: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2', platforms: ['facebook', 'instagram'], reels: true },
       { label: 'Gamers44life', uid: 'vzdH1DnfFLVjlY8bBgC26WACmmw2', platforms: ['facebook', 'instagram', 'threads'], reels: true },
       { label: 'DottEnergy', uid: 'LVR7p3WzdFM51ds92Kacf6S40og2', platforms: ['facebook', 'instagram', 'threads'], reels: false },
+      {
+        label: 'Simplicity',
+        uid: 'X0ObAFQft0UWZee9IbUyYaeaBfO2',
+        platforms: ['facebook', 'instagram'],
+        reels: true,
+        reelsPlatforms: ['instagram_reels', 'facebook'],
+      },
     ];
     const requestedAccounts = Array.isArray(req.body?.accounts)
       ? new Set(
@@ -470,7 +477,9 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
             const afterStoriesJob = (await service.loadAutopostJob(account.uid)) ?? afterFeedJob;
             result.reels = summarize(
               await service.executeJob(account.uid, afterStoriesJob, {
-                platforms: ['instagram_reels'],
+                platforms: Array.isArray(account.reelsPlatforms) && account.reelsPlatforms.length
+                  ? account.reelsPlatforms
+                  : ['instagram_reels'],
                 intervalHours: afterStoriesJob.reelsIntervalHours ?? 2,
                 nextRunField: 'reelsNextRun',
                 lastRunField: 'reelsLastRunAt',
