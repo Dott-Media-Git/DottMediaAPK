@@ -9,6 +9,7 @@ import { contentGenerationService } from '../packages/services/contentGeneration
 import { socialSchedulingService } from '../packages/services/socialSchedulingService';
 import { sendMonthlyPerformanceReportEmail, sendPerformanceReportEmail } from './emailService';
 import { canUseOutboundPipeline } from '../utils/socialAccess';
+import { getLiveSocialMetrics } from './liveSocialMetricsService';
 
 const strategiesCollection = firestore.collection('assistant_strategies');
 const settingsCollection = firestore.collection('assistant_settings');
@@ -44,6 +45,10 @@ type PeriodMetrics = {
     posted: number;
     failed: number;
     skipped: number;
+    views: number;
+    interactions: number;
+    engagementRate: number;
+    conversions: number;
   };
   inbound: {
     messages: number;
@@ -269,9 +274,6 @@ export class AssistantStrategyService {
   }
 
   private async fetchDailyRows(collectionName: string, userId: string, limit: number) {
-    if (process.env.ALLOW_MOCK_AUTH === 'true') {
-      return [];
-    }
     const scopeKey = resolveAnalyticsScopeKey({ userId });
     const collectionRef = firestore.collection('analytics').doc(scopeKey).collection(collectionName);
     try {
@@ -284,19 +286,23 @@ export class AssistantStrategyService {
   }
 
   private async buildPeriodMetrics(userId: string, days: number): Promise<PeriodMetrics> {
-    const allowMock = process.env.ALLOW_MOCK_AUTH === 'true';
-    const [summary, socialRows, inboundRows, outboundRows, engagementRows, followupRows] = await Promise.all([
+    const [summary, socialRows, inboundRows, outboundRows, engagementRows, followupRows, liveSocial] = await Promise.all([
       this.analyticsService.getSummary(userId),
-      allowMock
-        ? Promise.resolve([])
-        : this.socialAnalytics.getDailySummary(userId, Math.max(days * 2, 14)).catch(error => {
-            console.warn('Failed to load social analytics', (error as Error).message);
-            return [];
-          }),
+      this.socialAnalytics.getDailySummary(userId, Math.max(days * 2, 14)).catch(error => {
+        console.warn('Failed to load social analytics', (error as Error).message);
+        return [];
+      }),
       this.fetchDailyRows('inboundDaily', userId, Math.max(days * 2, 14)),
       this.fetchDailyRows('outboundDaily', userId, Math.max(days * 2, 14)),
       this.fetchDailyRows('engagementDaily', userId, Math.max(days * 2, 14)),
       this.fetchDailyRows('followupsDaily', userId, Math.max(days * 2, 14)),
+      getLiveSocialMetrics(userId, {
+        lookbackHours: Math.max(days * 24, 24),
+        scope: { userId, scopeId: userId },
+      }).catch(error => {
+        console.warn('Failed to load live social metrics for report', (error as Error).message);
+        return null;
+      }),
     ]);
 
     const history = Array.isArray(summary.history) ? summary.history : [];
@@ -317,6 +323,9 @@ export class AssistantStrategyService {
     const socialPosted = sumField(socialWindow, 'postsPosted');
     const socialFailed = sumField(socialWindow, 'postsFailed');
     const socialSkipped = sumField(socialWindow, 'postsSkipped');
+    const livePostsAnalyzed = liveSocial
+      ? Object.values(liveSocial.platforms).reduce((sum, platform) => sum + Number(platform.postsAnalyzed ?? 0), 0)
+      : 0;
 
     const inboundWindow = filterByCutoff(inboundRows as Array<Record<string, unknown>>, days);
     const inboundMessages = sumField(inboundWindow, 'messages');
@@ -355,9 +364,13 @@ export class AssistantStrategyService {
       },
       social: {
         attempted: Math.round(socialAttempted),
-        posted: Math.round(socialPosted),
+        posted: Math.round(socialPosted || livePostsAnalyzed),
         failed: Math.round(socialFailed),
         skipped: Math.round(socialSkipped),
+        views: Math.round(liveSocial?.summary.views ?? 0),
+        interactions: Math.round(liveSocial?.summary.interactions ?? 0),
+        engagementRate: Number((liveSocial?.summary.engagementRate ?? 0).toFixed(2)),
+        conversions: Math.round(liveSocial?.summary.conversions ?? 0),
       },
       inbound: {
         messages: Math.round(inboundMessages),
@@ -475,7 +488,7 @@ export class AssistantStrategyService {
   private formatMonthlyReport(metrics: PeriodMetrics, company?: string) {
     const header = `Monthly performance report${company ? ` for ${company}` : ''}`;
     const crmLine = `CRM: ${metrics.crm.leads} leads, ${metrics.crm.conversions} conversions, engagement avg ${metrics.crm.engagementAvg}%.`;
-    const socialLine = `Social: ${metrics.social.posted} posts, ${metrics.social.failed} failures, ${metrics.social.skipped} skipped.`;
+    const socialLine = `Social: ${metrics.social.posted} posts, ${metrics.social.views} views, ${metrics.social.interactions} interactions, ${metrics.social.engagementRate}% engagement, ${metrics.social.conversions} conversions, ${metrics.social.failed} failures, ${metrics.social.skipped} skipped.`;
     const outboundLine = `Outreach: ${metrics.outbound.messagesSent} sent, ${metrics.outbound.replies} replies, ${metrics.outbound.conversions} conversions (CR ${formatRate(metrics.outbound.conversionRate)}).`;
     const inboundLine = `Auto-replies: ${metrics.inbound.messages} inbound, ${metrics.inbound.leads} leads (CR ${formatRate(metrics.inbound.conversionRate)}).`;
     const engagementLine = `Engagement: ${metrics.engagement.comments} comments, ${metrics.engagement.replies} replies, ${metrics.engagement.conversions} conversions (CR ${formatRate(metrics.engagement.conversionRate)}).`;
@@ -504,7 +517,7 @@ export class AssistantStrategyService {
       header,
       '',
       `CRM: ${metrics.crm.leads} leads and ${metrics.crm.conversions} conversions.`,
-      `Social: ${metrics.social.posted} posts published, ${metrics.social.failed} failed, ${metrics.social.skipped} skipped.`,
+      `Social: ${metrics.social.posted} posts published, ${metrics.social.views} views, ${metrics.social.interactions} interactions, ${metrics.social.engagementRate}% engagement, ${metrics.social.conversions} conversions, ${metrics.social.failed} failed, ${metrics.social.skipped} skipped.`,
       `Outreach: ${metrics.outbound.messagesSent} sent, ${metrics.outbound.replies} replies, ${metrics.outbound.conversions} conversions.`,
       `Inbound: ${metrics.inbound.messages} messages produced ${metrics.inbound.leads} leads.`,
       `Engagement: ${metrics.engagement.comments} comments, ${metrics.engagement.replies} replies, ${metrics.engagement.conversions} conversions.`,
