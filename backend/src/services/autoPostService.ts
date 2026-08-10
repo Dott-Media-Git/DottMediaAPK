@@ -234,6 +234,7 @@ const TOP_FIVE_LEAGUES: LeagueDefinition[] = [
 
 const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
+const OBSOLETE_AUTOPOST_USER_IDS = new Set(['meta-page-1321705594350297']);
 const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId: string; instagramUsername: string }> = {
   acmVetCcOiTHeGk5D7eDYieamDF3: {
     pageId: '1191892417341226',
@@ -632,6 +633,7 @@ export class AutoPostService {
   }
 
   private async mirrorAutopostJob(userId: string, job: AutoPostJob) {
+    if (OBSOLETE_AUTOPOST_USER_IDS.has(userId)) return;
     this.cacheJob(userId, job);
     try {
       await supabaseFallbackService.upsertAutopostJob(userId, job as Record<string, unknown>);
@@ -641,6 +643,7 @@ export class AutoPostService {
   }
 
   private async loadAutopostJob(userId: string) {
+    if (OBSOLETE_AUTOPOST_USER_IDS.has(userId)) return null;
     const cached = this.memoryStore.get(userId);
     if (cached) return cached;
     try {
@@ -1676,6 +1679,7 @@ export class AutoPostService {
     field: 'next_run' | 'reels_next_run' | 'story_next_run' | 'trend_next_run',
     now: admin.firestore.Timestamp,
   ) {
+    if (OBSOLETE_AUTOPOST_USER_IDS.has(userId)) return false;
     if (!supabaseFallbackService.isConfigured()) return true;
     const expectedRun = this.getClaimedRunValue(job, field);
     if (!expectedRun) return false;
