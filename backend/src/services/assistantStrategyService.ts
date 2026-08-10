@@ -285,7 +285,7 @@ export class AssistantStrategyService {
     }
   }
 
-  private async buildPeriodMetrics(userId: string, days: number): Promise<PeriodMetrics> {
+  private async buildPeriodMetrics(userId: string, days: number, accountEmail?: string | null): Promise<PeriodMetrics> {
     const [summary, socialRows, inboundRows, outboundRows, engagementRows, followupRows, liveSocial] = await Promise.all([
       this.analyticsService.getSummary(userId),
       this.socialAnalytics.getDailySummary(userId, Math.max(days * 2, 14)).catch(error => {
@@ -298,7 +298,7 @@ export class AssistantStrategyService {
       this.fetchDailyRows('followupsDaily', userId, Math.max(days * 2, 14)),
       getLiveSocialMetrics(userId, {
         lookbackHours: Math.max(days * 24, 24),
-        scope: { userId, scopeId: userId },
+        scope: { userId, scopeId: userId, email: accountEmail ?? undefined },
       }).catch(error => {
         console.warn('Failed to load live social metrics for report', (error as Error).message);
         return null;
@@ -739,7 +739,7 @@ export class AssistantStrategyService {
       return { message: 'I do not have an email address for this account yet.' };
     }
 
-    const metrics = await this.buildPeriodMetrics(input.userId, 30);
+    const metrics = await this.buildPeriodMetrics(input.userId, 30, input.email ?? recipients[0]);
     const reportText = this.formatMonthlyReport(metrics, input.company);
 
     await Promise.all(
@@ -760,7 +760,7 @@ export class AssistantStrategyService {
     if (!recipients.length) {
       return { message: 'I do not have an email address for this account yet.' };
     }
-    const metrics = await this.buildPeriodMetrics(input.userId, 7);
+    const metrics = await this.buildPeriodMetrics(input.userId, 7, input.email ?? recipients[0]);
     const company = input.company ?? 'your team';
     const reportText = this.formatWeeklyReport(metrics, input.company);
     await Promise.all(
