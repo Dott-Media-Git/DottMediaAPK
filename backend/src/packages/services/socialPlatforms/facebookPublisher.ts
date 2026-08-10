@@ -2,6 +2,10 @@ import axios from 'axios';
 import { SocialAccounts } from '../socialPostingService';
 import { appendCommentToDmCaptionCta } from '../../../services/commentToDmService';
 
+const http = axios.create({
+  timeout: Math.max(Number(process.env.SOCIAL_PUBLISH_HTTP_TIMEOUT_MS ?? 20_000), 5_000),
+});
+
 type PublishInput = {
   caption: string;
   imageUrls: string[];
@@ -27,7 +31,7 @@ const isPayloadSizeError = (error: any) => {
 
 const resolveFacebookAnalyticsId = async (objectId: string, accessToken: string) => {
   try {
-    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${objectId}`, {
+    const response = await http.get(`https://graph.facebook.com/${GRAPH_VERSION}/${objectId}`, {
       params: {
         fields: 'page_story_id,post_id',
         access_token: accessToken,
@@ -50,7 +54,7 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
   const caption = appendCommentToDmCaptionCta(input.caption, { pageId });
   const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${pageId}`;
   const publishSinglePhoto = () =>
-    axios.post(`${baseUrl}/photos`, {
+    http.post(`${baseUrl}/photos`, {
       url: input.imageUrls[0],
       message: caption,
       access_token: accessToken,
@@ -59,7 +63,7 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
   try {
     let response;
     if (input.videoUrl) {
-      response = await axios.post(`${baseUrl}/videos`, {
+      response = await http.post(`${baseUrl}/videos`, {
         file_url: input.videoUrl,
         description: caption,
         access_token: accessToken,
@@ -68,7 +72,7 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
       try {
         const photoUploads = await Promise.all(
           input.imageUrls.slice(0, FACEBOOK_ALBUM_MAX_IMAGES).map(url =>
-            axios.post(`${baseUrl}/photos`, {
+            http.post(`${baseUrl}/photos`, {
               url,
               published: false,
               access_token: accessToken,
@@ -82,7 +86,7 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
         if (!attached_media.length) {
           throw new Error('No Facebook photo IDs returned for multi-photo post');
         }
-        response = await axios.post(`${baseUrl}/feed`, {
+        response = await http.post(`${baseUrl}/feed`, {
           message: caption,
           attached_media,
           access_token: accessToken,
@@ -97,7 +101,7 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
       response = await publishSinglePhoto();
     } else {
       // Post text only
-      response = await axios.post(`${baseUrl}/feed`, {
+      response = await http.post(`${baseUrl}/feed`, {
         message: caption,
         access_token: accessToken,
       });
@@ -133,7 +137,7 @@ export async function publishToFacebookStory(input: PublishInput): Promise<{ rem
 
   try {
     if (!input.videoUrl) {
-      const photoResponse = await axios.post(`${baseUrl}/photos`, {
+      const photoResponse = await http.post(`${baseUrl}/photos`, {
         url: mediaUrl,
         published: false,
         access_token: accessToken,
@@ -142,7 +146,7 @@ export async function publishToFacebookStory(input: PublishInput): Promise<{ rem
       if (!photoId) {
         throw new Error('No photo ID returned from Facebook Story upload');
       }
-      const storyResponse = await axios.post(`${baseUrl}/photo_stories`, {
+      const storyResponse = await http.post(`${baseUrl}/photo_stories`, {
         photo_id: photoId,
         access_token: accessToken,
       });
@@ -156,7 +160,7 @@ export async function publishToFacebookStory(input: PublishInput): Promise<{ rem
       access_token: accessToken,
       file_url: mediaUrl,
     };
-    const response = await axios.post(`${baseUrl}/stories`, payload);
+    const response = await http.post(`${baseUrl}/stories`, payload);
     if (response.data && response.data.id) {
       return { remoteId: response.data.id };
     }
