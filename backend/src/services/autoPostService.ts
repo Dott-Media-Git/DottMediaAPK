@@ -5398,18 +5398,29 @@ export class AutoPostService {
         }).catch(error => console.warn('[autopost] supabase social account mirror failed', logSafeError(error)));
       }
     } catch (error) {
-      console.warn('[autopost] user credential lookup failed; using runtime fallbacks', {
+      console.warn('[autopost] user credential lookup failed; checking Supabase primary credentials', {
         userId,
         error: error instanceof Error ? error.message : String(error),
       });
-      try {
-        const fallback = await supabaseFallbackService.getSocialAccounts(userId);
-        if (fallback) {
-          userData = fallback as { email?: string | null; socialAccounts?: SocialAccounts };
-        }
-      } catch (fallbackError) {
-        console.warn('[autopost] supabase social account lookup failed', logSafeError(fallbackError));
+    }
+    // Supabase is the durable source for connected channels. Always read it,
+    // even when the Firebase document lookup succeeds but returns no account
+    // credentials. Prefer its channel records because OAuth refreshes are
+    // mirrored there first while Firebase can be unavailable or quota-limited.
+    try {
+      const primary = await supabaseFallbackService.getSocialAccounts(userId);
+      if (primary) {
+        userData = {
+          ...userData,
+          email: primary.email ?? userData?.email ?? null,
+          socialAccounts: {
+            ...(userData?.socialAccounts ?? {}),
+            ...((primary.socialAccounts as SocialAccounts | undefined) ?? {}),
+          },
+        };
       }
+    } catch (primaryError) {
+      console.warn('[autopost] supabase social account lookup failed', logSafeError(primaryError));
     }
     const allowDefaults = !this.isNicheClientAccount(userId) && canUsePrimarySocialDefaults(userData, userId);
     const defaults = this.defaultSocialAccounts(allowDefaults);
