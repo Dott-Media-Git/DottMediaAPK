@@ -89,6 +89,7 @@ const pinnedAccounts: MonitoredAccount[] = [
 
 const autopostCollection = firestore.collection('autopostJobs');
 const stateRef = firestore.collection('system').doc('autopostCompliance');
+const OBSOLETE_AUTOPOST_USER_IDS = new Set(['meta-page-1321705594350297']);
 
 const timeoutMs = (name: string, fallback: number) => Math.max(Number(process.env[name] ?? fallback), 3000);
 
@@ -245,10 +246,12 @@ const discoverFirestoreJobs = async () => {
     timeoutMs('AUTOPOST_COMPLIANCE_FIRESTORE_TIMEOUT_MS', 15000),
     'firestore_job_discovery',
   );
-  return snap.docs.map(doc => ({
-    userId: doc.id,
-    job: doc.data() as Record<string, unknown>,
-  }));
+  return snap.docs
+    .filter(doc => !OBSOLETE_AUTOPOST_USER_IDS.has(doc.id))
+    .map(doc => ({
+      userId: doc.id,
+      job: doc.data() as Record<string, unknown>,
+    }));
 };
 
 const discoverSupabaseJobs = async () => {
@@ -260,7 +263,7 @@ const discoverSupabaseJobs = async () => {
   );
   return jobs
     .map(job => ({ userId: String(job.userId ?? ''), job }))
-    .filter(row => row.userId);
+    .filter(row => row.userId && !OBSOLETE_AUTOPOST_USER_IDS.has(row.userId));
 };
 
 const discoverAccounts = async () => {
@@ -316,6 +319,7 @@ const discoverAccounts = async () => {
 };
 
 const updateJob = async (userId: string, job: Record<string, unknown>, patch: Record<string, unknown>) => {
+  if (OBSOLETE_AUTOPOST_USER_IDS.has(userId)) return;
   const nextJob = { ...job, ...patch, active: job.active !== false };
   try {
     await withTimeout(
