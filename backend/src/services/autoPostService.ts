@@ -1591,7 +1591,14 @@ export class AutoPostService {
           : field === 'trend_next_run'
             ? job.trendIntervalHours ?? 4
             : this.getFeedIntervalHours(userId, job.intervalHours);
-    return new Date(now.getTime() + Math.max(hours, 0.05) * 60 * 60 * 1000);
+    // This timestamp is a processing lease, not the final content schedule.
+    // executeJob writes the real interval after it records the platform result.
+    // Keeping the lease short prevents a crashed/timed-out Meta request from
+    // suppressing all retries for the account's full posting interval.
+    const configuredLeaseMinutes = Math.max(Number(process.env.AUTOPOST_CLAIM_LEASE_MINUTES ?? 10), 2);
+    const intervalMinutes = Math.max(hours, 0.05) * 60;
+    const leaseMinutes = Math.min(configuredLeaseMinutes, intervalMinutes);
+    return new Date(now.getTime() + leaseMinutes * 60 * 1000);
   }
 
   private isNicheClientAccount(userId: string) {
