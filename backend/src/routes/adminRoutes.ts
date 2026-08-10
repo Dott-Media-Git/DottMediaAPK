@@ -33,6 +33,7 @@ import { pollFacebookCommentsOnce } from '../jobs/facebookCommentPollJob';
 import { pollInstagramCommentsOnce } from '../jobs/instagramCommentPollJob';
 import { pollThreadsCommentsOnce } from '../jobs/threadsCommentPollJob';
 import { pollInstagramDmsOnce } from '../jobs/instagramDmPollJob';
+import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const router = Router();
 
@@ -46,6 +47,48 @@ const ADMIN_LIVE_SOCIAL_CLIENTS = [
   { label: 'Gamers 4 Life', userId: 'vzdH1DnfFLVjlY8bBgC26WACmmw2' },
   { label: 'Bwin / Ball Analytics', userId: process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53', scopeId: process.env.BWIN_SCOPE_ID || 'bwinbetug', email: 'ball_analytics' },
 ];
+
+type AdminLiveSocialClient = (typeof ADMIN_LIVE_SOCIAL_CLIENTS)[number] & {
+  scopeId?: string;
+  email?: string | null;
+};
+
+const loadAdminLiveSocialClients = async (): Promise<AdminLiveSocialClient[]> => {
+  const clients = new Map<string, AdminLiveSocialClient>(
+    ADMIN_LIVE_SOCIAL_CLIENTS.map(client => [client.userId, client]),
+  );
+  try {
+    const [jobs, socialRows] = await Promise.all([
+      supabaseFallbackService.getActiveAutopostJobs(1000),
+      supabaseFallbackService.getAllSocialAccounts(1000),
+    ]);
+    const socialByUser = new Map(socialRows.map(row => [row.userId, row]));
+    jobs.forEach(job => {
+      const userId = String(job.userId ?? '').trim();
+      if (!userId) return;
+      const social = socialByUser.get(userId);
+      const accounts = social?.socialAccounts as Record<string, any> | undefined;
+      const hasConnectedSocial = Boolean(
+        accounts?.facebook || accounts?.instagram || accounts?.threads || accounts?.linkedin ||
+        accounts?.twitter || accounts?.tiktok || accounts?.youtube,
+      );
+      if (!hasConnectedSocial) return;
+      const existing = clients.get(userId);
+      const pageName = String(accounts?.facebook?.pageName ?? '').trim();
+      const instagramName = String(accounts?.instagram?.username ?? '').trim();
+      clients.set(userId, {
+        ...existing,
+        userId,
+        label: existing?.label || pageName || instagramName || social?.email || `Connected account ${userId.slice(0, 8)}`,
+        email: existing?.email ?? social?.email ?? null,
+      });
+    });
+  } catch (error) {
+    console.warn('[admin-live-social] dynamic client discovery failed; using configured clients',
+      error instanceof Error ? error.message : String(error));
+  }
+  return Array.from(clients.values());
+};
 const ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS ?? 90000);
 const ADMIN_METRICS_FRESH_MS = Number(process.env.ADMIN_METRICS_FRESH_MS ?? 15000);
 const ADMIN_METRICS_STALE_MS = Number(process.env.ADMIN_METRICS_STALE_MS ?? 180000);
@@ -130,8 +173,9 @@ router.get('/admin/live-social', requireFirebase, requireAdmin, async (req, res,
   try {
     const lookbackRaw = typeof req.query.lookbackHours === 'string' ? Number(req.query.lookbackHours) : 720;
     const lookbackHours = Number.isFinite(lookbackRaw) && lookbackRaw > 0 ? lookbackRaw : 720;
+    const liveSocialClients = await loadAdminLiveSocialClients();
     const rows = await Promise.all(
-      ADMIN_LIVE_SOCIAL_CLIENTS.map(async client => {
+      liveSocialClients.map(async client => {
         try {
           const stats = await withTimeout(
             getLiveSocialMetrics(client.userId, {
