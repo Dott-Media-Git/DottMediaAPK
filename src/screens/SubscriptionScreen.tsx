@@ -38,42 +38,27 @@ const fallbackPlans: BillingPlan[] = [
   {
     id: 'free',
     name: 'Free',
-    description: 'Strict trial plan with limited AI and no video generation.',
+    description: 'Start with the essential AI and social tools at no cost.',
     priceMonthlyCents: 0,
     stripeConfigured: true,
     limits: { aiReplies: 10, images: 1, basicVideos: 0, proVideos: 0, scheduledPosts: 5 },
   },
   {
-    id: 'starter',
-    name: 'Starter',
-    description: 'Entry plan for creators and small teams.',
-    priceMonthlyCents: 2000,
-    stripeConfigured: false,
-    limits: { aiReplies: 500, images: 25, basicVideos: 2, proVideos: 0, scheduledPosts: 100 },
-  },
-  {
     id: 'creator',
     name: 'Creator',
-    description: 'Main creator plan with meaningful AI and media capacity.',
+    description: 'Create, schedule, and grow with higher AI and media capacity.',
     priceMonthlyCents: 4900,
     stripeConfigured: false,
     limits: { aiReplies: 2000, images: 100, basicVideos: 10, proVideos: 0, scheduledPosts: 500 },
   },
   {
-    id: 'business',
-    name: 'Business',
-    description: 'For active brands needing higher posting and content capacity.',
-    priceMonthlyCents: 9900,
-    stripeConfigured: false,
-    limits: { aiReplies: 5000, images: 300, basicVideos: 20, proVideos: 0, scheduledPosts: 1500 },
-  },
-  {
-    id: 'agency',
-    name: 'Agency',
-    description: 'High-volume plan for agencies managing multiple brands.',
-    priceMonthlyCents: 39900,
-    stripeConfigured: false,
-    limits: { aiReplies: 15000, images: 1000, basicVideos: 50, proVideos: 10, scheduledPosts: 5000 },
+    id: 'enterprise',
+    name: 'Enterprise',
+    description: 'Custom scale, onboarding, limits, and dedicated support.',
+    priceMonthlyCents: null,
+    stripeConfigured: true,
+    mobileMoneyConfigured: false,
+    limits: { aiReplies: null, images: null, basicVideos: null, proVideos: null, scheduledPosts: null },
   },
 ];
 
@@ -221,7 +206,7 @@ export const SubscriptionScreen: React.FC = () => {
       ) : null}
 
       <View style={styles.planGrid}>
-        {plans.filter(plan => plan.id !== 'enterprise').map(plan => (
+        {plans.map(plan => (
           <DMCard
             key={plan.id}
             title={t(plan.name)}
@@ -237,7 +222,15 @@ export const SubscriptionScreen: React.FC = () => {
               title={
                 plan.id === currentPlanId
                   ? t('Current plan')
-                  : t(plan.priceMonthlyCents === 0 ? 'Start free' : paymentMethod === 'flutterwave_mobile_money' ? 'Pay mobile money' : 'Pay by card')
+                  : t(
+                      plan.id === 'enterprise'
+                        ? 'Contact sales'
+                        : plan.priceMonthlyCents === 0
+                          ? 'Start free'
+                          : paymentMethod === 'flutterwave_mobile_money'
+                            ? 'Pay mobile money'
+                            : 'Pay by card',
+                    )
               }
               onPress={() => handleCheckout(plan)}
               loading={loadingPlan === plan.id}

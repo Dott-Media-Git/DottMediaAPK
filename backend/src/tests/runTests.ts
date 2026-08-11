@@ -30,6 +30,8 @@ async function testBillingPolicy() {
   const { assertUsageAllowed, canActivateCheckoutSession, resolveUsablePlan } = await import(
     '../services/billing/billingPolicy.js'
   );
+  const { planCatalog } = await import('../services/billing/planCatalog.js');
+  assert.deepEqual(planCatalog.map(plan => plan.id), ['free', 'creator', 'enterprise']);
   assert.equal(resolveUsablePlan({ planId: 'creator', subscriptionStatus: 'active' }).id, 'creator');
   assert.equal(resolveUsablePlan({ planId: 'creator' }).id, 'free');
   assert.equal(resolveUsablePlan({ planId: 'creator', subscriptionStatus: 'past_due' }).id, 'free');
@@ -45,15 +47,18 @@ async function testBillingPolicy() {
   assert.equal(canActivateCheckoutSession('unpaid'), false);
 
   const starter = resolveUsablePlan({ planId: 'starter', subscriptionStatus: 'active' });
+  assert.equal(starter.id, 'creator', 'Legacy Starter subscriptions should migrate to Creator');
+  assert.equal(resolveUsablePlan({ planId: 'business', subscriptionStatus: 'active' }).id, 'enterprise');
+  assert.equal(resolveUsablePlan({ planId: 'agency', subscriptionStatus: 'active' }).id, 'enterprise');
   assert.doesNotThrow(() =>
-    assertUsageAllowed(starter, { aiReplies: 499 }, {}, new Map([['aiReplies', 1]])),
+    assertUsageAllowed(starter, { aiReplies: 1999 }, {}, new Map([['aiReplies', 1]])),
   );
   assert.throws(
-    () => assertUsageAllowed(starter, { aiReplies: 500 }, {}, new Map([['aiReplies', 1]])),
+    () => assertUsageAllowed(starter, { aiReplies: 2000 }, {}, new Map([['aiReplies', 1]])),
     (error: any) => error?.status === 402,
   );
   assert.doesNotThrow(() =>
-    assertUsageAllowed(starter, { images: 25 }, { images: 2 }, new Map([['images', 2]])),
+    assertUsageAllowed(starter, { images: 100 }, { images: 2 }, new Map([['images', 2]])),
   );
 }
 

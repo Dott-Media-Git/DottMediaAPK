@@ -1,4 +1,4 @@
-export type OrgPlan = 'Free' | 'Starter' | 'Creator' | 'Business' | 'Agency' | 'Enterprise' | 'Pro';
+export type OrgPlan = 'Free' | 'Creator' | 'Enterprise';
 
 export type OrgRole = 'Owner' | 'Admin' | 'Agent' | 'Viewer';
 
