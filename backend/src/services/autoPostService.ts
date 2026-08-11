@@ -647,6 +647,16 @@ export class AutoPostService {
     const cached = this.memoryStore.get(userId);
     if (cached) return cached;
     try {
+      const fallback = await supabaseFallbackService.getAutopostJob(userId);
+      if (fallback) {
+        const job = fallback as AutoPostJob;
+        this.cacheJob(userId, job);
+        return job;
+      }
+    } catch (error) {
+      console.warn('[autopost] supabase job fetch failed; checking Firestore fallback', logSafeError(error));
+    }
+    try {
       const firestoreTimeoutMs = Math.max(Number(process.env.AUTOPOST_FIRESTORE_TIMEOUT_MS ?? 15000), 3000);
       const snap = await this.withTimeout(
         autopostCollection.doc(userId).get(),
@@ -659,17 +669,7 @@ export class AutoPostService {
         return job;
       }
     } catch (error) {
-      console.warn('[autopost] firestore job fetch failed; checking fallback store', error);
-    }
-    try {
-      const fallback = await supabaseFallbackService.getAutopostJob(userId);
-      if (fallback) {
-        const job = fallback as AutoPostJob;
-        this.cacheJob(userId, job);
-        return job;
-      }
-    } catch (error) {
-      console.warn('[autopost] supabase job fetch failed', logSafeError(error));
+      console.warn('[autopost] firestore fallback job fetch failed', error);
     }
     const runtimeJob = this.buildPinnedClientRuntimeJob(userId);
     if (runtimeJob) {
@@ -4707,7 +4707,10 @@ export class AutoPostService {
       }
       const selected = pool[selectedIndex];
       if (selected) {
-        imageUrls = [selected];
+        const publishImage = isStoryRun
+          ? await this.prepareOwnedSourceStoryImageUrl(selected, userId)
+          : selected;
+        imageUrls = [publishImage ?? selected];
         usedClientSourceImageUrl = selected;
         cursorUpdates.sourceImageCursor = (selectedIndex + 1) % pool.length;
       }
@@ -5012,7 +5015,7 @@ export class AutoPostService {
       const threadSafeCaption = this.limitThreadsCaption(platform, brandedCaption);
       let captionSelection = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption || dottEnergyProductCaption
         ? { caption: threadSafeCaption, signature: this.buildCaptionSignature(platform, threadSafeCaption) }
-        : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
+        : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId, job);
       let caption = this.limitThreadsCaption(platform, captionSelection.caption);
       let signature =
         caption === captionSelection.caption
@@ -5025,7 +5028,25 @@ export class AutoPostService {
       const privacyStatus = platform === 'youtube' ? job.youtubePrivacyStatus : undefined;
       const tags = platform === 'youtube' && enableYouTubeShorts ? ['shorts'] : undefined;
 
-      if (supportsVideo && isVideoPlatform) {
+      if (isReelsRun && platform === 'facebook') {
+        const platformSelection = await this.selectNextVideo(
+          job,
+          'instagram_reels',
+          fallbackVideoPool,
+          userId,
+          recentVideoSet,
+        );
+        if (platformSelection.videoUrl) {
+          videoUrl = platformSelection.videoUrl;
+          if (platformSelection.caption) {
+            caption = this.limitThreadsCaption(platform, platformSelection.caption);
+            signature = this.buildCaptionSignature(platform, caption);
+          }
+          if (typeof platformSelection.nextCursor === 'number') {
+            cursorUpdates.reelsVideoCursor = platformSelection.nextCursor;
+          }
+        }
+      } else if (supportsVideo && isVideoPlatform) {
         const platformSelection = await this.selectNextVideo(
           job,
           platform as VideoPlatform,
@@ -6518,6 +6539,30 @@ export class AutoPostService {
     }
   }
 
+  private async prepareOwnedSourceStoryImageUrl(url: string, userId: string) {
+    try {
+      const source = await this.loadImageBuffer(url);
+      if (!source) return null;
+      const buffer = await sharp(source)
+        .rotate()
+        .resize(1080, 1920, {
+          fit: 'contain',
+          background: { r: 248, g: 245, b: 240 },
+          withoutEnlargement: false,
+        })
+        .jpeg({ quality: 91, mozjpeg: true })
+        .toBuffer();
+      const safeUserId = userId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || 'campaign';
+      return this.uploadClientFallbackImage(buffer, `owned-${safeUserId}`, 'story');
+    } catch (error) {
+      console.warn('[autopost] owned source story normalization failed', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
   private async generateClientFallbackImageUrls(
     userId: string,
     _job: AutoPostJob,
@@ -6701,12 +6746,24 @@ export class AutoPostService {
     return true;
   }
 
-  private ensureCaptionVariety(platform: string, caption: string, history: Set<string>, userId?: string) {
+  private ensureCaptionVariety(
+    platform: string,
+    caption: string,
+    history: Set<string>,
+    userId?: string,
+    job?: AutoPostJob,
+  ) {
     const signature = this.buildCaptionSignature(platform, caption);
     if (!history.has(signature)) {
       return { caption, signature };
     }
-    const variants = this.getCaptionVarietyVariants(userId);
+    const hasOwnedRotation = Boolean(
+      job &&
+        ((Array.isArray(job.sourceImageUrls) && job.sourceImageUrls.some(Boolean)) ||
+          (Array.isArray(job.reelsVideoUrls) && job.reelsVideoUrls.some(Boolean)) ||
+          (Array.isArray(job.videoUrls) && job.videoUrls.some(Boolean))),
+    );
+    const variants = hasOwnedRotation ? [] : this.getCaptionVarietyVariants(userId);
     for (const variant of variants) {
       const candidate = this.appendCaptionSuffix(caption, variant, platform);
       const candidateSignature = this.buildCaptionSignature(platform, candidate);
