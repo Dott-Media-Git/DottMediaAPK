@@ -4988,9 +4988,33 @@ export class AutoPostService {
       };
     }
 
-    await consumeUsageBatch(resolveBillingScope(userId), [
-      { resource: 'scheduledPosts', amount: Math.max(publishPlatforms.length, 1) },
-    ]);
+    try {
+      await consumeUsageBatch(resolveBillingScope(userId), [
+        { resource: 'scheduledPosts', amount: Math.max(publishPlatforms.length, 1) },
+      ]);
+    } catch (error) {
+      const candidate = error as { status?: unknown; statusCode?: unknown; response?: { status?: unknown }; message?: unknown };
+      const status = Number(candidate.statusCode ?? candidate.status ?? candidate.response?.status ?? 0);
+      const message = String(candidate.message ?? error ?? 'scheduled_post_usage_denied');
+      if (status !== 402 && !/scheduledposts limit reached|upgrade or buy credits/i.test(message)) {
+        throw error;
+      }
+      // A single account reaching its plan allowance must not abort the global
+      // scheduler and block unrelated campaigns that are still eligible.
+      console.warn('[autopost] skipping account at scheduled-post plan limit', { userId });
+      return {
+        posted: 0,
+        failed: [
+          ...missingCredentialFailures,
+          ...publishPlatforms.map(platform => ({
+            platform,
+            status: 'failed' as const,
+            error: 'scheduled_post_plan_limit_reached',
+          })),
+        ],
+        nextRun: new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000).toISOString(),
+      };
+    }
 
     for (const platform of publishPlatforms) {
       const publisher = platformPublishers[platform] ?? publishToTwitter;
