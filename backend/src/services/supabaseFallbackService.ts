@@ -931,22 +931,19 @@ class SupabaseFallbackService {
 
   async upsertAutopostJob(userId: string, job: Record<string, unknown>) {
     if (!this.isConfigured() || !userId) return;
-    const data = (sanitizeJson(job) ?? {}) as Record<string, unknown>;
-    if (!data.socialAccounts) {
-      try {
-        const existing = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
-        const existingData = existing?.data && typeof existing.data === 'object' ? existing.data : {};
-        if (existingData.socialAccounts && typeof existingData.socialAccounts === 'object') {
-          data.socialAccounts = existingData.socialAccounts;
-        }
-        if (data.email === undefined && existingData.email !== undefined) {
-          data.email = existingData.email;
-        }
-      } catch (error) {
-        const status = (error as { response?: { status?: number } })?.response?.status;
-        if (status !== 404) throw error;
-      }
+    const incomingData = (sanitizeJson(job) ?? {}) as Record<string, unknown>;
+    let existingData: Record<string, unknown> = {};
+    try {
+      const existing = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
+      existingData = existing?.data && typeof existing.data === 'object' ? existing.data : {};
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status !== 404) throw error;
     }
+    // Scheduler updates are intentionally partial. Preserve durable campaign
+    // configuration (platforms, source media and captions) that is not present
+    // in a single run result instead of replacing the complete JSON document.
+    const data = { ...existingData, ...incomingData };
     const row = {
       user_id: userId,
       active: job.active !== false,
