@@ -5250,7 +5250,11 @@ export class AutoPostService {
       updatePayload.storyIntervalHours = effectiveIntervalHours;
     }
     try {
-      await autopostCollection.doc(userId).set(updatePayload, { merge: true });
+      await this.withTimeout(
+        autopostCollection.doc(userId).set(updatePayload, { merge: true }),
+        Math.max(Number(process.env.AUTOPOST_FIRESTORE_WRITE_TIMEOUT_MS ?? 7000), 3000),
+        'firestore_autopost_job_update',
+      );
     } catch (error) {
       console.warn('[autopost] firestore executeJob update failed', error);
     }
@@ -5343,6 +5347,11 @@ export class AutoPostService {
       };
     });
     try {
+      await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
+    } catch (error) {
+      console.warn('[autopost] failed to write history to Supabase', logSafeError(error));
+    }
+    try {
       const batch = firestore.batch();
       fallbackRows.forEach(entry => {
         const ref = scheduledPostsCollection.doc(entry.id);
@@ -5370,8 +5379,12 @@ export class AutoPostService {
         }
         batch.set(ref, payload);
       });
-      await batch.commit();
-      await Promise.all(
+      await this.withTimeout(
+        batch.commit(),
+        Math.max(Number(process.env.AUTOPOST_FIRESTORE_WRITE_TIMEOUT_MS ?? 7000), 3000),
+        'firestore_autopost_history_write',
+      );
+      void Promise.all(
         entries.map(entry =>
           socialAnalyticsService.incrementDaily({
             userId,
@@ -5379,21 +5392,38 @@ export class AutoPostService {
             status: entry.status,
           }),
         ),
-      );
+      ).catch(error => console.warn('[autopost] failed to increment Firebase social analytics', error));
     } catch (error) {
-      console.warn('[autopost] failed to record history', error);
-    }
-    try {
-      await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
-    } catch (error) {
-      console.warn('[autopost] failed to mirror history to supabase', logSafeError(error));
+      console.warn('[autopost] failed to mirror history to Firebase', error);
     }
   }
 
   private async resolveCredentials(userId: string): Promise<SocialAccounts> {
     let userData: { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
     try {
-      const userDoc = await firestore.collection('users').doc(userId).get();
+      const primary = await this.withTimeout(
+        supabaseFallbackService.getSocialAccounts(userId),
+        Math.max(Number(process.env.AUTOPOST_SUPABASE_CREDENTIAL_TIMEOUT_MS ?? 10000), 3000),
+        'supabase_social_account_lookup',
+      );
+      if (primary) {
+        userData = {
+          email: primary.email ?? null,
+          socialAccounts: (primary.socialAccounts as SocialAccounts | undefined) ?? {},
+        };
+      }
+    } catch (primaryError) {
+      console.warn('[autopost] Supabase primary social account lookup failed', logSafeError(primaryError));
+    }
+
+    const hasPrimaryAccounts = Boolean(userData?.socialAccounts && Object.keys(userData.socialAccounts).length);
+    if (!hasPrimaryAccounts) {
+    try {
+      const userDoc = await this.withTimeout(
+        firestore.collection('users').doc(userId).get(),
+        Math.max(Number(process.env.AUTOPOST_FIRESTORE_CREDENTIAL_TIMEOUT_MS ?? 7000), 3000),
+        'firestore_social_account_lookup',
+      );
       userData = userDoc.data() as { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
       if (userData?.socialAccounts) {
         void supabaseFallbackService.upsertSocialAccounts(userId, {
@@ -5407,24 +5437,11 @@ export class AutoPostService {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    // Supabase is the durable source for connected channels. Always read it,
-    // even when the Firebase document lookup succeeds but returns no account
-    // credentials. Prefer its channel records because OAuth refreshes are
-    // mirrored there first while Firebase can be unavailable or quota-limited.
-    try {
-      const primary = await supabaseFallbackService.getSocialAccounts(userId);
-      if (primary) {
-        userData = {
-          ...userData,
-          email: primary.email ?? userData?.email ?? null,
-          socialAccounts: {
-            ...(userData?.socialAccounts ?? {}),
-            ...((primary.socialAccounts as SocialAccounts | undefined) ?? {}),
-          },
-        };
-      }
-    } catch (primaryError) {
-      console.warn('[autopost] supabase social account lookup failed', logSafeError(primaryError));
+    }
+    if (hasPrimaryAccounts) {
+      // Supabase is authoritative for OAuth refreshes. Do not block a publish
+      // on Firebase when the durable channel record is already complete.
+      console.info('[autopost] using Supabase primary social credentials', { userId });
     }
     const allowDefaults = !this.isNicheClientAccount(userId) && canUsePrimarySocialDefaults(userData, userId);
     const defaults = this.defaultSocialAccounts(allowDefaults);
@@ -5805,11 +5822,36 @@ export class AutoPostService {
     };
 
     try {
-      const snapshot = await scheduledPostsCollection
-        .where('userId', '==', userId)
-        .orderBy('createdAt', 'desc')
-        .limit(maxHistory)
-        .get();
+      const primaryHistory = await this.withTimeout(
+        collectSupabaseHistory(),
+        Math.max(Number(process.env.AUTOPOST_SUPABASE_HISTORY_TIMEOUT_MS ?? 10000), 3000),
+        'supabase_scheduled_post_history',
+      );
+      if (
+        primaryHistory.imageUrls.length ||
+        primaryHistory.videoUrls.length ||
+        primaryHistory.captions.length ||
+        primaryHistory.contentKeys.length
+      ) {
+        return primaryHistory;
+      }
+    } catch (error) {
+      console.warn('[autopost] Supabase primary scheduled post history lookup failed', {
+        userId,
+        error: logSafeError(error),
+      });
+    }
+
+    try {
+      const snapshot = await this.withTimeout(
+        scheduledPostsCollection
+          .where('userId', '==', userId)
+          .orderBy('createdAt', 'desc')
+          .limit(maxHistory)
+          .get(),
+        Math.max(Number(process.env.AUTOPOST_FIRESTORE_HISTORY_TIMEOUT_MS ?? 7000), 3000),
+        'firestore_scheduled_post_history_ordered',
+      );
       return collect(snapshot.docs);
     } catch (error) {
       console.warn('[autopost] scheduled post history lookup with ordering failed; retrying without order', {
@@ -5819,7 +5861,11 @@ export class AutoPostService {
     }
 
     try {
-      const snapshot = await scheduledPostsCollection.where('userId', '==', userId).limit(maxHistory).get();
+      const snapshot = await this.withTimeout(
+        scheduledPostsCollection.where('userId', '==', userId).limit(maxHistory).get(),
+        Math.max(Number(process.env.AUTOPOST_FIRESTORE_HISTORY_TIMEOUT_MS ?? 7000), 3000),
+        'firestore_scheduled_post_history',
+      );
       return collect(snapshot.docs);
     } catch (error) {
       console.warn('[autopost] scheduled post history lookup failed', {
