@@ -4468,7 +4468,11 @@ export class AutoPostService {
     const lastRunField = options.lastRunField ?? 'lastRunAt';
     const resultField = options.resultField ?? 'lastResult';
     const clientFallbackProfile = this.getClientFallbackProfile(userId);
-    const useGenericVideoFallback = options.useGenericVideoFallback !== false && !clientFallbackProfile;
+    const hasOwnedSourceImagePool = Array.isArray(job.sourceImageUrls) && job.sourceImageUrls.some(Boolean);
+    const useGenericVideoFallback =
+      options.useGenericVideoFallback !== false &&
+      !clientFallbackProfile &&
+      (isReelsRun || !hasOwnedSourceImagePool);
     if (!platforms.length) {
       const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
       const updatePayload: Record<string, unknown> = {
@@ -4599,7 +4603,7 @@ export class AutoPostService {
       return true;
     });
     const clientPhotoProfile = needsImages ? clientFallbackProfile : null;
-    const hasOwnedSourceImages = needsImages && Array.isArray(job.sourceImageUrls) && job.sourceImageUrls.some(Boolean);
+    const hasOwnedSourceImages = needsImages && hasOwnedSourceImagePool;
     const requireAiImages = needsImages ? (isBwinUser || clientPhotoProfile || hasOwnedSourceImages ? false : this.requireAiImages(job)) : false;
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
     const fallbackCopy = this.buildFallbackCopy(job, userId);
