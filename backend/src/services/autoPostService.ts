@@ -632,11 +632,35 @@ export class AutoPostService {
     this.memoryStore.set(userId, job);
   }
 
+  private mergeAutopostLaneState(current: AutoPostJob | undefined, incoming: AutoPostJob) {
+    if (!current) return incoming;
+    const merged = { ...current, ...incoming } as AutoPostJob;
+    const currentRecord = current as unknown as Record<string, unknown>;
+    const incomingRecord = incoming as unknown as Record<string, unknown>;
+    const mergedRecord = merged as unknown as Record<string, unknown>;
+    const lanes: Array<{ lastRun: string; fields: string[] }> = [
+      { lastRun: 'lastRunAt', fields: ['lastRunAt', 'lastResult', 'nextRun'] },
+      { lastRun: 'reelsLastRunAt', fields: ['reelsLastRunAt', 'reelsLastResult', 'reelsNextRun'] },
+      { lastRun: 'storyLastRunAt', fields: ['storyLastRunAt', 'storyLastResult', 'storyNextRun'] },
+      { lastRun: 'trendLastRunAt', fields: ['trendLastRunAt', 'trendLastResult', 'trendNextRun'] },
+    ];
+    for (const lane of lanes) {
+      const currentMillis = this.timestampToMillis(currentRecord[lane.lastRun] as admin.firestore.Timestamp | undefined) ?? 0;
+      const incomingMillis = this.timestampToMillis(incomingRecord[lane.lastRun] as admin.firestore.Timestamp | undefined) ?? 0;
+      if (currentMillis <= incomingMillis) continue;
+      for (const field of lane.fields) {
+        if (currentRecord[field] !== undefined) mergedRecord[field] = currentRecord[field];
+      }
+    }
+    return merged;
+  }
+
   private async mirrorAutopostJob(userId: string, job: AutoPostJob) {
     if (OBSOLETE_AUTOPOST_USER_IDS.has(userId)) return;
-    this.cacheJob(userId, job);
+    const mergedJob = this.mergeAutopostLaneState(this.memoryStore.get(userId), job);
+    this.cacheJob(userId, mergedJob);
     try {
-      await supabaseFallbackService.upsertAutopostJob(userId, job as Record<string, unknown>);
+      await supabaseFallbackService.upsertAutopostJob(userId, mergedJob as Record<string, unknown>);
     } catch (error) {
       console.warn('[autopost] supabase job mirror failed', logSafeError(error));
     }
