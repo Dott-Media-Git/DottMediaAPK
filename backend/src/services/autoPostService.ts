@@ -5497,6 +5497,24 @@ export class AutoPostService {
     const userAccounts = (userData?.socialAccounts as SocialAccounts | undefined) ?? {};
     const runtimeFallbackAccounts = await this.getRuntimeFallbackAccounts(userId);
     const merged: SocialAccounts = { ...defaults, ...runtimeFallbackAccounts, ...userAccounts };
+    if (merged.facebook?.accessToken && merged.facebook.pageId) {
+      try {
+        const resolved = await resolveFacebookPageId(merged.facebook.accessToken, merged.facebook.pageId);
+        if (resolved && (resolved.pageToken || resolved.pageId === merged.facebook.pageId)) {
+          merged.facebook = {
+            ...merged.facebook,
+            accessToken: resolved.pageToken?.trim() || merged.facebook.accessToken,
+            pageId: resolved.pageId,
+            ...(resolved.pageName ? { pageName: resolved.pageName } : {}),
+          };
+        }
+      } catch (error) {
+        console.warn('[autopost] failed to resolve connected Facebook Page token', {
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     if (allowDefaults && !merged.facebook && config.channels.facebook.pageToken) {
       try {
         const resolved = await resolveFacebookPageId(
