@@ -1,6 +1,6 @@
 import { OrgPlan } from '../../types/org';
 
-export type DottPlanId = 'free' | 'creator' | 'enterprise';
+export type DottPlanId = 'free' | 'creator' | 'business' | 'enterprise';
 
 export type UsageResource =
   | 'aiReplies'
@@ -53,7 +53,7 @@ export const planCatalog: PlanDefinition[] = [
     id: 'creator',
     orgPlan: 'Creator',
     name: 'Creator',
-    priceMonthlyCents: 4900,
+    priceMonthlyCents: 3900,
     estimatedCostsCents: { openAi: 1825, backend: 145, otherOps: 80 },
     stripePriceEnv: 'STRIPE_PRICE_CREATOR',
     description: 'Create, schedule, and grow with higher AI and media capacity.',
@@ -66,6 +66,25 @@ export const planCatalog: PlanDefinition[] = [
       connectedSocials: 8,
       teamSeats: 2,
       priorityQueue: false,
+    },
+  },
+  {
+    id: 'business',
+    orgPlan: 'Business',
+    name: 'Business',
+    priceMonthlyCents: 39900,
+    estimatedCostsCents: { openAi: 19000, backend: 900, otherOps: 700 },
+    stripePriceEnv: 'STRIPE_PRICE_BUSINESS',
+    description: 'High-volume capacity for teams managing multiple brands.',
+    limits: {
+      aiReplies: 15000,
+      images: 1000,
+      basicVideos: 50,
+      proVideos: 10,
+      scheduledPosts: 5000,
+      connectedSocials: 75,
+      teamSeats: 20,
+      priorityQueue: true,
     },
   },
   {
@@ -91,7 +110,8 @@ export const planCatalog: PlanDefinition[] = [
 export const normalizePlanId = (value: unknown): DottPlanId => {
   const raw = String(value ?? '').trim().toLowerCase();
   if (raw === 'pro' || raw === 'starter' || raw === 'creator') return 'creator';
-  if (raw === 'business' || raw === 'agency' || raw === 'enterprise') return 'enterprise';
+  if (raw === 'business' || raw === 'agency') return 'business';
+  if (raw === 'enterprise') return 'enterprise';
   return 'free';
 };
 

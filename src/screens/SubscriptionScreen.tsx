@@ -47,9 +47,17 @@ const fallbackPlans: BillingPlan[] = [
     id: 'creator',
     name: 'Creator',
     description: 'Create, schedule, and grow with higher AI and media capacity.',
-    priceMonthlyCents: 4900,
+    priceMonthlyCents: 3900,
     stripeConfigured: false,
     limits: { aiReplies: 2000, images: 100, basicVideos: 10, proVideos: 0, scheduledPosts: 500 },
+  },
+  {
+    id: 'business',
+    name: 'Business',
+    description: 'High-volume capacity for teams managing multiple brands.',
+    priceMonthlyCents: 39900,
+    stripeConfigured: false,
+    limits: { aiReplies: 15000, images: 1000, basicVideos: 50, proVideos: 10, scheduledPosts: 5000 },
   },
   {
     id: 'enterprise',

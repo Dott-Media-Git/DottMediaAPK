@@ -8,6 +8,12 @@ import { fetchPlans, swapPlan } from '@services/admin/plansService';
 import { fetchUsage } from '@services/admin/usageService';
 import { useI18n } from '@context/I18nContext';
 
+const formatPrice = (priceMonthlyCents: number | null) => {
+  if (priceMonthlyCents === null) return 'Custom';
+  if (priceMonthlyCents === 0) return '$0';
+  return `$${(priceMonthlyCents / 100).toLocaleString()}/mo`;
+};
+
 export const PlansUsageScreen: React.FC = () => {
   const { orgId } = useAuth();
   const { t } = useI18n();
@@ -38,7 +44,7 @@ export const PlansUsageScreen: React.FC = () => {
       {plans.map(plan => (
         <View key={plan.id} style={styles.planCard}>
           <Text style={styles.planTitle}>{plan.name}</Text>
-          <Text style={styles.planPrice}>${plan.price}/mo</Text>
+          <Text style={styles.planPrice}>{formatPrice(plan.priceMonthlyCents)}</Text>
           <Text style={styles.planLimits}>{t('Leads/mo: {{count}}', { count: plan.limits?.leadsPerMo ?? 0 })}</Text>
           <DMButton title={t('Select')} onPress={() => changePlan(plan.name)} />
         </View>
