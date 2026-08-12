@@ -195,7 +195,6 @@ export async function swapPlan(orgId: string, plan: OrgPlan, successUrl: string,
   if (!stripe) throw createHttpError(500, 'Stripe is not configured');
   const planDefinition = getPlan(plan);
   if (planDefinition.id === 'free') throw createHttpError(400, 'Free plan does not need checkout');
-  if (planDefinition.id === 'enterprise') throw createHttpError(400, 'Enterprise requires a custom contract');
   const lineItem = await resolveStripeLineItem(planDefinition);
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',

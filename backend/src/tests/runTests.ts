@@ -31,8 +31,8 @@ async function testBillingPolicy() {
     '../services/billing/billingPolicy.js'
   );
   const { planCatalog } = await import('../services/billing/planCatalog.js');
-  assert.deepEqual(planCatalog.map(plan => plan.id), ['free', 'creator', 'business', 'enterprise']);
-  assert.equal(planCatalog.find(plan => plan.id === 'creator')?.priceMonthlyCents, 3900);
+  assert.deepEqual(planCatalog.map(plan => plan.id), ['free', 'creator', 'business']);
+  assert.equal(planCatalog.find(plan => plan.id === 'creator')?.priceMonthlyCents, 4900);
   assert.equal(planCatalog.find(plan => plan.id === 'business')?.priceMonthlyCents, 39900);
   assert.equal(resolveUsablePlan({ planId: 'creator', subscriptionStatus: 'active' }).id, 'creator');
   assert.equal(resolveUsablePlan({ planId: 'creator' }).id, 'free');
@@ -52,6 +52,7 @@ async function testBillingPolicy() {
   assert.equal(starter.id, 'creator', 'Legacy Starter subscriptions should migrate to Creator');
   assert.equal(resolveUsablePlan({ planId: 'business', subscriptionStatus: 'active' }).id, 'business');
   assert.equal(resolveUsablePlan({ planId: 'agency', subscriptionStatus: 'active' }).id, 'business');
+  assert.equal(resolveUsablePlan({ planId: 'enterprise', subscriptionStatus: 'active' }).id, 'business');
   assert.doesNotThrow(() =>
     assertUsageAllowed(starter, { aiReplies: 1999 }, {}, new Map([['aiReplies', 1]])),
   );

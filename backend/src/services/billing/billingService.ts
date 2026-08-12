@@ -83,11 +83,11 @@ export function listBillingPlans() {
   const flutterwaveConfigured = Boolean(process.env.FLUTTERWAVE_SECRET_KEY);
   return planCatalog.map(plan => ({
     ...plan,
-    stripeConfigured: Boolean(stripe) || plan.id === 'free' || plan.id === 'enterprise',
-    mobileMoneyConfigured: flutterwaveConfigured && plan.id !== 'free' && plan.id !== 'enterprise',
+    stripeConfigured: Boolean(stripe) || plan.id === 'free',
+    mobileMoneyConfigured: flutterwaveConfigured && plan.id !== 'free',
     paymentProviders: {
-      stripe: Boolean(stripe) || plan.id === 'free' || plan.id === 'enterprise',
-      mobileMoney: flutterwaveConfigured && plan.id !== 'free' && plan.id !== 'enterprise',
+      stripe: Boolean(stripe) || plan.id === 'free',
+      mobileMoney: flutterwaveConfigured && plan.id !== 'free',
     },
   }));
 }
@@ -238,9 +238,7 @@ async function createFlutterwaveCheckoutSession(
   if (!secretKey) throw createHttpError(500, 'Flutterwave is not configured');
   const plan = getPlan(requestedPlan);
   if (plan.id === 'free') throw createHttpError(400, 'Free plan does not need checkout');
-  if (plan.id === 'enterprise' || plan.priceMonthlyCents === null) {
-    throw createHttpError(400, 'Enterprise requires a custom contract');
-  }
+  if (plan.priceMonthlyCents === null) throw createHttpError(400, 'This package is not available for checkout');
 
   const { currency, amount } = resolveFlutterwaveAmount(plan.priceMonthlyCents);
   const txRef = buildFlutterwaveTxRef(plan.id, scope.orgId);
@@ -321,7 +319,6 @@ export async function createCheckoutSession(
   if (!stripe) throw createHttpError(500, 'Stripe is not configured');
   const plan = getPlan(requestedPlan);
   if (plan.id === 'free') throw createHttpError(400, 'Free plan does not need checkout');
-  if (plan.id === 'enterprise') throw createHttpError(400, 'Enterprise requires a custom contract');
   const lineItem = await resolveStripeLineItem(plan);
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',

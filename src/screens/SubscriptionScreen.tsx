@@ -47,7 +47,7 @@ const fallbackPlans: BillingPlan[] = [
     id: 'creator',
     name: 'Creator',
     description: 'Create, schedule, and grow with higher AI and media capacity.',
-    priceMonthlyCents: 3900,
+    priceMonthlyCents: 4900,
     stripeConfigured: false,
     limits: { aiReplies: 2000, images: 100, basicVideos: 10, proVideos: 0, scheduledPosts: 500 },
   },
@@ -58,15 +58,6 @@ const fallbackPlans: BillingPlan[] = [
     priceMonthlyCents: 39900,
     stripeConfigured: false,
     limits: { aiReplies: 15000, images: 1000, basicVideos: 50, proVideos: 10, scheduledPosts: 5000 },
-  },
-  {
-    id: 'enterprise',
-    name: 'Enterprise',
-    description: 'Custom scale, onboarding, limits, and dedicated support.',
-    priceMonthlyCents: null,
-    stripeConfigured: true,
-    mobileMoneyConfigured: false,
-    limits: { aiReplies: null, images: null, basicVideos: null, proVideos: null, scheduledPosts: null },
   },
 ];
 
@@ -108,8 +99,8 @@ export const SubscriptionScreen: React.FC = () => {
       Alert.alert(t('Free plan'), t('Your free plan is active by default.'));
       return;
     }
-    if (plan.id === 'enterprise' || plan.priceMonthlyCents === null) {
-      Alert.alert(t('Enterprise'), t('Contact Dott Media for a custom contract.'));
+    if (plan.priceMonthlyCents === null) {
+      Alert.alert(t('Unavailable'), t('This package is not available for checkout.'));
       return;
     }
     const usingMobileMoney = paymentMethod === 'flutterwave_mobile_money';
@@ -231,9 +222,7 @@ export const SubscriptionScreen: React.FC = () => {
                 plan.id === currentPlanId
                   ? t('Current plan')
                   : t(
-                      plan.id === 'enterprise'
-                        ? 'Contact sales'
-                        : plan.priceMonthlyCents === 0
+                      plan.priceMonthlyCents === 0
                           ? 'Start free'
                           : paymentMethod === 'flutterwave_mobile_money'
                             ? 'Pay mobile money'
