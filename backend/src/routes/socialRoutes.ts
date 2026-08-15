@@ -907,7 +907,7 @@ const scheduleSchema = z
     const hasYoutube = data.platforms.includes('youtube');
     const hasTikTok = data.platforms.includes('tiktok');
     const hasReels = data.platforms.includes('instagram_reels');
-    const videoCapable = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
+    const videoCapable = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin', 'threads']);
     const hasImagePlatform = data.platforms.some(platform => {
       if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels') return false;
       if (platform === 'whatsapp') return false;

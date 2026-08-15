@@ -147,7 +147,7 @@ async function run() {
     videoCursor: 0,
     reelsVideoUrls: videoUrls,
     reelsVideoCursor: 0,
-    reelsPlatforms: ['instagram_reels', 'facebook'],
+    reelsPlatforms: ['instagram_reels', 'facebook', 'threads'],
     reelsSourceMode: 'static',
     reelsIntervalHours: VIDEO_INTERVAL_HOURS,
     reelsNextRun: nextVideoRun,

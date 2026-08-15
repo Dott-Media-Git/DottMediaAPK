@@ -128,6 +128,9 @@ async function ensureClient(client: ClientConfig) {
     Object.assign(autopostPayload, {
       reelsIntervalHours,
       reelsSourceMode: 'dynamic',
+      ...(client.key === 'simplicityhomedecor'
+        ? { reelsPlatforms: ['instagram_reels', 'facebook', 'threads'] }
+        : {}),
     });
   }
   const settingsPayload = {
