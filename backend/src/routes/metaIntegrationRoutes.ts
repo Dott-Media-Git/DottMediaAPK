@@ -699,9 +699,23 @@ const mergeAutopostPlatforms = async (userId: string, platformsToAdd: string[]) 
   const autopostRef = firestore.collection('autopostJobs').doc(userId);
   const autopostSnap = await autopostRef.get();
   const autopostData = autopostSnap.data() ?? {};
+  const fallbackJob = await supabaseFallbackService.getAutopostJob(userId).catch(error => {
+    console.warn('[meta] Supabase autopost lookup failed while connecting a platform', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+  const fallbackData = (fallbackJob ?? {}) as Record<string, unknown>;
 
-  const postPlatformSet = new Set(((autopostData.platforms as string[] | undefined) ?? []).filter(Boolean));
-  const trendPlatformSet = new Set(((autopostData.trendPlatforms as string[] | undefined) ?? []).filter(Boolean));
+  const postPlatformSet = new Set([
+    ...(((autopostData.platforms as string[] | undefined) ?? []).filter(Boolean)),
+    ...(((fallbackData.platforms as string[] | undefined) ?? []).filter(Boolean)),
+  ]);
+  const trendPlatformSet = new Set([
+    ...(((autopostData.trendPlatforms as string[] | undefined) ?? []).filter(Boolean)),
+    ...(((fallbackData.trendPlatforms as string[] | undefined) ?? []).filter(Boolean)),
+  ]);
 
   for (const platform of platformsToAdd) {
     postPlatformSet.add(platform);
@@ -710,7 +724,7 @@ const mergeAutopostPlatforms = async (userId: string, platformsToAdd: string[]) 
     }
   }
 
-  if (!autopostSnap.exists) {
+  if (!autopostSnap.exists && !fallbackJob) {
     await autoPostService.start({
       userId,
       platforms: Array.from(postPlatformSet),
@@ -725,6 +739,13 @@ const mergeAutopostPlatforms = async (userId: string, platformsToAdd: string[]) 
     },
     { merge: true },
   );
+  await supabaseFallbackService.upsertAutopostJob(userId, {
+    userId,
+    active: fallbackData.active !== false && autopostData.active !== false,
+    platforms: Array.from(postPlatformSet),
+    trendPlatforms: Array.from(trendPlatformSet),
+    updatedAt: new Date(),
+  });
 };
 
 const renderCallbackHtml = (title: string, message: string) => `<!doctype html>

@@ -1210,6 +1210,7 @@ export class AutoPostService {
     tiktokVideoUrls?: string[];
     instagramReelsVideoUrl?: string;
     instagramReelsVideoUrls?: string[];
+    intervalHours?: number;
     reelsIntervalHours?: number;
     generatedContent?: GeneratedContent;
   }) {
@@ -1260,7 +1261,7 @@ export class AutoPostService {
       reelsVideoUrl: reelsVideoUrl ?? undefined,
       reelsVideoUrls: reelsVideoUrls ?? undefined,
       reelsVideoCursor: reelsVideoUrls && reelsVideoUrls.length ? 0 : undefined,
-      intervalHours: this.defaultIntervalHours,
+      intervalHours: payload.intervalHours && payload.intervalHours > 0 ? payload.intervalHours : this.defaultIntervalHours,
       nextRun: admin.firestore.Timestamp.fromDate(now),
       reelsIntervalHours: reelsEnabled ? reelsIntervalHours : undefined,
       reelsNextRun: reelsEnabled ? admin.firestore.Timestamp.fromDate(now) : undefined,

@@ -253,6 +253,7 @@ app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
       tiktokVideoUrls,
       instagramReelsVideoUrl,
       instagramReelsVideoUrls,
+      intervalHours,
       reelsIntervalHours,
     } = req.body ?? {};
     const result = await autoPostService.start({
@@ -271,6 +272,7 @@ app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
       tiktokVideoUrls,
       instagramReelsVideoUrl,
       instagramReelsVideoUrls,
+      intervalHours,
       reelsIntervalHours,
     });
     res.json({ ok: true, ...result });
@@ -404,7 +406,7 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
       {
         label: 'Simplicity',
         uid: 'X0ObAFQft0UWZee9IbUyYaeaBfO2',
-        platforms: ['facebook', 'instagram'],
+        platforms: ['facebook', 'instagram', 'threads'],
         reels: true,
         reelsPlatforms: ['instagram_reels', 'facebook'],
       },
