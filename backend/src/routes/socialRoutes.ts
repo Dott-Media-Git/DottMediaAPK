@@ -7,6 +7,7 @@ import admin from 'firebase-admin';
 import { z } from 'zod';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService';
+import { genericVideoPlatforms } from '../packages/services/socialScheduleMedia';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 import { socialPostingService } from '../packages/services/socialPostingService';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService';
@@ -907,11 +908,11 @@ const scheduleSchema = z
     const hasYoutube = data.platforms.includes('youtube');
     const hasTikTok = data.platforms.includes('tiktok');
     const hasReels = data.platforms.includes('instagram_reels');
-    const videoCapable = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin', 'threads']);
     const hasImagePlatform = data.platforms.some(platform => {
       if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels') return false;
       if (platform === 'whatsapp') return false;
-      if (videoCapable.has(platform) && data.videoUrl) return false;
+      if (platform === 'instagram' && data.videoUrl && !data.images?.length) return false;
+      if (genericVideoPlatforms.has(platform) && data.videoUrl) return false;
       return true;
     });
     if (hasImagePlatform && (!data.images || data.images.length === 0)) {
@@ -935,7 +936,7 @@ const scheduleSchema = z
         message: 'TikTok video URL is required.',
       });
     }
-    if (hasReels && !data.instagramReelsVideoUrl) {
+    if (hasReels && !(data.instagramReelsVideoUrl || data.videoUrl)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['instagramReelsVideoUrl'],

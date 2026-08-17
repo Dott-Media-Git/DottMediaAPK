@@ -65,11 +65,47 @@ async function testBillingPolicy() {
   );
 }
 
+async function testVideoScheduleMediaRouting() {
+  const { normalizeVideoSchedulePayload, resolvePlatformVideoUrl } = await import(
+    '../packages/services/socialScheduleMedia.js'
+  );
+  const videoUrl = 'https://cdn.example.com/fresh-video.mp4';
+  const normalized = normalizeVideoSchedulePayload({
+    platforms: ['instagram', 'instagram_reels', 'facebook', 'threads', 'twitter'],
+    images: [],
+    videoUrl,
+  });
+
+  assert.deepEqual(
+    normalized.platforms,
+    ['instagram_reels', 'facebook', 'threads', 'twitter'],
+    'Video-only Instagram feed selections should become a single Reels destination',
+  );
+  assert.equal(normalized.instagramReelsVideoUrl, videoUrl);
+  assert.equal(resolvePlatformVideoUrl('instagram_reels', normalized), videoUrl);
+  assert.equal(resolvePlatformVideoUrl('facebook', normalized), videoUrl);
+  assert.equal(resolvePlatformVideoUrl('threads', normalized), videoUrl);
+  assert.equal(resolvePlatformVideoUrl('twitter', normalized), videoUrl);
+
+  const imageAndVideo = normalizeVideoSchedulePayload({
+    platforms: ['instagram'],
+    images: ['https://cdn.example.com/image.jpg'],
+    videoUrl,
+  });
+  assert.deepEqual(
+    imageAndVideo.platforms,
+    ['instagram'],
+    'Instagram feed should remain image-based when an image is supplied',
+  );
+  assert.equal(resolvePlatformVideoUrl('instagram', imageAndVideo), null);
+}
+
 async function run() {
   await testVault();
   await testRoleHelper();
   await testSettingsValidator();
   await testBillingPolicy();
+  await testVideoScheduleMediaRouting();
   console.log('Backend tests passed');
 }
 

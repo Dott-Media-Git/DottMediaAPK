@@ -21,6 +21,7 @@ import { colors } from '@constants/colors';
 import { publishPostNow, schedulePost, uploadMediaFiles, type UploadedMediaFile } from '@services/social';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
+import { GENERIC_VIDEO_PLATFORMS, resolveSelectedPostPlatforms } from '../utils/socialPostMedia';
 
 const PLATFORM_OPTIONS = [
   'instagram',
@@ -188,25 +189,29 @@ export const SchedulePostScreen: React.FC = () => {
     setImageUrlInput('');
   };
 
-  const summary = useMemo(() => Math.min(timesPerDay * selectedPlatforms.length, 5), [timesPerDay, selectedPlatforms]);
-  const hasYoutube = selectedPlatforms.includes('youtube');
-  const hasTikTok = selectedPlatforms.includes('tiktok');
-  const hasReels = selectedPlatforms.includes('instagram_reels');
-  const hasOptionalVideoPlatforms = selectedPlatforms.some(
-    platform => platform === 'facebook' || platform === 'facebook_story' || platform === 'instagram_story' || platform === 'linkedin',
-  );
   const hasGenericVideo = videoUrl.trim().length > 0;
+  const hasAnyVideo = Boolean(
+    hasGenericVideo || youtubeVideoUrl.trim() || tiktokVideoUrl.trim() || reelsVideoUrl.trim(),
+  );
+  const isVideoOnlyPost = images.length === 0 && hasAnyVideo;
+  const effectivePlatforms = useMemo(
+    () => resolveSelectedPostPlatforms(selectedPlatforms, images.length, hasAnyVideo),
+    [hasAnyVideo, images.length, selectedPlatforms],
+  );
+  const summary = useMemo(() => Math.min(timesPerDay * effectivePlatforms.length, 5), [timesPerDay, effectivePlatforms]);
+  const hasYoutube = effectivePlatforms.includes('youtube');
+  const hasTikTok = effectivePlatforms.includes('tiktok');
+  const hasReels = effectivePlatforms.includes('instagram_reels');
+  const hasOptionalVideoPlatforms = effectivePlatforms.some(platform =>
+    GENERIC_VIDEO_PLATFORMS.has(platform) && platform !== 'whatsapp',
+  );
   const hasVideoPlatform = hasYoutube || hasTikTok || hasReels;
-  const imageOnlyPlatforms = selectedPlatforms.filter(
+  const imageOnlyPlatforms = effectivePlatforms.filter(
     platform =>
       platform !== 'youtube' &&
       platform !== 'tiktok' &&
       platform !== 'instagram_reels' &&
-      platform !== 'facebook' &&
-      platform !== 'facebook_story' &&
-      platform !== 'instagram_story' &&
-      platform !== 'linkedin' &&
-      platform !== 'whatsapp',
+      !GENERIC_VIDEO_PLATFORMS.has(platform),
   );
   const needsImages = imageOnlyPlatforms.length > 0 || (hasOptionalVideoPlatforms && !hasGenericVideo);
 
@@ -300,12 +305,12 @@ export const SchedulePostScreen: React.FC = () => {
   };
 
   const assignUploadedVideoUrl = (url: string) => {
+    // Keep one generic source for every video-capable channel in a mixed selection.
+    // Dedicated platform fields remain available for user overrides.
+    setVideoUrl(url);
     if (hasYoutube) setYoutubeVideoUrl(url);
     if (hasTikTok) setTiktokVideoUrl(url);
     if (hasReels) setReelsVideoUrl(url);
-    if (hasOptionalVideoPlatforms || (!hasYoutube && !hasTikTok && !hasReels)) {
-      setVideoUrl(url);
-    }
   };
 
   const isLikelyImageUrl = (url: string) => IMAGE_URL_PATTERN.test(url);
@@ -404,15 +409,15 @@ export const SchedulePostScreen: React.FC = () => {
       }
       return false;
     }
-    if (hasYoutube && !youtubeVideoUrl.trim()) {
+    if (hasYoutube && !youtubeVideoUrl.trim() && !videoUrl.trim()) {
       showNotice(t('Add a YouTube video URL first, or drop a video below.'));
       return false;
     }
-    if (hasTikTok && !tiktokVideoUrl.trim()) {
+    if (hasTikTok && !tiktokVideoUrl.trim() && !videoUrl.trim()) {
       showNotice(t('Add a TikTok video URL first, or drop a video below.'));
       return false;
     }
-    if (hasReels && !reelsVideoUrl.trim()) {
+    if (hasReels && !reelsVideoUrl.trim() && !videoUrl.trim()) {
       showNotice(t('Add an Instagram Reels video URL first, or drop a video below.'));
       return false;
     }
@@ -459,9 +464,16 @@ export const SchedulePostScreen: React.FC = () => {
       platform === 'facebook' ||
       platform === 'facebook_story' ||
       platform === 'instagram_story' ||
-      platform === 'linkedin'
+      platform === 'linkedin' ||
+      platform === 'threads' ||
+      platform === 'twitter' ||
+      platform === 'whatsapp'
     ) {
       return videoUrl.trim() ? [videoUrl.trim()] : [];
+    }
+    if (platform === 'instagram' && isVideoOnlyPost) {
+      const instagramVideoUrl = reelsVideoUrl.trim() || videoUrl.trim();
+      return instagramVideoUrl ? [instagramVideoUrl] : [];
     }
     return [];
   };
@@ -487,12 +499,12 @@ export const SchedulePostScreen: React.FC = () => {
 
   const buildPostPayload = () => ({
     userId: state.user!.uid,
-    platforms: selectedPlatforms,
+    platforms: effectivePlatforms,
     images,
     videoUrl: videoUrl.trim() || undefined,
     youtubeVideoUrl: youtubeVideoUrl.trim() || undefined,
     tiktokVideoUrl: tiktokVideoUrl.trim() || undefined,
-    instagramReelsVideoUrl: reelsVideoUrl.trim() || undefined,
+    instagramReelsVideoUrl: hasReels ? reelsVideoUrl.trim() || videoUrl.trim() || undefined : undefined,
     videoTitle: videoTitle.trim() || undefined,
     caption: normalizedCaption,
     hashtags: normalizedHashtags,
@@ -521,10 +533,15 @@ export const SchedulePostScreen: React.FC = () => {
         throw new Error(t('The post was prepared but the selected platforms rejected it. Check the connection and media requirements, then try again.'));
       }
       setPreviewVisible(false);
+      const successMessage = hasAnyVideo
+        ? t('Posted. Your video is live on {{count}} selected platform(s).', { count: postedCount })
+        : images.length
+          ? t('Posted. Your image is live on {{count}} selected platform(s).', { count: postedCount })
+          : t('Posted to {{count}} selected platform(s).', { count: postedCount });
       resetForm();
       showNotice(result?.failed
         ? t('Posted to {{count}} platform(s). {{failed}} platform(s) failed; check Posting History.', { count: postedCount, failed: result.failed })
-        : t('Posted. Your image is live on {{count}} selected platform(s).', { count: postedCount }));
+        : successMessage);
     } catch (error: any) {
       Alert.alert(t('Post failed'), error?.message ?? t('Unable to post right now.'));
     } finally {
@@ -1022,7 +1039,7 @@ export const SchedulePostScreen: React.FC = () => {
               <View style={styles.previewMetaCard}>
                 <Text style={styles.previewMetaLabel}>{t('Selected Platforms')}</Text>
                 <View style={styles.row}>
-                  {selectedPlatforms.map(platform => (
+                  {effectivePlatforms.map(platform => (
                     <View key={platform} style={styles.previewChip}>
                       <Text style={styles.previewChipText}>{t(formatPlatformLabel(platform))}</Text>
                     </View>
@@ -1069,6 +1086,9 @@ export const SchedulePostScreen: React.FC = () => {
                     ...getPlatformMedia('facebook_story'),
                     ...getPlatformMedia('instagram_story'),
                     ...getPlatformMedia('linkedin'),
+                    ...getPlatformMedia('threads'),
+                    ...getPlatformMedia('twitter'),
+                    ...getPlatformMedia('whatsapp'),
                   ]
                     .filter((value, index, array) => array.indexOf(value) === index)
                     .map((url, index) => (
@@ -1086,7 +1106,7 @@ export const SchedulePostScreen: React.FC = () => {
                 </View>
               ) : null}
 
-              {selectedPlatforms.map(platform => {
+              {effectivePlatforms.map(platform => {
                 const mediaUrls = getPlatformMedia(platform);
                 return (
                   <View key={platform} style={styles.previewPlatformCard}>
