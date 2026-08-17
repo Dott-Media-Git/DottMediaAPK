@@ -138,7 +138,7 @@ async function run() {
   const job = {
     userId: USER_ID,
     active: true,
-    platforms: ['facebook', 'instagram'],
+    platforms: ['facebook', 'instagram', 'threads'],
     intervalHours: IMAGE_INTERVAL_HOURS,
     nextRun: nextImageRun,
     sourceImageUrls,
@@ -147,7 +147,7 @@ async function run() {
     videoCursor: 0,
     reelsVideoUrls: videoUrls,
     reelsVideoCursor: 0,
-    reelsPlatforms: ['instagram_reels', 'facebook'],
+    reelsPlatforms: ['instagram_reels', 'facebook', 'threads'],
     reelsSourceMode: 'static',
     reelsIntervalHours: VIDEO_INTERVAL_HOURS,
     reelsNextRun: nextVideoRun,
@@ -188,7 +188,7 @@ async function run() {
     if (postNow) {
       const imageJob = (await firestore.collection('autopostJobs').doc(USER_ID).get()).data() ?? job;
       const imageResult = await (autoPostService as any).executeJob(USER_ID, imageJob, {
-        platforms: ['facebook', 'instagram'],
+        platforms: ['facebook', 'instagram', 'threads'],
         intervalHours: IMAGE_INTERVAL_HOURS,
         nextRunField: 'nextRun',
         lastRunField: 'lastRunAt',

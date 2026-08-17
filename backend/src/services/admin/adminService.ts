@@ -5,8 +5,8 @@ import { firestore } from '../../db/firestore';
 import { OrgDocument, OrgLocale, OrgPlan, OrgSettingsDocument, OrgUserDocument } from '../../types/org';
 import { putSecret, getSecret } from '../secretVaultService';
 import { validateSettingsPatch } from './settingsValidator';
-import { listBillingPlans } from '../billing/billingService';
-import { getPlan, getStripePriceId } from '../billing/planCatalog';
+import { listBillingPlans, resolveStripeLineItem } from '../billing/billingService';
+import { getPlan } from '../billing/planCatalog';
 
 const orgsCollection = firestore.collection('orgs');
 const orgUsersCollection = firestore.collection('orgUsers');
@@ -194,11 +194,11 @@ export async function listPlans() {
 export async function swapPlan(orgId: string, plan: OrgPlan, successUrl: string, cancelUrl: string) {
   if (!stripe) throw createHttpError(500, 'Stripe is not configured');
   const planDefinition = getPlan(plan);
-  const priceId = getStripePriceId(planDefinition);
-  if (!priceId) throw createHttpError(400, 'Unsupported plan for checkout');
+  if (planDefinition.id === 'free') throw createHttpError(400, 'Free plan does not need checkout');
+  const lineItem = await resolveStripeLineItem(planDefinition);
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
-    line_items: [{ price: priceId, quantity: 1 }],
+    line_items: [lineItem],
     success_url: successUrl,
     cancel_url: cancelUrl,
     metadata: { orgId, plan: planDefinition.id },

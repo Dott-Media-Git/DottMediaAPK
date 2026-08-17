@@ -7,6 +7,12 @@ import {
   getBwinAccountClosureState,
   isBwinAccountClosureActive,
 } from '../../services/bwinAccountClosureService';
+import {
+  genericVideoPlatforms,
+  normalizeVideoSchedulePayload,
+  resolvePlatformVideoUrl,
+  type ScheduledPlatform,
+} from './socialScheduleMedia';
 
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
@@ -18,20 +24,7 @@ const withFirestoreDeadline = <T>(promise: Promise<T>, label: string, timeoutMs 
 
 export type SchedulePayload = {
   userId: string;
-  platforms: Array<
-    | 'instagram'
-    | 'instagram_reels'
-    | 'instagram_story'
-    | 'facebook'
-    | 'facebook_story'
-    | 'linkedin'
-    | 'twitter'
-    | 'x'
-    | 'threads'
-    | 'tiktok'
-    | 'youtube'
-    | 'whatsapp'
-  >;
+  platforms: ScheduledPlatform[];
   images?: string[];
   videoUrl?: string;
   youtubeVideoUrl?: string;
@@ -48,6 +41,7 @@ export type SchedulePayload = {
 export class SocialSchedulingService {
   async schedulePosts(payload: SchedulePayload) {
     if (!payload.platforms.length) throw new Error('At least one platform is required');
+    payload = normalizeVideoSchedulePayload(payload);
     const closureState = await getBwinAccountClosureState(payload.userId);
     if (closureState?.enabled) {
       const shutdownAt = new Date(closureState.shutdownAt);
@@ -76,16 +70,15 @@ export class SocialSchedulingService {
     const hasYoutube = payload.platforms.includes('youtube');
     const hasTikTok = payload.platforms.includes('tiktok');
     const hasReels = payload.platforms.includes('instagram_reels');
-    const videoCapable = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
     const hasImagePlatform = payload.platforms.some(platform => {
       if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels') return false;
       if (platform === 'whatsapp') return false;
-      if (videoCapable.has(platform) && payload.videoUrl) return false;
+      if (genericVideoPlatforms.has(platform) && payload.videoUrl) return false;
       return true;
     });
     const youtubeUrl = payload.youtubeVideoUrl ?? payload.videoUrl;
     const tiktokUrl = payload.tiktokVideoUrl ?? payload.videoUrl;
-    const reelsUrl = payload.instagramReelsVideoUrl ?? null;
+    const reelsUrl = payload.instagramReelsVideoUrl ?? payload.videoUrl;
     if (hasYoutube && !youtubeUrl) {
       throw new Error('YouTube requires a videoUrl');
     }
@@ -151,28 +144,8 @@ export class SocialSchedulingService {
     const batch = firestore.batch();
     const createdAt = new Date();
     const fallbackRows = docsToCreate.map(doc => {
-      const isVideoPlatform =
-        doc.platform === 'youtube' ||
-        doc.platform === 'tiktok' ||
-        doc.platform === 'instagram_reels' ||
-        ((doc.platform === 'facebook' ||
-          doc.platform === 'facebook_story' ||
-          doc.platform === 'instagram_story' ||
-          doc.platform === 'linkedin') &&
-          Boolean(payload.videoUrl));
-      const videoUrl =
-        doc.platform === 'youtube'
-          ? payload.youtubeVideoUrl ?? payload.videoUrl ?? null
-          : doc.platform === 'tiktok'
-            ? payload.tiktokVideoUrl ?? payload.videoUrl ?? null
-            : doc.platform === 'instagram_reels'
-              ? payload.instagramReelsVideoUrl ?? null
-              : (doc.platform === 'facebook' ||
-                  doc.platform === 'facebook_story' ||
-                  doc.platform === 'instagram_story' ||
-                  doc.platform === 'linkedin')
-                ? payload.videoUrl ?? null
-                : null;
+      const videoUrl = resolvePlatformVideoUrl(doc.platform as ScheduledPlatform, payload);
+      const isVideoPlatform = Boolean(videoUrl);
       return {
         id: doc.id,
         userId: payload.userId,
@@ -192,28 +165,8 @@ export class SocialSchedulingService {
       };
     });
     docsToCreate.forEach(doc => {
-      const isVideoPlatform =
-        doc.platform === 'youtube' ||
-        doc.platform === 'tiktok' ||
-        doc.platform === 'instagram_reels' ||
-        ((doc.platform === 'facebook' ||
-          doc.platform === 'facebook_story' ||
-          doc.platform === 'instagram_story' ||
-          doc.platform === 'linkedin') &&
-          Boolean(payload.videoUrl));
-      const videoUrl =
-        doc.platform === 'youtube'
-          ? payload.youtubeVideoUrl ?? payload.videoUrl ?? null
-          : doc.platform === 'tiktok'
-            ? payload.tiktokVideoUrl ?? payload.videoUrl ?? null
-            : doc.platform === 'instagram_reels'
-              ? payload.instagramReelsVideoUrl ?? null
-              : (doc.platform === 'facebook' ||
-                  doc.platform === 'facebook_story' ||
-                  doc.platform === 'instagram_story' ||
-                  doc.platform === 'linkedin')
-                ? payload.videoUrl ?? null
-                : null;
+      const videoUrl = resolvePlatformVideoUrl(doc.platform as ScheduledPlatform, payload);
+      const isVideoPlatform = Boolean(videoUrl);
       batch.set(scheduledPostsCollection.doc(doc.id), {
         userId: payload.userId,
         platform: doc.platform,

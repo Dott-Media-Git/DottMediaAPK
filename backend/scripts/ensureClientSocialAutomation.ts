@@ -106,10 +106,11 @@ function readArg(name: string) {
 }
 
 async function ensureClient(client: ClientConfig) {
+  const feedPlatforms = client.key === 'simplicityhomedecor' ? ['facebook', 'instagram', 'threads'] : ['facebook', 'instagram'];
   const autopostPayload = {
     userId: client.uid,
     active: true,
-    platforms: ['facebook', 'instagram'],
+    platforms: feedPlatforms,
     intervalHours,
     nextRun: now,
     storyPlatforms: ['facebook_story', 'instagram_story'],
@@ -127,6 +128,9 @@ async function ensureClient(client: ClientConfig) {
     Object.assign(autopostPayload, {
       reelsIntervalHours,
       reelsSourceMode: 'dynamic',
+      ...(client.key === 'simplicityhomedecor'
+        ? { reelsPlatforms: ['instagram_reels', 'facebook', 'threads'] }
+        : {}),
     });
   }
   const settingsPayload = {

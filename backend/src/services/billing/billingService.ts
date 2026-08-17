@@ -83,13 +83,58 @@ export function listBillingPlans() {
   const flutterwaveConfigured = Boolean(process.env.FLUTTERWAVE_SECRET_KEY);
   return planCatalog.map(plan => ({
     ...plan,
-    stripeConfigured: Boolean(getStripePriceId(plan)) || plan.id === 'free' || plan.id === 'enterprise',
-    mobileMoneyConfigured: flutterwaveConfigured && plan.id !== 'free' && plan.id !== 'enterprise',
+    stripeConfigured: Boolean(stripe) || plan.id === 'free',
+    mobileMoneyConfigured: flutterwaveConfigured && plan.id !== 'free',
     paymentProviders: {
-      stripe: Boolean(getStripePriceId(plan)) || plan.id === 'free' || plan.id === 'enterprise',
-      mobileMoney: flutterwaveConfigured && plan.id !== 'free' && plan.id !== 'enterprise',
+      stripe: Boolean(stripe) || plan.id === 'free',
+      mobileMoney: flutterwaveConfigured && plan.id !== 'free',
     },
   }));
+}
+
+export async function resolveStripeLineItem(plan: ReturnType<typeof getPlan>): Promise<Stripe.Checkout.SessionCreateParams.LineItem> {
+  if (!stripe || plan.priceMonthlyCents === null) {
+    throw createHttpError(500, 'Stripe is not configured');
+  }
+
+  const configuredPriceId = getStripePriceId(plan);
+  if (configuredPriceId) {
+    try {
+      const configuredPrice = await stripe.prices.retrieve(configuredPriceId);
+      const isExpectedMonthlyPrice =
+        configuredPrice.active &&
+        configuredPrice.currency.toLowerCase() === 'usd' &&
+        configuredPrice.unit_amount === plan.priceMonthlyCents &&
+        configuredPrice.recurring?.interval === 'month' &&
+        (configuredPrice.recurring.interval_count ?? 1) === 1;
+
+      if (isExpectedMonthlyPrice) {
+        return { price: configuredPriceId, quantity: 1 };
+      }
+
+      console.warn('[billing] Configured Stripe price does not match the current package price; using the catalog price.', {
+        planId: plan.id,
+      });
+    } catch (error) {
+      console.warn('[billing] Could not validate the configured Stripe price; using the catalog price.', {
+        planId: plan.id,
+        error: error instanceof Error ? error.message : 'Unknown Stripe error',
+      });
+    }
+  }
+
+  return {
+    price_data: {
+      currency: 'usd',
+      unit_amount: plan.priceMonthlyCents,
+      recurring: { interval: 'month' },
+      product_data: {
+        name: `Dott ${plan.name}`,
+        description: plan.description,
+      },
+    },
+    quantity: 1,
+  };
 }
 
 const calculateAllocation = (planValue: string, grossRevenueCents: number) => {
@@ -193,9 +238,7 @@ async function createFlutterwaveCheckoutSession(
   if (!secretKey) throw createHttpError(500, 'Flutterwave is not configured');
   const plan = getPlan(requestedPlan);
   if (plan.id === 'free') throw createHttpError(400, 'Free plan does not need checkout');
-  if (plan.id === 'enterprise' || plan.priceMonthlyCents === null) {
-    throw createHttpError(400, 'Enterprise requires a custom contract');
-  }
+  if (plan.priceMonthlyCents === null) throw createHttpError(400, 'This package is not available for checkout');
 
   const { currency, amount } = resolveFlutterwaveAmount(plan.priceMonthlyCents);
   const txRef = buildFlutterwaveTxRef(plan.id, scope.orgId);
@@ -276,13 +319,11 @@ export async function createCheckoutSession(
   if (!stripe) throw createHttpError(500, 'Stripe is not configured');
   const plan = getPlan(requestedPlan);
   if (plan.id === 'free') throw createHttpError(400, 'Free plan does not need checkout');
-  if (plan.id === 'enterprise') throw createHttpError(400, 'Enterprise requires a custom contract');
-  const priceId = getStripePriceId(plan);
-  if (!priceId) throw createHttpError(400, `${plan.name} checkout is not configured yet`);
+  const lineItem = await resolveStripeLineItem(plan);
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     customer_email: scope.email,
-    line_items: [{ price: priceId, quantity: 1 }],
+    line_items: [lineItem],
     success_url: successUrl,
     cancel_url: cancelUrl,
     metadata: {

@@ -7,6 +7,7 @@ import admin from 'firebase-admin';
 import { z } from 'zod';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService';
+import { genericVideoPlatforms } from '../packages/services/socialScheduleMedia';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 import { socialPostingService } from '../packages/services/socialPostingService';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService';
@@ -31,7 +32,7 @@ const HISTORY_DAILY_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_DAILY_TIMEO
 const HISTORY_STORED_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_STORED_TIMEOUT_MS ?? 1000), 500);
 const HISTORY_SOCIAL_LOG_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_SOCIAL_LOG_TIMEOUT_MS ?? 1500), 500);
 const HISTORY_USER_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_USER_LOOKUP_TIMEOUT_MS ?? 1000), 500);
-const SOCIAL_STATUS_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.SOCIAL_STATUS_LOOKUP_TIMEOUT_MS ?? 1500), 500);
+const SOCIAL_STATUS_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.SOCIAL_STATUS_LOOKUP_TIMEOUT_MS ?? 12000), 1500);
 
 const router = Router();
 type ImmediatePublishState = { userId: string; complete: boolean; posted: number; failed: number; pending: number; posts: Array<Record<string, unknown>>; error?: string; updatedAt: number };
@@ -758,10 +759,32 @@ const disconnectSocialPlatform = async (userId: string, platform: string) => {
 
 const mergeAutopostPlatforms = async (userId: string, platformsToAdd: string[]) => {
   const autopostRef = firestore.collection('autopostJobs').doc(userId);
-  const autopostSnap = await autopostRef.get();
-  const autopostData = autopostSnap.data() ?? {};
-  const platformSet = new Set(((autopostData.platforms as string[] | undefined) ?? []).filter(Boolean));
-  const trendPlatformSet = new Set(((autopostData.trendPlatforms as string[] | undefined) ?? []).filter(Boolean));
+  const [autopostSnap, fallbackJob] = await Promise.all([
+    autopostRef.get().catch(error => {
+      console.warn('[social] Firestore autopost lookup failed while connecting a platform', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }),
+    supabaseFallbackService.getAutopostJob(userId).catch(error => {
+      console.warn('[social] Supabase autopost lookup failed while connecting a platform', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }),
+  ]);
+  const autopostData = autopostSnap?.data() ?? {};
+  const fallbackData = (fallbackJob ?? {}) as Record<string, unknown>;
+  const platformSet = new Set([
+    ...(((autopostData.platforms as string[] | undefined) ?? []).filter(Boolean)),
+    ...(((fallbackData.platforms as string[] | undefined) ?? []).filter(Boolean)),
+  ]);
+  const trendPlatformSet = new Set([
+    ...(((autopostData.trendPlatforms as string[] | undefined) ?? []).filter(Boolean)),
+    ...(((fallbackData.trendPlatforms as string[] | undefined) ?? []).filter(Boolean)),
+  ]);
 
   for (const platform of platformsToAdd) {
     platformSet.add(platform);
@@ -770,15 +793,20 @@ const mergeAutopostPlatforms = async (userId: string, platformsToAdd: string[]) 
     }
   }
 
-  await autopostRef.set(
-    {
-      userId,
-      platforms: Array.from(platformSet),
-      trendPlatforms: Array.from(trendPlatformSet),
-      updatedAt: new Date(),
-    },
-    { merge: true },
-  );
+  const schedulePatch = {
+    userId,
+    active: fallbackData.active !== false && autopostData.active !== false,
+    platforms: Array.from(platformSet),
+    trendPlatforms: Array.from(trendPlatformSet),
+    updatedAt: new Date(),
+  };
+  const writes = await Promise.allSettled([
+    autopostRef.set(schedulePatch, { merge: true }),
+    supabaseFallbackService.upsertAutopostJob(userId, schedulePatch),
+  ]);
+  if (writes.every(result => result.status === 'rejected')) {
+    throw (writes[1] as PromiseRejectedResult).reason ?? (writes[0] as PromiseRejectedResult).reason;
+  }
 };
 
 const renderThreadsCallbackHtml = (title: string, message: string) => `<!doctype html>
@@ -880,11 +908,11 @@ const scheduleSchema = z
     const hasYoutube = data.platforms.includes('youtube');
     const hasTikTok = data.platforms.includes('tiktok');
     const hasReels = data.platforms.includes('instagram_reels');
-    const videoCapable = new Set(['facebook', 'facebook_story', 'instagram_story', 'linkedin']);
     const hasImagePlatform = data.platforms.some(platform => {
       if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels') return false;
       if (platform === 'whatsapp') return false;
-      if (videoCapable.has(platform) && data.videoUrl) return false;
+      if (platform === 'instagram' && data.videoUrl && !data.images?.length) return false;
+      if (genericVideoPlatforms.has(platform) && data.videoUrl) return false;
       return true;
     });
     if (hasImagePlatform && (!data.images || data.images.length === 0)) {
@@ -908,7 +936,7 @@ const scheduleSchema = z
         message: 'TikTok video URL is required.',
       });
     }
-    if (hasReels && !data.instagramReelsVideoUrl) {
+    if (hasReels && !(data.instagramReelsVideoUrl || data.videoUrl)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['instagramReelsVideoUrl'],
@@ -951,6 +979,7 @@ const autoPostSchema = z
     tiktokVideoUrls: z.array(z.string().url()).optional(),
     instagramReelsVideoUrl: z.string().url().optional(),
     instagramReelsVideoUrls: z.array(z.string().url()).optional(),
+    intervalHours: z.number().positive().optional(),
     reelsIntervalHours: z.number().positive().optional(),
     generatedContent: z
       .object({
@@ -1110,6 +1139,7 @@ router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
       tiktokVideoUrls: payload.tiktokVideoUrls,
       instagramReelsVideoUrl: payload.instagramReelsVideoUrl,
       instagramReelsVideoUrls: payload.instagramReelsVideoUrls,
+      intervalHours: payload.intervalHours,
       reelsIntervalHours: payload.reelsIntervalHours,
       generatedContent: payload.generatedContent,
     });
@@ -1605,6 +1635,9 @@ router.post('/social/credentials', requireFirebase, async (req, res, next) => {
 
     await persistSocialAccounts(payload.userId, { socialAccounts: payload.credentials });
     await clearSocialDisconnects(payload.userId, Object.keys(payload.credentials));
+    if (payload.credentials.threads) {
+      await mergeAutopostPlatforms(payload.userId, ['threads']);
+    }
 
     res.json({ success: true });
   } catch (error) {

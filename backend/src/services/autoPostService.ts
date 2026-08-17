@@ -1210,6 +1210,7 @@ export class AutoPostService {
     tiktokVideoUrls?: string[];
     instagramReelsVideoUrl?: string;
     instagramReelsVideoUrls?: string[];
+    intervalHours?: number;
     reelsIntervalHours?: number;
     generatedContent?: GeneratedContent;
   }) {
@@ -1260,7 +1261,7 @@ export class AutoPostService {
       reelsVideoUrl: reelsVideoUrl ?? undefined,
       reelsVideoUrls: reelsVideoUrls ?? undefined,
       reelsVideoCursor: reelsVideoUrls && reelsVideoUrls.length ? 0 : undefined,
-      intervalHours: this.defaultIntervalHours,
+      intervalHours: payload.intervalHours && payload.intervalHours > 0 ? payload.intervalHours : this.defaultIntervalHours,
       nextRun: admin.firestore.Timestamp.fromDate(now),
       reelsIntervalHours: reelsEnabled ? reelsIntervalHours : undefined,
       reelsNextRun: reelsEnabled ? admin.firestore.Timestamp.fromDate(now) : undefined,
@@ -4495,8 +4496,7 @@ export class AutoPostService {
     const hasOwnedSourceImagePool = Array.isArray(job.sourceImageUrls) && job.sourceImageUrls.some(Boolean);
     const useGenericVideoFallback =
       options.useGenericVideoFallback !== false &&
-      !clientFallbackProfile &&
-      (isReelsRun || !hasOwnedSourceImagePool);
+      (isReelsRun || (!clientFallbackProfile && !hasOwnedSourceImagePool));
     if (!platforms.length) {
       const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
       const updatePayload: Record<string, unknown> = {
@@ -5399,7 +5399,11 @@ export class AutoPostService {
     const scheduledFor = admin.firestore.Timestamp.now();
     const now = new Date();
     const fallbackRows = entries.map(entry => {
-      const isVideoPlatform = entry.platform === 'youtube' || entry.platform === 'tiktok' || entry.platform === 'instagram_reels';
+      const isVideoPlatform =
+        entry.platform === 'youtube' ||
+        entry.platform === 'tiktok' ||
+        entry.platform === 'instagram_reels' ||
+        Boolean(entry.videoUrl);
       return {
         id: scheduledPostsCollection.doc().id,
         userId,
@@ -5428,7 +5432,11 @@ export class AutoPostService {
       const batch = firestore.batch();
       fallbackRows.forEach(entry => {
         const ref = scheduledPostsCollection.doc(entry.id);
-        const isVideoPlatform = entry.platform === 'youtube' || entry.platform === 'tiktok' || entry.platform === 'instagram_reels';
+        const isVideoPlatform =
+          entry.platform === 'youtube' ||
+          entry.platform === 'tiktok' ||
+          entry.platform === 'instagram_reels' ||
+          Boolean(entry.videoUrl);
         const payload: Record<string, unknown> = {
           userId,
           platform: entry.platform,

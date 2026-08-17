@@ -22,8 +22,8 @@ const GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
 const READY_ATTEMPTS = Math.max(Number(process.env.THREADS_MEDIA_READY_ATTEMPTS ?? 12), 3);
 const READY_DELAY_MS = Math.max(Number(process.env.THREADS_MEDIA_READY_DELAY_MS ?? 2000), 1000);
-const PUBLISH_RETRIES = Math.max(Number(process.env.THREADS_PUBLISH_RETRIES ?? 3), 1);
-const PUBLISH_RETRY_DELAY_MS = Math.max(Number(process.env.THREADS_PUBLISH_RETRY_DELAY_MS ?? 2500), 1000);
+const PUBLISH_RETRIES = Math.max(Number(process.env.THREADS_PUBLISH_RETRIES ?? 5), 1);
+const PUBLISH_RETRY_DELAY_MS = Math.max(Number(process.env.THREADS_PUBLISH_RETRY_DELAY_MS ?? 3000), 1000);
 
 function formatThreadsError(error: any, fallback: string) {
   const apiError = error?.response?.data?.error as ThreadsApiError | undefined;
@@ -92,8 +92,12 @@ async function publishWithRetry(accountId: string, accessToken: string, creation
       throw new Error('No ID returned from Threads publish');
     } catch (error: any) {
       lastError = error;
-      const message = error?.response?.data?.error?.message ?? error?.message ?? '';
-      if (attempt < PUBLISH_RETRIES - 1 && /not ready|not available|processing|try again/i.test(message)) {
+      const apiError = error?.response?.data?.error as ThreadsApiError | undefined;
+      const message = apiError?.error_user_msg ?? apiError?.message ?? error?.message ?? '';
+      const mediaStillPropagating =
+        /not ready|not available|processing|try again|cannot be found|media not found/i.test(message) ||
+        (apiError?.code === 24 && apiError?.error_subcode === 4279009);
+      if (attempt < PUBLISH_RETRIES - 1 && mediaStillPropagating) {
         await new Promise(resolve => setTimeout(resolve, PUBLISH_RETRY_DELAY_MS));
         continue;
       }
