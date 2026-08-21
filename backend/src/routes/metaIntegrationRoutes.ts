@@ -48,6 +48,7 @@ type InstagramProfile = {
 };
 
 type MetaConnectPlatform = 'facebook' | 'instagram' | 'ads' | 'all';
+type WhatsAppEmbeddedSignupPayload = { code?: unknown; wabaId?: unknown; phoneNumberId?: unknown; businessId?: unknown; orgId?: unknown };
 
 type ConnectedMetaAsset = {
   id: string;
@@ -120,6 +121,14 @@ const getMetaAppConfig = (req: Request) => {
   }
 
   return { appId, appSecret, redirectUri };
+};
+
+const getWhatsAppEmbeddedSignupConfig = (req: Request) => {
+  const renderEnv = resolveRenderEnv();
+  const { appId, appSecret } = getMetaAppConfig(req);
+  const configId = (process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID ?? renderEnv.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID ?? '').trim();
+  if (!configId) throw createHttpError(400, 'Missing WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID');
+  return { appId, appSecret, configId };
 };
 
 const getThreadsAppConfig = (req: Request) => {
@@ -396,6 +405,30 @@ const exchangeLongLivedToken = async (req: Request, shortLivedToken: string) => 
     },
   });
   return (response.data?.access_token as string | undefined) ?? shortLivedToken;
+};
+
+const exchangeWhatsAppBusinessToken = async (req: Request, code: string) => {
+  const { appId, appSecret } = getWhatsAppEmbeddedSignupConfig(req);
+  const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/oauth/access_token`, { params: { client_id: appId, client_secret: appSecret, code } });
+  const accessToken = response.data?.access_token as string | undefined;
+  if (!accessToken) throw new Error('Meta did not return a WhatsApp business token');
+  return accessToken;
+};
+
+const assertMetaAssetId = (value: unknown, label: string) => {
+  const normalized = String(value ?? '').trim();
+  if (!/^\d{5,30}$/.test(normalized)) throw createHttpError(400, `Invalid ${label}`);
+  return normalized;
+};
+
+const fetchWhatsAppPhone = async (phoneNumberId: string, accessToken: string) => {
+  const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}`, { params: { fields: 'id,display_phone_number,verified_name,quality_rating', access_token: accessToken } });
+  if (String(response.data?.id ?? '') !== phoneNumberId) throw new Error('The selected WhatsApp phone number could not be verified');
+  return response.data as { id: string; display_phone_number?: string; verified_name?: string; quality_rating?: string };
+};
+
+const subscribeWhatsAppWebhooks = async (wabaId: string, accessToken: string) => {
+  await axios.post(`https://graph.facebook.com/${GRAPH_VERSION}/${wabaId}/subscribed_apps`, undefined, { params: { access_token: accessToken } });
 };
 
 const fetchGrantedPermissions = async (userAccessToken: string) => {
@@ -862,6 +895,36 @@ router.get('/integrations/threads/connect', requireFirebase, async (req, res, ne
   } catch (error) {
     next(error);
   }
+});
+
+router.get('/integrations/whatsapp/config', requireFirebase, async (req, res, next) => {
+  try {
+    const { appId, configId } = getWhatsAppEmbeddedSignupConfig(req);
+    res.json({ appId, configId, graphVersion: GRAPH_VERSION });
+  } catch (error) { next(error); }
+});
+
+router.post('/integrations/whatsapp/complete', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
+    const payload = (req.body ?? {}) as WhatsAppEmbeddedSignupPayload;
+    const code = String(payload.code ?? '').trim();
+    if (!code || code.length > 4096) throw createHttpError(400, 'Missing or invalid Embedded Signup code');
+    const wabaId = assertMetaAssetId(payload.wabaId, 'WhatsApp Business Account ID');
+    const phoneNumberId = assertMetaAssetId(payload.phoneNumberId, 'WhatsApp phone number ID');
+    const businessId = payload.businessId ? assertMetaAssetId(payload.businessId, 'Meta business ID') : undefined;
+    const accessToken = await exchangeWhatsAppBusinessToken(req, code);
+    const phone = await fetchWhatsAppPhone(phoneNumberId, accessToken);
+    await subscribeWhatsAppWebhooks(wabaId, accessToken);
+    const userData = await loadStoredSocialAccounts(authUser.uid);
+    const currentAccounts = { ...(userData.socialAccounts ?? {}) };
+    const wasConnected = Boolean(currentAccounts.whatsapp?.accessToken && currentAccounts.whatsapp?.phoneNumberId);
+    currentAccounts.whatsapp = { accessToken, phoneNumberId, wabaId, ...(businessId ? { businessId } : {}), ...(phone.display_phone_number ? { displayPhoneNumber: phone.display_phone_number } : {}), ...(phone.verified_name ? { verifiedName: phone.verified_name } : {}), ...(phone.quality_rating ? { qualityRating: phone.quality_rating } : {}), provider: 'meta_embedded_signup', connectedAt: new Date().toISOString() };
+    if (!wasConnected) await consumeUsage(resolveBillingScope(authUser.uid, typeof payload.orgId === 'string' ? payload.orgId : undefined, authUser.email ?? userData.email ?? undefined), 'connectedSocials', 1);
+    await persistSocialAccounts(authUser.uid, { email: userData.email ?? authUser.email ?? null, socialAccounts: currentAccounts });
+    res.json({ connected: true, whatsapp: { phoneNumberId, wabaId, displayPhoneNumber: phone.display_phone_number, verifiedName: phone.verified_name } });
+  } catch (error) { next(error); }
 });
 
 router.post('/integrations/threads/start', requireFirebaseForm, async (req, res, next) => {

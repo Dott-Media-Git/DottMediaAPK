@@ -267,6 +267,11 @@ export const fetchThreadsConnectUrl = async (): Promise<{ url?: string }> => {
   return authedFetch('/integrations/threads/connect-url');
 };
 
+export type WhatsAppEmbeddedSignupConfig = { appId: string; configId: string; graphVersion: string };
+export const fetchWhatsAppEmbeddedSignupConfig = async (): Promise<WhatsAppEmbeddedSignupConfig> => authedFetch('/integrations/whatsapp/config');
+export const completeWhatsAppEmbeddedSignup = async (payload: { code: string; wabaId: string; phoneNumberId: string; businessId?: string; orgId?: string | null }) =>
+  authedFetch('/integrations/whatsapp/complete', { method: 'POST', body: JSON.stringify(payload) });
+
 export const fetchLinkedInConnectUrl = async (): Promise<{ url?: string }> => {
   return authedFetch('/integrations/linkedin/connect-url');
 };

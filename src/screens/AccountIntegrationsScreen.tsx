@@ -13,11 +13,20 @@ import {
   fetchLinkedInConnectUrl,
   fetchSocialStatus,
   fetchThreadsConnectUrl,
+  fetchWhatsAppEmbeddedSignupConfig,
+  completeWhatsAppEmbeddedSignup,
   fetchTwitterConnectUrl,
   disconnectSocialPlatform,
   saveSocialCredentials,
   type SocialConnectionStatus
 } from '@services/social';
+
+declare global {
+  interface Window {
+    FB?: { init(options: Record<string, unknown>): void; login(callback: (response: any) => void, options: Record<string, unknown>): void };
+    fbAsyncInit?: () => void;
+  }
+}
 import { useI18n } from '@context/I18nContext';
 import {
   fetchYouTubeConfig,
@@ -619,6 +628,52 @@ export const AccountIntegrationsScreen: React.FC = () => {
     }
   };
 
+  const loadFacebookSdk = async (appId: string, graphVersion: string) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || typeof document === 'undefined') throw new Error('WhatsApp self-connect is currently available on the Dotti web app.');
+    if (window.FB) return window.FB;
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error('Meta login took too long to load.')), 15000);
+      window.fbAsyncInit = () => { window.clearTimeout(timeout); window.FB?.init({ appId, cookie: true, xfbml: false, version: graphVersion }); resolve(); };
+      if (document.getElementById('facebook-jssdk')) return;
+      const script = document.createElement('script');
+      script.id = 'facebook-jssdk'; script.async = true; script.defer = true; script.crossOrigin = 'anonymous'; script.src = 'https://connect.facebook.net/en_US/sdk.js';
+      script.onerror = () => { window.clearTimeout(timeout); reject(new Error('Unable to load Meta login. Check your connection and retry.')); };
+      document.head.appendChild(script);
+    });
+    if (!window.FB) throw new Error('Meta login did not initialize.');
+    return window.FB;
+  };
+
+  const handleWhatsAppConnect = async () => {
+    setSavingPlatform('whatsapp');
+    try {
+      const config = await fetchWhatsAppEmbeddedSignupConfig();
+      const fb = await loadFacebookSdk(config.appId, config.graphVersion);
+      let sessionData: { phone_number_id?: string; waba_id?: string; business_id?: string } | null = null;
+      const sessionListener = (event: MessageEvent) => {
+        if (!/^https:\/\/([a-z0-9-]+\.)*facebook\.com$/i.test(event.origin)) return;
+        try {
+          const message = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          if (message?.type === 'WA_EMBEDDED_SIGNUP' && String(message.event ?? '').startsWith('FINISH')) sessionData = message.data ?? null;
+        } catch { /* Ignore unrelated window messages. */ }
+      };
+      window.addEventListener('message', sessionListener);
+      try {
+        const response = await new Promise<any>(resolve => fb.login(resolve, { config_id: config.configId, response_type: 'code', override_default_response_type: true, extras: { setup: {} } }));
+        const code = response?.authResponse?.code as string | undefined;
+        if (!code) throw new Error('WhatsApp connection was cancelled or Meta did not return an authorization code.');
+        await new Promise(resolve => window.setTimeout(resolve, sessionData ? 0 : 600));
+        if (!sessionData?.waba_id || !sessionData?.phone_number_id) throw new Error('Meta did not return the WhatsApp account and phone number. Please finish every step and retry.');
+        await completeWhatsAppEmbeddedSignup({ code, wabaId: sessionData.waba_id, phoneNumberId: sessionData.phone_number_id, businessId: sessionData.business_id, orgId });
+      } finally { window.removeEventListener('message', sessionListener); }
+      await refreshSocialConnections();
+      setExpandedPlatform(null);
+      Alert.alert(t('Success'), t('WhatsApp connected through Meta.'));
+    } catch (error: any) {
+      Alert.alert(t('Error'), error.message ?? t('Unable to connect WhatsApp through Meta.'));
+    } finally { setSavingPlatform(null); }
+  };
+
   const confirmDisconnect = (platform: PlatformKey, action: () => void) => {
     Alert.alert(t('Disconnect'), t('Are you sure?'), [
       { text: t('Cancel'), style: 'cancel' },
@@ -697,6 +752,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
     platform === 'threads' ||
     platform === 'linkedin' ||
     platform === 'twitter' ||
+    platform === 'whatsapp' ||
     platform === 'youtube' ||
     platform === 'tiktok';
 
@@ -711,6 +767,10 @@ export const AccountIntegrationsScreen: React.FC = () => {
     }
     if (platform === 'threads') {
       void handleThreadsConnect();
+      return;
+    }
+    if (platform === 'whatsapp') {
+      void handleWhatsAppConnect();
       return;
     }
     if (platform === 'linkedin') {
@@ -985,6 +1045,24 @@ export const AccountIntegrationsScreen: React.FC = () => {
                           onPress={() => handleManualSave(manualPlatform)}
                           disabled={isSaving}
                         />
+                      </View>
+                    </>
+                  ) : platform === 'whatsapp' ? (
+                    <>
+                      <View style={styles.oauthPanel}>
+                        <Text style={styles.oauthTitle}>{t('Connect through Meta')}</Text>
+                        <Text style={styles.oauthText}>{t('Sign in with Meta, choose your WhatsApp Business Account and phone number, and let Dotti finish the secure Cloud API setup.')}</Text>
+                        <DMButton title={isSaving ? t('Opening...') : t('Connect WhatsApp')} onPress={handleWhatsAppConnect} disabled={isSaving} />
+                      </View>
+                      <View style={styles.manualPanel}>
+                        <Text style={styles.manualTitle}>{t('Manual fallback')}</Text>
+                        {MANUAL_FIELDS[manualPlatform].map(field => (
+                          <View key={field.key} style={styles.fieldBlock}>
+                            <Text style={styles.label}>{field.label}</Text>
+                            <TextInput value={drafts[manualPlatform]?.[field.key] ?? ''} onChangeText={value => updateDraft(manualPlatform, field.key, value)} placeholder={field.placeholder} placeholderTextColor={colors.subtext} style={styles.input} autoCapitalize="none" autoCorrect={false} />
+                          </View>
+                        ))}
+                        <DMButton title={isSaving ? t('Saving...') : t('Save manually')} onPress={() => handleManualSave(manualPlatform)} disabled={isSaving} />
                       </View>
                     </>
                   ) : (
