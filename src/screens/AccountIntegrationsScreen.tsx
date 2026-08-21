@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import { Alert, AppState, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { doc, getDoc } from 'firebase/firestore';
@@ -131,6 +131,8 @@ export const AccountIntegrationsScreen: React.FC = () => {
   const [showTikTokRevealModal, setShowTikTokRevealModal] = useState(false);
   const [pendingOAuthPlatform, setPendingOAuthPlatform] = useState<PlatformKey | null>(null);
   const [integrationNotice, setIntegrationNotice] = useState<IntegrationNotice | null>(null);
+  const whatsAppConfigRef = useRef<Awaited<ReturnType<typeof fetchWhatsAppEmbeddedSignupConfig>> | null>(null);
+  const whatsAppSdkRef = useRef<NonNullable<Window['FB']> | null>(null);
 
   const loadYouTube = async () => {
     setYouTubeLoading(true);
@@ -644,11 +646,26 @@ export const AccountIntegrationsScreen: React.FC = () => {
     return window.FB;
   };
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !state.user) return;
+    let cancelled = false;
+    void fetchWhatsAppEmbeddedSignupConfig()
+      .then(async config => {
+        const sdk = await loadFacebookSdk(config.appId, config.graphVersion);
+        if (!cancelled) {
+          whatsAppConfigRef.current = config;
+          whatsAppSdkRef.current = sdk;
+        }
+      })
+      .catch(error => console.warn('Unable to prepare WhatsApp Embedded Signup', error));
+    return () => { cancelled = true; };
+  }, [state.user?.uid]);
+
   const handleWhatsAppConnect = async () => {
     setSavingPlatform('whatsapp');
     try {
-      const config = await fetchWhatsAppEmbeddedSignupConfig();
-      const fb = await loadFacebookSdk(config.appId, config.graphVersion);
+      const config = whatsAppConfigRef.current ?? await fetchWhatsAppEmbeddedSignupConfig();
+      const fb = whatsAppSdkRef.current ?? await loadFacebookSdk(config.appId, config.graphVersion);
       let sessionData: { phone_number_id?: string; waba_id?: string; business_id?: string } | null = null;
       const sessionListener = (event: MessageEvent) => {
         if (!/^https:\/\/([a-z0-9-]+\.)*facebook\.com$/i.test(event.origin)) return;
@@ -668,9 +685,12 @@ export const AccountIntegrationsScreen: React.FC = () => {
       } finally { window.removeEventListener('message', sessionListener); }
       await refreshSocialConnections();
       setExpandedPlatform(null);
+      setIntegrationNotice({ kind: 'success', title: t('WhatsApp connected'), message: t('Your WhatsApp Business number is ready to use in Dotti.'), expanded: true });
       Alert.alert(t('Success'), t('WhatsApp connected through Meta.'));
     } catch (error: any) {
-      Alert.alert(t('Error'), error.message ?? t('Unable to connect WhatsApp through Meta.'));
+      const message = error.message ?? t('Unable to connect WhatsApp through Meta.');
+      setIntegrationNotice({ kind: 'error', title: t('WhatsApp connection failed'), message, expanded: true });
+      Alert.alert(t('Error'), message);
     } finally { setSavingPlatform(null); }
   };
 
