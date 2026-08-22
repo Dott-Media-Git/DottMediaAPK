@@ -233,6 +233,26 @@ export const AccountIntegrationsScreen: React.FC = () => {
   }, [state.user?.uid]);
 
   useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !state.user?.uid) return;
+    const url = new URL(window.location.href);
+    const connected = url.searchParams.get('connected') as PlatformKey | null;
+    const oauthPlatforms: PlatformKey[] = ['facebook', 'instagram', 'threads', 'linkedin'];
+    if (!connected || !oauthPlatforms.includes(connected)) return;
+
+    setExpandedPlatform(connected);
+    setIntegrationNotice({
+      kind: 'success',
+      title: `${PLATFORM_LABELS[connected]} ${t('connected')}`,
+      message: t('Permissions were approved and the account is ready to use in Dott Media.'),
+      expanded: true,
+    });
+    void refreshPlatformConnection(connected);
+
+    url.searchParams.delete('connected');
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+  }, [state.user?.uid]);
+
+  useEffect(() => {
     const subscription = AppState.addEventListener('change', nextState => {
       if (nextState === 'active' && pendingOAuthPlatform) {
         void refreshPlatformConnection(pendingOAuthPlatform).finally(() => setPendingOAuthPlatform(null));
