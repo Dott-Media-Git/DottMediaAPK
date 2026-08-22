@@ -12,7 +12,10 @@ const router = Router();
 
 const CALLBACK_PATH = '/integrations/linkedin/callback';
 const LINKEDIN_API = 'https://api.linkedin.com';
-const DEFAULT_SCOPES = ['openid', 'profile', 'w_member_social', 'r_member_postAnalytics'];
+// Keep self-service authorization limited to LinkedIn's sign-in and member
+// posting products. Analytics permissions require separate product approval and
+// cause LinkedIn to reject otherwise valid users before returning a code.
+const DEFAULT_SCOPES = ['openid', 'profile', 'w_member_social'];
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '');
 
@@ -37,7 +40,10 @@ const splitScopes = (value: unknown) =>
 
 const getScopes = () => {
   const raw = process.env.LINKEDIN_SCOPES?.trim();
-  return raw ? splitScopes(raw) : DEFAULT_SCOPES;
+  const requested = raw ? splitScopes(raw) : DEFAULT_SCOPES;
+  return process.env.LINKEDIN_ENABLE_MEMBER_ANALYTICS_SCOPE === 'true'
+    ? requested
+    : requested.filter(scope => scope !== 'r_member_postAnalytics');
 };
 
 const getClientConfig = (req: Request) => {
@@ -144,8 +150,20 @@ router.get('/integrations/linkedin/callback', async (req, res) => {
   const code = typeof req.query.code === 'string' ? req.query.code : '';
   const stateParam = typeof req.query.state === 'string' ? req.query.state : '';
   const state = verifySignedState(stateParam);
-  if (!code || !state) {
-    res.status(400).send(renderCallbackHtml('LinkedIn connection failed', 'Invalid OAuth state or missing code.'));
+  const providerError = typeof req.query.error === 'string' ? req.query.error : '';
+  const providerErrorDescription =
+    typeof req.query.error_description === 'string' ? req.query.error_description : '';
+  if (!state || state.platform !== 'linkedin') {
+    res.status(400).send(renderCallbackHtml('LinkedIn connection failed', 'The secure connection request expired or was invalid. Please return to Dotti and try again.'));
+    return;
+  }
+  if (providerError) {
+    const message = providerErrorDescription || `LinkedIn declined the requested access (${providerError}).`;
+    res.status(400).send(renderCallbackHtml('LinkedIn connection failed', message));
+    return;
+  }
+  if (!code) {
+    res.status(400).send(renderCallbackHtml('LinkedIn connection failed', 'LinkedIn did not return an authorization code. Please return to Dotti and try again.'));
     return;
   }
 
