@@ -44,28 +44,12 @@ const fallbackPlans: BillingPlan[] = [
     limits: { aiReplies: 10, images: 1, basicVideos: 0, proVideos: 0, scheduledPosts: 5 },
   },
   {
-    id: 'starter',
-    name: 'Starter',
-    description: 'Entry plan for creators and small teams.',
-    priceMonthlyCents: 2000,
-    stripeConfigured: false,
-    limits: { aiReplies: 500, images: 25, basicVideos: 2, proVideos: 0, scheduledPosts: 100 },
-  },
-  {
     id: 'creator',
     name: 'Creator',
     description: 'Main creator plan with meaningful AI and media capacity.',
     priceMonthlyCents: 4900,
     stripeConfigured: false,
     limits: { aiReplies: 2000, images: 100, basicVideos: 10, proVideos: 0, scheduledPosts: 500 },
-  },
-  {
-    id: 'business',
-    name: 'Business',
-    description: 'For active brands needing higher posting and content capacity.',
-    priceMonthlyCents: 9900,
-    stripeConfigured: false,
-    limits: { aiReplies: 5000, images: 300, basicVideos: 20, proVideos: 0, scheduledPosts: 1500 },
   },
   {
     id: 'agency',
@@ -77,8 +61,10 @@ const fallbackPlans: BillingPlan[] = [
   },
 ];
 
+const visiblePlanIds = new Set(['free', 'creator', 'agency']);
+
 export const SubscriptionScreen: React.FC = () => {
-  const { state } = useAuth();
+  const { state, startSubscription } = useAuth();
   const { t } = useI18n();
   const [plans, setPlans] = useState<BillingPlan[]>(fallbackPlans);
   const [overview, setOverview] = useState<BillingOverview | null>(null);
@@ -92,7 +78,9 @@ export const SubscriptionScreen: React.FC = () => {
     void Promise.allSettled([fetchBillingPlans(), fetchBillingOverview(), fetchFinancialLedger()]).then(results => {
       if (!active) return;
       const [plansResult, overviewResult, ledgerResult] = results;
-      if (plansResult.status === 'fulfilled' && plansResult.value.length) setPlans(plansResult.value);
+      if (plansResult.status === 'fulfilled' && plansResult.value.length) {
+        setPlans(plansResult.value.filter(plan => visiblePlanIds.has(plan.id)));
+      }
       if (overviewResult.status === 'fulfilled') setOverview(overviewResult.value);
       if (ledgerResult.status === 'fulfilled') setAllocations(ledgerResult.value);
     });
@@ -107,12 +95,23 @@ export const SubscriptionScreen: React.FC = () => {
   ]);
 
   const handleCheckout = async (plan: BillingPlan) => {
-    if (plan.id === currentPlanId) {
-      Alert.alert(t('Current plan'), t('You are already on this plan.'));
+    if (plan.id === 'free') {
+      if (state.subscriptionStatus === 'active') {
+        Alert.alert(t('Current plan'), t('You are already on this plan.'));
+        return;
+      }
+      setLoadingPlan(plan.id);
+      try {
+        await startSubscription();
+      } catch (error: any) {
+        Alert.alert(t('Could not continue'), error?.message ?? t('Please try again.'));
+      } finally {
+        setLoadingPlan(null);
+      }
       return;
     }
-    if (plan.id === 'free') {
-      Alert.alert(t('Free plan'), t('Your free plan is active by default.'));
+    if (plan.id === currentPlanId) {
+      Alert.alert(t('Current plan'), t('You are already on this plan.'));
       return;
     }
     if (plan.id === 'enterprise' || plan.priceMonthlyCents === null) {
@@ -172,7 +171,8 @@ export const SubscriptionScreen: React.FC = () => {
         </Text>
       </LinearGradient>
 
-      <DMCard title={t('Payment method')} subtitle={t('Choose how you want to pay for your package.')}>
+      {state.subscriptionStatus === 'active' ? (
+      <DMCard title={t('Payment method')} subtitle={t('Choose how you want to pay for a paid package.')}>
         <View style={styles.paymentMethodRow}>
           <TouchableOpacity
             style={[styles.paymentMethodOption, paymentMethod === 'stripe' && styles.paymentMethodOptionActive]}
@@ -202,6 +202,7 @@ export const SubscriptionScreen: React.FC = () => {
           />
         ) : null}
       </DMCard>
+      ) : null}
 
       {overview ? (
         <DMCard title={t('Current usage')} subtitle={t('Monthly limits reset automatically.')}>
@@ -221,7 +222,9 @@ export const SubscriptionScreen: React.FC = () => {
       ) : null}
 
       <View style={styles.planGrid}>
-        {plans.filter(plan => plan.id !== 'enterprise').map(plan => (
+        {plans.filter(plan => visiblePlanIds.has(plan.id)).map(plan => {
+          const isCurrentPlan = plan.id === currentPlanId && (plan.id !== 'free' || state.subscriptionStatus === 'active');
+          return (
           <DMCard
             key={plan.id}
             title={t(plan.name)}
@@ -230,18 +233,18 @@ export const SubscriptionScreen: React.FC = () => {
           >
             <View style={styles.planHeader}>
               <Text style={styles.price}>{formatPrice(plan.priceMonthlyCents)}</Text>
-              {plan.id === currentPlanId ? <Text style={styles.currentBadge}>{t('Current')}</Text> : null}
+              {isCurrentPlan ? <Text style={styles.currentBadge}>{t('Current')}</Text> : null}
             </View>
             {usageKeys.map(([key, label]) => renderLimit(plan, key, label))}
             <DMButton
               title={
-                plan.id === currentPlanId
+                isCurrentPlan
                   ? t('Current plan')
-                  : t(plan.priceMonthlyCents === 0 ? 'Start free' : paymentMethod === 'flutterwave_mobile_money' ? 'Pay mobile money' : 'Pay by card')
+                  : t(plan.priceMonthlyCents === 0 ? 'Continue with Free' : paymentMethod === 'flutterwave_mobile_money' ? 'Pay mobile money' : 'Pay by card')
               }
               onPress={() => handleCheckout(plan)}
               loading={loadingPlan === plan.id}
-              disabled={loadingPlan !== null || plan.id === currentPlanId}
+              disabled={loadingPlan !== null || isCurrentPlan}
               style={styles.planButton}
             />
             {paymentMethod === 'stripe' && !plan.stripeConfigured && plan.priceMonthlyCents ? (
@@ -251,7 +254,8 @@ export const SubscriptionScreen: React.FC = () => {
               <Text style={styles.setupNote}>{t('Mobile money not configured yet.')}</Text>
             ) : null}
           </DMCard>
-        ))}
+          );
+        })}
       </View>
 
       <DMCard title={t('Credit add-ons')} subtitle={t('Use credits after your monthly package allowance is finished.')}>
