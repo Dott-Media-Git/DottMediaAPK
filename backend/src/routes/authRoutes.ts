@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import admin from 'firebase-admin';
 import { z } from 'zod';
-import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth.js';
-import { putSecret } from '../services/secretVaultService.js';
+import { requireFirebase, requireFirebaseStrict, AuthedRequest } from '../middleware/firebaseAuth.js';
 import { firestore } from '../db/firestore.js';
 import { firebaseApp } from '../db/firestore.js';
 import {
@@ -10,12 +9,9 @@ import {
   sendPhoneVerificationSms,
   verifyBrevoTransport,
 } from '../services/emailService.js';
+import { deleteDottiAccount } from '../services/accountDeletionService.js';
 
 const router = Router();
-
-const logSchema = z.object({
-  password: z.string().min(1),
-});
 
 const phoneSchema = z.object({
   phoneNumber: z.string().regex(/^\+[1-9]\d{7,14}$/, 'Use international phone format, for example +256700000000.'),
@@ -23,6 +19,12 @@ const phoneSchema = z.object({
 
 const phoneCodeSchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'Enter the 6 digit verification code.'),
+});
+
+const deletionRequestSchema = z.object({
+  email: z.string().trim().email().max(254),
+  reason: z.string().trim().max(1000).optional().default(''),
+  website: z.string().max(0).optional(),
 });
 
 const verificationCodeTtlMs = 10 * 60 * 1000;
@@ -135,24 +137,35 @@ router.post('/auth/confirm-phone-verification', requireFirebase, async (req, res
   }
 });
 
-router.post('/auth/log-password', requireFirebase, async (req, res, next) => {
+router.post('/auth/deletion-request', async (req, res, next) => {
+  try {
+    const input = deletionRequestSchema.parse(req.body);
+    if (input.website) return res.status(202).json({ ok: true });
+    const normalizedEmail = input.email.toLowerCase();
+    const requestRef = firestore.collection('accountDeletionRequests').doc();
+    await requestRef.set({
+      email: normalizedEmail,
+      reason: input.reason || null,
+      status: 'pending_verification',
+      source: 'public_web_form',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    res.status(202).json({
+      ok: true,
+      requestId: requestRef.id,
+      message: 'Request received. Dott Media will verify account ownership before deletion.',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete('/auth/account', requireFirebaseStrict, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
-    if (!authUser) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
-    const { password } = logSchema.parse(req.body);
-    await putSecret(authUser.uid, 'login_password', password);
-    await firestore.collection('loginPasswords').doc(authUser.uid).set(
-      {
-        userId: authUser.uid,
-        email: authUser.email ?? null,
-        lastSavedAt: admin.firestore.FieldValue.serverTimestamp(),
-        length: password.length,
-      },
-      { merge: true },
-    );
-    res.json({ ok: true });
+    if (!authUser?.uid) return res.status(401).json({ message: 'Unauthorized' });
+    await deleteDottiAccount(authUser.uid);
+    res.json({ ok: true, message: 'Your Dotti account and associated data were deleted.' });
   } catch (error) {
     next(error);
   }

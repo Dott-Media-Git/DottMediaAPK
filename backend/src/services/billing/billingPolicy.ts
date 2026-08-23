@@ -11,8 +11,10 @@ const toDate = (value: any) => {
 export const resolveUsablePlan = (data: BillingRecord, now = new Date()): PlanDefinition => {
   const plan = getPlan(data?.planId ?? data?.plan ?? 'free');
   if (plan.id === 'free') return plan;
+
   const status = String(data?.subscriptionStatus ?? '').trim().toLowerCase();
   if (status !== 'active' && status !== 'trialing') return getPlan('free');
+
   const endsAt = toDate(data?.billingCycleEndsAt);
   if (endsAt && endsAt.getTime() <= now.getTime()) return getPlan('free');
   return plan;

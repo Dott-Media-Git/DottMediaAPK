@@ -88,6 +88,25 @@ export async function requireFirebase(req: Request, _res: Response, next: NextFu
   }
 }
 
+/** Destructive account operations must always be verified by Firebase Admin. */
+export async function requireFirebaseStrict(req: Request, _res: Response, next: NextFunction) {
+  const header = req.header('Authorization');
+  if (!header) return next(createHttpError(401, 'Missing Authorization header'));
+  const [scheme, token] = header.split(' ');
+  if (scheme !== 'Bearer' || !token) return next(createHttpError(401, 'Invalid auth header'));
+  if (config.security.allowMockAuth && token.startsWith('mock-')) {
+    return next(createHttpError(403, 'Account deletion is unavailable in mock authentication mode'));
+  }
+  if (!firebaseApp) return next(createHttpError(503, 'Firebase auth is not initialized'));
+  try {
+    const decoded = await firebaseApp.auth().verifyIdToken(token, true);
+    (req as AuthedRequest).authUser = decoded;
+    return next();
+  } catch {
+    return next(createHttpError(401, 'Re-authenticate before deleting your account'));
+  }
+}
+
 export async function requireFirebaseForm(req: Request, _res: Response, next: NextFunction) {
   const token = typeof req.body?.idToken === 'string' ? req.body.idToken.trim() : '';
   if (!token) return next(createHttpError(401, 'Missing Firebase ID token'));

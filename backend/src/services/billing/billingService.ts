@@ -18,15 +18,12 @@ const paymentTransactionsCollection = firestore.collection('paymentTransactions'
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 const OWNER_MANAGED_BILLING_EXEMPT_USER_IDS = new Set([
-  'cMPZQccGggbhZe9dbvtxFmBehP02', // Dott Media main
   '1zvY9nNyXMcfxdPQEyx0bIdK7r53', // Bwin / Ball Analytics
   'LVR7p3WzdFM51ds92Kacf6S40og2', // Dott Energy
   '80bYIeiuukNFtUvXTUobXmfC7pu1', // Dott Human Resource
   'D1iNgjLKNRaQhH35M0NmGfw1LVD2', // StaySphere
   'acmVetCcOiTHeGk5D7eDYieamDF3', // Carmarketplace
   'vzdH1DnfFLVjlY8bBgC26WACmmw2', // Gamers44life
-  'X0ObAFQft0UWZee9IbUyYaeaBfO2', // Simplicity Home Decor managed campaign
-  'voaUNlSii4fye2sFxUIhbVZJR622', // Babra Kids & Home Decor managed campaign
 ]);
 
 type CheckoutProvider = 'stripe' | 'flutterwave_mobile_money';
@@ -79,9 +76,38 @@ export async function getBillingOverview(scope: BillingScope) {
   };
 }
 
+export async function cancelBillingForAccountDeletion(userId: string) {
+  const [userSnap, profileSnap] = await Promise.all([
+    usersCollection.doc(userId).get().catch(() => null),
+    profilesCollection.doc(userId).get().catch(() => null),
+  ]);
+  const userData = userSnap?.exists ? userSnap.data() ?? {} : {};
+  const profileData = profileSnap?.exists ? profileSnap.data() ?? {} : {};
+  const orgId = typeof userData.orgId === 'string' && userData.orgId.trim() ? userData.orgId.trim() : userId;
+  const orgSnap = await orgsCollection.doc(orgId).get().catch(() => null);
+  const orgData = orgSnap?.exists ? orgSnap.data() ?? {} : {};
+  const subscriptionId = [orgData, profileData, userData]
+    .map(data => typeof data?.stripe?.subscriptionId === 'string' ? data.stripe.subscriptionId.trim() : '')
+    .find(Boolean);
+
+  if (!subscriptionId) return { canceled: false, reason: 'no_subscription' };
+  if (!stripe) {
+    throw createHttpError(503, 'Billing cancellation is temporarily unavailable. Please try again or contact support.');
+  }
+  try {
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    if (subscription.status !== 'canceled') await stripe.subscriptions.cancel(subscriptionId);
+    return { canceled: true, subscriptionId };
+  } catch (error: any) {
+    if (error?.code === 'resource_missing') return { canceled: false, reason: 'not_found' };
+    throw error;
+  }
+}
+
 export function listBillingPlans() {
   const flutterwaveConfigured = Boolean(process.env.FLUTTERWAVE_SECRET_KEY);
-  return planCatalog.map(plan => ({
+  const visiblePlanIds = new Set(['free', 'creator', 'agency']);
+  return planCatalog.filter(plan => visiblePlanIds.has(plan.id)).map(plan => ({
     ...plan,
     stripeConfigured: Boolean(getStripePriceId(plan)) || plan.id === 'free' || plan.id === 'enterprise',
     mobileMoneyConfigured: flutterwaveConfigured && plan.id !== 'free' && plan.id !== 'enterprise',

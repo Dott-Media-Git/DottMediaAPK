@@ -931,19 +931,22 @@ class SupabaseFallbackService {
 
   async upsertAutopostJob(userId: string, job: Record<string, unknown>) {
     if (!this.isConfigured() || !userId) return;
-    const incomingData = (sanitizeJson(job) ?? {}) as Record<string, unknown>;
-    let existingData: Record<string, unknown> = {};
-    try {
-      const existing = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
-      existingData = existing?.data && typeof existing.data === 'object' ? existing.data : {};
-    } catch (error) {
-      const status = (error as { response?: { status?: number } })?.response?.status;
-      if (status !== 404) throw error;
+    const data = (sanitizeJson(job) ?? {}) as Record<string, unknown>;
+    if (!data.socialAccounts) {
+      try {
+        const existing = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
+        const existingData = existing?.data && typeof existing.data === 'object' ? existing.data : {};
+        if (existingData.socialAccounts && typeof existingData.socialAccounts === 'object') {
+          data.socialAccounts = existingData.socialAccounts;
+        }
+        if (data.email === undefined && existingData.email !== undefined) {
+          data.email = existingData.email;
+        }
+      } catch (error) {
+        const status = (error as { response?: { status?: number } })?.response?.status;
+        if (status !== 404) throw error;
+      }
     }
-    // Scheduler updates are intentionally partial. Preserve durable campaign
-    // configuration (platforms, source media and captions) that is not present
-    // in a single run result instead of replacing the complete JSON document.
-    const data = { ...existingData, ...incomingData };
     const row = {
       user_id: userId,
       active: job.active !== false,
@@ -1098,6 +1101,35 @@ class SupabaseFallbackService {
       email: row.email ?? null,
       socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
     };
+  }
+
+  async deleteUserData(userId: string) {
+    const tables = [
+      'dott_social_logs',
+      'dott_social_daily',
+      'dott_social_limits',
+      'dott_scheduled_posts',
+      'dott_metric_daily',
+      'dott_metric_summaries',
+      'dott_autopost_jobs',
+      'dott_social_accounts',
+      'dott_profiles',
+      'dott_users',
+    ];
+    if (this.hasDatabaseFallback()) {
+      for (const table of tables) {
+        await this.databaseQuery(`delete from public.${table} where user_id = $1`, [userId]);
+      }
+      return { deleted: true, store: 'database' as const };
+    }
+    if (!this.isConfigured()) return { deleted: false, store: 'not_configured' as const };
+    for (const table of tables) {
+      await this.request('DELETE', table, {
+        params: { user_id: `eq.${userId}` },
+        prefer: 'return=minimal',
+      });
+    }
+    return { deleted: true, store: 'rest' as const };
   }
 
   async getUser(userId: string) {

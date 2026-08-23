@@ -8,7 +8,7 @@ services:
     startCommand: cd backend && node dist/index.js
     envVars:
       - key: NODE_VERSION
-        value: "18"
+        value: "22"
       - key: META_VERIFY_TOKEN
         value: your_meta_verify_token
       - key: INSTAGRAM_ACCESS_TOKEN
