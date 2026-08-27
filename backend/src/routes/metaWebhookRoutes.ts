@@ -442,8 +442,7 @@ router.post('/meta/webhook', async (req, res) => {
       const entryId = entry?.id as string | undefined;
       const instagramContext = body.object === 'instagram' ? await resolvePlatformContext('instagram', entryId) : null;
       const facebookContext = body.object === 'page' ? await resolvePlatformContext('facebook', entryId) : null;
-      if (!entry.changes) continue;
-      for (const change of entry.changes) {
+      for (const change of entry.changes ?? []) {
         // Instagram comments
         if (change.field === 'comments' && body.object === 'instagram') {
           const commentId = change.value?.id as string | undefined;
