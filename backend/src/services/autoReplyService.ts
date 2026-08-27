@@ -25,10 +25,17 @@ const CLIENT_REPLY_PROFILES: Record<string, string> = {
   x0obafqft0uwzee9ibuyyaeabfo2: 'simplicityhomedecor',
 };
 
-const openai = new OpenAI({ apiKey: config.openAI.apiKey, timeout: OPENAI_REPLY_TIMEOUT_MS });
-const openAiRepliesEnabled = () => {
+// NVIDIA NIM exposes an OpenAI-compatible chat-completions API, so all social
+// auto-replies can share the provider selected for the main assistant.
+const replyAI = new OpenAI({
+  apiKey: config.assistantAI.apiKey,
+  baseURL: config.assistantAI.baseURL,
+  timeout: OPENAI_REPLY_TIMEOUT_MS,
+});
+const aiRepliesEnabled = () => {
   if (process.env.AUTO_REPLY_OPENAI_ENABLED === 'false' || process.env.OPENAI_AUTO_REPLY_ENABLED === 'false') return false;
-  const key = config.openAI.apiKey?.trim() ?? '';
+  if (process.env.AUTO_REPLY_AI_ENABLED === 'false') return false;
+  const key = config.assistantAI.apiKey?.trim() ?? '';
   return Boolean(key) && !/^sk-(test|example|placeholder)/i.test(key);
 };
 
@@ -156,15 +163,15 @@ export async function generateReply(
   const override = await getAutoReplyPromptOverride(userId);
   const system = override ? `${baseSystem}\nAdditional guidance: ${override}` : baseSystem;
   const fallback = pickFallbackReply({ channel: platform, kind, profile });
-  if (!openAiRepliesEnabled()) {
+  if (!aiRepliesEnabled()) {
     return fallback;
   }
   try {
     if (userId) {
       await consumeUsageForUserId(userId, 'aiReplies', 1);
     }
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+    const completion = await replyAI.chat.completions.create({
+      model: config.assistantAI.model,
       temperature: 0.4,
       max_tokens: 120,
       messages: [
@@ -174,7 +181,11 @@ export async function generateReply(
     });
     return completion.choices[0]?.message?.content?.trim() || fallback;
   } catch (err) {
-    console.error('OpenAI generateReply failed', { error: (err as Error).message, platform });
+    console.error('Social AI generateReply failed', {
+      error: (err as Error).message,
+      platform,
+      provider: config.assistantAI.provider,
+    });
     // Return a safe, short fallback so webhook flow continues even if the AI is unavailable
     return fallback;
   }
