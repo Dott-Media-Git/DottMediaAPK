@@ -67,7 +67,7 @@ async function authedMultipartFetch(path: string, body: FormData) {
   const token = await getIdToken();
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
-  const timeout = mergeAbortSignals(null, 90000);
+  const timeout = mergeAbortSignals(null, 5 * 60 * 1000);
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {

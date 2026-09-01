@@ -2825,7 +2825,7 @@ export class AutoPostService {
     const normalized = String(value || '').replace(/\s+/g, ' ').trim();
     if (!normalized) return '';
     if (normalized.length <= maxLength) return normalized;
-    return `${normalized.slice(0, Math.max(maxLength - 1, 1)).trimEnd()}…`;
+    return `${normalized.slice(0, Math.max(maxLength - 1, 1)).trimEnd()}?`;
   }
 
   private wrapCardText(value: string, maxCharsPerLine = 22, maxLines = 4) {
