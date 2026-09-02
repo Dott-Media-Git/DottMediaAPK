@@ -81,7 +81,6 @@ type AutoPostJob = {
   lastRunAt?: admin.firestore.Timestamp;
   lastResult?: PostResult[];
   reelsIntervalHours?: number;
-  reelsPlatforms?: string[];
   reelsNextRun?: admin.firestore.Timestamp;
   reelsLastRunAt?: admin.firestore.Timestamp;
   reelsLastResult?: PostResult[];
@@ -133,8 +132,6 @@ type AutoPostJob = {
   xLastWeeklyAwardTweetId?: string;
   active?: boolean;
   recentImageUrls?: string[];
-  sourceImageUrls?: string[];
-  sourceImageCursor?: number;
   recentVideoUrls?: string[];
   fallbackCaption?: string;
   fallbackHashtags?: string;
@@ -234,7 +231,6 @@ const TOP_FIVE_LEAGUES: LeagueDefinition[] = [
 
 const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
-const OBSOLETE_AUTOPOST_USER_IDS = new Set(['meta-page-1321705594350297']);
 const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId: string; instagramUsername: string }> = {
   acmVetCcOiTHeGk5D7eDYieamDF3: {
     pageId: '1191892417341226',
@@ -250,11 +246,6 @@ const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId
     pageId: '1121885391014110',
     instagramAccountId: '17841412643148539',
     instagramUsername: 'gamers44life',
-  },
-  LVR7p3WzdFM51ds92Kacf6S40og2: {
-    pageId: '1165009866702868',
-    instagramAccountId: '',
-    instagramUsername: '',
   },
 };
 
@@ -528,7 +519,6 @@ export class AutoPostService {
     const value = (name: string) => (process.env[`${prefix}_${name}`] ?? '').trim();
     const facebookToken = value('FACEBOOK_PAGE_TOKEN') || value('FACEBOOK_ACCESS_TOKEN');
     const instagramToken = value('INSTAGRAM_ACCESS_TOKEN') || facebookToken;
-    const instagramAccountId = value('INSTAGRAM_ACCOUNT_ID') || fallback.instagramAccountId;
     const threadsToken = value('THREADS_ACCESS_TOKEN');
     const accounts: SocialAccounts = {};
 
@@ -538,10 +528,10 @@ export class AutoPostService {
         pageId: value('FACEBOOK_PAGE_ID') || fallback.pageId,
       };
     }
-    if (instagramToken && instagramAccountId) {
+    if (instagramToken) {
       accounts.instagram = {
         accessToken: instagramToken,
-        accountId: instagramAccountId,
+        accountId: value('INSTAGRAM_ACCOUNT_ID') || fallback.instagramAccountId,
         username: value('INSTAGRAM_USERNAME') || fallback.instagramUsername,
       };
     }
@@ -632,54 +622,18 @@ export class AutoPostService {
     this.memoryStore.set(userId, job);
   }
 
-  private mergeAutopostLaneState(current: AutoPostJob | undefined, incoming: AutoPostJob) {
-    if (!current) return incoming;
-    const merged = { ...current, ...incoming } as AutoPostJob;
-    const currentRecord = current as unknown as Record<string, unknown>;
-    const incomingRecord = incoming as unknown as Record<string, unknown>;
-    const mergedRecord = merged as unknown as Record<string, unknown>;
-    const lanes: Array<{ lastRun: string; fields: string[] }> = [
-      { lastRun: 'lastRunAt', fields: ['lastRunAt', 'lastResult', 'nextRun'] },
-      { lastRun: 'reelsLastRunAt', fields: ['reelsLastRunAt', 'reelsLastResult', 'reelsNextRun'] },
-      { lastRun: 'storyLastRunAt', fields: ['storyLastRunAt', 'storyLastResult', 'storyNextRun'] },
-      { lastRun: 'trendLastRunAt', fields: ['trendLastRunAt', 'trendLastResult', 'trendNextRun'] },
-    ];
-    for (const lane of lanes) {
-      const currentMillis = this.timestampToMillis(currentRecord[lane.lastRun] as admin.firestore.Timestamp | undefined) ?? 0;
-      const incomingMillis = this.timestampToMillis(incomingRecord[lane.lastRun] as admin.firestore.Timestamp | undefined) ?? 0;
-      if (currentMillis <= incomingMillis) continue;
-      for (const field of lane.fields) {
-        if (currentRecord[field] !== undefined) mergedRecord[field] = currentRecord[field];
-      }
-    }
-    return merged;
-  }
-
   private async mirrorAutopostJob(userId: string, job: AutoPostJob) {
-    if (OBSOLETE_AUTOPOST_USER_IDS.has(userId)) return;
-    const mergedJob = this.mergeAutopostLaneState(this.memoryStore.get(userId), job);
-    this.cacheJob(userId, mergedJob);
+    this.cacheJob(userId, job);
     try {
-      await supabaseFallbackService.upsertAutopostJob(userId, mergedJob as Record<string, unknown>);
+      await supabaseFallbackService.upsertAutopostJob(userId, job as Record<string, unknown>);
     } catch (error) {
       console.warn('[autopost] supabase job mirror failed', logSafeError(error));
     }
   }
 
   private async loadAutopostJob(userId: string) {
-    if (OBSOLETE_AUTOPOST_USER_IDS.has(userId)) return null;
     const cached = this.memoryStore.get(userId);
     if (cached) return cached;
-    try {
-      const fallback = await supabaseFallbackService.getAutopostJob(userId);
-      if (fallback) {
-        const job = fallback as AutoPostJob;
-        this.cacheJob(userId, job);
-        return job;
-      }
-    } catch (error) {
-      console.warn('[autopost] supabase job fetch failed; checking Firestore fallback', logSafeError(error));
-    }
     try {
       const firestoreTimeoutMs = Math.max(Number(process.env.AUTOPOST_FIRESTORE_TIMEOUT_MS ?? 15000), 3000);
       const snap = await this.withTimeout(
@@ -693,7 +647,17 @@ export class AutoPostService {
         return job;
       }
     } catch (error) {
-      console.warn('[autopost] firestore fallback job fetch failed', error);
+      console.warn('[autopost] firestore job fetch failed; checking fallback store', error);
+    }
+    try {
+      const fallback = await supabaseFallbackService.getAutopostJob(userId);
+      if (fallback) {
+        const job = fallback as AutoPostJob;
+        this.cacheJob(userId, job);
+        return job;
+      }
+    } catch (error) {
+      console.warn('[autopost] supabase job fetch failed', logSafeError(error));
     }
     const runtimeJob = this.buildPinnedClientRuntimeJob(userId);
     if (runtimeJob) {
@@ -739,25 +703,23 @@ export class AutoPostService {
     });
 
     let { dueStandard, dueReels, dueStories, dueTrends } = buildDueSets();
-    // Always merge due rows from the durable fallback. Previously this query only
-    // ran when the memory store had no due work at all, so one pinned/in-memory
-    // account could prevent every other Supabase-backed account from being
-    // discovered indefinitely.
-    try {
-      const [standard, reels, stories, trends] = await Promise.all([
-        supabaseFallbackService.getDueAutopostJobs('next_run', new Date(now.toMillis())),
-        supabaseFallbackService.getDueAutopostJobs('reels_next_run', new Date(now.toMillis())),
-        supabaseFallbackService.getDueAutopostJobs('story_next_run', new Date(now.toMillis())),
-        supabaseFallbackService.getDueAutopostJobs('trend_next_run', new Date(now.toMillis())),
-      ]);
-      [...standard, ...reels, ...stories, ...trends].forEach(job => {
-        if (!job?.userId || excludedUserIds.has(job.userId as string)) return;
-        this.cacheJob(job.userId as string, job as AutoPostJob);
-      });
-    } catch (error) {
-      console.warn('[autopost] supabase due-job fetch failed', logSafeError(error));
+    if (!dueStandard.length && !dueReels.length && !dueStories.length && !dueTrends.length) {
+      try {
+        const [standard, reels, stories, trends] = await Promise.all([
+          supabaseFallbackService.getDueAutopostJobs('next_run', new Date(now.toMillis())),
+          supabaseFallbackService.getDueAutopostJobs('reels_next_run', new Date(now.toMillis())),
+          supabaseFallbackService.getDueAutopostJobs('story_next_run', new Date(now.toMillis())),
+          supabaseFallbackService.getDueAutopostJobs('trend_next_run', new Date(now.toMillis())),
+        ]);
+        [...standard, ...reels, ...stories, ...trends].forEach(job => {
+          if (!job?.userId) return;
+          this.cacheJob(job.userId as string, job as AutoPostJob);
+        });
+      } catch (error) {
+        console.warn('[autopost] supabase due-job fetch failed', logSafeError(error));
+      }
+      ({ dueStandard, dueReels, dueStories, dueTrends } = buildDueSets());
     }
-    ({ dueStandard, dueReels, dueStories, dueTrends } = buildDueSets());
 
     let processed = 0;
     const results = new Map<
@@ -792,12 +754,12 @@ export class AutoPostService {
     for (const [userId, job] of dueReels) {
       if (!(await this.claimDueRun(userId, job, 'reels_next_run', now))) continue;
       const outcome = await this.executeJob(userId, job, {
-        platforms: this.getReelsPlatforms(job),
+        platforms: ['instagram_reels'],
         intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
         nextRunField: 'reelsNextRun',
         lastRunField: 'reelsLastRunAt',
         resultField: 'reelsLastResult',
-        useGenericVideoFallback: true,
+        useGenericVideoFallback: false,
       });
       processed += 1;
       const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
@@ -1285,7 +1247,29 @@ export class AutoPostService {
     if (payload.deferRun) {
       const queuedAt = new Date().toISOString();
       setImmediate(() => {
-        void this.runForUser(payload.userId, runOptions)
+        // Execute the exact submitted snapshot. Loading the shared recurring job
+        // again creates a race where a campaign worker can replace the user's
+        // platforms or media between acknowledgement and publishing.
+        const runSubmittedJob = async () => {
+          const standard = await this.executeJob(payload.userId, initialJob, runOptions);
+          if (!reelsEnabled) return standard;
+          const reels = await this.executeJob(payload.userId, initialJob, {
+            ...runOptions,
+            platforms: ['instagram_reels'],
+            intervalHours: reelsIntervalHours,
+            nextRunField: 'reelsNextRun',
+            lastRunField: 'reelsLastRunAt',
+            resultField: 'reelsLastResult',
+            useGenericVideoFallback: false,
+          });
+          return {
+            ...standard,
+            reelsPosted: reels.posted,
+            reelsFailed: reels.failed,
+            reelsNextRun: reels.nextRun,
+          };
+        };
+        void runSubmittedJob()
           .then(result => console.info('[autopost] queued runNow complete', { userId: payload.userId, result }))
           .catch(error => console.error('[autopost] queued runNow failed', {
             userId: payload.userId,
@@ -1352,12 +1336,12 @@ export class AutoPostService {
       for (const [userId, job] of dueReels) {
         if (!(await this.claimDueRun(userId, job, 'reels_next_run', now))) continue;
         const outcome = await this.executeJob(userId, job, {
-          platforms: this.getReelsPlatforms(job),
+          platforms: ['instagram_reels'],
           intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
           nextRunField: 'reelsNextRun',
           lastRunField: 'reelsLastRunAt',
           resultField: 'reelsLastResult',
-          useGenericVideoFallback: true,
+          useGenericVideoFallback: false,
         });
         processed += 1;
         const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
@@ -1511,12 +1495,12 @@ export class AutoPostService {
         this.cacheJob(doc.id, { ...data, userId: data.userId ?? doc.id });
         if (!(await this.claimDueRun(doc.id, data, 'reels_next_run', now))) continue;
         const outcome = await this.executeJob(doc.id, data, {
-          platforms: this.getReelsPlatforms(data),
+          platforms: ['instagram_reels'],
           intervalHours: this.getReelsIntervalHours(doc.id, data.reelsIntervalHours),
           nextRunField: 'reelsNextRun',
           lastRunField: 'reelsLastRunAt',
           resultField: 'reelsLastResult',
-          useGenericVideoFallback: true,
+          useGenericVideoFallback: false,
         });
         processed += 1;
         const existing = results.get(doc.id) ?? { userId: doc.id, posted: 0, failed: 0, nextRun: null };
@@ -1632,14 +1616,7 @@ export class AutoPostService {
           : field === 'trend_next_run'
             ? job.trendIntervalHours ?? 4
             : this.getFeedIntervalHours(userId, job.intervalHours);
-    // This timestamp is a processing lease, not the final content schedule.
-    // executeJob writes the real interval after it records the platform result.
-    // Keeping the lease short prevents a crashed/timed-out Meta request from
-    // suppressing all retries for the account's full posting interval.
-    const configuredLeaseMinutes = Math.max(Number(process.env.AUTOPOST_CLAIM_LEASE_MINUTES ?? 10), 2);
-    const intervalMinutes = Math.max(hours, 0.05) * 60;
-    const leaseMinutes = Math.min(configuredLeaseMinutes, intervalMinutes);
-    return new Date(now.getTime() + leaseMinutes * 60 * 1000);
+    return new Date(now.getTime() + Math.max(hours, 0.05) * 60 * 60 * 1000);
   }
 
   private isNicheClientAccount(userId: string) {
@@ -1717,7 +1694,6 @@ export class AutoPostService {
     field: 'next_run' | 'reels_next_run' | 'story_next_run' | 'trend_next_run',
     now: admin.firestore.Timestamp,
   ) {
-    if (OBSOLETE_AUTOPOST_USER_IDS.has(userId)) return false;
     if (!supabaseFallbackService.isConfigured()) return true;
     const expectedRun = this.getClaimedRunValue(job, field);
     if (!expectedRun) return false;
@@ -1757,12 +1733,12 @@ export class AutoPostService {
       if (job.reelsNextRun || job.reelsVideoUrl || (job.reelsVideoUrls && job.reelsVideoUrls.length)) {
         const reels = await this.executeJob(userId, job, {
           ...(options.generatedContent ? { generatedContent: options.generatedContent } : {}),
-          platforms: this.getReelsPlatforms(job),
+          platforms: ['instagram_reels'],
           intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
           nextRunField: 'reelsNextRun',
           lastRunField: 'reelsLastRunAt',
           resultField: 'reelsLastResult',
-          useGenericVideoFallback: true,
+          useGenericVideoFallback: false,
         });
         return {
           ...standard,
@@ -1798,12 +1774,12 @@ export class AutoPostService {
     if (job.reelsNextRun || job.reelsVideoUrl || (job.reelsVideoUrls && job.reelsVideoUrls.length)) {
       const reels = await this.executeJob(userId, job, {
         ...(options.generatedContent ? { generatedContent: options.generatedContent } : {}),
-        platforms: this.getReelsPlatforms(job),
+        platforms: ['instagram_reels'],
         intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
         nextRunField: 'reelsNextRun',
         lastRunField: 'reelsLastRunAt',
         resultField: 'reelsLastResult',
-        useGenericVideoFallback: true,
+        useGenericVideoFallback: false,
       });
       return {
         ...standard,
@@ -1839,13 +1815,6 @@ export class AutoPostService {
     const fromJob = (job.platforms ?? []).filter(platform => platform.endsWith('_story'));
     if (fromJob.length) return fromJob;
     return ['instagram_story', 'facebook_story'];
-  }
-
-  private getReelsPlatforms(job: AutoPostJob) {
-    if (Array.isArray(job.reelsPlatforms) && job.reelsPlatforms.length) {
-      return Array.from(new Set(job.reelsPlatforms.filter(Boolean)));
-    }
-    return ['instagram_reels'];
   }
 
   private getTrendPlatforms(job: AutoPostJob) {
@@ -2839,7 +2808,7 @@ export class AutoPostService {
     const normalized = String(value || '').replace(/\s+/g, ' ').trim();
     if (!normalized) return '';
     if (normalized.length <= maxLength) return normalized;
-    return `${normalized.slice(0, Math.max(maxLength - 1, 1)).trimEnd()}?`;
+    return `${normalized.slice(0, Math.max(maxLength - 1, 1)).trimEnd()}…`;
   }
 
   private wrapCardText(value: string, maxCharsPerLine = 22, maxLines = 4) {
@@ -4506,11 +4475,7 @@ export class AutoPostService {
     const lastRunField = options.lastRunField ?? 'lastRunAt';
     const resultField = options.resultField ?? 'lastResult';
     const clientFallbackProfile = this.getClientFallbackProfile(userId);
-    const hasOwnedSourceImagePool = Array.isArray(job.sourceImageUrls) && job.sourceImageUrls.some(Boolean);
-    const useGenericVideoFallback =
-      options.useGenericVideoFallback !== false &&
-      !clientFallbackProfile &&
-      (isReelsRun || !hasOwnedSourceImagePool);
+    const useGenericVideoFallback = options.useGenericVideoFallback !== false && !clientFallbackProfile;
     if (!platforms.length) {
       const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
       const updatePayload: Record<string, unknown> = {
@@ -4641,8 +4606,7 @@ export class AutoPostService {
       return true;
     });
     const clientPhotoProfile = needsImages ? clientFallbackProfile : null;
-    const hasOwnedSourceImages = needsImages && hasOwnedSourceImagePool;
-    const requireAiImages = needsImages ? (isBwinUser || clientPhotoProfile || hasOwnedSourceImages ? false : this.requireAiImages(job)) : false;
+    const requireAiImages = needsImages ? (isBwinUser || clientPhotoProfile ? false : this.requireAiImages(job)) : false;
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
     const fallbackCopy = this.buildFallbackCopy(job, userId);
 
@@ -4653,7 +4617,7 @@ export class AutoPostService {
         }
       : null;
     let generationError: Error | null = null;
-    if (!generated && (clientPhotoProfile || hasOwnedSourceImages)) {
+    if (!generated && clientPhotoProfile) {
       generated = {
         images: [],
         caption_instagram: '',
@@ -4714,7 +4678,7 @@ export class AutoPostService {
     const recentVideos = this.mergeRecentVideos(this.getRecentVideoHistory(job), scheduledHistory.videoUrls);
     const recentVideoSet = new Set(recentVideos);
     const cursorUpdates: Partial<
-      Pick<AutoPostJob, 'videoCursor' | 'youtubeVideoCursor' | 'tiktokVideoCursor' | 'reelsVideoCursor' | 'sourceImageCursor'>
+      Pick<AutoPostJob, 'videoCursor' | 'youtubeVideoCursor' | 'tiktokVideoCursor' | 'reelsVideoCursor'>
     > = {};
     let usedGenericVideo = false;
     const recentCaptions = this.mergeRecentCaptions(this.getRecentCaptionHistory(job), [
@@ -4735,28 +4699,6 @@ export class AutoPostService {
     let usedDottEnergyProductKey: string | null = null;
     let dottEnergyPostedStoreProduct = false;
     let clientInstagramSourceImageUrls: string[] = [];
-
-    if (hasOwnedSourceImages && !isReelsRun) {
-      const pool = Array.from(new Set((job.sourceImageUrls ?? []).map(url => String(url).trim()).filter(Boolean)));
-      const start = Math.max(Number(job.sourceImageCursor ?? 0), 0) % pool.length;
-      let selectedIndex = start;
-      for (let offset = 0; offset < pool.length; offset += 1) {
-        const candidateIndex = (start + offset) % pool.length;
-        if (!recentSet.has(pool[candidateIndex])) {
-          selectedIndex = candidateIndex;
-          break;
-        }
-      }
-      const selected = pool[selectedIndex];
-      if (selected) {
-        const publishImage = isStoryRun
-          ? await this.prepareOwnedSourceStoryImageUrl(selected, userId)
-          : selected;
-        imageUrls = [publishImage ?? selected];
-        usedClientSourceImageUrl = selected;
-        cursorUpdates.sourceImageCursor = (selectedIndex + 1) % pool.length;
-      }
-    }
 
     if (clientPhotoProfile?.key === 'carmarketplace' && needsImages) {
       try {
@@ -5030,33 +4972,9 @@ export class AutoPostService {
       };
     }
 
-    try {
-      await consumeUsageBatch(resolveBillingScope(userId), [
-        { resource: 'scheduledPosts', amount: Math.max(publishPlatforms.length, 1) },
-      ]);
-    } catch (error) {
-      const candidate = error as { status?: unknown; statusCode?: unknown; response?: { status?: unknown }; message?: unknown };
-      const status = Number(candidate.statusCode ?? candidate.status ?? candidate.response?.status ?? 0);
-      const message = String(candidate.message ?? error ?? 'scheduled_post_usage_denied');
-      if (status !== 402 && !/scheduledposts limit reached|upgrade or buy credits/i.test(message)) {
-        throw error;
-      }
-      // A single account reaching its plan allowance must not abort the global
-      // scheduler and block unrelated campaigns that are still eligible.
-      console.warn('[autopost] skipping account at scheduled-post plan limit', { userId });
-      return {
-        posted: 0,
-        failed: [
-          ...missingCredentialFailures,
-          ...publishPlatforms.map(platform => ({
-            platform,
-            status: 'failed' as const,
-            error: 'scheduled_post_plan_limit_reached',
-          })),
-        ],
-        nextRun: new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000).toISOString(),
-      };
-    }
+    await consumeUsageBatch(resolveBillingScope(userId), [
+      { resource: 'scheduledPosts', amount: Math.max(publishPlatforms.length, 1) },
+    ]);
 
     for (const platform of publishPlatforms) {
       const publisher = platformPublishers[platform] ?? publishToTwitter;
@@ -5081,7 +4999,7 @@ export class AutoPostService {
       const threadSafeCaption = this.limitThreadsCaption(platform, brandedCaption);
       let captionSelection = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption || dottEnergyProductCaption
         ? { caption: threadSafeCaption, signature: this.buildCaptionSignature(platform, threadSafeCaption) }
-        : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId, job);
+        : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
       let caption = this.limitThreadsCaption(platform, captionSelection.caption);
       let signature =
         caption === captionSelection.caption
@@ -5094,25 +5012,7 @@ export class AutoPostService {
       const privacyStatus = platform === 'youtube' ? job.youtubePrivacyStatus : undefined;
       const tags = platform === 'youtube' && enableYouTubeShorts ? ['shorts'] : undefined;
 
-      if (isReelsRun && platform === 'facebook') {
-        const platformSelection = await this.selectNextVideo(
-          job,
-          'instagram_reels',
-          fallbackVideoPool,
-          userId,
-          recentVideoSet,
-        );
-        if (platformSelection.videoUrl) {
-          videoUrl = platformSelection.videoUrl;
-          if (platformSelection.caption) {
-            caption = this.limitThreadsCaption(platform, platformSelection.caption);
-            signature = this.buildCaptionSignature(platform, caption);
-          }
-          if (typeof platformSelection.nextCursor === 'number') {
-            cursorUpdates.reelsVideoCursor = platformSelection.nextCursor;
-          }
-        }
-      } else if (supportsVideo && isVideoPlatform) {
+      if (supportsVideo && isVideoPlatform) {
         const platformSelection = await this.selectNextVideo(
           job,
           platform as VideoPlatform,
@@ -5337,11 +5237,7 @@ export class AutoPostService {
       updatePayload.storyIntervalHours = effectiveIntervalHours;
     }
     try {
-      await this.withTimeout(
-        autopostCollection.doc(userId).set(updatePayload, { merge: true }),
-        Math.max(Number(process.env.AUTOPOST_FIRESTORE_WRITE_TIMEOUT_MS ?? 7000), 3000),
-        'firestore_autopost_job_update',
-      );
+      await autopostCollection.doc(userId).set(updatePayload, { merge: true });
     } catch (error) {
       console.warn('[autopost] firestore executeJob update failed', error);
     }
@@ -5364,8 +5260,6 @@ export class AutoPostService {
         typeof cursorUpdates.tiktokVideoCursor === 'number' ? cursorUpdates.tiktokVideoCursor : job.tiktokVideoCursor,
       reelsVideoCursor:
         typeof cursorUpdates.reelsVideoCursor === 'number' ? cursorUpdates.reelsVideoCursor : job.reelsVideoCursor,
-      sourceImageCursor:
-        typeof cursorUpdates.sourceImageCursor === 'number' ? cursorUpdates.sourceImageCursor : job.sourceImageCursor,
     };
     for (const field of instagramAttemptFields) {
       nextRecord[field] = admin.firestore.Timestamp.now();
@@ -5434,11 +5328,6 @@ export class AutoPostService {
       };
     });
     try {
-      await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
-    } catch (error) {
-      console.warn('[autopost] failed to write history to Supabase', logSafeError(error));
-    }
-    try {
       const batch = firestore.batch();
       fallbackRows.forEach(entry => {
         const ref = scheduledPostsCollection.doc(entry.id);
@@ -5466,12 +5355,8 @@ export class AutoPostService {
         }
         batch.set(ref, payload);
       });
-      await this.withTimeout(
-        batch.commit(),
-        Math.max(Number(process.env.AUTOPOST_FIRESTORE_WRITE_TIMEOUT_MS ?? 7000), 3000),
-        'firestore_autopost_history_write',
-      );
-      void Promise.all(
+      await batch.commit();
+      await Promise.all(
         entries.map(entry =>
           socialAnalyticsService.incrementDaily({
             userId,
@@ -5479,38 +5364,21 @@ export class AutoPostService {
             status: entry.status,
           }),
         ),
-      ).catch(error => console.warn('[autopost] failed to increment Firebase social analytics', error));
+      );
     } catch (error) {
-      console.warn('[autopost] failed to mirror history to Firebase', error);
+      console.warn('[autopost] failed to record history', error);
+    }
+    try {
+      await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
+    } catch (error) {
+      console.warn('[autopost] failed to mirror history to supabase', logSafeError(error));
     }
   }
 
   private async resolveCredentials(userId: string): Promise<SocialAccounts> {
     let userData: { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
     try {
-      const primary = await this.withTimeout(
-        supabaseFallbackService.getSocialAccounts(userId),
-        Math.max(Number(process.env.AUTOPOST_SUPABASE_CREDENTIAL_TIMEOUT_MS ?? 10000), 3000),
-        'supabase_social_account_lookup',
-      );
-      if (primary) {
-        userData = {
-          email: primary.email ?? null,
-          socialAccounts: (primary.socialAccounts as SocialAccounts | undefined) ?? {},
-        };
-      }
-    } catch (primaryError) {
-      console.warn('[autopost] Supabase primary social account lookup failed', logSafeError(primaryError));
-    }
-
-    const hasPrimaryAccounts = Boolean(userData?.socialAccounts && Object.keys(userData.socialAccounts).length);
-    if (!hasPrimaryAccounts) {
-    try {
-      const userDoc = await this.withTimeout(
-        firestore.collection('users').doc(userId).get(),
-        Math.max(Number(process.env.AUTOPOST_FIRESTORE_CREDENTIAL_TIMEOUT_MS ?? 7000), 3000),
-        'firestore_social_account_lookup',
-      );
+      const userDoc = await firestore.collection('users').doc(userId).get();
       userData = userDoc.data() as { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
       if (userData?.socialAccounts) {
         void supabaseFallbackService.upsertSocialAccounts(userId, {
@@ -5519,40 +5387,24 @@ export class AutoPostService {
         }).catch(error => console.warn('[autopost] supabase social account mirror failed', logSafeError(error)));
       }
     } catch (error) {
-      console.warn('[autopost] user credential lookup failed; checking Supabase primary credentials', {
+      console.warn('[autopost] user credential lookup failed; using runtime fallbacks', {
         userId,
         error: error instanceof Error ? error.message : String(error),
       });
-    }
-    }
-    if (hasPrimaryAccounts) {
-      // Supabase is authoritative for OAuth refreshes. Do not block a publish
-      // on Firebase when the durable channel record is already complete.
-      console.info('[autopost] using Supabase primary social credentials', { userId });
+      try {
+        const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+        if (fallback) {
+          userData = fallback as { email?: string | null; socialAccounts?: SocialAccounts };
+        }
+      } catch (fallbackError) {
+        console.warn('[autopost] supabase social account lookup failed', logSafeError(fallbackError));
+      }
     }
     const allowDefaults = !this.isNicheClientAccount(userId) && canUsePrimarySocialDefaults(userData, userId);
     const defaults = this.defaultSocialAccounts(allowDefaults);
     const userAccounts = (userData?.socialAccounts as SocialAccounts | undefined) ?? {};
     const runtimeFallbackAccounts = await this.getRuntimeFallbackAccounts(userId);
     const merged: SocialAccounts = { ...defaults, ...runtimeFallbackAccounts, ...userAccounts };
-    if (merged.facebook?.accessToken && merged.facebook.pageId) {
-      try {
-        const resolved = await resolveFacebookPageId(merged.facebook.accessToken, merged.facebook.pageId);
-        if (resolved && (resolved.pageToken || resolved.pageId === merged.facebook.pageId)) {
-          merged.facebook = {
-            ...merged.facebook,
-            accessToken: resolved.pageToken?.trim() || merged.facebook.accessToken,
-            pageId: resolved.pageId,
-            ...(resolved.pageName ? { pageName: resolved.pageName } : {}),
-          };
-        }
-      } catch (error) {
-        console.warn('[autopost] failed to resolve connected Facebook Page token', {
-          userId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
     if (allowDefaults && !merged.facebook && config.channels.facebook.pageToken) {
       try {
         const resolved = await resolveFacebookPageId(
@@ -5927,36 +5779,11 @@ export class AutoPostService {
     };
 
     try {
-      const primaryHistory = await this.withTimeout(
-        collectSupabaseHistory(),
-        Math.max(Number(process.env.AUTOPOST_SUPABASE_HISTORY_TIMEOUT_MS ?? 10000), 3000),
-        'supabase_scheduled_post_history',
-      );
-      if (
-        primaryHistory.imageUrls.length ||
-        primaryHistory.videoUrls.length ||
-        primaryHistory.captions.length ||
-        primaryHistory.contentKeys.length
-      ) {
-        return primaryHistory;
-      }
-    } catch (error) {
-      console.warn('[autopost] Supabase primary scheduled post history lookup failed', {
-        userId,
-        error: logSafeError(error),
-      });
-    }
-
-    try {
-      const snapshot = await this.withTimeout(
-        scheduledPostsCollection
-          .where('userId', '==', userId)
-          .orderBy('createdAt', 'desc')
-          .limit(maxHistory)
-          .get(),
-        Math.max(Number(process.env.AUTOPOST_FIRESTORE_HISTORY_TIMEOUT_MS ?? 7000), 3000),
-        'firestore_scheduled_post_history_ordered',
-      );
+      const snapshot = await scheduledPostsCollection
+        .where('userId', '==', userId)
+        .orderBy('createdAt', 'desc')
+        .limit(maxHistory)
+        .get();
       return collect(snapshot.docs);
     } catch (error) {
       console.warn('[autopost] scheduled post history lookup with ordering failed; retrying without order', {
@@ -5966,11 +5793,7 @@ export class AutoPostService {
     }
 
     try {
-      const snapshot = await this.withTimeout(
-        scheduledPostsCollection.where('userId', '==', userId).limit(maxHistory).get(),
-        Math.max(Number(process.env.AUTOPOST_FIRESTORE_HISTORY_TIMEOUT_MS ?? 7000), 3000),
-        'firestore_scheduled_post_history',
-      );
+      const snapshot = await scheduledPostsCollection.where('userId', '==', userId).limit(maxHistory).get();
       return collect(snapshot.docs);
     } catch (error) {
       console.warn('[autopost] scheduled post history lookup failed', {
@@ -6623,30 +6446,6 @@ export class AutoPostService {
     }
   }
 
-  private async prepareOwnedSourceStoryImageUrl(url: string, userId: string) {
-    try {
-      const source = await this.loadImageBuffer(url);
-      if (!source) return null;
-      const buffer = await sharp(source)
-        .rotate()
-        .resize(1080, 1920, {
-          fit: 'contain',
-          background: { r: 248, g: 245, b: 240 },
-          withoutEnlargement: false,
-        })
-        .jpeg({ quality: 91, mozjpeg: true })
-        .toBuffer();
-      const safeUserId = userId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || 'campaign';
-      return this.uploadClientFallbackImage(buffer, `owned-${safeUserId}`, 'story');
-    } catch (error) {
-      console.warn('[autopost] owned source story normalization failed', {
-        userId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    }
-  }
-
   private async generateClientFallbackImageUrls(
     userId: string,
     _job: AutoPostJob,
@@ -6830,24 +6629,12 @@ export class AutoPostService {
     return true;
   }
 
-  private ensureCaptionVariety(
-    platform: string,
-    caption: string,
-    history: Set<string>,
-    userId?: string,
-    job?: AutoPostJob,
-  ) {
+  private ensureCaptionVariety(platform: string, caption: string, history: Set<string>, userId?: string) {
     const signature = this.buildCaptionSignature(platform, caption);
     if (!history.has(signature)) {
       return { caption, signature };
     }
-    const hasOwnedRotation = Boolean(
-      job &&
-        ((Array.isArray(job.sourceImageUrls) && job.sourceImageUrls.some(Boolean)) ||
-          (Array.isArray(job.reelsVideoUrls) && job.reelsVideoUrls.some(Boolean)) ||
-          (Array.isArray(job.videoUrls) && job.videoUrls.some(Boolean))),
-    );
-    const variants = hasOwnedRotation ? [] : this.getCaptionVarietyVariants(userId);
+    const variants = this.getCaptionVarietyVariants(userId);
     for (const variant of variants) {
       const candidate = this.appendCaptionSuffix(caption, variant, platform);
       const candidateSignature = this.buildCaptionSignature(platform, candidate);
@@ -7159,7 +6946,8 @@ export class AutoPostService {
       if (dynamicVideo?.videoUrl) {
         return { ...dynamicVideo, nextCursor: undefined };
       }
-      return { videoUrl: undefined, nextCursor: undefined };
+      // Most client profiles use their configured reel library. Dynamic reel
+      // discovery is an optional override, not a reason to discard that library.
     }
     const list =
       platform === 'youtube'
