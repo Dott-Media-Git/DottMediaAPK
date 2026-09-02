@@ -152,7 +152,6 @@ export const SchedulePostScreen: React.FC = () => {
   const [date, setDate] = useState(new Date());
   const [showPicker, setShowPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
-  const [imageUrlInput, setImageUrlInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [postingNow, setPostingNow] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
@@ -179,14 +178,6 @@ export const SchedulePostScreen: React.FC = () => {
     };
   }, []);
 
-  const addImage = () => {
-    if (!imageUrlInput.trim()) {
-      showNotice(t('Add an image URL first, or drag and drop an image below.'));
-      return;
-    }
-    setImages(prev => [...prev, imageUrlInput.trim()]);
-    setImageUrlInput('');
-  };
 
   const summary = useMemo(() => Math.min(timesPerDay * selectedPlatforms.length, 5), [timesPerDay, selectedPlatforms]);
   const hasYoutube = selectedPlatforms.includes('youtube');
@@ -892,14 +883,6 @@ export const SchedulePostScreen: React.FC = () => {
           ))}
 
           <Text style={styles.label}>{t('Images')}</Text>
-          <TextInput
-            value={imageUrlInput}
-            onChangeText={setImageUrlInput}
-            placeholder={t('Paste image URL')}
-            placeholderTextColor={colors.subtext}
-            style={styles.input}
-          />
-          <DMButton title={t('Add Image')} onPress={addImage} style={{ marginBottom: 12 }} />
           <View style={styles.imageMiniGrid}>
             {images.map(url => {
               const uploaded = uploadedMedia.find(item => item.url === url);
