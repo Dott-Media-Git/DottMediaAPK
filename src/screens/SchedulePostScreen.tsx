@@ -21,6 +21,8 @@ import { colors } from '@constants/colors';
 import { publishPostNow, schedulePost, uploadMediaFiles, type UploadedMediaFile } from '@services/social';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
+import { useRoute } from '@react-navigation/native';
+import type { MediaLibraryAsset } from '@services/mediaLibrary';
 
 const PLATFORM_OPTIONS = [
   'instagram',
@@ -137,6 +139,7 @@ const BWIN_ALLOWED_MEDIA_MARKERS = [
 ];
 
 export const SchedulePostScreen: React.FC = () => {
+  const route = useRoute<any>();
   const { state } = useAuth();
   const { t } = useI18n();
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(['instagram']);
@@ -164,6 +167,7 @@ export const SchedulePostScreen: React.FC = () => {
   const webFileInputRef = useRef<any>(null);
   const webDateInputRef = useRef<any>(null);
   const webTimeInputRef = useRef<any>(null);
+  const gallerySelectionKeyRef = useRef<number | null>(null);
   const isBwinAccount = useMemo(() => {
     const company = `${state.crmData?.companyName ?? ''}`.trim().toLowerCase();
     const email = `${state.user?.email ?? ''}`.trim().toLowerCase();
@@ -178,6 +182,17 @@ export const SchedulePostScreen: React.FC = () => {
     };
   }, []);
 
+
+  useEffect(() => {
+    const selection = route.params?.gallerySelection as MediaLibraryAsset[] | undefined;
+    const selectionKey = route.params?.gallerySelectionKey as number | undefined;
+    if (!selection?.length || !selectionKey || gallerySelectionKeyRef.current === selectionKey) return;
+    gallerySelectionKeyRef.current = selectionKey;
+    const selectedImages = selection.filter(asset => asset.kind === 'image').map(asset => asset.url);
+    const selectedVideo = selection.find(asset => asset.kind === 'video');
+    if (selectedImages.length) setImages(current => [...new Set([...current, ...selectedImages])]);
+    if (selectedVideo) assignUploadedVideoUrl(selectedVideo.url);
+  }, [route.params?.gallerySelection, route.params?.gallerySelectionKey]);
 
   const summary = useMemo(() => Math.min(timesPerDay * selectedPlatforms.length, 5), [timesPerDay, selectedPlatforms]);
   const hasYoutube = selectedPlatforms.includes('youtube');

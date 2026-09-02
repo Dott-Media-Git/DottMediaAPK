@@ -18,6 +18,7 @@ import { DashboardScreen } from '@screens/DashboardScreen';
 import { SupportScreen } from '@screens/SupportScreen';
 import { CreateContentScreen } from '@screens/CreateContentScreen';
 import { SchedulePostScreen } from '@screens/SchedulePostScreen';
+import { ContentGalleryScreen } from '@screens/ContentGalleryScreen';
 import { PostingHistoryScreen } from '@screens/PostingHistoryScreen';
 import { AccountIntegrationsScreen } from '@screens/AccountIntegrationsScreen';
 import { AdsManagerScreen } from '@screens/AdsManagerScreen';
@@ -60,6 +61,7 @@ const linking = {
           AccountBilling: 'account-billing',
           CreateContent: 'create',
           SchedulePost: 'schedule',
+          ContentGallery: 'gallery',
           PostingHistory: 'history',
           AccountIntegrations: 'integrations',
           AdsManager: 'ads',
@@ -101,6 +103,7 @@ const baseDrawerScreens = [
   { name: 'Dashboard', labelKey: 'Dashboard', component: DashboardScreen, icon: 'stats-chart-outline' },
   { name: 'CreateContent', labelKey: 'Create Content', component: CreateContentScreen, icon: 'color-palette-outline' },
   { name: 'SchedulePost', labelKey: 'Schedule Posts', component: SchedulePostScreen, icon: 'calendar-outline' },
+  { name: 'ContentGallery', labelKey: 'Content Gallery', component: ContentGalleryScreen, icon: 'images-outline' },
   { name: 'PostingHistory', labelKey: 'Posting History', component: PostingHistoryScreen, icon: 'time-outline' },
   { name: 'TrendingNews', labelKey: 'Your trending News', component: TrendingNewsScreen, icon: 'pulse-outline' },
   {
