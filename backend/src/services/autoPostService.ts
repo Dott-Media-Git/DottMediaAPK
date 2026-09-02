@@ -1212,6 +1212,7 @@ export class AutoPostService {
     instagramReelsVideoUrls?: string[];
     reelsIntervalHours?: number;
     generatedContent?: GeneratedContent;
+    deferRun?: boolean;
   }) {
     const basePlatforms = payload.platforms?.length
       ? payload.platforms
@@ -1278,9 +1279,22 @@ export class AutoPostService {
       console.warn('[autopost] firestore start config write failed; using fallback mirror', error);
     }
     await this.mirrorAutopostJob(payload.userId, initialJob);
-    return this.runForUser(payload.userId, {
+    const runOptions = {
       ...(payload.generatedContent ? { generatedContent: payload.generatedContent } : {}),
-    });
+    };
+    if (payload.deferRun) {
+      const queuedAt = new Date().toISOString();
+      setImmediate(() => {
+        void this.runForUser(payload.userId, runOptions)
+          .then(result => console.info('[autopost] queued runNow complete', { userId: payload.userId, result }))
+          .catch(error => console.error('[autopost] queued runNow failed', {
+            userId: payload.userId,
+            error: error instanceof Error ? error.message : String(error),
+          }));
+      });
+      return { accepted: true, status: 'queued' as const, queuedAt };
+    }
+    return this.runForUser(payload.userId, runOptions);
   }
 
   async runDueJobs() {

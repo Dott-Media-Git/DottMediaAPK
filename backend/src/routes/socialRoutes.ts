@@ -1112,8 +1112,9 @@ router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
       instagramReelsVideoUrls: payload.instagramReelsVideoUrls,
       reelsIntervalHours: payload.reelsIntervalHours,
       generatedContent: payload.generatedContent,
+      deferRun: true,
     });
-    res.json({ ok: true, ...result });
+    res.status(202).json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }

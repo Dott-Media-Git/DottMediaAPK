@@ -254,6 +254,7 @@ app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
       instagramReelsVideoUrl,
       instagramReelsVideoUrls,
       reelsIntervalHours,
+      generatedContent,
     } = req.body ?? {};
     const result = await autoPostService.start({
       userId: authUser.uid,
@@ -272,8 +273,10 @@ app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
       instagramReelsVideoUrl,
       instagramReelsVideoUrls,
       reelsIntervalHours,
+      generatedContent,
+      deferRun: true,
     });
-    res.json({ ok: true, ...result });
+    res.status(202).json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }
