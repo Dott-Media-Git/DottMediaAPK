@@ -1179,6 +1179,7 @@ export class AutoPostService {
     const basePlatforms = payload.platforms?.length
       ? payload.platforms
       : ['instagram', 'instagram_story', 'facebook', 'facebook_story', 'linkedin'];
+    const submittedPlatforms = Array.from(new Set(basePlatforms));
     const withStories = new Set(basePlatforms);
     if (withStories.has('instagram') && !withStories.has('instagram_story')) {
       withStories.add('instagram_story');
@@ -1250,25 +1251,12 @@ export class AutoPostService {
         // Execute the exact submitted snapshot. Loading the shared recurring job
         // again creates a race where a campaign worker can replace the user's
         // platforms or media between acknowledgement and publishing.
-        const runSubmittedJob = async () => {
-          const standard = await this.executeJob(payload.userId, initialJob, runOptions);
-          if (!reelsEnabled) return standard;
-          const reels = await this.executeJob(payload.userId, initialJob, {
-            ...runOptions,
-            platforms: ['instagram_reels'],
-            intervalHours: reelsIntervalHours,
-            nextRunField: 'reelsNextRun',
-            lastRunField: 'reelsLastRunAt',
-            resultField: 'reelsLastResult',
-            useGenericVideoFallback: false,
-          });
-          return {
-            ...standard,
-            reelsPosted: reels.posted,
-            reelsFailed: reels.failed,
-            reelsNextRun: reels.nextRun,
-          };
-        };
+        const runSubmittedJob = () => this.publishSubmittedPostNow({
+          userId: payload.userId,
+          platforms: submittedPlatforms,
+          job: initialJob,
+          generatedContent: payload.generatedContent,
+        });
         void runSubmittedJob()
           .then(result => console.info('[autopost] queued runNow complete', { userId: payload.userId, result }))
           .catch(error => console.error('[autopost] queued runNow failed', {
@@ -1279,6 +1267,78 @@ export class AutoPostService {
       return { accepted: true, status: 'queued' as const, queuedAt };
     }
     return this.runForUser(payload.userId, runOptions);
+  }
+
+  private async publishSubmittedPostNow(input: {
+    userId: string;
+    platforms: string[];
+    job: AutoPostJob;
+    generatedContent?: GeneratedContent;
+  }) {
+    const fallbackCopy = this.buildFallbackCopy(input.job, input.userId);
+    const content: GeneratedContent = input.generatedContent ?? {
+      images: [],
+      caption_instagram: fallbackCopy.caption,
+      caption_linkedin: fallbackCopy.caption,
+      caption_x: fallbackCopy.caption,
+      hashtags_instagram: fallbackCopy.hashtags,
+      hashtags_generic: fallbackCopy.hashtags,
+    };
+    const credentials = await this.resolveCredentialsForSubmittedPost(input.userId);
+    const results = await Promise.all(input.platforms.map(async platform => {
+      if (!this.hasCredentialsForPlatform(platform, credentials)) {
+        return { platform, status: 'failed' as const, error: `missing_${platform}_credentials` };
+      }
+      const videoUrl = platform === 'instagram_reels'
+        ? input.job.reelsVideoUrl ?? input.job.videoUrl
+        : platform === 'youtube'
+          ? input.job.youtubeVideoUrl ?? input.job.videoUrl
+          : platform === 'tiktok'
+            ? input.job.tiktokVideoUrl ?? input.job.videoUrl
+            : input.job.videoUrl;
+      if (['instagram_reels', 'youtube', 'tiktok'].includes(platform) && !videoUrl) {
+        return { platform, status: 'failed' as const, error: `missing_${platform}_video` };
+      }
+      const caption = this.captionForPlatform(platform, content, fallbackCopy);
+      try {
+        const publisher = platformPublishers[platform] ?? publishToTwitter;
+        const response = await publisher({
+          caption,
+          imageUrls: videoUrl ? [] : content.images ?? [],
+          videoUrl,
+          videoTitle: input.job.videoTitle,
+          privacyStatus: platform === 'youtube' ? input.job.youtubePrivacyStatus : undefined,
+          credentials,
+        });
+        return { platform, status: 'posted' as const, remoteId: response.remoteId ?? null };
+      } catch (error) {
+        return { platform, status: 'failed' as const, error: logSafeError(error) };
+      }
+    }));
+    const historyEntries: HistoryEntry[] = results.map(result => ({
+      platform: result.platform,
+      status: result.status,
+      caption: this.captionForPlatform(result.platform, content, fallbackCopy),
+      ...(result.status === 'posted' ? { remoteId: result.remoteId } : { errorMessage: result.error }),
+      videoUrl: result.platform === 'instagram_reels' ? input.job.reelsVideoUrl : input.job.videoUrl,
+      videoTitle: input.job.videoTitle,
+    }));
+    await this.recordHistory(input.userId, historyEntries, content.images ?? []);
+    return {
+      posted: results.filter(result => result.status === 'posted').length,
+      failed: results.filter(result => result.status === 'failed'),
+      results,
+    };
+  }
+
+  private async resolveCredentialsForSubmittedPost(userId: string): Promise<SocialAccounts> {
+    const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+    const userData = fallback as { email?: string | null; socialAccounts?: SocialAccounts } | null;
+    const allowDefaults = !this.isNicheClientAccount(userId) && canUsePrimarySocialDefaults(userData ?? undefined, userId);
+    return {
+      ...this.defaultSocialAccounts(allowDefaults),
+      ...((userData?.socialAccounts as SocialAccounts | undefined) ?? {}),
+    };
   }
 
   async runDueJobs() {
