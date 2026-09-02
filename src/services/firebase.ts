@@ -617,7 +617,7 @@ const waitForAuthBootstrap = async (timeoutMs = 3000) => {
   await authBootstrapPromise;
 };
 
-export const getIdToken = async (): Promise<string | null> => {
+export const getIdToken = async (forceRefresh = false): Promise<string | null> => {
   requireFirebaseAuth();
   if (!useFirebase || !auth) {
     return null;
@@ -626,5 +626,5 @@ export const getIdToken = async (): Promise<string | null> => {
     await waitForAuthBootstrap();
   }
   if (!auth.currentUser) return null;
-  return auth.currentUser.getIdToken();
+  return auth.currentUser.getIdToken(forceRefresh);
 };

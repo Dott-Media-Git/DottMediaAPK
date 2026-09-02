@@ -12,6 +12,9 @@ import {
 
 const API_BASE = env.apiUrl?.replace(/\/$/, '') ?? '';
 const REQUEST_TIMEOUT_MS = 30000;
+const MEDIA_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+const MEDIA_UPLOAD_ATTEMPTS = 3;
+const MAX_MEDIA_FILE_BYTES = 80 * 1024 * 1024;
 
 const mergeAbortSignals = (externalSignal: AbortSignal | null | undefined, timeoutMs: number) => {
   const controller = new AbortController();
@@ -64,39 +67,55 @@ async function authedFetch(path: string, options: RequestInit = {}, timeoutMs = 
 
 async function authedMultipartFetch(path: string, body: FormData) {
   if (!API_BASE) throw new Error('Missing API URL');
-  const token = await getIdToken();
-  const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const timeout = mergeAbortSignals(null, 5 * 60 * 1000);
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, {
-      method: 'POST',
-      headers,
-      body,
-      signal: timeout.signal,
-    });
-  } catch (error: any) {
-    if (timeout.signal.aborted) {
-      throw new Error('The server took too long to respond. Please try again.');
-    }
-    throw error;
-  } finally {
-    timeout.cleanup();
-  }
-  if (!response.ok) {
-    const text = await response.text();
+  let lastNetworkError: unknown = null;
+  for (let attempt = 1; attempt <= MEDIA_UPLOAD_ATTEMPTS; attempt += 1) {
+    const token = await getIdToken(attempt > 1);
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const timeout = mergeAbortSignals(null, MEDIA_UPLOAD_TIMEOUT_MS);
+    let response: Response;
     try {
-      const payload = JSON.parse(text);
-      throw new Error(payload.message || payload.error || `Request failed with status ${response.status}`);
-    } catch (error) {
-      if (error instanceof SyntaxError) {
-        throw new Error(text || `Request failed with status ${response.status}`);
+      response = await fetch(`${API_BASE}${path}`, {
+        method: 'POST',
+        headers,
+        body,
+        signal: timeout.signal,
+      });
+    } catch (error: any) {
+      lastNetworkError = error;
+      if (attempt < MEDIA_UPLOAD_ATTEMPTS) {
+        await new Promise(resolve => setTimeout(resolve, attempt * 1200));
+        continue;
       }
-      throw error;
+      if (timeout.signal.aborted) {
+        throw new Error('The video upload timed out. Check your connection and try again.');
+      }
+      throw new Error('The upload connection was interrupted. Please check your internet connection and try again.');
+    } finally {
+      timeout.cleanup();
     }
+
+    if (!response.ok) {
+      const text = await response.text();
+      if (attempt < MEDIA_UPLOAD_ATTEMPTS && response.status >= 500) {
+        await new Promise(resolve => setTimeout(resolve, attempt * 1200));
+        continue;
+      }
+      try {
+        const payload = JSON.parse(text);
+        throw new Error(payload.message || payload.error || `Upload failed with status ${response.status}`);
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          throw new Error(text || `Upload failed with status ${response.status}`);
+        }
+        throw error;
+      }
+    }
+    return response.json();
   }
-  return response.json();
+  throw lastNetworkError instanceof Error
+    ? lastNetworkError
+    : new Error('Unable to upload this file right now.');
 }
 
 export const generateContent = async (payload: {
@@ -192,9 +211,17 @@ export type UploadedMediaFile = {
 };
 
 export const uploadMediaFiles = async (files: File[]) => {
-  const formData = new FormData();
-  files.forEach(file => formData.append('files', file));
-  return authedMultipartFetch('/api/media/upload', formData) as Promise<{ files: UploadedMediaFile[] }>;
+  const uploaded: UploadedMediaFile[] = [];
+  for (const file of files) {
+    if (typeof file.size === 'number' && file.size > MAX_MEDIA_FILE_BYTES) {
+      throw new Error(`${file.name || 'This video'} is larger than the 80 MB upload limit.`);
+    }
+    const formData = new FormData();
+    formData.append('files', file);
+    const result = await authedMultipartFetch('/api/media/upload', formData) as { files: UploadedMediaFile[] };
+    uploaded.push(...(result.files ?? []));
+  }
+  return { files: uploaded };
 };
 
 export type SocialPost = {
