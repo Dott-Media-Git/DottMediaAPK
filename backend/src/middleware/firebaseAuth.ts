@@ -142,3 +142,10 @@ export async function requireFirebaseForm(req: Request, _res: Response, next: Ne
     return next(createHttpError(401, 'Invalid or expired token'));
   }
 }
+
+
+/** Uses a valid Firebase session when supplied, but permits a public guest request. */
+export async function optionalFirebase(req: Request, res: Response, next: NextFunction) {
+  if (!req.header('Authorization')) return next();
+  return requireFirebase(req, res, next);
+}

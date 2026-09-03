@@ -50,6 +50,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
   const { t } = useI18n();
   const [input, setInput] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [listening, setListening] = useState(false);
@@ -112,6 +113,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const chooseWebFiles = (kind: 'document' | 'image') => {
+    if (!state.user) { setAttachmentMenuOpen(false); setAuthPromptOpen(true); return; }
     if (typeof document === 'undefined') return;
     const picker = document.createElement('input');
     picker.type = 'file';
@@ -141,6 +143,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const chooseGallery = async () => {
+    if (!state.user) { setAttachmentMenuOpen(false); setAuthPromptOpen(true); return; }
     if (Platform.OS === 'web') return chooseWebFiles('image');
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) return Alert.alert('Gallery access', 'Allow gallery access to share images with Dotti.');
@@ -159,6 +162,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const chooseDocument = () => {
+    if (!state.user) { setAttachmentMenuOpen(false); setAuthPromptOpen(true); return; }
     if (Platform.OS === 'web') return chooseWebFiles('document');
     setAttachmentMenuOpen(false);
     Alert.alert('Document sharing', 'Document selection is available in Dotti web. Gallery images are available here.');
@@ -286,6 +290,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
           </View>
         </View>
         <View style={styles.topbarActions}>
+          {!state.user ? <TouchableOpacity style={styles.signInButton} onPress={() => navigation.getParent()?.navigate('Auth', { screen: 'Login' })}><Text style={styles.signInButtonText}>Sign in</Text></TouchableOpacity> : null}
           <TouchableOpacity style={[styles.newChatButton, compact && styles.newChatButtonCompact]} accessibilityRole="button" onPress={() => setHistoryOpen(true)}>
             <Ionicons name="time-outline" size={18} color={colors.text} />
             {!compact ? <Text style={styles.newChatLabel}>{t('Previous conversations')}</Text> : null}
@@ -403,6 +408,17 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
         ) : null}
       </View>
 
+      <Modal visible={authPromptOpen} transparent animationType="fade" onRequestClose={() => setAuthPromptOpen(false)}>
+        <View style={styles.authPromptBackdrop}><View style={styles.authPromptCard}>
+          <View style={styles.authPromptIcon}><Ionicons name="cloud-upload-outline" size={31} color={colors.accent} /></View>
+          <Text style={styles.authPromptTitle}>Save and upload with an account</Text>
+          <Text style={styles.authPromptCopy}>Keep chatting with Dotti for free. Sign in or create an account when you want to upload content or connect your social channels.</Text>
+          <TouchableOpacity style={styles.authPromptPrimary} onPress={() => { setAuthPromptOpen(false); navigation.getParent()?.navigate('Auth', { screen: 'Signup' }); }}><Text style={styles.authPromptPrimaryText}>Create account</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.authPromptSecondary} onPress={() => { setAuthPromptOpen(false); navigation.getParent()?.navigate('Auth', { screen: 'Login' }); }}><Text style={styles.authPromptSecondaryText}>Sign in</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.authPromptCancel} onPress={() => setAuthPromptOpen(false)}><Text style={styles.authPromptCancelText}>Not now</Text></TouchableOpacity>
+        </View></View>
+      </Modal>
+
       <Modal visible={historyOpen} transparent animationType="fade" onRequestClose={() => setHistoryOpen(false)}>
         <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setHistoryOpen(false)}>
           <View style={[styles.historyPanel, compact && styles.historyPanelCompact]} onStartShouldSetResponder={() => true}>
@@ -459,6 +475,19 @@ const styles = StyleSheet.create({
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
   statusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success },
   statusText: { color: colors.subtext, fontSize: 11 },
+  signInButton: { minHeight: 40, paddingHorizontal: 17, borderRadius: 12, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  signInButtonText: { color: '#fff', fontSize: 13, fontWeight: '800' },
+  authPromptBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.66)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  authPromptCard: { width: '100%', maxWidth: 430, borderRadius: 24, padding: 26, backgroundColor: colors.backgroundAlt, borderWidth: 1, borderColor: colors.border, alignItems: 'center' },
+  authPromptIcon: { width: 62, height: 62, borderRadius: 20, backgroundColor: colors.cardOverlay, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  authPromptTitle: { color: colors.text, fontSize: 22, fontWeight: '900', textAlign: 'center' },
+  authPromptCopy: { color: colors.subtext, fontSize: 14, lineHeight: 21, textAlign: 'center', marginTop: 9, marginBottom: 20 },
+  authPromptPrimary: { width: '100%', minHeight: 48, borderRadius: 14, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  authPromptPrimaryText: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  authPromptSecondary: { width: '100%', minHeight: 48, borderRadius: 14, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
+  authPromptSecondaryText: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  authPromptCancel: { padding: 12, marginTop: 4 },
+  authPromptCancelText: { color: colors.subtext, fontSize: 14, fontWeight: '700' },
   topbarActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   newChatButton: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 14, height: 40, borderRadius: 12, borderWidth: 1, borderColor: colors.border },
   newChatButtonCompact: { width: 40, paddingHorizontal: 0, justifyContent: 'center' },

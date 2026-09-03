@@ -99,6 +99,19 @@ const FramedSetupScreen: React.FC = () => (
   <WebScreenFrame><SetupFormScreen /></WebScreenFrame>
 );
 
+const GuestProtectedScreen: React.FC<any> = ({ navigation, route }) => {
+  const feature = route?.name === 'AccountIntegrations' ? 'connect your social accounts' : route?.name === 'ContentGallery' || route?.name === 'SchedulePost' ? 'upload and publish content' : 'use this account feature';
+  const openAuth = (screen: 'Login' | 'Signup') => navigation.getParent()?.navigate('Auth', { screen });
+  return <View style={styles.guestGatePage}><Modal visible transparent animationType="fade" onRequestClose={() => navigation.navigate('DottiChat')}><View style={styles.guestGateBackdrop}><View style={styles.guestGateCard}>
+    <View style={styles.guestGateIcon}><Ionicons name="person-circle-outline" size={34} color={colors.accent} /></View>
+    <Text style={styles.guestGateTitle}>Sign in to continue</Text>
+    <Text style={styles.guestGateCopy}>Create a free Dotti account or sign in to {feature}. Your open chat remains available.</Text>
+    <TouchableOpacity style={styles.guestGatePrimary} onPress={() => openAuth('Signup')}><Text style={styles.guestGatePrimaryText}>Create account</Text></TouchableOpacity>
+    <TouchableOpacity style={styles.guestGateSecondary} onPress={() => openAuth('Login')}><Text style={styles.guestGateSecondaryText}>Sign in</Text></TouchableOpacity>
+    <TouchableOpacity style={styles.guestGateCancel} onPress={() => navigation.navigate('DottiChat')}><Text style={styles.guestGateCancelText}>Continue chatting</Text></TouchableOpacity>
+  </View></View></Modal></View>;
+};
+
 const baseDrawerScreens = [
   { name: 'Dashboard', labelKey: 'Dashboard', component: DashboardScreen, icon: 'stats-chart-outline' },
   { name: 'CreateContent', labelKey: 'Create Content', component: CreateContentScreen, icon: 'color-palette-outline' },
@@ -160,7 +173,7 @@ const DrawerNavigator = () => {
   const inactiveColor = isDarkTheme ? colors.subtext : colors.text;
   const labelColor = isDarkTheme ? colors.subtext : colors.text;
   const { t } = useI18n();
-  const { state } = useAuth();
+  const { state, isAuthenticated } = useAuth();
   const isAdminUser = useMemo(() => {
     const email = normalizeLower(state.user?.email);
     return email === 'brasioxirin@gmail.com' || Boolean((state.user as any)?.isAdmin);
@@ -170,9 +183,9 @@ const DrawerNavigator = () => {
       const accountScreens = isAdminUser
         ? [...baseDrawerScreens.slice(0, -3), adminDrawerScreen, ...baseDrawerScreens.slice(-3)]
         : baseDrawerScreens;
-      return [webChatDrawerScreen, ...accountScreens];
+      return [webChatDrawerScreen, ...accountScreens.map(screen => isAuthenticated ? screen : { ...screen, component: GuestProtectedScreen })];
     },
-    [isAdminUser, isDesktopWeb]
+    [isAdminUser, isDesktopWeb, isAuthenticated]
   );
   return (
     <Drawer.Navigator
@@ -288,7 +301,10 @@ export const AppNavigator: React.FC = () => {
     >
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         {!isAuthenticated ? (
-          <RootStack.Screen name="Auth" component={AuthStackNavigator} />
+          <>
+            <RootStack.Screen name="Main" component={DrawerNavigator} />
+            <RootStack.Screen name="Auth" component={AuthStackNavigator} options={{ presentation: 'modal' }} />
+          </>
         ) : state.user?.emailVerified === false ? (
           <RootStack.Screen name="EmailVerification" component={EmailVerificationScreen} />
         ) : needsSubscription ? (
@@ -304,6 +320,18 @@ export const AppNavigator: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  guestGatePage: { flex: 1, backgroundColor: colors.background },
+  guestGateBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.66)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  guestGateCard: { width: '100%', maxWidth: 430, borderRadius: 24, padding: 26, backgroundColor: colors.backgroundAlt, borderWidth: 1, borderColor: colors.border, alignItems: 'center' },
+  guestGateIcon: { width: 66, height: 66, borderRadius: 22, backgroundColor: colors.cardOverlay, alignItems: 'center', justifyContent: 'center', marginBottom: 17 },
+  guestGateTitle: { color: colors.text, fontSize: 24, fontWeight: '900' },
+  guestGateCopy: { color: colors.subtext, fontSize: 15, lineHeight: 22, textAlign: 'center', marginTop: 9, marginBottom: 21 },
+  guestGatePrimary: { width: '100%', minHeight: 48, borderRadius: 14, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  guestGatePrimaryText: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  guestGateSecondary: { width: '100%', minHeight: 48, borderRadius: 14, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
+  guestGateSecondaryText: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  guestGateCancel: { padding: 12, marginTop: 4 },
+  guestGateCancelText: { color: colors.subtext, fontSize: 14, fontWeight: '700' },
   menuButton: {
     marginLeft: 12,
     padding: 6,

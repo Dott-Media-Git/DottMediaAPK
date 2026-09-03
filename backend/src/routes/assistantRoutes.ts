@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
+import { requireFirebase, optionalFirebase, AuthedRequest } from '../middleware/firebaseAuth';
+import { createRateLimit } from '../middleware/rateLimit';
 import { firestore } from '../db/firestore';
 import { AssistantService } from '../services/assistantService';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
@@ -136,7 +137,11 @@ router.delete('/assistant/conversations/:conversationId', requireFirebase, async
   }
 });
 
-router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
+router.post(
+  '/assistant/chat',
+  createRateLimit({ windowMs: 60_000, max: 24, message: 'Too many chat messages. Please wait a moment and try again.' }),
+  optionalFirebase,
+  async (req, res, next) => {
   try {
     const parsed = BodySchema.parse(req.body);
     const authUser = (req as AuthedRequest).authUser;
@@ -270,6 +275,7 @@ router.post('/assistant/chat', requireFirebase, async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
+  },
+);
 
 export default router;
