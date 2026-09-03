@@ -178,28 +178,14 @@ export const schedulePost = async (payload: any) => {
 
 export const publishPostNow = async (payload: any) => {
   const body = JSON.stringify(payload);
-  const queued = await authedFetch('/api/posts/publish-now', { method: 'POST', body }, 60000) as SchedulePostResponse & { queued?: number; requestId?: string };
-  if (queued.requestId) {
-    for (let attempt = 0; attempt < 90; attempt += 1) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      const status = await authedFetch(`/api/posts/publish-status?requestId=${encodeURIComponent(queued.requestId)}`, {}, 45000) as { posted: number; failed: number; pending: number; complete: boolean; error?: string };
-      if (status.complete) {
-        if (status.error && status.posted === 0) throw new Error(status.error);
-        return { ...queued, ...status, processed: status.posted };
-      }
-    }
-    throw new Error('Publishing is still taking longer than expected. Check Posting History for the final platform results.');
-  }
-  const ids = queued.postIds ?? [];
-  if (!ids.length) return queued;
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    const status = await authedFetch(`/api/posts/publish-status?ids=${encodeURIComponent(ids.join(','))}`, {}, 45000) as {
-      posted: number; failed: number; pending: number; complete: boolean;
-    };
-    if (status.complete) return { ...queued, ...status, processed: status.posted };
-  }
-  throw new Error('Publishing is still taking longer than expected. Check Posting History for the final platform results.');
+  const queued = await authedFetch('/api/posts/publish-now', { method: 'POST', body }, 10000) as SchedulePostResponse & { queued?: number; requestId?: string };
+  // Remote platforms may continue processing media without keeping the user
+  // trapped behind a spinner after the server has accepted the post.
+  return {
+    ...queued,
+    pending: Number(queued.queued ?? queued.postIds?.length ?? 0),
+    accepted: true,
+  };
 };
 
 export type UploadedMediaFile = {

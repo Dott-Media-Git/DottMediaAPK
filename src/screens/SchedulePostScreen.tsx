@@ -524,7 +524,10 @@ export const SchedulePostScreen: React.FC = () => {
       }
       const postedCount = Number(result?.posted ?? result?.processed ?? 0);
       if (postedCount <= 0) {
-        throw new Error(t('The post was prepared but the selected platforms rejected it. Check the connection and media requirements, then try again.'));
+        setPreviewVisible(false);
+        resetForm();
+        showNotice(t('Publishing started. Your post is processing in the background; follow its progress in Posting History.'));
+        return;
       }
       setPreviewVisible(false);
       resetForm();
