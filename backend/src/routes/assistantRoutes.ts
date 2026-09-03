@@ -146,7 +146,19 @@ router.post(
     const parsed = BodySchema.parse(req.body);
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) {
-      return res.status(401).json({ message: 'Unauthorized' });
+      if ((parsed.attachments ?? []).length) {
+        return res.status(401).json({ message: 'Sign in to upload content to Dotti.' });
+      }
+      const answer = await assistant.answer(parsed.question, {
+        ...(parsed.context ?? {}),
+        userId: undefined,
+        userEmail: undefined,
+        guest: true,
+        connectedChannels: [],
+        attachments: [],
+        conversationHistory: boundConversationHistory(parsed.conversationHistory ?? []),
+      });
+      return res.json({ answer });
     }
     const [primaryUser, primaryProfile] = supabasePrimary
       ? await Promise.all([
