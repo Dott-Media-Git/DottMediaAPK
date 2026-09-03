@@ -1032,23 +1032,39 @@ router.post('/posts/publish-now', requireFirebase, async (req, res, next) => {
     if (authUser.uid !== payload.userId) {
       return res.status(403).json({ message: 'Cannot publish for another user' });
     }
+
+    // Durably create the queue records before acknowledging the request. This
+    // remains fast, but guarantees an accepted post cannot disappear if the
+    // hosting process is recycled immediately after sending the response.
+    await consumeUsage(
+      resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email),
+      'scheduledPosts',
+      Math.max(payload.platforms.length, 1),
+    );
+    const scheduled = await socialSchedulingService.schedulePosts({ ...payload, billingUsageConsumed: true });
+    const ids = scheduled.postIds ?? [];
+    if (!ids.length) {
+      return res.status(scheduled.reason === 'limit_reached' ? 429 : 400).json({
+        message: scheduled.reason === 'limit_reached'
+          ? 'Today\'s posting limit has been reached.'
+          : 'No posts were queued.',
+        reason: scheduled.reason,
+      });
+    }
+
     const requestId = randomBytes(16).toString('hex');
-    const orgId = req.header('x-org-id');
-    immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: false, posted: 0, failed: 0, pending: payload.platforms.length, posts: [], updatedAt: Date.now() });
-    res.status(202).json({ requestId, queued: payload.platforms.length });
+    immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: false, posted: 0, failed: 0, pending: ids.length, posts: [], updatedAt: Date.now() });
+    res.status(202).json({ requestId, queued: ids.length, postIds: ids });
+
     void (async () => {
       try {
-        await consumeUsage(resolveBillingScope(authUser.uid, orgId, authUser.email), 'scheduledPosts', Math.max(payload.platforms.length, 1));
-        const scheduled = await socialSchedulingService.schedulePosts({ ...payload, billingUsageConsumed: true });
-        const ids = scheduled.postIds ?? [];
-        if (!ids.length) throw new Error(scheduled.reason === 'limit_reached' ? 'Today\'s posting limit has been reached.' : 'No posts were queued.');
         await socialPostingService.runQueue(250, authUser.uid);
         const history = await socialPostingService.getHistory(authUser.uid, 500);
         const posts = history.posts.filter(post => ids.includes(String(post.id ?? ''))).map(post => ({ id: post.id, platform: post.platform, status: post.status, errorMessage: post.errorMessage, remoteId: post.remoteId }));
         const posted = posts.filter(post => post.status === 'posted').length;
         immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: true, posted, failed: Math.max(ids.length - posted, 0), pending: 0, posts, updatedAt: Date.now() });
       } catch (error) {
-        immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: true, posted: 0, failed: payload.platforms.length, pending: 0, posts: [], error: error instanceof Error ? error.message : String(error), updatedAt: Date.now() });
+        immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: true, posted: 0, failed: ids.length, pending: 0, posts: [], error: error instanceof Error ? error.message : String(error), updatedAt: Date.now() });
       }
     })();
   } catch (error) {
