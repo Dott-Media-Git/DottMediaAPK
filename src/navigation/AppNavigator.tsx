@@ -186,7 +186,12 @@ const DrawerNavigator = () => {
       const accountScreens = isAdminUser
         ? [...baseDrawerScreens.slice(0, -3), adminDrawerScreen, ...baseDrawerScreens.slice(-3)]
         : baseDrawerScreens;
-      return [webChatDrawerScreen, ...accountScreens.map(screen => isAuthenticated ? screen : { ...screen, component: (props: any) => <GuestProtectedScreen {...props} PreviewComponent={screen.component} /> })];
+      return [webChatDrawerScreen, ...accountScreens.map(screen => {
+          const requiresAccount = ['AccountIntegrations', 'ContentGallery', 'SchedulePost'].includes(screen.name);
+          return isAuthenticated || !requiresAccount
+            ? screen
+            : { ...screen, component: (props: any) => <GuestProtectedScreen {...props} PreviewComponent={screen.component} /> };
+        })];
     },
     [isAdminUser, isDesktopWeb, isAuthenticated]
   );
