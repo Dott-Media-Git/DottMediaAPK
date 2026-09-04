@@ -99,17 +99,20 @@ const FramedSetupScreen: React.FC = () => (
   <WebScreenFrame><SetupFormScreen /></WebScreenFrame>
 );
 
-const GuestProtectedScreen: React.FC<any> = ({ navigation, route }) => {
+const GuestProtectedScreen: React.FC<any> = ({ navigation, route, PreviewComponent, ...screenProps }) => {
   const feature = route?.name === 'AccountIntegrations' ? 'connect your social accounts' : route?.name === 'ContentGallery' || route?.name === 'SchedulePost' ? 'upload and publish content' : 'use this account feature';
   const openAuth = (screen: 'Login' | 'Signup') => navigation.getParent()?.navigate('Auth', { screen });
-  return <View style={styles.guestGatePage}><Modal visible transparent animationType="fade" onRequestClose={() => navigation.navigate('DottiChat')}><View style={styles.guestGateBackdrop}><View style={styles.guestGateCard}>
-    <View style={styles.guestGateIcon}><Ionicons name="person-circle-outline" size={34} color={colors.accent} /></View>
-    <Text style={styles.guestGateTitle}>Sign in to continue</Text>
-    <Text style={styles.guestGateCopy}>Create a free Dotti account or sign in to {feature}. Your open chat remains available.</Text>
-    <TouchableOpacity style={styles.guestGatePrimary} onPress={() => openAuth('Signup')}><Text style={styles.guestGatePrimaryText}>Create account</Text></TouchableOpacity>
-    <TouchableOpacity style={styles.guestGateSecondary} onPress={() => openAuth('Login')}><Text style={styles.guestGateSecondaryText}>Sign in</Text></TouchableOpacity>
-    <TouchableOpacity style={styles.guestGateCancel} onPress={() => navigation.navigate('DottiChat')}><Text style={styles.guestGateCancelText}>Continue chatting</Text></TouchableOpacity>
-  </View></View></Modal></View>;
+  return <View style={styles.guestGatePage}>
+    <View style={styles.guestPagePreview} pointerEvents="none"><PreviewComponent navigation={navigation} route={route} {...screenProps} /></View>
+    <Modal visible transparent animationType="fade" onRequestClose={() => navigation.navigate('DottiChat')}><View style={styles.guestGateBackdrop}><View style={styles.guestGateCard}>
+      <View style={styles.guestGateIcon}><Ionicons name="person-circle-outline" size={34} color={colors.accent} /></View>
+      <Text style={styles.guestGateTitle}>Sign in to continue</Text>
+      <Text style={styles.guestGateCopy}>Create a free Dotti account or sign in to {feature}. Your open chat remains available.</Text>
+      <TouchableOpacity style={styles.guestGatePrimary} onPress={() => openAuth('Signup')}><Text style={styles.guestGatePrimaryText}>Create account</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.guestGateSecondary} onPress={() => openAuth('Login')}><Text style={styles.guestGateSecondaryText}>Sign in</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.guestGateCancel} onPress={() => navigation.navigate('DottiChat')}><Text style={styles.guestGateCancelText}>Continue chatting</Text></TouchableOpacity>
+    </View></View></Modal>
+  </View>;
 };
 
 const baseDrawerScreens = [
@@ -183,7 +186,7 @@ const DrawerNavigator = () => {
       const accountScreens = isAdminUser
         ? [...baseDrawerScreens.slice(0, -3), adminDrawerScreen, ...baseDrawerScreens.slice(-3)]
         : baseDrawerScreens;
-      return [webChatDrawerScreen, ...accountScreens.map(screen => isAuthenticated ? screen : { ...screen, component: GuestProtectedScreen })];
+      return [webChatDrawerScreen, ...accountScreens.map(screen => isAuthenticated ? screen : { ...screen, component: (props: any) => <GuestProtectedScreen {...props} PreviewComponent={screen.component} /> })];
     },
     [isAdminUser, isDesktopWeb, isAuthenticated]
   );
@@ -321,6 +324,7 @@ export const AppNavigator: React.FC = () => {
 
 const styles = StyleSheet.create({
   guestGatePage: { flex: 1, backgroundColor: colors.background },
+  guestPagePreview: { flex: 1, width: '100%', opacity: 0.82 },
   guestGateBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.66)', alignItems: 'center', justifyContent: 'center', padding: 20 },
   guestGateCard: { width: '100%', maxWidth: 430, borderRadius: 24, padding: 26, backgroundColor: colors.backgroundAlt, borderWidth: 1, borderColor: colors.border, alignItems: 'center' },
   guestGateIcon: { width: 66, height: 66, borderRadius: 22, backgroundColor: colors.cardOverlay, alignItems: 'center', justifyContent: 'center', marginBottom: 17 },
