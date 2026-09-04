@@ -269,6 +269,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[styles.topbar, compact && styles.topbarCompact]}>
+        {state.user ? (
         <TouchableOpacity
           style={styles.menuButton}
           onPress={() => navigation.toggleDrawer()}
@@ -277,6 +278,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
         >
           <Ionicons name="menu-outline" size={22} color={colors.text} />
         </TouchableOpacity>
+        ) : null}
         <View style={styles.brandRow}>
           <View style={styles.brandHead}>
             <DottiAvatar state={isTyping ? 'thinking' : listening ? 'focused' : 'happy'} size={44} />
