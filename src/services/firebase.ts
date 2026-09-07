@@ -408,6 +408,20 @@ export const signOutUser = async () => {
   await firebaseSignOut(auth);
 };
 
+export const deleteDottiAccount = async (): Promise<void> => {
+  requireFirebaseAuth();
+  if (!auth?.currentUser) throw new Error('Sign in before deleting your account.');
+  const token = await auth.currentUser.getIdToken(true);
+  const baseUrl = env.apiUrl || 'https://dottmediaapk.onrender.com';
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/auth/account`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  const body = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(body.message || 'Unable to delete your account.');
+  await firebaseSignOut(auth).catch(() => undefined);
+};
+
 export const realtimeDb = db;
 export const isFirebaseEnabled = useFirebase;
 

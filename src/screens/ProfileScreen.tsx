@@ -9,7 +9,7 @@ import { DMTextInput } from '@components/DMTextInput';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
-import { uploadProfileImage } from '@services/firebase';
+import { deleteDottiAccount, uploadProfileImage } from '@services/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { realtimeDb } from '@services/firebase';
 
@@ -52,6 +52,7 @@ export const ProfileScreen: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [photoURL, setPhotoURL] = useState(user?.photoURL ?? '');
   const [name, setName] = useState(user?.name ?? '');
   const [companyName, setCompanyName] = useState(crm?.companyName ?? '');
@@ -164,6 +165,34 @@ export const ProfileScreen: React.FC = () => {
     setEditing(false);
   };
 
+  const permanentlyDeleteAccount = async () => {
+    setDeletingAccount(true);
+    try {
+      await deleteDottiAccount();
+      signOut();
+      Alert.alert(t('Account deleted'), t('Your Dotti account and associated data have been deleted.'));
+    } catch (error: any) {
+      Alert.alert(t('Deletion failed'), error?.message ?? t('Unable to delete your account.'));
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
+  const confirmAccountDeletion = () => {
+    Alert.alert(
+      t('Are you sure?'),
+      t('This deletes your Dotti profile, connected social credentials, CRM data, content, automations, and account access. Published posts on third-party platforms are not deleted.'),
+      [
+        { text: t('No'), style: 'cancel' },
+        {
+          text: t('Yes, delete account'),
+          style: 'destructive',
+          onPress: () => void permanentlyDeleteAccount(),
+        },
+      ],
+    );
+  };
+
   const effectiveClosure = closureState ?? (bwinAccount ? {
     enabled: true,
     visibleToClient: true,
@@ -255,6 +284,18 @@ export const ProfileScreen: React.FC = () => {
         <TouchableOpacity style={styles.signOutButton} onPress={signOut}>
           <Text style={styles.signOutText}>{t('Sign out')}</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.deleteAccountButton}
+          onPress={confirmAccountDeletion}
+          disabled={deletingAccount}
+        >
+          <Text style={styles.deleteAccountText}>
+            {deletingAccount ? t('Deleting account...') : t('Delete account permanently')}
+          </Text>
+        </TouchableOpacity>
+        <Text style={styles.deletionHelp}>
+          {t('You can also request deletion at dottmediaapk.web.app/delete-account.')}
+        </Text>
       </DMCard>
     </ScrollView>
   );
@@ -290,4 +331,10 @@ const styles = StyleSheet.create({
   planStatus: { color: colors.text, fontWeight: '700', marginBottom: 14, textTransform: 'capitalize' },
   signOutButton: { backgroundColor: colors.danger, paddingVertical: 13, borderRadius: 14, alignItems: 'center' },
   signOutText: { color: colors.text, fontWeight: '700' },
+  deleteAccountButton: {
+    marginTop: 12, backgroundColor: colors.danger, paddingVertical: 13,
+    borderRadius: 14, alignItems: 'center',
+  },
+  deleteAccountText: { color: colors.text, fontWeight: '800' },
+  deletionHelp: { color: colors.subtext, fontSize: 12, lineHeight: 18, marginTop: 12, textAlign: 'center' },
 });
