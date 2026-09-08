@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import https from 'https';
 import sharp from 'sharp';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
+import { isEligibleCarmarketVehicle, isPreferredCarmarketModel } from './carmarketVehicleSelection.js';
 
 export type BeforwardVehicle = {
   title: string;
@@ -214,7 +215,7 @@ async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}
   const html = await fetchHtml('https://www.carbarn.ug/cars');
   for (const vehicle of parseCarbarnEmbeddedVehicles(html)) {
     if (vehicle.stockNo && options.recentStockNos?.has(vehicle.stockNo)) continue;
-    if (vehicle.images.length > 1) return vehicle;
+    if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) return vehicle;
   }
   const $ = cheerio.load(html);
   const scripts = $('script[type="application/ld+json"]')
@@ -228,6 +229,7 @@ async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}
       if (!Array.isArray(items)) continue;
       for (const entry of items) {
         const item = entry?.item;
+        if (!isEligibleCarmarketVehicle({ title: String(item?.name ?? ''), summary: {} })) continue;
         const url = String(item?.url ?? '').trim();
         const stockNo = url.match(/-(\d+)$/)?.[1] || url.split('/').pop() || '';
         if (stockNo && options.recentStockNos?.has(`CARBARN-${stockNo}`)) continue;
@@ -308,7 +310,7 @@ async function pickMileleVehicle(options: { recentStockNos?: Set<string> } = {})
     if (stockKey && options.recentStockNos?.has(stockKey)) continue;
     try {
       const vehicle = await fetchMileleVehicle(link);
-      if (vehicle.images.length > 1) return vehicle;
+      if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) return vehicle;
     } catch {
       // Try the next Milele listing.
     }
@@ -320,7 +322,7 @@ export async function pickBeforwardVehicle(options: {
   searchUrl?: string;
   recentStockNos?: Set<string>;
 } = {}) {
-  const searchUrl = options.searchUrl || `${BASE_URL}/stocklist/make=1/sortkey=n/`;
+  const searchUrl = options.searchUrl || `${BASE_URL}/stocklist/year_from=2016/sortkey=n/`;
   const html = await fetchHtml(searchUrl);
   const links = unique(
     Array.from(html.matchAll(/href="(\/[a-z0-9-]+\/[a-z0-9-]+\/[a-z]{2}\d{6}\/id\/\d+\/)"/gi)).map(match =>
@@ -328,11 +330,14 @@ export async function pickBeforwardVehicle(options: {
     ),
   );
   for (const link of links) {
+    // Model names are available in listing URLs; avoid fetching economy cars.
+    const modelTitle = link.replace(BASE_URL, '').split('/').slice(1, 3).join(' ').replace(/-/g, ' ');
+    if (!isPreferredCarmarketModel(modelTitle)) continue;
     const stockNo = link.match(/\/([a-z]{2}\d{6})\//i)?.[1]?.toUpperCase();
     if (stockNo && options.recentStockNos?.has(stockNo)) continue;
     try {
       const vehicle = await fetchBeforwardVehicle(link);
-      if (vehicle.images.length > 1) return vehicle;
+      if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) return vehicle;
     } catch {
       // Try the next listing.
     }
