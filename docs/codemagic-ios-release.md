@@ -75,6 +75,10 @@ uses App Store distribution (not an internal-only or ad-hoc IPA).
 - Package and lockfile dependency declarations checked for consistency.
 - Expo configuration evaluated locally. A full signed Xcode archive still requires
   the configured cloud Mac and Apple integration.
+- Metro resolved the iOS JavaScript, but the Windows Hermes compiler crashed.
+  A JavaScript-only retry was stopped while still bundling; neither run counts as
+  a successful release build. Validate the new-source workflow on Codemagic before
+  using its IPA. This does not alter the existing signed build 38.
 
 Sources: [Codemagic React Native setup](https://docs.codemagic.io/yaml-quick-start/building-a-react-native-app/),
 [Codemagic App Store publishing](https://docs.codemagic.io/yaml-publishing/app-store-connect/),
