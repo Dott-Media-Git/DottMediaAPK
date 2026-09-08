@@ -1,13 +1,13 @@
 """Update known listing facts without inventing review or privacy declarations."""
 import json
-import os
 
 from codemagic.tools.app_store_connect import AppStoreConnect
+from codemagic.tools.app_store_connect.arguments import Types
 
 tool = AppStoreConnect(
-    key_identifier=os.environ.get("APP_STORE_CONNECT_KEY_IDENTIFIER"),
-    issuer_id=os.environ.get("APP_STORE_CONNECT_ISSUER_ID"),
-    private_key=os.environ.get("APP_STORE_CONNECT_PRIVATE_KEY"),
+    key_identifier=Types.KeyIdentifierArgument.resolve_value(None),
+    issuer_id=Types.IssuerIdArgument.resolve_value(None),
+    private_key=Types.PrivateKeyArgument.resolve_value(None),
 )
 client = tool.api_client
 base = "https://api.appstoreconnect.apple.com/v1"
