@@ -24,6 +24,7 @@ const OWNER_MANAGED_BILLING_EXEMPT_USER_IDS = new Set([
   'D1iNgjLKNRaQhH35M0NmGfw1LVD2', // StaySphere
   'acmVetCcOiTHeGk5D7eDYieamDF3', // Carmarketplace
   'vzdH1DnfFLVjlY8bBgC26WACmmw2', // Gamers44life
+  'X0ObAFQft0UWZee9IbUyYaeaBfO2', // Simplicity Home Decor managed campaign (restored from #83)
 ]);
 
 type CheckoutProvider = 'stripe' | 'flutterwave_mobile_money';
