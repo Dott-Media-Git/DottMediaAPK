@@ -725,6 +725,14 @@ export class AutoPostService {
       ({ dueStandard, dueReels, dueStories, dueTrends } = buildDueSets());
     }
 
+    const runSafely = async (userId: string, run: () => Promise<any>) => {
+      try { return await run(); }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn('[autopost] fallback account failed; continuing remaining schedules', { userId, error: message });
+        return { posted: 0, failed: [{ platform: 'autopost', status: 'failed', error: message }], nextRun: null };
+      }
+    };
     let processed = 0;
     const results = new Map<
       string,
@@ -747,7 +755,7 @@ export class AutoPostService {
     for (const [userId, snapshot] of dueStandard) {
       const job = this.memoryStore.get(userId) ?? snapshot;
       if (!(await this.claimDueRun(userId, job, 'next_run', now))) continue;
-      const outcome = await this.executeJob(userId, job);
+      const outcome = await runSafely(userId, () => this.executeJob(userId, job));
       processed += 1;
       results.set(userId, {
         userId,
@@ -759,14 +767,14 @@ export class AutoPostService {
     for (const [userId, snapshot] of dueReels) {
       const job = this.memoryStore.get(userId) ?? snapshot;
       if (!(await this.claimDueRun(userId, job, 'reels_next_run', now))) continue;
-      const outcome = await this.executeJob(userId, job, {
+      const outcome = await runSafely(userId, () => this.executeJob(userId, job, {
         platforms: ['instagram_reels'],
         intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
         nextRunField: 'reelsNextRun',
         lastRunField: 'reelsLastRunAt',
         resultField: 'reelsLastResult',
         useGenericVideoFallback: false,
-      });
+      }));
       processed += 1;
       const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
       results.set(userId, {
@@ -779,15 +787,15 @@ export class AutoPostService {
     for (const [userId, snapshot] of dueStories) {
       const job = this.memoryStore.get(userId) ?? snapshot;
       if (!(await this.claimDueRun(userId, job, 'story_next_run', now))) continue;
-      const outcome = job.storyTrendEnabled === true
-        ? await this.executeTrendStories(userId, job)
-        : await this.executeJob(userId, job, {
+      const outcome = await runSafely(userId, () => job.storyTrendEnabled === true
+        ? this.executeTrendStories(userId, job)
+        : this.executeJob(userId, job, {
             platforms: this.getStoryPlatforms(job),
             intervalHours: this.getStoryIntervalHours(userId, job.storyIntervalHours),
             nextRunField: 'storyNextRun',
             lastRunField: 'storyLastRunAt',
             resultField: 'storyLastResult',
-          });
+          }));
       processed += 1;
       const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
       results.set(userId, {
@@ -804,7 +812,7 @@ export class AutoPostService {
         continue;
       }
       if (!(await this.claimDueRun(userId, job, 'trend_next_run', now))) continue;
-      const outcome = await this.executeTrendPosts(userId, job);
+      const outcome = await runSafely(userId, () => this.executeTrendPosts(userId, job));
       processed += 1;
       const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
       results.set(userId, {
