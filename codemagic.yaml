@@ -1,4 +1,14 @@
 workflows:
+  ios-submit-review:
+    name: Submit Dotti build 38 for App Review
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    integrations:
+      app_store_connect: Dotti App Store Connect
+    scripts:
+      - name: Submit existing build and release after approval
+        script: python3 scripts/ios/submit-review.py
+
   ios-upload-existing:
     name: Upload Dotti 1.0.0 (38) to App Store Connect
     instance_type: mac_mini_m2
