@@ -4808,10 +4808,11 @@ export class AutoPostService {
           usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
         }
       } catch (error) {
-        console.warn('[autopost] BE FORWARD vehicle lookup failed; using client photo fallback', {
+        console.warn('[autopost] Carmarket vehicle lookup failed; skipping unverified vehicle fallback', {
           userId,
           error: error instanceof Error ? error.message : String(error),
         });
+        throw new Error('No verified 2016+ higher-tier Carmarket listing available');
       }
     }
 
@@ -5042,7 +5043,7 @@ export class AutoPostService {
       const isDottEnergyCaptionPlatform =
         isFeedCaptionPlatform || platform === 'facebook_story' || platform === 'instagram_story';
       const rawCaption =
-        carmarketVehicleCaption && isFeedCaptionPlatform
+        carmarketVehicleCaption && (isFeedCaptionPlatform || platform === 'facebook_story' || platform === 'instagram_story')
           ? carmarketVehicleCaption
           : staysphereListingCaption && isFeedCaptionPlatform
             ? staysphereListingCaption
