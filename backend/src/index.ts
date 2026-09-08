@@ -401,6 +401,7 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
       { label: 'Bwin', uid: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', bwin: true, platforms: ['facebook', 'instagram', 'threads'] },
       { label: 'DottHR', uid: '80bYIeiuukNFtUvXTUobXmfC7pu1', platforms: ['facebook', 'instagram', 'threads'], reels: false },
       { label: 'Carmarketug', uid: 'acmVetCcOiTHeGk5D7eDYieamDF3', platforms: ['facebook', 'instagram', 'threads'], reels: true },
+      { label: 'Simplicity Home Decor', uid: 'X0ObAFQft0UWZee9IbUyYaeaBfO2', platforms: ['facebook', 'instagram'], reels: true },
       { label: 'Staysphere', uid: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2', platforms: ['facebook', 'instagram'], reels: true },
       { label: 'Gamers44life', uid: 'vzdH1DnfFLVjlY8bBgC26WACmmw2', platforms: ['facebook', 'instagram', 'threads'], reels: true },
       { label: 'DottEnergy', uid: 'LVR7p3WzdFM51ds92Kacf6S40og2', platforms: ['facebook', 'instagram', 'threads'], reels: false },

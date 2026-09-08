@@ -1,4 +1,5 @@
 import admin from 'firebase-admin';
+import { selectConfiguredMedia } from './configuredMediaSelection.js';
 import axios from 'axios';
 import sharp from 'sharp';
 import * as cheerio from 'cheerio';
@@ -137,6 +138,8 @@ type AutoPostJob = {
   fallbackHashtags?: string;
   recentCaptions?: string[];
   requireAiImages?: boolean;
+  sourceImageUrls?: string[];
+  sourceImageCursor?: number;
   videoUrl?: string;
   videoUrls?: string[];
   videoTitle?: string;
@@ -703,7 +706,8 @@ export class AutoPostService {
     });
 
     let { dueStandard, dueReels, dueStories, dueTrends } = buildDueSets();
-    if (!dueStandard.length && !dueReels.length && !dueStories.length && !dueTrends.length) {
+    // Always discover durable jobs: pinned in-memory jobs must not starve other accounts.
+    {
       try {
         const [standard, reels, stories, trends] = await Promise.all([
           supabaseFallbackService.getDueAutopostJobs('next_run', new Date(now.toMillis())),
@@ -740,7 +744,8 @@ export class AutoPostService {
         trendNextRun?: string | null;
       }
     >();
-    for (const [userId, job] of dueStandard) {
+    for (const [userId, snapshot] of dueStandard) {
+      const job = this.memoryStore.get(userId) ?? snapshot;
       if (!(await this.claimDueRun(userId, job, 'next_run', now))) continue;
       const outcome = await this.executeJob(userId, job);
       processed += 1;
@@ -751,7 +756,8 @@ export class AutoPostService {
         nextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
       });
     }
-    for (const [userId, job] of dueReels) {
+    for (const [userId, snapshot] of dueReels) {
+      const job = this.memoryStore.get(userId) ?? snapshot;
       if (!(await this.claimDueRun(userId, job, 'reels_next_run', now))) continue;
       const outcome = await this.executeJob(userId, job, {
         platforms: ['instagram_reels'],
@@ -770,7 +776,8 @@ export class AutoPostService {
         reelsNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
       });
     }
-    for (const [userId, job] of dueStories) {
+    for (const [userId, snapshot] of dueStories) {
+      const job = this.memoryStore.get(userId) ?? snapshot;
       if (!(await this.claimDueRun(userId, job, 'story_next_run', now))) continue;
       const outcome = job.storyTrendEnabled === true
         ? await this.executeTrendStories(userId, job)
@@ -790,7 +797,8 @@ export class AutoPostService {
         storyNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
       });
     }
-    for (const [userId, job] of dueTrends) {
+    for (const [userId, snapshot] of dueTrends) {
+      const job = this.memoryStore.get(userId) ?? snapshot;
       const feedAlreadyProcessed = Boolean(results.get(userId)?.nextRun);
       if (this.isBwinScopeUser(userId) && feedAlreadyProcessed) {
         continue;
@@ -4535,7 +4543,7 @@ export class AutoPostService {
     const lastRunField = options.lastRunField ?? 'lastRunAt';
     const resultField = options.resultField ?? 'lastResult';
     const clientFallbackProfile = this.getClientFallbackProfile(userId);
-    const useGenericVideoFallback = options.useGenericVideoFallback !== false && !clientFallbackProfile;
+    const useGenericVideoFallback = options.useGenericVideoFallback !== false && !clientFallbackProfile && !job.sourceImageUrls?.length;
     if (!platforms.length) {
       const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
       const updatePayload: Record<string, unknown> = {
@@ -4669,6 +4677,9 @@ export class AutoPostService {
     const requireAiImages = needsImages ? (isBwinUser || clientPhotoProfile ? false : this.requireAiImages(job)) : false;
     const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
     const fallbackCopy = this.buildFallbackCopy(job, userId);
+    const configuredImage = needsImages && !options.generatedContent
+      ? selectConfiguredMedia(job.sourceImageUrls ?? [], job.sourceImageCursor, recentSet)
+      : null;
 
     let generated: GeneratedContent | null = options.generatedContent
       ? {
@@ -4677,6 +4688,16 @@ export class AutoPostService {
         }
       : null;
     let generationError: Error | null = null;
+    if (!generated && configuredImage) {
+      generated = {
+        images: [configuredImage.url],
+        caption_instagram: fallbackCopy.caption,
+        caption_linkedin: fallbackCopy.caption,
+        caption_x: fallbackCopy.caption,
+        hashtags_instagram: fallbackCopy.hashtags,
+        hashtags_generic: fallbackCopy.hashtags,
+      };
+    }
     if (!generated && clientPhotoProfile) {
       generated = {
         images: [],
@@ -4731,7 +4752,9 @@ export class AutoPostService {
     const results: PostResult[] = [...missingCredentialFailures];
     const finalGenerated = generated;
     let imageUrls = needsImages
-      ? options.generatedContent
+      ? configuredImage
+        ? [configuredImage.url]
+        : options.generatedContent
         ? this.resolveApprovedImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages, userId)
         : this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages, userId)
       : [];
@@ -5058,7 +5081,7 @@ export class AutoPostService {
       const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
       const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
       const threadSafeCaption = this.limitThreadsCaption(platform, brandedCaption);
-      let captionSelection = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption || dottEnergyProductCaption
+      let captionSelection = configuredImage || job.reelsSourceMode === 'static' || carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption || dottEnergyProductCaption
         ? { caption: threadSafeCaption, signature: this.buildCaptionSignature(platform, threadSafeCaption) }
         : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
       let caption = this.limitThreadsCaption(platform, captionSelection.caption);
@@ -5274,6 +5297,8 @@ export class AutoPostService {
       recentVideoUrls: nextRecentVideos,
       recentCaptions: nextRecentCaptions,
       ...cursorUpdates,
+      ...(configuredImage && results.some(result => result.status === 'posted')
+        ? { sourceImageCursor: configuredImage.nextCursor } : {}),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
     for (const field of instagramAttemptFields) {
@@ -5306,6 +5331,8 @@ export class AutoPostService {
     await this.recordHistory(userId, historyEntries, imageUrls);
     const nextRecord: AutoPostJob = {
       ...job,
+      ...(configuredImage && results.some(result => result.status === 'posted')
+        ? { sourceImageCursor: configuredImage.nextCursor } : {}),
       active: job.active !== false,
       recentImageUrls: nextRecentImages,
       recentVideoUrls: nextRecentVideos,
@@ -7034,6 +7061,10 @@ export class AutoPostService {
           : Number.isFinite(job.reelsVideoCursor)
             ? (job.reelsVideoCursor as number)
             : 0;
+    if (platform === 'instagram_reels' && job.reelsSourceMode === 'static') {
+      const selected = selectConfiguredMedia(list.length ? list : single ? [single] : [], cursor, recentVideos);
+      return selected ? { videoUrl: selected.url, nextCursor: selected.nextCursor } : { videoUrl: undefined };
+    }
     const freshList = list.filter(url => !recentVideos.has(url));
     if (!freshList.length && list.length) {
       return { videoUrl: undefined, nextCursor: cursor };
