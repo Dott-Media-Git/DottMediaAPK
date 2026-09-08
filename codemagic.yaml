@@ -7,7 +7,11 @@ workflows:
       app_store_connect: Dotti App Store Connect
     scripts:
       - name: Update verified metadata and inspect readiness
-        script: python3 scripts/ios/complete-listing.py
+        script: |
+          set -euo pipefail
+          python3 -m venv /tmp/dotti-store-tools
+          /tmp/dotti-store-tools/bin/pip install --quiet codemagic-cli-tools==0.69.0
+          /tmp/dotti-store-tools/bin/python scripts/ios/complete-listing.py
 
   ios-submit-review:
     name: Submit Dotti build 38 for App Review
