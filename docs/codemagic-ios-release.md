@@ -34,12 +34,35 @@ the same version/build pair again will be rejected. If Expo's artifact has expir
 use the local `ios-store-assets/Dotti-AI-1.0.0-build-38.ipa` via a secure artifact
 URL and keep the checksum unchanged, or use the new-build workflow below.
 
-The workflows upload the binary only. They do not submit to beta review, submit
-to App Review, cancel existing submissions, or release the app automatically.
+The upload/build workflows upload the binary only. They do not submit to beta review,
+submit to App Review, cancel existing submissions, or release the app automatically.
 Before choosing **Add for Review** in App Store Connect, complete the version's
 screenshots, app privacy answers, support/privacy URLs, content rights, age rating,
 export-compliance questions and review contact/demo-login details. Select build 38
 on the App Store version page after it finishes processing.
+
+## App Review submission
+
+After upload, `ios-submit-review` submits the existing 1.0.0 (38) build and sets
+release to `AFTER_APPROVAL`. The owner authorized submission and release on
+8 September 2026. It does not upload the same binary again or cancel prior reviews.
+Apple app ID: `6755872330`.
+
+The first submission reached Apple but was blocked by missing listing information:
+
+- An iPad screenshot (`APP_IPAD_PRO_3GEN_129`); existing iPhone screenshots are present.
+- App Review contact details and review/demo access.
+- A privacy policy URL, primary category, and content-rights declaration.
+- The age-rating questionnaire, published app privacy/data-use answers, and pricing.
+
+`ios-complete-listing` applies the verified Business category and live privacy URL
+`https://dotti.dott-media.org/privacy`, and verifies release-after-approval settings.
+It intentionally does not invent contact details, demo credentials, legal declarations,
+or screenshots. Complete those remaining requirements before retrying submission.
+
+An actual iPad screenshot may be 2048 x 2732 or 2064 x 2752 pixels in portrait;
+capture the app running on an iPad or iPad simulator. Publish the privacy answers
+in App Store Connect's App Privacy section, not only the privacy-policy URL.
 
 ## Build a new IPA from GitHub
 
