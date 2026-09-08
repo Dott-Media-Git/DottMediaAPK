@@ -1,4 +1,14 @@
 workflows:
+  ios-complete-listing:
+    name: Complete verified Dotti listing fields
+    instance_type: mac_mini_m2
+    max_build_duration: 15
+    integrations:
+      app_store_connect: Dotti App Store Connect
+    scripts:
+      - name: Update verified metadata and inspect readiness
+        script: python3 scripts/ios/complete-listing.py
+
   ios-submit-review:
     name: Submit Dotti build 38 for App Review
     instance_type: mac_mini_m2
