@@ -42,13 +42,11 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "./app.plugin.js",
       [
         "expo-build-properties",
         {
           "ios": {
-            "deploymentTarget": "15.1",
-            "useFrameworks": "static"
+            "deploymentTarget": "15.1"
           }
         }
       ]
@@ -57,6 +55,7 @@
       "eas": {
         "projectId": "2c1c654b-a235-4e12-886f-34020bc6de28"
       }
-    }
+    },
+    "newArchEnabled": true
   }
 }

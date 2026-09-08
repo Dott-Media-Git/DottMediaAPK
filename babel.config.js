@@ -16,8 +16,7 @@
             '@constants': './src/constants'
           }
         }
-      ],
-      'react-native-reanimated/plugin'
+      ]
     ]
   };
 };

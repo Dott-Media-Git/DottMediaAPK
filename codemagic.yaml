@@ -1,0 +1,84 @@
+workflows:
+  ios-upload-existing:
+    name: Upload Dotti 1.0.0 (38) to App Store Connect
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    integrations:
+      app_store_connect: Dotti App Store Connect
+    environment:
+      xcode: 26.0
+      vars:
+        IPA_URL: https://expo.dev/artifacts/eas/Bo2O3uCd7XwOnFl27QhT5xcHPdeCF7xjNY5-ZTM4UYc.ipa
+        IPA_SHA256: c40eabb9cc17f17344208f2167533d4d295b8eec290adb96b80d1697def1489d
+    scripts:
+      - name: Download and validate the existing signed release
+        script: |
+          set -euo pipefail
+          mkdir -p build/ios/ipa
+          curl --fail --location --retry 3 "$IPA_URL" -o build/ios/ipa/Dotti-1.0.0-38.ipa
+          python3 scripts/ios/inspect-ipa.py build/ios/ipa/Dotti-1.0.0-38.ipa --sha256 "$IPA_SHA256" --build 38
+          unzip -q build/ios/ipa/Dotti-1.0.0-38.ipa -d build/ios/verified
+          codesign --verify --deep --strict --verbose=2 build/ios/verified/Payload/*.app
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: false
+        submit_to_app_store: false
+
+  ios-release:
+    name: Build Dotti iOS and upload to App Store Connect
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    integrations:
+      app_store_connect: Dotti App Store Connect
+    environment:
+      node: 22.21.0
+      xcode: 26.0
+      cocoapods: default
+      groups:
+        - dotti_mobile
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.dottmedia.dottmediaapk
+      vars:
+        EXPO_PUBLIC_API_URL: https://dottmediaapk.onrender.com
+        XCODE_WORKSPACE: ios/DottMediaCRM.xcworkspace
+        XCODE_SCHEME: DottMediaCRM
+    scripts:
+      - name: Check release configuration
+        script: |
+          set -euo pipefail
+          node scripts/ios/prepare-release.cjs --check
+      - name: Install locked Expo dependencies
+        script: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Allocate the next iOS build number
+        script: |
+          set -euo pipefail
+          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID")
+          export IOS_BUILD_NUMBER=$((LATEST_BUILD + 1))
+          if [ "$IOS_BUILD_NUMBER" -lt 39 ]; then export IOS_BUILD_NUMBER=39; fi
+          node scripts/ios/prepare-release.cjs
+      - name: Generate the native iOS project
+        script: |
+          set -euo pipefail
+          npx expo prebuild --platform ios --clean --no-install
+          cd ios
+          pod install
+      - name: Apply App Store signing
+        script: xcode-project use-profiles
+      - name: Archive and export IPA
+        script: |
+          set -euo pipefail
+          xcode-project build-ipa --workspace "$CM_BUILD_DIR/$XCODE_WORKSPACE" --scheme "$XCODE_SCHEME"
+          python3 scripts/ios/inspect-ipa.py build/ios/ipa/*.ipa
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: false
+        submit_to_app_store: false
