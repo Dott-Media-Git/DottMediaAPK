@@ -48,10 +48,21 @@ release to `AFTER_APPROVAL`. The owner authorized submission and release on
 8 September 2026. It does not upload the same binary again or cancel prior reviews.
 Apple app ID: `6755872330`.
 
+Verified on 9 September 2026:
+- Build 38 is uploaded. Version 1.0.0 remains `PREPARE_FOR_SUBMISSION`.
+- Business category, the working privacy-policy URL, and `AFTER_APPROVAL` are saved.
+- Dedicated login `apple-review@dott-media.org` is created and its password is saved
+  and verified in the private App Review details. No password is stored in this repository.
+- Firebase password sign-in and the authenticated live profile endpoint succeed.
+  Firestore profile reads return `Quota exceeded` and the billing endpoint returned
+  HTTP 500, so full in-app review access is not yet verified.
+- Apple review contact fields remain incomplete. Four iPhone screenshots are present;
+  the required iPad screenshot is missing.
+
 The first submission reached Apple but was blocked by missing listing information:
 
 - An iPad screenshot (`APP_IPAD_PRO_3GEN_129`); existing iPhone screenshots are present.
-- App Review contact details and review/demo access.
+- App Review contact details (review/demo credentials have since been supplied).
 - A privacy policy URL, primary category, and content-rights declaration.
 - The age-rating questionnaire, published app privacy/data-use answers, and pricing.
 
