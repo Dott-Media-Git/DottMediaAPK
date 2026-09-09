@@ -1,13 +1,14 @@
 """Update known listing facts without inventing review or privacy declarations."""
 import json
+import os
 
 from codemagic.tools.app_store_connect import AppStoreConnect
 from codemagic.tools.app_store_connect.arguments import Types
 
 tool = AppStoreConnect(
-    key_identifier=Types.KeyIdentifierArgument.resolve_value(None),
-    issuer_id=Types.IssuerIdArgument.resolve_value(None),
-    private_key=Types.PrivateKeyArgument.resolve_value(None),
+    key_identifier=Types.KeyIdentifierArgument.from_environment_variable_default().value,
+    issuer_id=Types.IssuerIdArgument.from_environment_variable_default().value,
+    private_key=Types.PrivateKeyArgument.from_environment_variable_default().value,
 )
 client = tool.api_client
 base = "https://api.appstoreconnect.apple.com/v1"
@@ -40,6 +41,30 @@ patch("appInfos", info["id"], relationships={"primaryCategory": {"data": {"type"
 for localization in get(f"/appInfos/{info['id']}/appInfoLocalizations"):
     patch("appInfoLocalizations", localization["id"], attributes={"privacyPolicyUrl": "https://dotti.dott-media.org/privacy"})
 patch("appStoreVersions", version_id, attributes={"releaseType": "AFTER_APPROVAL"})
+if os.environ.get("APP_REVIEW_PASSWORD"):
+    review_attributes = {
+        "demoAccountRequired": True,
+        "demoAccountName": "apple-review@dott-media.org",
+        "demoAccountPassword": os.environ["APP_REVIEW_PASSWORD"],
+        "notes": "Sign in using Email and Password with the supplied review credentials. This dedicated workspace has complimentary Business access and no customer data or connected social accounts. Email verification is already complete. Explore the assistant, content creation, scheduling, CRM and integration settings. Publishing to an external platform requires connecting an authorized platform account, as it does for other users.",
+    }
+    response = client.session.get(base + f"/appStoreVersions/{version_id}/appStoreReviewDetail")
+    if response.ok and response.json().get("data"):
+        patch("appStoreReviewDetails", response.json()["data"]["id"], attributes=review_attributes)
+    elif response.status_code == 404 or (response.ok and not response.json().get("data")):
+        response = client.session.post(base + "/appStoreReviewDetails", json={"data": {
+            "type": "appStoreReviewDetails", "attributes": review_attributes,
+            "relationships": {"appStoreVersion": {"data": {"type": "appStoreVersions", "id": version_id}}},
+        }})
+        if not response.ok:
+            print("Review details creation failed:", response.status_code, flush=True)
+        response.raise_for_status()
+        print("Created private review login details", flush=True)
+    else:
+        response.raise_for_status()
+    saved_review = get(f"/appStoreVersions/{version_id}/appStoreReviewDetail")["attributes"]
+    print("Review login verified:", saved_review.get("demoAccountName") == review_attributes["demoAccountName"] and saved_review.get("demoAccountPassword") == review_attributes["demoAccountPassword"], flush=True)
+    print("Review contact complete:", all(saved_review.get(k) for k in ("contactFirstName", "contactLastName", "contactEmail", "contactPhone")), flush=True)
 version = get(f"/appStoreVersions/{version_id}")
 print("Version state:", json.dumps({k: version["attributes"].get(k) for k in ("versionString", "appStoreState", "releaseType")}), flush=True)
 for localization in get(f"/appStoreVersions/{version_id}/appStoreVersionLocalizations"):
