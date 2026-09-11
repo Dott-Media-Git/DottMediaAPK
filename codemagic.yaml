@@ -1,4 +1,36 @@
 workflows:
+  ios-ipad-screenshot:
+    name: Capture native Dotti iPad screenshot
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      node: 22.21.0
+      xcode: 26.0
+      cocoapods: default
+      groups:
+        - dotti_mobile
+      vars:
+        EXPO_PUBLIC_API_URL: https://dottmediaapk.onrender.com
+    scripts:
+      - name: Install release dependencies
+        script: npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Generate native iOS app
+        script: |
+          set -euo pipefail
+          node scripts/ios/prepare-release.cjs --check
+          npx expo prebuild --platform ios --clean --no-install
+          cd ios
+          pod install
+      - name: Build the release app for iPad Simulator
+        script: |
+          set -euo pipefail
+          xcodebuild -workspace ios/DottMediaCRM.xcworkspace -scheme DottMediaCRM -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=NO build > /tmp/dotti-ipad-build.log 2>&1 || { tail -100 /tmp/dotti-ipad-build.log; exit 1; }
+      - name: Capture the actual iPad display
+        script: python3 scripts/ios/capture-ipad.py
+    artifacts:
+      - build/ipad-screenshots/*.png
+      - /tmp/dotti-ipad-build.log
+
   ios-complete-listing:
     name: Complete verified Dotti listing fields
     instance_type: mac_mini_m2
