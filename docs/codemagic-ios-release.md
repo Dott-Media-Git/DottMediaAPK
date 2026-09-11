@@ -43,6 +43,18 @@ on the App Store version page after it finishes processing.
 
 ## App Review submission
 
+Latest verified update, 11 September 2026:
+- App download price is FREE; in-app service pricing was not changed.
+- Content rights and the age questionnaire are saved, including UGC, messaging,
+  advertising, and social features. Apple's returned general age rating is `FOUR_PLUS`.
+- Review contact is Dott Media, `info@dott-media.org`, `+256775067216`, using the
+  company's published contact information. Review login remains separate and verified.
+- App Privacy answers are prepared in [app-store-privacy-answers.md](app-store-privacy-answers.md)
+  and `scripts/ios/app-privacy-details.json`. They still require publication using an
+  Apple ID session; the connected API key cannot publish this label.
+- The required iPad screenshot is still missing. Firestore account-data reads still
+  return `Quota exceeded`; Firebase login succeeds but full access is not verified.
+
 After upload, `ios-submit-review` submits the existing 1.0.0 (38) build and sets
 release to `AFTER_APPROVAL`. The owner authorized submission and release on
 8 September 2026. It does not upload the same binary again or cancel prior reviews.

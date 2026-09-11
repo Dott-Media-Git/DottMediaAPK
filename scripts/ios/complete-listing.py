@@ -75,10 +75,10 @@ if os.environ.get("APP_REVIEW_PASSWORD"):
 version = get(f"/appStoreVersions/{version_id}")
 print("Version state:", json.dumps({k: version["attributes"].get(k) for k in ("versionString", "appStoreState", "releaseType")}), flush=True)
 for localization in get(f"/appStoreVersions/{version_id}/appStoreVersionLocalizations"):
-    attrs = localization["attributes"]
     patch("appStoreVersionLocalizations", localization["id"], attributes={"supportUrl": "https://dott-media.org/contact"})
+    attrs = get(f"/appStoreVersionLocalizations/{localization['id']}")["attributes"]
     print("Listing fields:", json.dumps({"locale": attrs.get("locale"), "descriptionPresent": bool(attrs.get("description")), "supportUrl": attrs.get("supportUrl")}), flush=True)
     for screenshots in get(f"/appStoreVersionLocalizations/{localization['id']}/appScreenshotSets"):
         files = get(f"/appScreenshotSets/{screenshots['id']}/appScreenshots")
         print("Screenshots:", screenshots["attributes"]["screenshotDisplayType"], len(files), flush=True)
-print("Check remaining requirements: iPad screenshot; reachable review contact phone/email; published privacy data disclosures; live account data access.", flush=True)
+print("Check remaining requirements: iPad screenshot; published privacy data disclosures; live account data access.", flush=True)
