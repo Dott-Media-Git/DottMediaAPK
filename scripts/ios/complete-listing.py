@@ -1,6 +1,8 @@
 """Update known listing facts without inventing review or privacy declarations."""
 import json
 import os
+import runpy
+from pathlib import Path
 
 from codemagic.tools.app_store_connect import AppStoreConnect
 from codemagic.tools.app_store_connect.arguments import Types
@@ -37,12 +39,17 @@ editable = [i for i in infos if i["attributes"]["appStoreState"] in ("PREPARE_FO
 if len(editable) != 1:
     raise SystemExit("Expected one editable app info; leaving existing records unchanged")
 info = editable[0]
+runpy.run_path(str(Path(__file__).with_name("listing-declarations.py")))["complete_declarations"](client, app_id, info["id"])
 patch("appInfos", info["id"], relationships={"primaryCategory": {"data": {"type": "appCategories", "id": "BUSINESS"}}})
 for localization in get(f"/appInfos/{info['id']}/appInfoLocalizations"):
     patch("appInfoLocalizations", localization["id"], attributes={"privacyPolicyUrl": "https://dotti.dott-media.org/privacy"})
 patch("appStoreVersions", version_id, attributes={"releaseType": "AFTER_APPROVAL"})
 if os.environ.get("APP_REVIEW_PASSWORD"):
     review_attributes = {
+        "contactFirstName": "Dott",
+        "contactLastName": "Media",
+        "contactEmail": "info@dott-media.org",
+        "contactPhone": "+256775067216",
         "demoAccountRequired": True,
         "demoAccountName": "apple-review@dott-media.org",
         "demoAccountPassword": os.environ["APP_REVIEW_PASSWORD"],
@@ -69,8 +76,9 @@ version = get(f"/appStoreVersions/{version_id}")
 print("Version state:", json.dumps({k: version["attributes"].get(k) for k in ("versionString", "appStoreState", "releaseType")}), flush=True)
 for localization in get(f"/appStoreVersions/{version_id}/appStoreVersionLocalizations"):
     attrs = localization["attributes"]
+    patch("appStoreVersionLocalizations", localization["id"], attributes={"supportUrl": "https://dott-media.org/contact"})
     print("Listing fields:", json.dumps({"locale": attrs.get("locale"), "descriptionPresent": bool(attrs.get("description")), "supportUrl": attrs.get("supportUrl")}), flush=True)
     for screenshots in get(f"/appStoreVersionLocalizations/{localization['id']}/appScreenshotSets"):
         files = get(f"/appScreenshotSets/{screenshots['id']}/appScreenshots")
         print("Screenshots:", screenshots["attributes"]["screenshotDisplayType"], len(files), flush=True)
-print("Remaining owner input: iPad screenshot; review contact and demo access; privacy data disclosures; age rating and content rights; pricing.", flush=True)
+print("Check remaining requirements: iPad screenshot; reachable review contact phone/email; published privacy data disclosures; live account data access.", flush=True)
