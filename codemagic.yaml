@@ -12,6 +12,8 @@ workflows:
           python3 -m venv /tmp/dotti-store-tools
           /tmp/dotti-store-tools/bin/pip install --quiet codemagic-cli-tools==0.69.0
           /tmp/dotti-store-tools/bin/python scripts/ios/upload-ipad.py
+      - name: Submit for review after screenshot processing succeeds
+        script: python3 scripts/ios/submit-review.py
 
   ios-ipad-screenshot:
     name: Capture native Dotti iPad screenshot
