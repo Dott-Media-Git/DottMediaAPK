@@ -40,7 +40,7 @@ workflows:
       - name: Build the release app for iPad Simulator
         script: |
           set -euo pipefail
-          xcodebuild -workspace ios/DottMediaCRM.xcworkspace -scheme DottMediaCRM -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=NO build > /tmp/dotti-ipad-build.log 2>&1 || { tail -100 /tmp/dotti-ipad-build.log; exit 1; }
+          xcodebuild -workspace ios/DottMediaCRM.xcworkspace -scheme DottMediaCRM -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build > /tmp/dotti-ipad-build.log 2>&1 || { tail -100 /tmp/dotti-ipad-build.log; exit 1; }
       - name: Capture the actual iPad display
         script: python3 scripts/ios/capture-ipad.py
     artifacts:
