@@ -29,6 +29,7 @@ workflows:
         script: python3 scripts/ios/capture-ipad.py
     artifacts:
       - build/ipad-screenshots/*.png
+      - build/ipad-diagnostics/*
       - /tmp/dotti-ipad-build.log
 
   ios-complete-listing:
