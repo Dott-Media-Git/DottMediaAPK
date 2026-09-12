@@ -193,6 +193,7 @@ const DrawerNavigator = () => {
   );
   return (
     <Drawer.Navigator
+      useLegacyImplementation={false}
       initialRouteName="DottiChat"
       defaultStatus="closed"
       backBehavior="history"
