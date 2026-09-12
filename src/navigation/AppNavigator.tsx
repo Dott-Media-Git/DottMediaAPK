@@ -308,7 +308,7 @@ export const AppNavigator: React.FC = () => {
         {!isAuthenticated ? (
           <>
             <RootStack.Screen name="Main" component={DrawerNavigator} />
-            <RootStack.Screen name="Auth" component={AuthStackNavigator} options={{ presentation: 'modal' }} />
+            <RootStack.Screen name="Auth" component={AuthStackNavigator} options={{ presentation: Platform.OS === 'ios' ? 'modal' : 'card', gestureEnabled: Platform.OS === 'ios' }} />
           </>
         ) : state.user?.emailVerified === false ? (
           <RootStack.Screen name="EmailVerification" component={EmailVerificationScreen} />

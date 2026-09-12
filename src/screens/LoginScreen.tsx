@@ -71,7 +71,8 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
+        removeClippedSubviews={false}
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
       >
@@ -97,6 +98,10 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
           }}
           autoCapitalize="none"
           keyboardType="email-address"
+          autoCorrect={false}
+          autoComplete="email"
+          textContentType="username"
+          testID="login-email"
         />
         <DMTextInput
           label={t('Password')}
@@ -106,6 +111,11 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
             if (error) setError('');
           }}
           secureTextEntry={!showPassword}
+          autoCorrect={false}
+          autoCapitalize="none"
+          autoComplete="current-password"
+          textContentType="password"
+          testID="login-password"
           rightElement={
             <TouchableOpacity
               onPress={() => setShowPassword(prev => !prev)}

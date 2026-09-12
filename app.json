@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Dott Media CRM",
+    "name": "Dotti AI",
     "slug": "dott-media-crm",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "scheme": "dottmedia",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -32,10 +32,11 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0D1117"
+        "backgroundColor": "#000000"
       },
-      "package": "com.anonymous.dottmediacrm",
-      "runtimeVersion": "1.0.0"
+      "package": "com.dottmedia.dotti",
+      "runtimeVersion": "1.0.1",
+      "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
       "bundler": "metro",
