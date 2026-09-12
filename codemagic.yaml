@@ -1,4 +1,18 @@
 workflows:
+  ios-upload-ipad:
+    name: Upload verified iPad screenshot
+    instance_type: mac_mini_m2
+    max_build_duration: 20
+    integrations:
+      app_store_connect: Dotti App Store Connect
+    scripts:
+      - name: Upload and verify iPad screenshot
+        script: |
+          set -euo pipefail
+          python3 -m venv /tmp/dotti-store-tools
+          /tmp/dotti-store-tools/bin/pip install --quiet codemagic-cli-tools==0.69.0
+          /tmp/dotti-store-tools/bin/python scripts/ios/upload-ipad.py
+
   ios-ipad-screenshot:
     name: Capture native Dotti iPad screenshot
     instance_type: mac_mini_m2
