@@ -1,4 +1,39 @@
 workflows:
+  android-eas-release:
+    name: Build signed Dotti Google Play bundle
+    instance_type: linux_x2
+    max_build_duration: 45
+    environment:
+      node: 22.21.0
+      groups:
+        - dotti_mobile
+        - dotti_eas
+      vars:
+        EXPO_PUBLIC_API_URL: https://dottmediaapk.onrender.com
+    scripts:
+      - name: Install release dependencies and build CLI
+        script: |
+          set -euo pipefail
+          npm ci --legacy-peer-deps --no-audit --no-fund
+          npm install -g eas-cli@16.28.0
+      - name: Restore authorized build session
+        script: |
+          node - <<'NODE'
+          const fs = require('fs'), os = require('os'), path = require('path');
+          const directory = path.join(os.homedir(), '.expo');
+          fs.mkdirSync(directory, { recursive: true });
+          fs.writeFileSync(path.join(directory, 'state.json'), JSON.stringify({auth: JSON.parse(process.env.EAS_SESSION_AUTH)}), {mode: 0o600});
+          const entries = Object.entries(process.env).filter(([key]) => key.startsWith('EXPO_PUBLIC_'));
+          fs.writeFileSync('.env', entries.map(([key, value]) => `${key}=${JSON.stringify(value)}`).join('\n') + '\n');
+          NODE
+      - name: Start production Android App Bundle build
+        script: |
+          set -euo pipefail
+          eas build --platform android --profile production --non-interactive --no-wait --json > android-build-request.json
+          node -e "for(const b of JSON.parse(require('fs').readFileSync('android-build-request.json'))) console.log('Android build:', b.id, b.status)"
+    artifacts:
+      - android-build-request.json
+
   ios-upload-ipad:
     name: Upload verified iPad screenshot
     instance_type: mac_mini_m2
