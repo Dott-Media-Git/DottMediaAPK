@@ -1,4 +1,58 @@
 workflows:
+  android-release-check:
+    name: Verify Google Play bundle and login keyboard
+    instance_type: linux_x2
+    max_build_duration: 60
+    environment:
+      java: 21
+      groups:
+        - dotti_eas
+      vars:
+        EAS_BUILD_ID: 5214f389-0b72-4989-97f7-043fd60c32b5
+    scripts:
+      - name: Wait for the selected signed release
+        script: python3 scripts/android/wait-for-bundle.py
+      - name: Validate the signed bundle and generate emulator APK
+        script: |
+          set -euo pipefail
+          mkdir -p build/android-check
+          AAB_URL=$(cat /tmp/dotti-aab-url)
+          curl --fail --location --retry 3 "$AAB_URL" -o build/dotti.aab
+          curl --fail --location --retry 3 https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar -o /tmp/bundletool.jar
+          java -jar /tmp/bundletool.jar validate --bundle=build/dotti.aab
+          jarsigner -verify build/dotti.aab
+          java -jar /tmp/bundletool.jar dump manifest --bundle=build/dotti.aab --module=base > build/android-check/manifest.xml
+          keytool -genkeypair -keystore /tmp/dotti-test.jks -storepass android -keypass android -alias androiddebugkey -dname 'CN=Android Test' -keyalg RSA -validity 30
+          java -jar /tmp/bundletool.jar build-apks --bundle=build/dotti.aab --output=build/dotti.apks --mode=universal --ks=/tmp/dotti-test.jks --ks-pass=pass:android --ks-key-alias=androiddebugkey --key-pass=pass:android
+          unzip -p build/dotti.apks universal.apk > build/dotti-test.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging build/dotti-test.apk > build/android-check/badging.txt
+          grep -q "package: name='com.dottmedia.dotti'" build/android-check/badging.txt
+          grep -q "application-label:'Dotti AI'" build/android-check/badging.txt
+          sha256sum build/dotti.aab > build/android-check/aab-sha256.txt
+          python3 - <<'PY'
+          import pathlib, zipfile
+          with zipfile.ZipFile('build/dotti-test.apk') as archive:
+              for name in archive.namelist():
+                  if 'xxxhdpi' in name and 'ic_launcher' in name and name.endswith(('.png', '.webp')):
+                      pathlib.Path('build/android-check', pathlib.Path(name).name).write_bytes(archive.read(name))
+          PY
+      - name: Boot Android with software keyboard
+        script: |
+          set -euo pipefail
+          "$ANDROID_HOME/emulator/emulator" -avd emulator -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect > build/android-check/emulator.log 2>&1 &
+          timeout 180 adb wait-for-device
+          for attempt in $(seq 1 90); do
+            if [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = '1' ]; then break; fi
+            sleep 2
+          done
+          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = '1'
+          adb shell input keyevent 82
+          adb install build/dotti-test.apk
+      - name: Verify email and password typing on the release app
+        script: python3 scripts/android/check-login-keyboard.py
+    artifacts:
+      - build/android-check/*
+
   android-eas-release:
     name: Build signed Dotti Google Play bundle
     instance_type: linux_x2
