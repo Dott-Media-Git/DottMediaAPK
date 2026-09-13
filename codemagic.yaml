@@ -16,6 +16,16 @@ workflows:
           curl --fail --location --retry 3 https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar -o /tmp/bundletool.jar
           java -jar /tmp/bundletool.jar validate --bundle=build/dotti.aab
           jarsigner -verify build/dotti.aab
+          curl --fail --location --retry 3 https://expo.dev/artifacts/eas/kLrjwpLdouBPK-IuZJLiZU3oQBbFHLZ6pYCWVsD9v4s.aab -o /tmp/dotti-previous.aab
+          python3 - <<'PY'
+          import re, subprocess, pathlib
+          def certificate(file):
+              output = subprocess.check_output(['keytool', '-printcert', '-jarfile', file], text=True)
+              return re.search(r'SHA256:\s*([A-F0-9:]+)', output).group(1)
+          previous, current = certificate('/tmp/dotti-previous.aab'), certificate('build/dotti.aab')
+          assert previous == current, 'Upload signing certificate differs from previous Play bundle'
+          pathlib.Path('build/android-check/signing-certificate.txt').write_text('Upload certificate matches build 21. SHA256: ' + current + '\n')
+          PY
           java -jar /tmp/bundletool.jar dump manifest --bundle=build/dotti.aab --module=base > build/android-check/manifest.xml
           keytool -genkeypair -keystore /tmp/dotti-test.jks -storepass android -keypass android -alias androiddebugkey -dname 'CN=Android Test' -keyalg RSA -validity 30
           java -jar /tmp/bundletool.jar build-apks --bundle=build/dotti.aab --output=build/dotti.apks --mode=universal --ks=/tmp/dotti-test.jks --ks-pass=pass:android --ks-key-alias=androiddebugkey --key-pass=pass:android
