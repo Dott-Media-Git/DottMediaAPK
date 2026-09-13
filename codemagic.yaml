@@ -5,18 +5,13 @@ workflows:
     max_build_duration: 60
     environment:
       java: 21
-      groups:
-        - dotti_eas
       vars:
-        EAS_BUILD_ID: 5214f389-0b72-4989-97f7-043fd60c32b5
+        AAB_URL: https://expo.dev/artifacts/eas/WKOSXa0TUYeEn3hPbPWDvO5VOHRVfLpUtkP9XQE3aDw.aab
     scripts:
-      - name: Wait for the selected signed release
-        script: python3 scripts/android/wait-for-bundle.py
       - name: Validate the signed bundle and generate emulator APK
         script: |
           set -euo pipefail
           mkdir -p build/android-check
-          AAB_URL=$(cat /tmp/dotti-aab-url)
           curl --fail --location --retry 3 "$AAB_URL" -o build/dotti.aab
           curl --fail --location --retry 3 https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar -o /tmp/bundletool.jar
           java -jar /tmp/bundletool.jar validate --bundle=build/dotti.aab
