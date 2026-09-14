@@ -1,4 +1,18 @@
 workflows:
+  ios-check-review:
+    name: Check Apple review and release status
+    instance_type: linux_x2
+    max_build_duration: 15
+    integrations:
+      app_store_connect: Dotti App Store Connect
+    scripts:
+      - name: Read current Apple status
+        script: |
+          set -euo pipefail
+          python3 -m venv /tmp/dotti-store-tools
+          /tmp/dotti-store-tools/bin/pip install --quiet codemagic-cli-tools==0.69.0
+          /tmp/dotti-store-tools/bin/python scripts/ios/check-review-status.py
+
   android-release-check:
     name: Verify Google Play bundle and login keyboard
     instance_type: linux_x2

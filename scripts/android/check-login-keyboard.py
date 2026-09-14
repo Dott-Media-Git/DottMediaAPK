@@ -43,7 +43,11 @@ try:
     adb('shell', 'am', 'force-stop', 'com.dottmedia.dotti')
     adb('shell', 'monkey', '-p', 'com.dottmedia.dotti', '-c', 'android.intent.category.LAUNCHER', '1')
     time.sleep(15)
-    tap(find('text', 'Sign in'))
+    # Use the app's public login deep link: the welcome avatar continuously
+    # animates, preventing legacy uiautomator from acquiring an idle hierarchy.
+    adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW',
+        '-d', 'dottmedia://login', 'com.dottmedia.dotti')
+    time.sleep(3)
     tap(find('resource-id', 'login-email'))
     time.sleep(3)
     keyboard_visible()
