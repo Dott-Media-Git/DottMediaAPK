@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
+import { Platform, StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
 import { colors } from '@constants/colors';
 
 type DMTextInputProps = TextInputProps & {
@@ -65,10 +65,14 @@ const styles = StyleSheet.create({
   },
   inputWrapperFocused: {
     borderColor: colors.accent,
-    shadowColor: colors.accent,
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 }
+    // Conditional Android shadows can recreate the native input wrapper and
+    // dismiss the keyboard as soon as the field receives focus.
+    ...(Platform.OS === 'ios' ? {
+      shadowColor: colors.accent,
+      shadowOpacity: 0.35,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 4 }
+    } : {})
   },
   inputWrapperError: {
     borderColor: colors.danger
