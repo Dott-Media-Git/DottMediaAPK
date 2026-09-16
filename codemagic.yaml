@@ -20,7 +20,7 @@ workflows:
     environment:
       java: 21
       vars:
-        AAB_URL: https://expo.dev/artifacts/eas/WKOSXa0TUYeEn3hPbPWDvO5VOHRVfLpUtkP9XQE3aDw.aab
+        AAB_URL: https://expo.dev/artifacts/eas/YnQlKDxUTOycZ2BgZs2k15L3zOgv7GHlSiawQD_ld6w.aab
     scripts:
       - name: Validate the signed bundle and generate emulator APK
         script: |
