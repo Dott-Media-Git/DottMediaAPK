@@ -237,7 +237,11 @@ const getScopes = (platform: MetaConnectPlatform = 'all') => {
   if (platform === 'facebook') return defaultFacebookScopes;
   if (platform === 'instagram') return defaultInstagramScopes;
   if (platform === 'ads') return defaultAdsScopes;
-  return uniqueScopes(defaultFacebookScopes, defaultInstagramScopes);
+  // The combined Meta connection is also used by the dashboard's Ads
+  // Performance card. Request the Ads scopes here as well so a user who
+  // connects Meta once through the general flow receives a token that can
+  // read ad accounts and insights.
+  return uniqueScopes(defaultFacebookScopes, defaultInstagramScopes, defaultAdsScopes);
 };
 
 const getBusinessLoginConfigId = (platform: MetaConnectPlatform = 'all') => {
