@@ -1259,6 +1259,7 @@ export class AssistantService {
       /\b(review|check|show|summari[sz]e|analy[sz]e|tell me about)\b[\s\S]{0,60}\b(performance|results|metrics|stats)\b/i.test(question) ||
       /\b(account|overall|business|marketing)\s+(performance|results|metrics|stats)\b/i.test(question) ||
       /\bhow(?:'s| is| are)\b[\s\S]{0,50}\b(account|business|performance|performing)\b/i.test(question);
+    const isSimpleGreeting = /^(?:hi|hello|hey|howdy|good\s+(?:morning|afternoon|evening))[!.?,\s]*$/i.test(question.trim());
     const asksForAdsPerformance = /\b(ad spend|ad performance|ads? report(?:ing)?|campaign reporting|impressions|click-through rate|\bctr\b)\b/i.test(question);
     const adsConnection = accountSnapshot?.adsAccount ?? {};
     const hasConnectedAdsAccount = Boolean(
@@ -1710,7 +1711,7 @@ export class AssistantService {
       }
 
       console.error('OpenAI Error:', { status, code, message });
-      if (accountContextBlock) {
+      if (accountContextBlock && asksForOverallPerformance) {
         const dashboard = accountSnapshot?.dashboardPerformance;
         const organicFallback = dashboard
           ? `Organic performance: ${this.formatWholeNumber(dashboard.views)} views, ${this.formatWholeNumber(dashboard.interactions)} interactions, ${dashboard.engagementRate.toFixed(2)}% engagement, ${this.formatWholeNumber(dashboard.conversions)} conversions.`
@@ -1722,6 +1723,18 @@ export class AssistantService {
             organicFallback,
             liveAdsContext ? `Paid ads: ${liveAdsContext}` : 'Paid ads performance is unavailable for this request.',
           ].join('\n'),
+        };
+      }
+      if (isSimpleGreeting) {
+        return {
+          type: 'text',
+          text: locale === 'fr'
+            ? 'Bonjour ! Je suis Dotti. Comment puis-je vous aider aujourd’hui ?'
+            : locale === 'de'
+              ? 'Hallo! Ich bin Dotti. Wie kann ich dir heute helfen?'
+              : locale === 'es'
+                ? '¡Hola! Soy Dotti. ¿Cómo puedo ayudarte hoy?'
+                : 'Hi! I’m Dotti. How can I help you today?',
         };
       }
       if (kind !== 'generic') {
