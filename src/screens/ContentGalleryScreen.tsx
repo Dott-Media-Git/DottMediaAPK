@@ -103,6 +103,14 @@ export const ContentGalleryScreen: React.FC = () => {
     setMessage('Removed from your gallery.');
   };
 
+  const removeAsset = async (assetId: string) => {
+    const next = assets.filter(asset => asset.id !== assetId);
+    setAssets(next);
+    setSelected(current => current.filter(id => id !== assetId));
+    await saveMediaLibrary(userId, next);
+    setMessage('Removed from your gallery.');
+  };
+
   const useInSchedule = () => {
     const chosen = assets.filter(asset => selected.includes(asset.id));
     if (!chosen.length) {
@@ -123,7 +131,7 @@ export const ContentGalleryScreen: React.FC = () => {
           <Text style={styles.title}>Content Gallery</Text>
           <Text style={styles.subtitle}>Upload once, then quickly select content whenever you schedule a post.</Text>
         </View>
-        <DMButton title={uploading ? 'Uploading…' : 'Upload photos & videos'} onPress={() => void chooseFiles()} disabled={uploading} />
+        <DMButton title={uploading ? 'Uploading…' : 'Upload photos & videos'} onPress={() => void chooseFiles()} disabled={uploading} style={styles.uploadButton} />
         {Platform.OS === 'web' && React.createElement('input', {
           ref: fileInputRef,
           type: 'file',
@@ -173,6 +181,18 @@ export const ContentGalleryScreen: React.FC = () => {
                 <View style={[styles.check, isSelected && styles.checkSelected]}>
                   {isSelected ? <Ionicons name="checkmark" size={17} color="#ffffff" /> : null}
                 </View>
+                <Pressable
+                  accessibilityLabel={`Remove ${asset.name || (asset.kind === 'image' ? 'photo' : 'video')} from gallery`}
+                  accessibilityRole="button"
+                  hitSlop={6}
+                  style={styles.removeAssetButton}
+                  onPress={(event: any) => {
+                    event.stopPropagation?.();
+                    void removeAsset(asset.id);
+                  }}
+                >
+                  <Ionicons name="remove" size={15} color="#ffffff" />
+                </Pressable>
                 <View style={styles.cardFooter}>
                   <Text numberOfLines={1} style={styles.fileName}>{asset.name || (asset.kind === 'image' ? 'Photo' : 'Video')}</Text>
                   <Text style={styles.fileMeta}>{asset.size ? `${(asset.size / 1024 / 1024).toFixed(1)} MB` : 'Ready'}</Text>
@@ -201,6 +221,7 @@ const styles = StyleSheet.create({
   hero: { padding: 22, borderRadius: 22, backgroundColor: colors.backgroundAlt, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
   heroIcon: { width: 56, height: 56, borderRadius: 18, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
   heroCopy: { flex: 1, minWidth: 220 },
+  uploadButton: { minWidth: 238, paddingHorizontal: 18 },
   title: { color: colors.text, fontSize: 27, fontWeight: '900' },
   subtitle: { color: colors.subtext, fontSize: 15, marginTop: 5, lineHeight: 22 },
   message: { backgroundColor: 'rgba(140,88,255,0.14)', borderColor: colors.accent, borderWidth: 1, borderRadius: 12, padding: 12 },
@@ -223,6 +244,7 @@ const styles = StyleSheet.create({
   videoLabel: { color: '#ffffff', fontSize: 11, fontWeight: '900', letterSpacing: 1.4, marginTop: 5 },
   check: { position: 'absolute', top: 10, right: 10, width: 27, height: 27, borderRadius: 14, borderWidth: 2, borderColor: '#ffffff', backgroundColor: 'rgba(0,0,0,0.36)', alignItems: 'center', justifyContent: 'center' },
   checkSelected: { backgroundColor: colors.accent, borderColor: colors.accent },
+  removeAssetButton: { position: 'absolute', top: 10, right: 44, width: 24, height: 24, borderRadius: 12, backgroundColor: '#dc3545', alignItems: 'center', justifyContent: 'center', zIndex: 2 },
   cardFooter: { padding: 11 },
   fileName: { color: colors.text, fontWeight: '800', fontSize: 14 },
   fileMeta: { color: colors.subtext, fontSize: 12, marginTop: 4 },
