@@ -15,6 +15,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import { colors } from '@constants/colors';
 import { DMButton } from '@components/DMButton';
+import { GalleryAutoPost } from '@components/GalleryAutoPost';
 import { useAuth } from '@context/AuthContext';
 import { uploadMediaFiles } from '@services/social';
 import {
@@ -134,6 +135,8 @@ export const ContentGalleryScreen: React.FC = () => {
       </View>
 
       {message ? <View style={styles.message}><Text style={styles.messageText}>{message}</Text></View> : null}
+
+      {userId ? <GalleryAutoPost key={userId} assets={assets} uploading={uploading} /> : null}
 
       <View style={styles.toolbar}>
         <View style={styles.filters}>

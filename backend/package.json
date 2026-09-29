@@ -9,7 +9,7 @@
     "start": "node dist/index.js",
     "build": "node scripts/build.mjs && node scripts/fix-esm-extensions.mjs",
     "worker": "tsx src/workers/automationWorker.ts",
-    "test": "tsx src/tests/runTests.ts",
+    "test": "tsx src/tests/runTests.ts && tsx --test src/tests/galleryAutoPost.test.ts",
     "load-test": "node scripts/loadTest.mjs",
     "seed": "tsx scripts/seedAdmin.ts",
     "connect-client-socials": "tsx scripts/connectClientSocials.ts",

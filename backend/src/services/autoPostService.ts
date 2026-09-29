@@ -1,5 +1,6 @@
 import admin from 'firebase-admin';
 import { selectConfiguredMedia } from './configuredMediaSelection.js';
+import { galleryPlatforms, type GalleryPlatform, type GalleryAsset, type GalleryResult } from './galleryAutoPostService.js';
 import axios from 'axios';
 import sharp from 'sharp';
 import * as cheerio from 'cheerio';
@@ -325,6 +326,72 @@ const platformPublishers: Record<
 };
 
 export class AutoPostService {
+  private async galleryCredentials(userId: string): Promise<SocialAccounts> {
+    let accounts: SocialAccounts | undefined;
+    try {
+      accounts = (await supabaseFallbackService.getSocialAccounts(userId))?.socialAccounts as SocialAccounts | undefined;
+    } catch { /* Use the existing Firebase account store if the primary store is unavailable. */ }
+    if (!accounts) {
+      const user = await firestore.collection('users').doc(userId).get();
+      accounts = user.data()?.socialAccounts as SocialAccounts | undefined;
+    }
+    const connected = { ...accounts };
+    const [youtube, tiktok] = await Promise.all([
+      getYouTubeIntegrationSecrets(userId), getTikTokIntegrationSecrets(userId),
+    ]);
+    if (youtube) connected.youtube = { refreshToken: youtube.refreshToken, accessToken: youtube.accessToken,
+      privacyStatus: youtube.privacyStatus, channelId: youtube.channelId ?? undefined };
+    if (tiktok) connected.tiktok = { accessToken: tiktok.accessToken, refreshToken: tiktok.refreshToken,
+      openId: tiktok.openId ?? undefined };
+    // Gallery jobs only use this user's connected accounts, never environment defaults.
+    return connected;
+  }
+
+  async galleryConnectedPlatforms(userId: string): Promise<GalleryPlatform[]> {
+    const accounts = await this.galleryCredentials(userId);
+    return galleryPlatforms.filter(platform => this.hasGalleryCredentials(platform, accounts));
+  }
+
+  private hasGalleryCredentials(platform: GalleryPlatform, accounts: SocialAccounts) {
+    const account = accounts[platform];
+    if (!account) return false;
+    const present = (value: unknown) => typeof value === 'string' && value.trim().length > 0;
+    if (platform === 'youtube') return present(account.refreshToken);
+    if (!present(account.accessToken)) return false;
+    if (platform === 'facebook') return present(account.pageId);
+    if (platform === 'instagram' || platform === 'threads') return present(account.accountId);
+    if (platform === 'linkedin') return present(account.urn);
+    if (platform === 'twitter') return present(account.accessSecret);
+    return true;
+  }
+
+  async publishGalleryAsset(userId: string, platform: GalleryPlatform, asset: GalleryAsset, caption: string): Promise<GalleryResult> {
+    const publishPlatform = platform === 'instagram' && asset.kind === 'video' ? 'instagram_reels' : platform;
+    try {
+      const accounts = await this.galleryCredentials(userId);
+      if (!this.hasGalleryCredentials(platform, accounts)) throw new Error('Reconnect this social account to continue.');
+      if (await isBwinAccountClosureActive(userId)) throw new Error('Posting is disabled for this account.');
+      const validation = validateBwinSportsContent({ userId, platforms: [publishPlatform], caption,
+        imageUrls: asset.kind === 'image' ? [asset.url] : [], videoUrl: asset.kind === 'video' ? asset.url : undefined });
+      if (!validation.ok) throw new Error(validation.reason || 'This content cannot be posted to the account.');
+      await consumeUsageBatch(resolveBillingScope(userId), [{ resource: 'scheduledPosts', amount: 1 }]);
+      const result = await platformPublishers[publishPlatform]({
+        caption, imageUrls: asset.kind === 'image' ? [asset.url] : [],
+        videoUrl: asset.kind === 'video' ? asset.url : undefined, videoTitle: asset.name || 'Gallery video',
+        credentials: accounts,
+      });
+      // A logging outage must not turn a successful publish into a retry.
+      try {
+        await this.recordHistory(userId, [{ platform: publishPlatform, status: 'posted', caption,
+          remoteId: result.remoteId ?? null, ...(asset.kind === 'video' ? { videoUrl: asset.url, videoTitle: asset.name } : {}) }],
+        asset.kind === 'image' ? [asset.url] : []);
+      } catch (error) { console.error('[gallery-autopost] history write failed', { userId, error: logSafeError(error) }); }
+      return { platform: publishPlatform, status: 'posted', remoteId: result.remoteId ?? null };
+    } catch (error) {
+      return { platform: publishPlatform, status: 'failed', error: logSafeError(error) };
+    }
+  }
+
   private memoryStore = new Map<string, AutoPostJob>();
   private useMemory =
     config.security.allowMockAuth &&

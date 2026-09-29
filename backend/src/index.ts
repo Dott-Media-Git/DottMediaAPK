@@ -30,6 +30,8 @@ import contentRoutes from './routes/contentRoutes';
 import footballTrendRoutes from './routes/footballTrendRoutes';
 import trendRoutes from './routes/trendRoutes';
 import socialRoutes from './routes/socialRoutes';
+import { createGalleryAutoPostRouter } from './routes/galleryAutoPostRoutes';
+import { galleryAutoPostService } from './services/galleryAutoPostRuntime';
 import metaWebhookRoutes from './routes/metaWebhookRoutes';
 import metaIntegrationRoutes from './routes/metaIntegrationRoutes';
 import metaAdsRoutes from './routes/metaAdsRoutes';
@@ -47,7 +49,7 @@ import mediaRoutes from './routes/mediaRoutes';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher';
 import stripeRoutes from './routes/stripeRoutes';
 import flutterwaveRoutes from './routes/flutterwaveRoutes';
-import { requireFirebase, AuthedRequest } from './middleware/firebaseAuth';
+import { requireFirebase, requireFirebaseStrict, AuthedRequest } from './middleware/firebaseAuth';
 import { autoPostService } from './services/autoPostService';
 import { autopostComplianceService } from './services/autopostComplianceService';
 import { firestore } from './db/firestore';
@@ -69,6 +71,7 @@ const initializeAutomation = async () => {
       import('./jobs/autopostComplianceJob.js'),
       import('./jobs/weeklyReportJob.js'),
       import('./jobs/socialQueueJob.js'),
+      import('./jobs/galleryAutoPostJob.js'),
       import('./jobs/instagramCommentPollJob.js'),
       import('./jobs/instagramDmPollJob.js'),
       import('./jobs/facebookCommentPollJob.js'),
@@ -218,6 +221,9 @@ if (footballTrendsEnabled) {
 } else {
   console.info('[football-trends] Routes disabled (set FOOTBALL_TRENDS_ENABLED=true).');
 }
+app.use('/api/gallery/autopost', createGalleryAutoPostRouter(
+  galleryAutoPostService, userId => autoPostService.galleryConnectedPlatforms(userId), requireFirebaseStrict,
+));
 app.use('/api', socialRoutes);
 app.use('/api', metaAdsRoutes);
 app.use('/api', billingRoutes);

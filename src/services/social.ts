@@ -196,6 +196,28 @@ export type UploadedMediaFile = {
   size?: number;
 };
 
+export type GalleryAutoPostPlatform = 'facebook' | 'instagram' | 'threads' | 'linkedin' | 'twitter' | 'youtube' | 'tiktok';
+export type GalleryAutoPostJob = {
+  active: boolean;
+  intervalHours: number;
+  assets: Array<{ id: string; url: string; kind: 'image' | 'video'; name: string }>;
+  platforms: GalleryAutoPostPlatform[];
+  caption: string;
+  cursor: number;
+  cycles: number;
+  nextRunAt: number | null;
+  runToken: string | null;
+  lastRunAt: number | null;
+  error: string | null;
+  lastResults: Array<{ platform: string; status: 'posted' | 'failed'; error?: string }>;
+};
+export const fetchGalleryAutoPost = (): Promise<{ job: GalleryAutoPostJob | null; platforms: GalleryAutoPostPlatform[] }> =>
+  authedFetch('/api/gallery/autopost', { cache: 'no-store' });
+export const startGalleryAutoPost = (input: Pick<GalleryAutoPostJob, 'intervalHours' | 'assets' | 'platforms' | 'caption'>): Promise<{ job: GalleryAutoPostJob }> =>
+  authedFetch('/api/gallery/autopost', { method: 'POST', body: JSON.stringify(input) });
+export const stopGalleryAutoPost = (): Promise<{ job: GalleryAutoPostJob | null }> =>
+  authedFetch('/api/gallery/autopost', { method: 'DELETE' });
+
 export const uploadMediaFiles = async (files: File[]) => {
   const uploaded: UploadedMediaFile[] = [];
   for (const file of files) {

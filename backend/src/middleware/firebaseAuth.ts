@@ -88,14 +88,14 @@ export async function requireFirebase(req: Request, _res: Response, next: NextFu
   }
 }
 
-/** Destructive account operations must always be verified by Firebase Admin. */
+/** Sensitive account and publishing operations must be verified by Firebase Admin. */
 export async function requireFirebaseStrict(req: Request, _res: Response, next: NextFunction) {
   const header = req.header('Authorization');
   if (!header) return next(createHttpError(401, 'Missing Authorization header'));
   const [scheme, token] = header.split(' ');
   if (scheme !== 'Bearer' || !token) return next(createHttpError(401, 'Invalid auth header'));
   if (config.security.allowMockAuth && token.startsWith('mock-')) {
-    return next(createHttpError(403, 'Account deletion is unavailable in mock authentication mode'));
+    return next(createHttpError(403, 'This action is unavailable in mock authentication mode'));
   }
   if (!firebaseApp) return next(createHttpError(503, 'Firebase auth is not initialized'));
   try {
@@ -103,7 +103,7 @@ export async function requireFirebaseStrict(req: Request, _res: Response, next: 
     (req as AuthedRequest).authUser = decoded;
     return next();
   } catch {
-    return next(createHttpError(401, 'Re-authenticate before deleting your account'));
+    return next(createHttpError(401, 'Please sign in again before continuing'));
   }
 }
 

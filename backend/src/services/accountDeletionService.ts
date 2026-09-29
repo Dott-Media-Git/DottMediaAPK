@@ -4,7 +4,7 @@ import { supabaseFallbackService } from './supabaseFallbackService';
 import { cancelBillingForAccountDeletion } from './billing/billingService';
 
 const keyedCollections = [
-  'users', 'profiles', 'loginPasswords', 'autopostJobs', 'socialIntegrations',
+  'users', 'profiles', 'loginPasswords', 'autopostJobs', 'galleryAutopostJobs', 'socialIntegrations',
   'assistant_settings', 'assistant_strategies', 'secrets', 'outreachConsent',
   'creditBalances', 'metaAdsPolicies', 'metaAdsMcpConnections',
 ];
