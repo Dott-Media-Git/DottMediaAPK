@@ -1255,7 +1255,8 @@ export class AssistantService {
 
   async answer(question: string, context: AssistantContext) {
     const locale = this.resolveLocale(context.locale);
-    const accountSnapshot = await this.loadAccountSnapshot(context);
+    const webSearchRequest = /\b(research|search|look\s*up|find\s+out|trending|trend|latest|current|today|news|recent|this\s+week|what(?:'s| is) happening)\b/i.test(question);
+    const accountSnapshot = webSearchRequest ? null : await this.loadAccountSnapshot(context);
     const asksForOverallPerformance =
       /\b(review|check|show|summari[sz]e|analy[sz]e|tell me about)\b[\s\S]{0,60}\b(performance|results|metrics|stats)\b/i.test(question) ||
       /\b(account|overall|business|marketing)\s+(performance|results|metrics|stats)\b/i.test(question) ||
@@ -1446,11 +1447,13 @@ export class AssistantService {
     const responseLanguage = LOCALE_RESPONSE_LANGUAGE[locale] ?? 'English';
     let knowledge: Array<{ title: string; summary: string; url?: string }> = [];
     try {
-      knowledge = await this.safeResolve(
-        'knowledge snippets',
-        () => knowledgeBase.getRelevantSnippets(question, 3),
-        [],
-      );
+      if (!webSearchRequest) {
+        knowledge = await this.safeResolve(
+          'knowledge snippets',
+          () => knowledgeBase.getRelevantSnippets(question, 3),
+          [],
+        );
+      }
     } catch (error) {
       console.warn('Failed to load knowledge snippets', (error as Error).message);
     }
@@ -1461,7 +1464,6 @@ export class AssistantService {
             .join('\n')}`
         : '';
     const accountContextBlock = accountSnapshot ? this.buildAccountContextBlock(accountSnapshot) : '';
-    const webSearchRequest = /\b(research|search|look\s*up|find\s+out|trending|trend|latest|current|today|news|recent|this\s+week|what(?:'s| is) happening)\b/i.test(question);
     let webResearchBlock = '';
     if (webSearchRequest) {
       try {
