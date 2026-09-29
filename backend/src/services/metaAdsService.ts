@@ -595,6 +595,7 @@ export const metaAdsService = {
     const socialAccounts = await loadUserSocialAccountsWithFallback(userId);
     const accessToken = String(
       socialAccounts.metaAds?.accessToken ||
+      socialAccounts.metaAds?.userAccessToken ||
         socialAccounts.facebook?.userAccessToken ||
         socialAccounts.facebook?.accessToken ||
         (userId === SHECARE_USER_ID ? process.env.META_GRAPH_TOKEN : '') ||
@@ -668,6 +669,7 @@ export const metaAdsService = {
       accessToken: String(
         payload.accessToken ||
           socialAccounts.metaAds?.accessToken ||
+          socialAccounts.metaAds?.userAccessToken ||
           socialAccounts.facebook?.userAccessToken ||
           socialAccounts.facebook?.accessToken ||
           '',
@@ -878,6 +880,8 @@ export const metaAdsService = {
     const accessToken = String(
       rule?.accessToken ||
         socialAccounts.metaAds?.accessToken ||
+        socialAccounts.metaAds?.userAccessToken ||
+        socialAccounts.metaAds?.userAccessToken ||
         socialAccounts.facebook?.userAccessToken ||
         socialAccounts.facebook?.accessToken ||
         process.env.META_GRAPH_TOKEN ||
@@ -1107,6 +1111,7 @@ export const metaAdsService = {
     ]);
     const accessToken = String(
       rule?.accessToken ||
+        socialAccounts.metaAds?.userAccessToken ||
         socialAccounts.facebook?.userAccessToken ||
         socialAccounts.facebook?.accessToken ||
         process.env.META_GRAPH_TOKEN ||
