@@ -886,7 +886,11 @@ export const metaAdsService = {
     let adAccountId = normalizeAdAccountId(
       rule?.adAccountId ||
       socialAccounts.metaAds?.selectedAdAccountId ||
-      socialAccounts.metaAds?.adAccountId,
+      socialAccounts.metaAds?.selectedAccountId ||
+      socialAccounts.metaAds?.adAccountId ||
+      socialAccounts.metaAds?.accountId ||
+      socialAccounts.metaAds?.adAccountIds?.[0] ||
+      socialAccounts.metaAds?.accounts?.[0]?.id,
     );
     if (!adAccountId && accessToken) {
       const connection = await metaAdsConnectionsCollection.doc(userId).get().catch(() => null);

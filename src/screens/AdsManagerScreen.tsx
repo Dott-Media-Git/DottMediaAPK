@@ -113,8 +113,8 @@ export const AdsManagerScreen: React.FC = () => {
     setLoading(true);
     try {
       const [ruleResponse, accountResponse] = await Promise.all([
-        fetchBoostRule(),
-        fetchMetaAdAccounts(),
+        fetchBoostRule().catch(() => ({ rule: {} as BoostRule })),
+        fetchMetaAdAccounts().catch(() => ({ accounts: [] as MetaAdAccount[] })),
       ]);
       const [runsResponse, connectionResponse, policyResponse, approvalsResponse, auditResponse] = await Promise.all([
         fetchAdRuns(20).catch(() => ({ runs: [] })),
