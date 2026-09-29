@@ -619,20 +619,7 @@ export const DashboardScreen: React.FC = () => {
     const refreshAdPerformance = async () => {
       setAdPerformanceLoading(true);
       try {
-        let response: Awaited<ReturnType<typeof fetchAdPerformance>> | null = null;
-        let lastError: unknown;
-        for (let attempt = 1; attempt <= 3; attempt += 1) {
-          try {
-            response = await fetchAdPerformance(12);
-            break;
-          } catch (error) {
-            lastError = error;
-            if (attempt < 3) {
-              await new Promise(resolve => setTimeout(resolve, attempt * 1000));
-            }
-          }
-        }
-        if (!response) throw lastError ?? new Error('Ad performance is temporarily unavailable');
+        const response = await fetchAdPerformance(12);
         if (mounted) {
           setAdPerformance(response.performance ?? emptyAdPerformance);
         }

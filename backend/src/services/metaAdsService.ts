@@ -9,6 +9,7 @@ const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 const boostRulesCollection = firestore.collection('boostRules');
 const adRunsCollection = firestore.collection('adRuns');
 const adCandidatesCollection = firestore.collection('adCandidates');
+const metaAdsConnectionsCollection = firestore.collection('metaAdsMcpConnections');
 const SHECARE_USER_ID = 'tCE1FQ1cOFgdupOXP23mPUMQRAz1';
 const SHECARE_WHATSAPP_NUMBER = '+447463010235';
 const SHECARE_AD_ACCOUNT_ID = 'act_4886098734954394';
@@ -281,7 +282,7 @@ const shecareFallbackAdAccount = () => ({
 
 const safeGet = async (url: string, params: Record<string, unknown>) => {
   try {
-    const response = await axios.get(url, { params, timeout: 30000 });
+    const response = await axios.get(url, { params, timeout: 10000 });
     return response.data;
   } catch (error) {
     return null;
@@ -289,7 +290,7 @@ const safeGet = async (url: string, params: Record<string, unknown>) => {
 };
 
 const graphGet = async (url: string, params: Record<string, unknown>) => {
-  const response = await axios.get(url, { params, timeout: 30000 });
+  const response = await axios.get(url, { params, timeout: 10000 });
   return response.data;
 };
 
@@ -609,7 +610,7 @@ export const metaAdsService = {
           fields: 'id,name,account_status,currency,timezone_name,amount_spent,balance',
           access_token: accessToken,
         },
-        timeout: 30000,
+        timeout: 10000,
       });
       const accounts = response.data?.data ?? [];
       if (userId === SHECARE_USER_ID && !accounts.some((account: any) => account?.id === SHECARE_AD_ACCOUNT_ID)) {
@@ -882,7 +883,23 @@ export const metaAdsService = {
         process.env.META_GRAPH_TOKEN ||
         '',
     ).trim();
-    const adAccountId = normalizeAdAccountId(rule?.adAccountId);
+    let adAccountId = normalizeAdAccountId(
+      rule?.adAccountId ||
+      socialAccounts.metaAds?.selectedAdAccountId ||
+      socialAccounts.metaAds?.adAccountId,
+    );
+    if (!adAccountId && accessToken) {
+      const connection = await metaAdsConnectionsCollection.doc(userId).get().catch(() => null);
+      adAccountId = normalizeAdAccountId(connection?.data()?.selectedAdAccountId);
+    }
+    if (!adAccountId && accessToken) {
+      const accountsPayload = await safeGet(`${GRAPH_BASE}/me/adaccounts`, {
+        fields: 'id,account_status,currency,timezone_name',
+        limit: 1,
+        access_token: accessToken,
+      });
+      adAccountId = normalizeAdAccountId(accountsPayload?.data?.[0]?.id);
+    }
     const runs = storedRuns
       .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt))
       .slice(0, cappedLimit);
@@ -953,15 +970,23 @@ export const metaAdsService = {
             fields: 'id,name,status,effective_status,created_time,updated_time,campaign_id,adset_id',
             limit: Math.max(cappedLimit, 25),
             access_token: accessToken,
+          }).catch(error => {
+            console.warn('[meta-ads] live ad list unavailable; keeping account insights', errorMessageFromMeta(error));
+            return null;
           }),
           graphGet(`${GRAPH_BASE}/${adAccountId}/insights`, {
             fields: 'spend,impressions,reach,clicks,inline_link_clicks,actions,cpc,cpm,ctr,date_start,date_stop',
             date_preset: 'last_30d',
             access_token: accessToken,
+          }).catch(error => {
+            console.warn('[meta-ads] account insights unavailable', errorMessageFromMeta(error));
+            return null;
           }),
         ]);
-        accountInsights = parseAdInsights(accountInsightsPayload);
-        accountInsightsLoaded = true;
+        if (accountInsightsPayload) {
+          accountInsights = parseAdInsights(accountInsightsPayload);
+          accountInsightsLoaded = true;
+        }
 
         const liveAds = Array.isArray(adsPayload?.data) ? adsPayload.data : [];
         const liveRows = await Promise.all(
