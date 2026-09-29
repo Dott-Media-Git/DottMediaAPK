@@ -1766,6 +1766,12 @@ export class AssistantService {
       }
 
       console.error('OpenAI Error:', { status, code, message });
+      if (webSearchRequest && webResearchBlock) {
+        return {
+          type: 'text',
+          text: `Here is what I found from current public sources:\n\n${webResearchBlock}`,
+        };
+      }
       if (accountContextBlock && asksForOverallPerformance) {
         const dashboard = accountSnapshot?.dashboardPerformance;
         const organicFallback = dashboard
