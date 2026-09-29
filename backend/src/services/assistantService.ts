@@ -1461,6 +1461,20 @@ export class AssistantService {
             .join('\n')}`
         : '';
     const accountContextBlock = accountSnapshot ? this.buildAccountContextBlock(accountSnapshot) : '';
+    const webSearchRequest = /\b(research|search|look\s*up|find\s+out|trending|trend|latest|current|today|news|recent|this\s+week|what(?:'s| is) happening)\b/i.test(question);
+    let webResearchBlock = '';
+    if (webSearchRequest) {
+      try {
+        const webResults = await searchWeb(question);
+        if (webResults.length) {
+          webResearchBlock = `Live web research:\n${webResults
+            .map((result, index) => `${index + 1}. ${result.title}\n${result.snippet}\nSource: ${result.url}`)
+            .join('\n\n')}`;
+        }
+      } catch (error) {
+        console.warn('Live web research unavailable', error instanceof Error ? error.message : error);
+      }
+    }
 
     const personalityPrompt = this.buildPersonalityPrompt(context);
     const systemPrompt = [
@@ -1468,7 +1482,7 @@ export class AssistantService {
       'Help with the authenticated user account and business, and also answer general questions across everyday topics.',
       personalityPrompt,
       'For account questions, use the supplied account data and never invent metrics or connected channels. For general questions, answer directly and clearly.',
-      'For current events, research, trends, or time-sensitive facts, use the web_search tool when it is available and ground the answer in its results. Mention the source links when useful.',
+      'For current events, research, trends, or time-sensitive facts, ground the answer in the supplied live web research when available. Mention source links when useful and be clear when live research is unavailable.',
       'Base every answer on the account data provided below. Never invent metrics or connected channels.',
       'For a general account-performance, views, interactions, engagement, or Dashboard question, always report AUTHORITATIVE DASHBOARD PERFORMANCE first. It is the Supabase-primary aggregation used by the visible Dashboard.',
       'When LIVE META ADS PERFORMANCE is supplied for a general performance review, always include its spend, impressions, reach/click results, messages, leads, CTR, and campaign status after the organic performance. Clearly label organic and paid results separately.',
@@ -1511,6 +1525,7 @@ export class AssistantService {
         ? `Legacy CRM snapshot: Leads=${context.analytics.leads ?? 'n/a'}, Engagement=${context.analytics.engagement ?? 'n/a'}%, Conversions=${context.analytics.conversions ?? 'n/a'}`
         : '',
       accountContextBlock ? `Live account data:\n${accountContextBlock}` : '',
+      webResearchBlock,
       liveAdsContext ? `LIVE META ADS PERFORMANCE (connected account): ${liveAdsContext}` : '',
       context.attachments?.length ? `Attachments:\n${context.attachments.map((item, index) => `${index + 1}. ${item.name} (${item.mimeType})${item.url ? ` URL: ${item.url}` : ''}${item.text ? `\nText: ${item.text.slice(0, 12000)}` : ''}`).join('\n')}` : '',
       knowledgeBlock,
@@ -1524,7 +1539,6 @@ export class AssistantService {
     const explicitImageRequest = /\b(create|generate|design|make)\b[\s\S]{0,50}\b(image|graphic|poster|visual|artwork)\b/i.test(question);
     const explicitPublishRequest = /\b(post|publish|send)\b[\s\S]{0,50}\b(now|immediately|to|on)\b/i.test(question);
     const explicitReplyRequest = /\b(reply|replies|respond)\b[\s\S]{0,60}\b(comment|comments|message|messages|dm|dms)\b/i.test(question);
-    const webSearchRequest = /\b(research|search|look\s*up|find\s+out|trending|trend|latest|current|today|news|recent|this\s+week|what(?:'s| is) happening)\b/i.test(question);
     const availableTools = tools.filter(tool => {
       const name = tool.function.name;
       if (name === 'navigate') return explicitNavigationRequest;
@@ -1533,7 +1547,7 @@ export class AssistantService {
       if (name === 'generate_social_image') return explicitImageRequest;
       if (name === 'publish_social_post_now') return explicitPublishRequest;
       if (name === 'configure_account_replies') return explicitReplyRequest;
-      if (name === 'web_search') return webSearchRequest;
+      if (name === 'web_search') return false;
       return false;
     });
 
