@@ -27,6 +27,7 @@ import { metaAdsControlService, type MetaAdsAction } from './metaAdsControlServi
 import { supabaseFallbackService } from './supabaseFallbackService';
 import { assistantCampaignService, type CampaignControlAction } from './assistantCampaignService';
 import { assistantSocialActionService } from './assistantSocialActionService';
+import { searchWeb, type WebSearchResult } from './webSearchService';
 
 const assistantAI = new OpenAI({
   apiKey: config.assistantAI.apiKey,
@@ -1464,9 +1465,10 @@ export class AssistantService {
     const personalityPrompt = this.buildPersonalityPrompt(context);
     const systemPrompt = [
       'You are Dotti, an AI-powered business assistant inside the Dott Media app.',
-      'Only answer questions about the authenticated user account, its connected channels, automation, performance, posting history, audience, business goals, growth strategy, and navigation inside Dott.',
+      'Help with the authenticated user account and business, and also answer general questions across everyday topics.',
       personalityPrompt,
-      'If the user asks for anything unrelated to their account or business, reply briefly that you can only help with their account and business inside Dott.',
+      'For account questions, use the supplied account data and never invent metrics or connected channels. For general questions, answer directly and clearly.',
+      'For current events, research, trends, or time-sensitive facts, use the web_search tool when it is available and ground the answer in its results. Mention the source links when useful.',
       'Base every answer on the account data provided below. Never invent metrics or connected channels.',
       'For a general account-performance, views, interactions, engagement, or Dashboard question, always report AUTHORITATIVE DASHBOARD PERFORMANCE first. It is the Supabase-primary aggregation used by the visible Dashboard.',
       'When LIVE META ADS PERFORMANCE is supplied for a general performance review, always include its spend, impressions, reach/click results, messages, leads, CTR, and campaign status after the organic performance. Clearly label organic and paid results separately.',
@@ -1490,7 +1492,7 @@ export class AssistantService {
       'Inspect attached images and document text directly. Attachment media URLs are valid inputs for creating and publishing content.',
       'Generate images only when requested. Publish only after an explicit post, publish, or send-now instruction and only to the named connected platforms.',
       'You can enable and tailor account-scoped replies to comments and direct messages.',
-      'Use the app tools only when the user asks to navigate, asks for a metric-specific account insight, requests a campaign control, or requests a Meta Ads operation.',
+      'Use the app tools only for explicit app actions or account operations. Use web_search for research, current events, trends, and time-sensitive public information.',
       'Keep answers professional, direct, and useful. Use short paragraphs. Stay concise unless the user asks for a detailed breakdown.',
       `Respond in ${responseLanguage}.`,
       accountSnapshot?.company ? `User Company: ${accountSnapshot.company}` : context.company ? `User Company: ${context.company}` : '',
@@ -1522,6 +1524,7 @@ export class AssistantService {
     const explicitImageRequest = /\b(create|generate|design|make)\b[\s\S]{0,50}\b(image|graphic|poster|visual|artwork)\b/i.test(question);
     const explicitPublishRequest = /\b(post|publish|send)\b[\s\S]{0,50}\b(now|immediately|to|on)\b/i.test(question);
     const explicitReplyRequest = /\b(reply|replies|respond)\b[\s\S]{0,60}\b(comment|comments|message|messages|dm|dms)\b/i.test(question);
+    const webSearchRequest = /\b(research|search|look\s*up|find\s+out|trending|trend|latest|current|today|news|recent|this\s+week|what(?:'s| is) happening)\b/i.test(question);
     const availableTools = tools.filter(tool => {
       const name = tool.function.name;
       if (name === 'navigate') return explicitNavigationRequest;
@@ -1530,6 +1533,7 @@ export class AssistantService {
       if (name === 'generate_social_image') return explicitImageRequest;
       if (name === 'publish_social_post_now') return explicitPublishRequest;
       if (name === 'configure_account_replies') return explicitReplyRequest;
+      if (name === 'web_search') return webSearchRequest;
       return false;
     });
 
@@ -1571,6 +1575,41 @@ export class AssistantService {
             params = JSON.parse(toolCall.function.arguments || '{}');
           } catch (parseError) {
             console.error('Failed to parse tool arguments', parseError);
+          }
+
+          if (toolCall.function.name === 'web_search') {
+            try {
+              const query = String((params as { query?: string })?.query || question).trim();
+              const results = await searchWeb(query);
+              if (!results.length) {
+                return { type: 'text', text: `I couldn't find reliable public results for “${query}”. Try a more specific search.` };
+              }
+              const researchBlock = results
+                .map((result: WebSearchResult, index: number) => `${index + 1}. ${result.title}\n${result.snippet}\nSource: ${result.url}`)
+                .join('\n\n');
+              const researchMessages: any[] = [
+                { role: 'system', content: systemPrompt },
+                ...(context.conversationHistory ?? []).slice(-120).map(message => ({
+                  role: message.role,
+                  content: message.content.slice(0, 4000),
+                })),
+                { role: 'user', content: question },
+                { role: 'assistant', content: null, tool_calls: [toolCall] },
+                { role: 'tool', tool_call_id: toolCall.id, content: researchBlock },
+              ];
+              const researched = await assistantAI.chat.completions.create({
+                model: config.assistantAI.model,
+                messages: researchMessages,
+                temperature: 0.3,
+                max_tokens: 900,
+              });
+              const researchedText = researched.choices[0]?.message?.content?.trim() || 'I found some sources, but I could not summarize them yet.';
+              const sourceList = results.map((result, index) => `${index + 1}. [${result.title}](${result.url})`).join('\n');
+              return { type: 'text', text: `${researchedText}\n\nSources\n${sourceList}` };
+            } catch (error) {
+              console.warn('Web research failed', error instanceof Error ? error.message : error);
+              return { type: 'text', text: 'I could not reach live web search right now. I can still answer from my general knowledge, or you can try the research request again.' };
+            }
           }
 
           if (toolCall.function.name === 'configure_social_campaign' && context.userId) {
