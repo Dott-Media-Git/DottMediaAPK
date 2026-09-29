@@ -898,11 +898,16 @@ export const metaAdsService = {
     }
     if (!adAccountId && accessToken) {
       const accountsPayload = await safeGet(`${GRAPH_BASE}/me/adaccounts`, {
-        fields: 'id,account_status,currency,timezone_name',
-        limit: 1,
+        fields: 'id,account_status,currency,timezone_name,amount_spent',
+        limit: 25,
         access_token: accessToken,
       });
-      adAccountId = normalizeAdAccountId(accountsPayload?.data?.[0]?.id);
+      const discoveredAccounts = Array.isArray(accountsPayload?.data) ? accountsPayload.data : [];
+      const preferredAccount = discoveredAccounts
+        .filter((account: any) => Number(account?.account_status ?? 1) === 1)
+        .sort((left: any, right: any) => Number(right?.amount_spent ?? 0) - Number(left?.amount_spent ?? 0))[0]
+        ?? discoveredAccounts[0];
+      adAccountId = normalizeAdAccountId(preferredAccount?.id);
     }
     const runs = storedRuns
       .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt))
