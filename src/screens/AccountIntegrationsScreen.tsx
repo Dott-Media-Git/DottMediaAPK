@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import { Alert, AppState, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { doc, getDoc } from 'firebase/firestore';
 import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
@@ -69,6 +70,17 @@ const PLATFORM_LABELS: Record<PlatformKey, string> = {
   whatsapp: 'WhatsApp',
   tiktok: 'TikTok',
   youtube: 'YouTube'
+};
+
+const PLATFORM_ICONS: Record<PlatformKey, { name: React.ComponentProps<typeof Ionicons>['name']; color: string }> = {
+  facebook: { name: 'logo-facebook', color: '#1877F2' },
+  linkedin: { name: 'logo-linkedin', color: '#0A66C2' },
+  instagram: { name: 'logo-instagram', color: '#D62976' },
+  threads: { name: 'logo-threads', color: '#111827' },
+  twitter: { name: 'logo-x', color: '#111827' },
+  whatsapp: { name: 'logo-whatsapp', color: '#25D366' },
+  tiktok: { name: 'logo-tiktok', color: '#111827' },
+  youtube: { name: 'logo-youtube', color: '#FF0000' }
 };
 
 const MANUAL_FIELDS: Record<ManualPlatform, Array<{ key: string; label: string; placeholder: string }>> = {
@@ -881,7 +893,12 @@ export const AccountIntegrationsScreen: React.FC = () => {
             <View key={platform} style={styles.integrationCard}>
               <View style={styles.integrationHeader}>
                 <View style={styles.integrationInfo}>
-                  <Text style={styles.integrationTitle}>{PLATFORM_LABELS[platform]}</Text>
+                  <View style={styles.platformTitleRow}>
+                    <View style={[styles.platformIcon, { backgroundColor: PLATFORM_ICONS[platform].color }]}>
+                      <Ionicons name={PLATFORM_ICONS[platform].name} size={19} color="#ffffff" />
+                    </View>
+                    <Text style={styles.integrationTitle}>{PLATFORM_LABELS[platform]}</Text>
+                  </View>
                   <View style={styles.integrationStatusRow}>
                     <Text style={styles.statusLabel}>{t('Status')}</Text>
                     <View
@@ -1426,11 +1443,28 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  platformTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 6,
+  },
+  platformIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
   integrationTitle: {
     color: colors.text,
     fontSize: 18,
     fontWeight: '700',
-    marginBottom: 6,
   },
   headerButton: {
     alignSelf: 'flex-start',
