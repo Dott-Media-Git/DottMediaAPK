@@ -1,4 +1,4 @@
-package com.anonymous.dottmediacrm
+package com.dottmedia.dotti
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

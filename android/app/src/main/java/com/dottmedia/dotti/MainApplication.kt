@@ -1,4 +1,4 @@
-package com.anonymous.dottmediacrm
+package com.dottmedia.dotti
 
 import android.app.Application
 import android.content.res.Configuration
