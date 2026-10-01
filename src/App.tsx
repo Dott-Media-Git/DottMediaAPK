@@ -1,6 +1,6 @@
 import 'react-native-gesture-handler';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, StatusBar, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, AppState, Platform, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Font from 'expo-font';
@@ -13,6 +13,14 @@ import { AppNavigator } from '@navigation/AppNavigator';
 import { colors } from '@constants/colors';
 import { FloatingAssistant } from '@components/FloatingAssistant';
 import { warmPrimaryScreenCaches } from '@services/appWarmCache';
+
+// Android devices can have a user-selected display font. The app does not
+// ship a decorative typeface, so explicitly use Android's standard sans-serif
+// family for unstyled text to keep the Play Store build visually consistent.
+if (Platform.OS === 'android') {
+  (Text as any).defaultProps = { ...(Text as any).defaultProps, style: { fontFamily: 'sans-serif' } };
+  (TextInput as any).defaultProps = { ...(TextInput as any).defaultProps, style: { fontFamily: 'sans-serif' } };
+}
 
 const WARM_CACHE_COOLDOWN_MS = 1000 * 60 * 3;
 

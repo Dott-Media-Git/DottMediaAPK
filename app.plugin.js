@@ -1,6 +1,22 @@
 // Keeps Expo prebuild aligned with the Yoga headers shipped in React Native 0.82.1 by
 // forcing legacy architecture flags and static frameworks into the generated Podfile.
-const { withPodfile } = require('@expo/config-plugins');
+const { withAndroidStyles, withPodfile } = require('@expo/config-plugins');
+
+function forceStandardAndroidFont(config) {
+  return withAndroidStyles(config, (modConfig) => {
+    const styles = modConfig.modResults?.resources?.style ?? [];
+    styles.forEach((style) => {
+      const items = style.item ?? (style.item = []);
+      const existing = items.find((item) => item?.$?.name === 'android:fontFamily');
+      if (existing) {
+        existing._ = 'sans-serif';
+      } else {
+        items.push({ $: { name: 'android:fontFamily' }, _: 'sans-serif' });
+      }
+    });
+    return modConfig;
+  });
+}
 
 function ensureNewArchDisabled(podfileContents) {
   const envBlock = "ENV['RCT_NEW_ARCH_ENABLED'] = '0'\nENV['RCT_FABRIC_ENABLED'] = '0'\n";
@@ -90,13 +106,13 @@ function ensureUseFrameworksStatic(podfileContents) {
 }
 
 const withYogaAlignment = (config) =>
-  withPodfile(config, (modConfig) => {
+  forceStandardAndroidFont(withPodfile(config, (modConfig) => {
     let contents = modConfig.modResults.contents;
     contents = ensureNewArchDisabled(contents);
     contents = injectReactNativeOptions(contents);
     contents = ensureUseFrameworksStatic(contents);
     modConfig.modResults.contents = contents;
     return modConfig;
-  });
+  }));
 
 module.exports = withYogaAlignment;
