@@ -34,7 +34,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0D1117"
       },
-      "package": "com.anonymous.dottmediacrm",
+      "package": "com.dottmedia.dotti",
       "runtimeVersion": "1.0.0"
     },
     "web": {
