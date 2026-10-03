@@ -24,6 +24,7 @@ import { DottiAvatar } from '@components/FloatingAssistant';
 import { useAssistant } from '@context/AssistantContext';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Props = DrawerScreenProps<any, any>;
 
@@ -48,6 +49,7 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
   const { messages, conversations, activeConversationId, sendMessage, isTyping, startNewChat, openConversation, deleteConversation } = useAssistant();
   const { state } = useAuth();
   const { t } = useI18n();
+  const insets = useSafeAreaInsets();
   const [input, setInput] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
@@ -268,7 +270,18 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
 
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={[styles.topbar, compact && styles.topbarCompact]}>
+      <View
+        style={[
+          styles.topbar,
+          compact && styles.topbarCompact,
+          // Android edge-to-edge draws this screen behind the status bar. Keep
+          // the brand row and actions inside the safe area on downloaded builds.
+          {
+            height: (compact ? 64 : 72) + insets.top,
+            paddingTop: insets.top,
+          },
+        ]}
+      >
         {state.user ? (
         <TouchableOpacity
           style={styles.menuButton}
