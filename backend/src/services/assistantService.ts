@@ -32,8 +32,12 @@ import { searchWeb, type WebSearchResult } from './webSearchService';
 const assistantAI = new OpenAI({
   apiKey: config.assistantAI.apiKey,
   baseURL: config.assistantAI.baseURL,
-  timeout: Number(process.env.ASSISTANT_AI_TIMEOUT_MS ?? 6_000),
-  maxRetries: 0,
+  // Provider responses can legitimately take longer than the old 6-second
+  // window, especially when the assistant is preparing account context or
+  // using the web-search tool. Keep retries bounded so transient provider
+  // failures do not surface as a brain-connection error to users.
+  timeout: Number(process.env.ASSISTANT_AI_TIMEOUT_MS ?? 30_000),
+  maxRetries: 2,
 });
 const analyticsService = new AnalyticsService();
 const socialAnalyticsService = new SocialAnalyticsService();

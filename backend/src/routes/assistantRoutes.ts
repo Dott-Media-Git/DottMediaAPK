@@ -234,7 +234,10 @@ router.post(
     const cloudConversations = await withFallbackTimeout(
       getAssistantConversations(effectiveUserId),
       [],
-    );
+    ).catch(error => {
+      console.warn('[assistant] conversation history unavailable; continuing without history', error instanceof Error ? error.message : error);
+      return [];
+    });
     const cloudHistory = cloudConversations
       .flatMap(conversation => conversation.messages)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
@@ -254,15 +257,24 @@ router.post(
       }
       return { name: attachment.name, mimeType: attachment.mimeType, text: attachment.text, url };
     }));
-    const answer = await assistant.answer(parsed.question, {
-      ...(parsed.context ?? {}),
-      // Conversation history may live under a legacy ID, but account data must
-      // always be scoped exactly like the Dashboard: to the authenticated user.
-      userId: authUser.uid,
-      userEmail: authUser.email,
-      attachments: resolvedAttachments,
-      conversationHistory,
-    });
+    let answer;
+    try {
+      answer = await assistant.answer(parsed.question, {
+        ...(parsed.context ?? {}),
+        // Conversation history may live under a legacy ID, but account data must
+        // always be scoped exactly like the Dashboard: to the authenticated user.
+        userId: authUser.uid,
+        userEmail: authUser.email,
+        attachments: resolvedAttachments,
+        conversationHistory,
+      });
+    } catch (error) {
+      console.error('[assistant] answer failed; returning a recoverable response', error);
+      answer = {
+        type: 'text',
+        text: 'Dotti is temporarily busy. Your message was received; please try again in a moment.',
+      };
+    }
     const answerText = typeof answer === 'string'
       ? answer
       : typeof answer?.text === 'string'
@@ -273,14 +285,16 @@ router.post(
       if (typeof conversationStore.saveAssistantExchange === 'function') {
         await withFallbackTimeout(
           conversationStore.saveAssistantExchange({
-          userId: effectiveUserId,
-          conversationId,
-          title: parsed.conversationTitle,
-          question: parsed.question,
-          answer: answerText,
+            userId: effectiveUserId,
+            conversationId,
+            title: parsed.conversationTitle,
+            question: parsed.question,
+            answer: answerText,
           }),
           undefined,
-        );
+        ).catch(error => {
+          console.warn('[assistant] conversation save failed after response; keeping response successful', error instanceof Error ? error.message : error);
+        });
       }
     }
     res.json({ answer });
