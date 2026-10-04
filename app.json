@@ -2,7 +2,7 @@
   "expo": {
     "name": "Dott Media CRM",
     "slug": "dott-media-crm",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "scheme": "dottmedia",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -30,7 +30,7 @@
       }
     },
     "android": {
-      "versionCode": 2,
+      "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0D1117"

@@ -1,0 +1,20 @@
+diff --git a/node_modules/react-native-safe-area-context/android/src/main/jni/CMakeLists.txt b/node_modules/react-native-safe-area-context/android/src/main/jni/CMakeLists.txt
+index 0000000..0000000 100644
+--- a/node_modules/react-native-safe-area-context/android/src/main/jni/CMakeLists.txt
++++ b/node_modules/react-native-safe-area-context/android/src/main/jni/CMakeLists.txt
+@@ -36,6 +36,7 @@
+           fbjni
+           jsi
+           reactnative
++          c++_shared
+   )
+ else()
+   target_link_libraries(
+@@ -56,6 +57,7 @@
+           rrc_view
+           turbomodulejsijni
+           yoga
++          c++_shared
+   )
+ endif()
+ 

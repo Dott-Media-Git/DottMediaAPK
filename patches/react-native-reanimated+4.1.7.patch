@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-reanimated/android/CMakeLists.txt b/node_modules/react-native-reanimated/android/CMakeLists.txt
+index 0000000..0000000 100644
+--- a/node_modules/react-native-reanimated/android/CMakeLists.txt
++++ b/node_modules/react-native-reanimated/android/CMakeLists.txt
+@@ -93,7 +93,7 @@
+ set_target_properties(reanimated PROPERTIES LINK_FLAGS "-Wl,--gc-sections")
+ 
+ target_link_libraries(reanimated log ReactAndroid::jsi fbjni::fbjni android
+-                      worklets)
++                      worklets c++_shared)
+ 
+ if(ReactAndroid_VERSION_MINOR GREATER_EQUAL 76)
+   target_link_libraries(reanimated ReactAndroid::reactnative)

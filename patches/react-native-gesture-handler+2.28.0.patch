@@ -1,0 +1,10 @@
+diff --git a/node_modules/react-native-gesture-handler/android/src/main/jni/CMakeLists.txt b/node_modules/react-native-gesture-handler/android/src/main/jni/CMakeLists.txt
+index 0000000..0000000 100644
+--- a/node_modules/react-native-gesture-handler/android/src/main/jni/CMakeLists.txt
++++ b/node_modules/react-native-gesture-handler/android/src/main/jni/CMakeLists.txt
+@@ -38,4 +38,5 @@
+   ReactAndroid::reactnative
+   ReactAndroid::jsi
+   fbjni::fbjni
++  c++_shared
+ )

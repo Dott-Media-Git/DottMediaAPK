@@ -1,0 +1,48 @@
+diff --git a/node_modules/react-native/ReactAndroid/cmake-utils/ReactNative-application.cmake b/node_modules/react-native/ReactAndroid/cmake-utils/ReactNative-application.cmake
+index baa0fef..204673e 100644
+--- a/node_modules/react-native/ReactAndroid/cmake-utils/ReactNative-application.cmake
++++ b/node_modules/react-native/ReactAndroid/cmake-utils/ReactNative-application.cmake
+@@ -82,6 +82,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
+         fbjni                               # via 3rd party prefab
+         jsi                                 # prefab ready
+         reactnative                         # prefab ready
++        c++_shared                          # Android's shared C++ runtime
+ )
+ 
+ # We use an interface target to propagate flags to all the generated targets
+@@ -92,9 +93,9 @@ target_compile_options(common_flags INTERFACE ${folly_FLAGS})
+ # If project is on RN CLI v9, then we can use the following lines to link against the autolinked 3rd party libraries.
+ if(EXISTS ${PROJECT_BUILD_DIR}/generated/autolinking/src/main/jni/Android-autolinking.cmake)
+         include(${PROJECT_BUILD_DIR}/generated/autolinking/src/main/jni/Android-autolinking.cmake)
+-        target_link_libraries(${CMAKE_PROJECT_NAME} ${AUTOLINKED_LIBRARIES})
++        target_link_libraries(${CMAKE_PROJECT_NAME} ${AUTOLINKED_LIBRARIES} c++_shared)
+         foreach(autolinked_library ${AUTOLINKED_LIBRARIES})
+-            target_link_libraries(${autolinked_library} common_flags)
++            target_link_libraries(${autolinked_library} common_flags c++_shared)
+         endforeach()
+ endif()
+ 
+diff --git a/node_modules/react-native/scripts/react_native_pods.rb b/node_modules/react-native/scripts/react_native_pods.rb
+index e9f5a89..5966876 100644
+--- a/node_modules/react-native/scripts/react_native_pods.rb
++++ b/node_modules/react-native/scripts/react_native_pods.rb
+@@ -94,11 +94,17 @@ def use_react_native! (
+   # Better to rely and enable this environment flag if the new architecture is turned on using flags.
+   relative_path_from_current = Pod::Config.instance.installation_root.relative_path_from(Pathname.pwd)
+   react_native_version = NewArchitectureHelper.extract_react_native_version(File.join(relative_path_from_current, path))
+-  fabric_enabled = fabric_enabled || NewArchitectureHelper.new_arch_enabled
++  new_arch_flag = if ENV.key?('RCT_NEW_ARCH_ENABLED')
++    ENV['RCT_NEW_ARCH_ENABLED'] == '1'
++  else
++    new_arch_enabled
++  end
++
++  fabric_enabled = fabric_enabled || new_arch_flag
+ 
+   ENV['RCT_FABRIC_ENABLED'] = fabric_enabled ? "1" : "0"
+   ENV['RCT_AGGREGATE_PRIVACY_FILES'] = privacy_file_aggregation_enabled ? "1" : "0"
+-  ENV["RCT_NEW_ARCH_ENABLED"] = new_arch_enabled ? "1" : "0"
++  ENV["RCT_NEW_ARCH_ENABLED"] = new_arch_flag ? "1" : "0"
+ 
+   prefix = path
+ 

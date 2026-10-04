@@ -1,0 +1,26 @@
+diff --git a/node_modules/react-native-screens/android/CMakeLists.txt b/node_modules/react-native-screens/android/CMakeLists.txt
+index 0000000..0000000 100644
+--- a/node_modules/react-native-screens/android/CMakeLists.txt
++++ b/node_modules/react-native-screens/android/CMakeLists.txt
+@@ -47,6 +47,7 @@
+             ReactAndroid::jsi
+             fbjni::fbjni
+             android
++            c++_shared
+         )
+     else()
+         target_link_libraries(
+@@ -70,11 +71,13 @@
+                 ReactAndroid::react_render_observers_events
+                 fbjni::fbjni
+                 android
++                c++_shared
+         )
+     endif()
+ else()
+     target_link_libraries(rnscreens
+         ReactAndroid::jsi
+         android
++        c++_shared
+     )
+ endif()

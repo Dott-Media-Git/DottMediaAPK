@@ -1,0 +1,20 @@
+diff --git a/node_modules/react-native-svg/android/src/main/jni/CMakeLists.txt b/node_modules/react-native-svg/android/src/main/jni/CMakeLists.txt
+index 0000000..0000000 100644
+--- a/node_modules/react-native-svg/android/src/main/jni/CMakeLists.txt
++++ b/node_modules/react-native-svg/android/src/main/jni/CMakeLists.txt
+@@ -33,6 +33,7 @@
+     react_codegen_rnsvg
+     ReactAndroid::reactnative
+     ReactAndroid::jsi
++    c++_shared
+   )
+ else()
+   target_link_libraries(
+@@ -60,6 +61,7 @@
+ target_link_libraries(
+   react_codegen_rnsvg
+   fbjni
++  c++_shared
+ )
+ 
+ target_include_directories(
