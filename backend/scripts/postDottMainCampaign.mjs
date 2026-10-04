@@ -51,6 +51,12 @@ const PUBLISHED_IMAGE_FILENAMES = new Set([
   'dotti-run-your-social.png',
   'dotti-vlog-sidekick.png',
   'dotti-influencer-assistant.png',
+  'dotti-takes-a-break-while-working.png',
+  'dotti-take-a-break-let-dotti-work-city.png',
+  'dotti-take-a-break.png',
+  'dotti-take-a-break-let-dotti-work-cafe.png',
+  'dotti-take-a-break-let-ai-work.png',
+  'dotti-overwhelmed-to-automated-success.png',
 ]);
 const FALLBACK_IMAGE_FILENAME = 'dotti-grow-online-market.png';
 
@@ -58,6 +64,36 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const STATIC_CAMPAIGN_ITEMS = [
+  {
+    type: 'image', slug: 'dotti-overwhelmed-to-automated-success', filename: 'dotti-overwhelmed-to-automated-success.png',
+    instagramCaption: "Less busywork. More customers. Dotti helps turn content, replies, lead capture, and follow-ups into one smoother growth system.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #BusinessAutomation #CustomerGrowth #MarketingAutomation",
+    facebookCaption: "Less busywork. More customers. Dotti helps turn content, replies, lead capture, and follow-ups into one smoother growth system.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #BusinessAutomation #CustomerGrowth #MarketingAutomation",
+  },
+  {
+    type: 'image', slug: 'dotti-take-a-break-let-dotti-work-city', filename: 'dotti-take-a-break-let-dotti-work-city.png',
+    instagramCaption: "Take a break and let Dotti keep your marketing moving. Stay visible, respond faster, capture leads, and keep follow-ups on track while you focus on your day.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AutoPosting #LeadGeneration #BusinessGrowth",
+    facebookCaption: "Take a break and let Dotti keep your marketing moving. Stay visible, respond faster, capture leads, and keep follow-ups on track while you focus on your day.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AutoPosting #LeadGeneration #BusinessGrowth",
+  },
+  {
+    type: 'image', slug: 'dotti-take-a-break-let-dotti-work-cafe', filename: 'dotti-take-a-break-let-dotti-work-cafe.png',
+    instagramCaption: "Enjoy the moment while Dotti handles the busy work behind your brand: consistent posts, quick replies, lead capture, and thoughtful follow-ups.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #SocialMediaAutomation #CustomerEngagement #BusinessGrowth",
+    facebookCaption: "Enjoy the moment while Dotti handles the busy work behind your brand: consistent posts, quick replies, lead capture, and thoughtful follow-ups.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #SocialMediaAutomation #CustomerEngagement #BusinessGrowth",
+  },
+  {
+    type: 'image', slug: 'dotti-takes-a-break-while-working', filename: 'dotti-takes-a-break-while-working.png',
+    instagramCaption: "Your business can keep moving while you take a break. Dotti keeps your content, replies, leads, and follow-ups working together.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #AutoReplies #BusinessGrowth",
+    facebookCaption: "Your business can keep moving while you take a break. Dotti keeps your content, replies, leads, and follow-ups working together.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #AutoReplies #BusinessGrowth",
+  },
+  {
+    type: 'image', slug: 'dotti-take-a-break', filename: 'dotti-take-a-break.png',
+    instagramCaption: "Let Dotti work behind the scenes while you make time for what matters. Automate your posting, replies, lead capture, and follow-ups from one place.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #MarketingAutomation #LeadCapture #BusinessGrowth",
+    facebookCaption: "Let Dotti work behind the scenes while you make time for what matters. Automate your posting, replies, lead capture, and follow-ups from one place.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #MarketingAutomation #LeadCapture #BusinessGrowth",
+  },
+  {
+    type: 'image', slug: 'dotti-take-a-break-let-ai-work', filename: 'dotti-take-a-break-let-ai-work.png',
+    instagramCaption: "Take a break. Let AI work. Dotti helps local businesses stay active online, nurture conversations, and turn attention into new opportunities.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #ContentAutomation #CustomerGrowth",
+    facebookCaption: "Take a break. Let AI work. Dotti helps local businesses stay active online, nurture conversations, and turn attention into new opportunities.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #ContentAutomation #CustomerGrowth",
+  },
   {
     type: 'image', slug: 'dotti-campaign-finish-strong', filename: 'dotti-campaign-finish-strong.png',
     instagramCaption: "Campaigns are marathons. Let Dotti keep your message consistent, engage the right people, and help your brand finish strong.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #CampaignManagement #DigitalMarketing #BusinessGrowth",
