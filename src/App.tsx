@@ -14,6 +14,17 @@ import { colors } from '@constants/colors';
 import { FloatingAssistant } from '@components/FloatingAssistant';
 import { warmPrimaryScreenCaches } from '@services/appWarmCache';
 
+// React Navigation 6's web drawer still calls the Reanimated 3 gesture hook,
+// which was removed in Reanimated 4. Web disables drawer swipe gestures and
+// uses the navigation buttons instead, so provide a no-op compatibility hook
+// before the drawer is rendered. Native platforms keep the real implementation.
+if (Platform.OS === 'web') {
+  const reanimated = require('react-native-reanimated');
+  if (typeof reanimated.useAnimatedGestureHandler !== 'function') {
+    reanimated.useAnimatedGestureHandler = () => undefined;
+  }
+}
+
 // Android devices can have a user-selected display font. The app does not
 // ship a decorative typeface, so explicitly use Android's standard sans-serif
 // family for unstyled text to keep the Play Store build visually consistent.

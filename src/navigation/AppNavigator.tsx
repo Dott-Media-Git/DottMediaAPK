@@ -194,6 +194,10 @@ const DrawerNavigator = () => {
   return (
     <Drawer.Navigator
       initialRouteName="DottiChat"
+      // Reanimated 3/4 no longer supports the drawer's legacy implementation.
+      // Setting this explicitly also prevents the web build from selecting the
+      // legacy default before Reanimated finishes configuring itself.
+      useLegacyImplementation={false}
       defaultStatus="closed"
       backBehavior="history"
       detachInactiveScreens={false}
