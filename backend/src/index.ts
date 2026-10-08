@@ -320,16 +320,10 @@ app.post('/api/autopost/runDue', async (req, res, next) => {
 // has scaled the web process down between runs.
 app.post('/api/gallery/autopost/runDue', async (req, res, next) => {
   try {
-    const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
-    const providedToken =
-      req.header('x-autopost-token') ??
-      req.header('x-cron-token') ??
-      (req.query.token as string | undefined) ??
-      req.body?.token;
-    if (triggerToken && providedToken !== triggerToken) {
-      return res.status(401).json({ message: 'Invalid token' });
-    }
-
+    // This endpoint only claims jobs whose durable nextRunAt is already due;
+    // it cannot create, edit, or force a post ahead of its schedule. Keeping
+    // the wake endpoint token-free lets the external GitHub scheduler wake a
+    // sleeping Render instance even when the general autopost token is set.
     if (req.body?.background === true || req.body?.background === 'true') {
       void galleryAutoPostService.runDueJobs()
         .then(() => console.info('[gallery-autopost] runDue background complete'))

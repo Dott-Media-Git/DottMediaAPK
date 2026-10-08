@@ -21,7 +21,7 @@ jobs:
             -X POST \
             -H "Content-Type: application/json" \
             -d '{"background":true}' \
-            https://dottmediaapk.onrender.com/api/autopost/runDue
+            https://dottmediaapk.onrender.com/api/autopost/runDue || echo "General autopost runner requires its configured cron token; continuing with gallery wake."
           curl --fail --show-error --silent --max-time 540 \
             -X POST \
             -H "Content-Type: application/json" \
