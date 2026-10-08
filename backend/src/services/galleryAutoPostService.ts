@@ -93,7 +93,9 @@ export class GalleryAutoPostService {
   }
 
   stop(userId: string) {
-    return this.dependencies.store.update(userId, job => job ? { ...job, active: false, nextRunAt: null } : null);
+    return this.dependencies.store.update(userId, job => job
+      ? { ...job, active: false, nextRunAt: null, runToken: null, runStartedAt: null }
+      : null);
   }
 
   async runDueJobs() {
