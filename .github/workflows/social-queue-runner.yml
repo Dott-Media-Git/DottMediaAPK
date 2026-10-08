@@ -26,4 +26,4 @@ jobs:
             -X POST \
             -H "Content-Type: application/json" \
             -d '{"background":true}' \
-            https://dottmediaapk.onrender.com/api/gallery/autopost/runDue
+            https://dottmediaapk.onrender.com/api/gallery-autopost/runDue

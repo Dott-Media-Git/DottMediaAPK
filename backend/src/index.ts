@@ -318,7 +318,7 @@ app.post('/api/autopost/runDue', async (req, res, next) => {
 // Manual/server-side trigger for due gallery auto-post jobs. The GitHub social
 // queue runner calls this endpoint so gallery schedules continue when Render
 // has scaled the web process down between runs.
-app.post('/api/gallery/autopost/runDue', async (req, res, next) => {
+app.post('/api/gallery-autopost/runDue', async (req, res, next) => {
   try {
     // This endpoint only claims jobs whose durable nextRunAt is already due;
     // it cannot create, edit, or force a post ahead of its schedule. Keeping
