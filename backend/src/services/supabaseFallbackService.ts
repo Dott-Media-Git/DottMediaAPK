@@ -1283,6 +1283,79 @@ class SupabaseFallbackService {
     };
   }
 
+  // Gallery Auto-post uses its own job shape and can outlive a Firestore
+  // quota incident. Keep it in the existing fallback row without changing
+  // the legacy AutoPostJob columns consumed by the other scheduler.
+  async getGalleryAutoPostJob(userId: string) {
+    if (!this.isConfigured() || !userId) return null;
+    let row: any = null;
+    try {
+      row = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      const rows = await this.databaseQuery<any>('select data from public.dott_autopost_jobs where user_id = $1 limit 1', [userId]);
+      row = rows[0] ?? null;
+    }
+    const data = row?.data && typeof row.data === 'object' ? row.data as Record<string, unknown> : {};
+    return (data.galleryAutoPostJob && typeof data.galleryAutoPostJob === 'object')
+      ? data.galleryAutoPostJob
+      : null;
+  }
+
+  async upsertGalleryAutoPostJob(userId: string, job: Record<string, unknown> | null) {
+    if (!this.isConfigured() || !userId) return;
+    let existing: any = null;
+    try {
+      existing = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      const rows = await this.databaseQuery<any>('select * from public.dott_autopost_jobs where user_id = $1 limit 1', [userId]);
+      existing = rows[0] ?? null;
+    }
+    const data = existing?.data && typeof existing.data === 'object' ? { ...existing.data } : {};
+    if (job) data.galleryAutoPostJob = sanitizeJson(job) ?? {};
+    else delete data.galleryAutoPostJob;
+    const row = {
+      user_id: userId,
+      active: existing?.active ?? false,
+      next_run: existing?.next_run ?? null,
+      reels_next_run: existing?.reels_next_run ?? null,
+      story_next_run: existing?.story_next_run ?? null,
+      trend_next_run: existing?.trend_next_run ?? null,
+      data,
+      updated_at: NOW(),
+    };
+    try {
+      await this.request('POST', 'dott_autopost_jobs', {
+        params: { on_conflict: 'user_id' },
+        prefer: 'resolution=merge-duplicates,return=minimal',
+        body: [row],
+      });
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      await this.databaseQuery(
+        `insert into public.dott_autopost_jobs
+          (user_id, active, next_run, reels_next_run, story_next_run, trend_next_run, data, updated_at)
+         values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+         on conflict (user_id) do update set
+          data = excluded.data, updated_at = excluded.updated_at`,
+        [row.user_id, row.active, row.next_run, row.reels_next_run, row.story_next_run, row.trend_next_run, JSON.stringify(row.data), row.updated_at],
+      );
+    }
+  }
+
+  async getDueGalleryAutoPostUsers(now: number) {
+    if (!this.isConfigured()) return [] as string[];
+    const rows = await this.request<any[]>('GET', 'dott_autopost_jobs', {
+      params: { select: 'user_id,data', limit: 500 },
+    });
+    if (!Array.isArray(rows)) return [];
+    return rows.filter(row => {
+      const job = row?.data?.galleryAutoPostJob;
+      return job?.active === true && Number(job.nextRunAt ?? 0) <= now;
+    }).map(row => String(row.user_id ?? '')).filter(Boolean);
+  }
+
   async getActiveAutopostJobs(limit = 500) {
     if (!this.isConfigured()) return [] as Array<Record<string, unknown>>;
     const rows = await this.request<any[]>('GET', 'dott_autopost_jobs', {

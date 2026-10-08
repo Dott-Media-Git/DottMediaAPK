@@ -1,14 +1,24 @@
 import { firestore } from '../db/firestore';
 import { autoPostService } from './autoPostService';
 import { GalleryAutoPostService, type GalleryJob, type GalleryStore } from './galleryAutoPostService';
+import { supabaseFallbackService } from './supabaseFallbackService';
 
 const jobs = firestore.collection('galleryAutopostJobs');
 const store: GalleryStore = {
   async get(userId) {
+    if (supabaseFallbackService.isConfigured()) {
+      return await supabaseFallbackService.getGalleryAutoPostJob(userId) as GalleryJob | null;
+    }
     const snapshot = await jobs.doc(userId).get();
     return snapshot.exists ? snapshot.data() as GalleryJob : null;
   },
   async update(userId, change) {
+    if (supabaseFallbackService.isConfigured()) {
+      const current = await supabaseFallbackService.getGalleryAutoPostJob(userId) as GalleryJob | null;
+      const next = change(current);
+      await supabaseFallbackService.upsertGalleryAutoPostJob(userId, next as unknown as Record<string, unknown> | null);
+      return next;
+    }
     if (process.env.ALLOW_MOCK_AUTH === 'true') {
       throw Object.assign(new Error('Auto-post requires a persistent database.'), { status: 503 });
     }
@@ -21,6 +31,9 @@ const store: GalleryStore = {
     });
   },
   async due(now) {
+    if (supabaseFallbackService.isConfigured()) {
+      return supabaseFallbackService.getDueGalleryAutoPostUsers(now);
+    }
     // One range index; running jobs retain their due time for interrupted-run detection.
     const snapshot = await jobs.where('nextRunAt', '<=', now).orderBy('nextRunAt').limit(100).get();
     return snapshot.docs.map(doc => doc.id);
