@@ -191,6 +191,174 @@ const STATIC_CAMPAIGN_ITEMS = [
     facebookCaption:
       "Close more real-estate opportunities and build lasting client relationships. Dotti helps generate leads, automate follow-up, support prospects, and keep every deal moving.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIForBusiness #BusinessGrowth #SalesAutomation",
   },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-01',
+    filename: 'dotti-main-new-01.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-02',
+    filename: 'dotti-main-new-02.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-03',
+    filename: 'dotti-main-new-03.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-04',
+    filename: 'dotti-main-new-04.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-05',
+    filename: 'dotti-main-new-05.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-06',
+    filename: 'dotti-main-new-06.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-07',
+    filename: 'dotti-main-new-07.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-08',
+    filename: 'dotti-main-new-08.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-09',
+    filename: 'dotti-main-new-09.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-10',
+    filename: 'dotti-main-new-10.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-11',
+    filename: 'dotti-main-new-11.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-12',
+    filename: 'dotti-main-new-12.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-13',
+    filename: 'dotti-main-new-13.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-14',
+    filename: 'dotti-main-new-14.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-15',
+    filename: 'dotti-main-new-15.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-16',
+    filename: 'dotti-main-new-16.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-17',
+    filename: 'dotti-main-new-17.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-18',
+    filename: 'dotti-main-new-18.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-19',
+    filename: 'dotti-main-new-19.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-20',
+    filename: 'dotti-main-new-20.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-21',
+    filename: 'dotti-main-new-21.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-22',
+    filename: 'dotti-main-new-22.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'image',
+    slug: 'dotti-main-new-23',
+    filename: 'dotti-main-new-23.jpeg',
+    instagramCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+    facebookCaption: "Dotti helps you keep your business visible, capture more leads, respond faster, and grow online while you focus on what matters.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation #LeadGeneration",
+  },
+  {
+    type: 'video',
+    slug: 'dotti-main-new-showcase',
+    filename: 'dotti-main-new-showcase.mp4',
+    instagramCaption: "Dotti keeps your marketing moving with smarter content, faster replies, lead capture, and follow-up.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation",
+    facebookCaption: "Dotti keeps your marketing moving with smarter content, faster replies, lead capture, and follow-up.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation",
+  },
 ];
 
 const EMOTION_IMAGE_SLUGS = new Set([
@@ -1036,7 +1204,7 @@ function buildAssetUrl(item) {
   }
   const baseUrl = item.type === 'video' ? VIDEO_ASSET_BASE_URL : IMAGE_ASSET_BASE_URL;
   const filename =
-    item.type === 'video' || PUBLISHED_IMAGE_FILENAMES.has(item.filename)
+    item.type === 'video' || Boolean(item.filename)
       ? item.filename
       : FALLBACK_IMAGE_FILENAME;
   return `${baseUrl}/${encodeURIComponent(filename)}`;
