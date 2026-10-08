@@ -356,6 +356,7 @@ const STATIC_CAMPAIGN_ITEMS = [
     type: 'video',
     slug: 'dotti-main-new-showcase',
     filename: 'dotti-main-new-showcase.mp4',
+    assetUrl: 'https://cdn.jsdelivr.net/gh/Dott-Media-Git/DottMediaAPK@main/backend/public/campaign-videos/dottmain/dotti-main-new-showcase.mp4',
     instagramCaption: "Dotti keeps your marketing moving with smarter content, faster replies, lead capture, and follow-up.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation",
     facebookCaption: "Dotti keeps your marketing moving with smarter content, faster replies, lead capture, and follow-up.\n\nExplore Dotti: https://dotti.dott-media.org\n\n#Dotti #DottMedia #AIAutomation #BusinessGrowth #SocialMediaAutomation",
   },
