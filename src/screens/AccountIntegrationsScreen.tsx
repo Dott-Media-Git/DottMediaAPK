@@ -576,6 +576,15 @@ export const AccountIntegrationsScreen: React.FC = () => {
       .map(field => field.label);
   };
 
+  const getConnectedAccountLabel = (platform: ManualPlatform) => {
+    if (platform !== 'threads') return null;
+    const account = (socialAccounts?.[platform] ?? {}) as Record<string, unknown>;
+    const username = String(account.username ?? '').trim();
+    if (username) return username.startsWith('@') ? username : `@${username}`;
+    const accountId = String(account.accountId ?? '').trim();
+    return accountId ? `Account ${accountId}` : null;
+  };
+
   const updateDraft = (platform: ManualPlatform, key: string, value: string) => {
     setDrafts(prev => ({
       ...prev,
@@ -888,6 +897,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
               : platform === 'tiktok'
                 ? tiktokMissing
                 : getManualMissing(manualPlatform);
+          const connectedAccountLabel = connected ? getConnectedAccountLabel(manualPlatform) : null;
           const isSaving = savingPlatform === platform;
           return (
             <View key={platform} style={styles.integrationCard}>
@@ -912,6 +922,9 @@ export const AccountIntegrationsScreen: React.FC = () => {
                       </Text>
                     </View>
                   </View>
+                  {connectedAccountLabel ? (
+                    <Text style={styles.connectedAccountLabel}>Connected to {connectedAccountLabel}</Text>
+                  ) : null}
                 </View>
                 {connected ? (
                   <DMButton
@@ -1495,6 +1508,11 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 12,
     fontWeight: '600',
+  },
+  connectedAccountLabel: {
+    color: '#8ee6ad',
+    fontSize: 12,
+    marginTop: 6,
   },
   integrationBody: {
     marginTop: 12,
