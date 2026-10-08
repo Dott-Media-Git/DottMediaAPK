@@ -336,9 +336,20 @@ export class AutoPostService {
       accounts = user.data()?.socialAccounts as SocialAccounts | undefined;
     }
     const connected = { ...accounts };
-    const [youtube, tiktok] = await Promise.all([
+    // Optional video integrations must not prevent image-only gallery jobs
+    // from loading. A stale encrypted record or a provider outage should only
+    // make that provider unavailable, not break Facebook/Instagram/Threads.
+    const [youtubeResult, tiktokResult] = await Promise.allSettled([
       getYouTubeIntegrationSecrets(userId), getTikTokIntegrationSecrets(userId),
     ]);
+    const youtube = youtubeResult.status === 'fulfilled' ? youtubeResult.value : null;
+    const tiktok = tiktokResult.status === 'fulfilled' ? tiktokResult.value : null;
+    if (youtubeResult.status === 'rejected') {
+      console.warn('[autopost] YouTube integration lookup failed; continuing without YouTube', logSafeError(youtubeResult.reason));
+    }
+    if (tiktokResult.status === 'rejected') {
+      console.warn('[autopost] TikTok integration lookup failed; continuing without TikTok', logSafeError(tiktokResult.reason));
+    }
     if (youtube) connected.youtube = { refreshToken: youtube.refreshToken, accessToken: youtube.accessToken,
       privacyStatus: youtube.privacyStatus, channelId: youtube.channelId ?? undefined };
     if (tiktok) connected.tiktok = { accessToken: tiktok.accessToken, refreshToken: tiktok.refreshToken,
