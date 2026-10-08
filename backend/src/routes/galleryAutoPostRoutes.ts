@@ -21,8 +21,14 @@ router.get('/', async (req, res, next) => {
 });
 router.post('/', async (req, res, next) => {
   try {
-    const job = await galleryAutoPostService.start((req as AuthedRequest).authUser!.uid, req.body);
+    const userId = (req as AuthedRequest).authUser!.uid;
+    const job = await galleryAutoPostService.start(userId, req.body);
     res.status(201).json({ job });
+    // Start the first item immediately after the durable job is created. The
+    // background poller will handle all later three-hour runs.
+    void galleryAutoPostService.runUser(userId).catch(error => {
+      console.error('[gallery-autopost] initial run failed', { userId, error });
+    });
   } catch (error) {
     if (error instanceof ZodError) return res.status(400).json({ message: error.issues[0]?.message });
     next(error);

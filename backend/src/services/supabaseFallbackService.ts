@@ -1351,7 +1351,10 @@ class SupabaseFallbackService {
     });
     if (!Array.isArray(rows)) return [];
     return rows.filter(row => {
-      const job = row?.data?.galleryAutoPostJob;
+      const rowData = typeof row?.data === 'string' ? (() => {
+        try { return JSON.parse(row.data); } catch { return {}; }
+      })() : row?.data;
+      const job = rowData?.galleryAutoPostJob;
       return job?.active === true && Number(job.nextRunAt ?? 0) <= now;
     }).map(row => String(row.user_id ?? '')).filter(Boolean);
   }
