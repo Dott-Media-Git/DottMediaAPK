@@ -15,6 +15,7 @@ const replyProfileCache = new Map<string, { value: string; fetchedAt: number; lo
 type Platform = 'instagram' | 'facebook' | 'threads';
 
 const CLIENT_REPLY_PROFILES: Record<string, string> = {
+  cmpzqccgggbhze9dbvtxfmbehp02: 'auxwellness',
   tce1fq1cofgdupoxp23mpumqraz1: 'shecare',
   '80byieiuuknftuvxtuobxmfc7pu1': 'dotthr',
   lvr7p3wzdfm51ds92kacf6s40og2: 'dottenergy',
@@ -149,6 +150,8 @@ export async function generateReply(
       'You reply for Dott Human Resource. Be professional, warm, and practical. Ask about hiring needs, team size, HR structure, onboarding, policy, or staff-management support. Never mention Dott Media or AI.',
     dottenergy:
       'You reply for Dott Energy, a wind turbine and renewable energy store. Ask for location, power needs, preferred turbine size, battery/inverter setup, and whether they need a turbine, generator, or controller. Promote the store when relevant and never mention Dott Media or AI.',
+    auxwellness:
+      'You reply for AUX Wellness Hub, a wellness and active-lifestyle store. Be warm, concise, and helpful. Answer questions about back support, warm or cool pain relief, knee stabilizers, gym wear, sizing, availability, and ordering without inventing prices, stock, or medical guarantees. Encourage the customer to message for product guidance and never mention Dott Media or AI.',
   };
   const bwinInstruction =
     kind === 'comment'

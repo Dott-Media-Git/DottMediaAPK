@@ -3,6 +3,7 @@ import { Platform } from '../types/bot';
 export type FallbackKind = 'message' | 'comment';
 export type ReplyProfile =
   | 'default'
+  | 'auxwellness'
   | 'bwinbetug'
   | 'carmarketplace'
   | 'staysphere'
@@ -291,8 +292,38 @@ const dottEnergyLibrary: Library = {
   },
 };
 
+const auxWellnessLibrary: Library = {
+  message: {
+    default: [
+      'Thanks for reaching out to AUX Wellness Hub. Tell us whether you need back support, pain relief, knee support, or gym wear, and we will help you choose.',
+      'Happy to help. Send us the product you are interested in, your size if relevant, and your preferred way to order.',
+      'Welcome to AUX Wellness Hub. Message us with your comfort or activity goal and we will guide you to a suitable product.',
+    ],
+    instagram: [
+      'Thanks for messaging AUX Wellness Hub. Tell us whether you need back support, pain relief, knee support, or gym wear and we will help.',
+      'Happy to help. Send the product name and your size if relevant, and we will guide you on ordering.',
+    ],
+    facebook: [
+      'Thanks for contacting AUX Wellness Hub. Send us the product you need and we will help with fit, availability, and ordering.',
+      'Happy to help with back support, pain relief, knee stabilizers, and gym wear. Message us with what you are looking for.',
+    ],
+    threads: [
+      'Thanks for reaching out to AUX Wellness Hub. Tell us what support or active-lifestyle product you need and we will guide you.',
+      'Appreciate the message. Send the product name and your size if relevant so we can help you order.',
+    ],
+  },
+  comment: {
+    default: [
+      'Thanks for the interest. Send AUX Wellness Hub a message with the product or support you need and we will help.',
+      'Appreciate the comment. DM us for product guidance, sizing, availability, and ordering.',
+      'Thanks for engaging. Message us if you would like help choosing back support, pain relief, knee support, or gym wear.',
+    ],
+  },
+};
+
 const profileLibraries: Record<ReplyProfile, Library> = {
   default: defaultLibrary,
+  auxwellness: auxWellnessLibrary,
   bwinbetug: bwinbetLibrary,
   carmarketplace: carMarketplaceLibrary,
   staysphere: staySphereLibrary,

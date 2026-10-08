@@ -28,6 +28,7 @@ const KNOWN_IG_TARGETS: Record<string, { igBusinessId: string }> = {
 };
 
 const CLIENT_POLL_USER_IDS = [
+  'cMPZQccGggbhZe9dbvtxFmBehP02',
   'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
   '80bYIeiuukNFtUvXTUobXmfC7pu1',
   'LVR7p3WzdFM51ds92Kacf6S40og2',
