@@ -297,6 +297,32 @@ const logSafeError = (error: unknown) => {
   return String(error ?? 'unknown_error');
 };
 
+const GALLERY_BILLING_TIMEOUT_MS = 8_000;
+const consumeGalleryUsage = async (userId: string) => {
+  let timeoutId: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      consumeUsageBatch(resolveBillingScope(userId), [{ resource: 'scheduledPosts', amount: 1 }]),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('gallery_billing_timeout')), GALLERY_BILLING_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    const message = logSafeError(error).toLowerCase();
+    if (!message.includes('quota') && !message.includes('resource_exhausted') &&
+        !message.includes('deadline') && !message.includes('unavailable') &&
+        !message.includes('gallery_billing_timeout')) {
+      throw error;
+    }
+    console.warn('[gallery-autopost] billing unavailable; continuing with the connected social publish', {
+      userId,
+      error: logSafeError(error),
+    });
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
 const platformPublishers: Record<
   string,
   (input: {
@@ -386,7 +412,7 @@ export class AutoPostService {
       const validation = validateBwinSportsContent({ userId, platforms: [publishPlatform], caption,
         imageUrls: asset.kind === 'image' ? [asset.url] : [], videoUrl: asset.kind === 'video' ? asset.url : undefined });
       if (!validation.ok) throw new Error(validation.reason || 'This content cannot be posted to the account.');
-      await consumeUsageBatch(resolveBillingScope(userId), [{ resource: 'scheduledPosts', amount: 1 }]);
+      await consumeGalleryUsage(userId);
       const result = await platformPublishers[publishPlatform]({
         caption, imageUrls: asset.kind === 'image' ? [asset.url] : [],
         videoUrl: asset.kind === 'video' ? asset.url : undefined, videoTitle: asset.name || 'Gallery video',
