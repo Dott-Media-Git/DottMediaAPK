@@ -366,8 +366,8 @@ export class AutoPostService {
     // from loading. A stale encrypted record or a provider outage should only
     // make that provider unavailable, not break Facebook/Instagram/Threads.
     const [youtubeResult, tiktokResult] = await Promise.allSettled([
-      !accounts?.youtube?.refreshToken ? getYouTubeIntegrationSecrets(userId) : Promise.resolve(null),
-      !accounts?.tiktok?.accessToken ? getTikTokIntegrationSecrets(userId) : Promise.resolve(null),
+      accounts?.youtube ? getYouTubeIntegrationSecrets(userId) : Promise.resolve(null),
+      accounts?.tiktok ? getTikTokIntegrationSecrets(userId) : Promise.resolve(null),
     ]);
     const youtube = youtubeResult.status === 'fulfilled' ? youtubeResult.value : null;
     const tiktok = tiktokResult.status === 'fulfilled' ? tiktokResult.value : null;
