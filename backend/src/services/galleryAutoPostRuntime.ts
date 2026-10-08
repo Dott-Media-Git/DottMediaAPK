@@ -4,6 +4,22 @@ import { GalleryAutoPostService, type GalleryJob, type GalleryStore } from './ga
 import { supabaseFallbackService } from './supabaseFallbackService';
 
 const jobs = firestore.collection('galleryAutopostJobs');
+const updateLocks = new Map<string, Promise<void>>();
+
+const withUserUpdateLock = async <T>(userId: string, task: () => Promise<T>): Promise<T> => {
+  const previous = updateLocks.get(userId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>(resolve => { release = resolve; });
+  updateLocks.set(userId, current);
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+    if (updateLocks.get(userId) === current) updateLocks.delete(userId);
+  }
+};
+
 const store: GalleryStore = {
   async get(userId) {
     if (supabaseFallbackService.isConfigured()) {
@@ -14,10 +30,12 @@ const store: GalleryStore = {
   },
   async update(userId, change) {
     if (supabaseFallbackService.isConfigured()) {
-      const current = await supabaseFallbackService.getGalleryAutoPostJob(userId) as GalleryJob | null;
-      const next = change(current);
-      await supabaseFallbackService.upsertGalleryAutoPostJob(userId, next as unknown as Record<string, unknown> | null);
-      return next;
+      return withUserUpdateLock(userId, async () => {
+        const current = await supabaseFallbackService.getGalleryAutoPostJob(userId) as GalleryJob | null;
+        const next = change(current);
+        await supabaseFallbackService.upsertGalleryAutoPostJob(userId, next as unknown as Record<string, unknown> | null);
+        return next;
+      });
     }
     if (process.env.ALLOW_MOCK_AUTH === 'true') {
       throw Object.assign(new Error('Auto-post requires a persistent database.'), { status: 503 });
