@@ -22,3 +22,8 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"background":true}' \
             https://dottmediaapk.onrender.com/api/autopost/runDue
+          curl --fail --show-error --silent --max-time 540 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"background":true}' \
+            https://dottmediaapk.onrender.com/api/gallery/autopost/runDue

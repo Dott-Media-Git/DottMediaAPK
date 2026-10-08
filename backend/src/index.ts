@@ -315,6 +315,35 @@ app.post('/api/autopost/runDue', async (req, res, next) => {
   }
 });
 
+// Manual/server-side trigger for due gallery auto-post jobs. The GitHub social
+// queue runner calls this endpoint so gallery schedules continue when Render
+// has scaled the web process down between runs.
+app.post('/api/gallery/autopost/runDue', async (req, res, next) => {
+  try {
+    const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
+    const providedToken =
+      req.header('x-autopost-token') ??
+      req.header('x-cron-token') ??
+      (req.query.token as string | undefined) ??
+      req.body?.token;
+    if (triggerToken && providedToken !== triggerToken) {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+
+    if (req.body?.background === true || req.body?.background === 'true') {
+      void galleryAutoPostService.runDueJobs()
+        .then(() => console.info('[gallery-autopost] runDue background complete'))
+        .catch(error => console.error('[gallery-autopost] runDue background failed', error));
+      return res.status(202).json({ ok: true, accepted: true });
+    }
+
+    await galleryAutoPostService.runDueJobs();
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post('/api/autopost/complianceCheck', async (req, res, next) => {
   try {
     const triggerToken = process.env.AUTOPOST_RUN_TOKEN ?? process.env.CRON_SECRET ?? '';
