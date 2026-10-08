@@ -1587,6 +1587,27 @@ router.post('/social/credentials', requireFirebase, async (req, res, next) => {
       }
     }
 
+    if (payload.credentials.threads) {
+      const suppliedToken = payload.credentials.threads.accessToken.trim();
+      if (!suppliedToken) {
+        return res.status(400).json({ message: 'Threads access token is required.' });
+      }
+
+      // Threads user tokens must be exchanged with the app secret before they
+      // are persisted. This keeps manually supplied credentials on the same
+      // long-lived-token path as the OAuth callback flow.
+      const longLivedToken = await exchangeThreadsLongLivedToken(req, suppliedToken);
+      payload.credentials.threads.accessToken = longLivedToken;
+
+      if (!payload.credentials.threads.accountId?.trim()) {
+        const profile = await fetchThreadsMe(longLivedToken);
+        if (profile.id) payload.credentials.threads.accountId = profile.id;
+        if (!payload.credentials.threads.username && profile.username) {
+          payload.credentials.threads.username = profile.username;
+        }
+      }
+    }
+
     if (payload.credentials.instagram && !payload.credentials.threads) {
       const resolved = await resolveThreadsAccountId(
         payload.credentials.instagram.accessToken,
