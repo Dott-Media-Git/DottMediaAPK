@@ -450,9 +450,13 @@ function getCampaignBuckets(data) {
   const items = getCampaignItems(data);
   const images = items.filter(item => item.type === 'image');
   const videos = items.filter(item => item.type === 'video');
+  // Keep newly added Dotti creatives discoverable even when the legacy core
+  // rotation contains many more items. One new creative is selected for every
+  // three image decisions (see pickItemForState below).
+  const newImages = images.filter(item => item.slug.startsWith('dotti-main-new-'));
   const emotionImages = images.filter(item => EMOTION_IMAGE_SLUGS.has(item.slug));
   const coreImages = images.filter(item => !EMOTION_IMAGE_SLUGS.has(item.slug));
-  return { images, videos, emotionImages, coreImages };
+  return { images, videos, newImages, emotionImages, coreImages };
 }
 
 function toNonNegativeInteger(value, fallback = 0) {
@@ -502,7 +506,7 @@ function advanceCampaignState(campaignState, item) {
 }
 
 function pickItemForState(campaignState, data) {
-  const { images, videos, emotionImages, coreImages } = getCampaignBuckets(data);
+  const { images, videos, newImages, emotionImages, coreImages } = getCampaignBuckets(data);
   if (!images.length && !videos.length) {
     throw new Error('Dott main campaign items are empty.');
   }
@@ -518,6 +522,15 @@ function pickItemForState(campaignState, data) {
   if (campaignState.patternCursor === 1) {
     const index = positiveMod(campaignState.videoCursor, videos.length);
     return videos[index] ?? videos[0];
+  }
+
+  // The original rotation has a much larger core set than the newly added
+  // Dotti creatives. Reserve every third image slot for a new creative so the
+  // new gallery is posted steadily instead of waiting for a very long cursor
+  // cycle through the legacy set.
+  if (newImages.length && campaignState.imageCursor % 3 === 0) {
+    const index = positiveMod(Math.floor(campaignState.imageCursor / 3), newImages.length);
+    return newImages[index] ?? newImages[0];
   }
 
   if (emotionImages.length && coreImages.length) {
