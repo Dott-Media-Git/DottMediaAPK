@@ -13,7 +13,10 @@ type PublishInput = {
   credentials?: SocialAccounts;
 };
 
-const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v18.0';
+// v18 falls back to the deprecated publish_actions behavior for Page media.
+// Keep Facebook publishing aligned with the current Page publishing API while
+// still allowing an explicit META_GRAPH_VERSION override in production.
+const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const FACEBOOK_ALBUM_MAX_IMAGES = Math.min(
   Math.max(Number(process.env.FACEBOOK_ALBUM_MAX_IMAGES ?? 1), 1),
   10,
