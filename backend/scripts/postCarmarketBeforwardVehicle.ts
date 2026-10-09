@@ -5,6 +5,7 @@ import { resolveFacebookPageId } from '../src/services/socialAccountResolver.js'
 import {
   buildCarmarketVehicleCaption,
   fetchBeforwardVehicle,
+  fetchCarmarketAppVehicle,
   pickBeforwardVehicle,
 } from '../src/services/beforwardVehicleService.js';
 import { supabaseFallbackService } from '../src/services/supabaseFallbackService.js';
@@ -48,7 +49,9 @@ async function resolveCredentials() {
 async function main() {
   const url = process.argv[2]?.trim();
   const vehicle = url
-    ? await fetchBeforwardVehicle(url)
+    ? /app\.dott-media\.org/i.test(url)
+      ? await fetchCarmarketAppVehicle(url)
+      : await fetchBeforwardVehicle(url)
     : await pickBeforwardVehicle({ recentStockNos: await loadRecentStockNos() });
   const caption = buildCarmarketVehicleCaption(vehicle);
   const credentials = await resolveCredentials();

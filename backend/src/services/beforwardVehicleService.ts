@@ -333,7 +333,7 @@ async function pickMileleVehicle(options: { recentStockNos?: Set<string> } = {})
  * listings in server-rendered HTML, while each detail page contains the full
  * gallery and vehicle facts needed for an autopost.
  */
-async function fetchCarmarketAppVehicle(url: string): Promise<BeforwardVehicle> {
+export async function fetchCarmarketAppVehicle(url: string): Promise<BeforwardVehicle> {
   const vehicleUrl = absoluteUrl(url, CARMARKET_APP_URL);
   if (!vehicleUrl) throw new Error('Invalid CarMarketplace vehicle URL');
   const html = await fetchHtml(vehicleUrl);
