@@ -7,6 +7,7 @@ import {
   fetchBeforwardVehicle,
   fetchCarmarketAppVehicle,
   pickBeforwardVehicle,
+  renderCarmarketCoverImage,
 } from '../src/services/beforwardVehicleService.js';
 import { supabaseFallbackService } from '../src/services/supabaseFallbackService.js';
 
@@ -55,7 +56,11 @@ async function main() {
     : await pickBeforwardVehicle({ recentStockNos: await loadRecentStockNos() });
   const caption = buildCarmarketVehicleCaption(vehicle);
   const credentials = await resolveCredentials();
-  const imageUrls = vehicle.images.slice(0, 10);
+  const brandedCover = await renderCarmarketCoverImage(vehicle).catch(error => {
+    console.warn('[carmarket] branded cover generation failed; using source cover', error);
+    return null;
+  });
+  const imageUrls = [...(brandedCover ? [brandedCover] : []), ...vehicle.images.slice(brandedCover ? 1 : 0, 10)];
 
   const results = [];
   try {
