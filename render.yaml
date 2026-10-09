@@ -47,6 +47,10 @@ services:
         value: "./public/fallback-videos"
       - key: AUTOPOST_REQUIRE_AI_IMAGES
         value: "false"
+      - key: CARMARKET_PUBLIC_URL
+        value: "https://cmp.dott-media.org"
+      - key: CARMARKET_APP_URL
+        value: "https://app.dott-media.org"
       - key: ANALYTICS_ORG_ID
         value: "e3UXyD35FtaEtm0HMmQ4"
       - key: ANALYTICS_USER_ID
