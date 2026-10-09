@@ -18,6 +18,8 @@ export type BeforwardVehicle = {
 };
 
 const BASE_URL = 'https://www.beforward.jp';
+const CARMARKET_PUBLIC_URL = (process.env.CARMARKET_PUBLIC_URL || 'https://cmp.dott-media.org').trim().replace(/\/$/, '');
+const CARMARKET_APP_URL = (process.env.CARMARKET_APP_URL || 'https://app.dott-media.org').trim().replace(/\/$/, '');
 const USER_AGENT =
   process.env.BEFORWARD_USER_AGENT ||
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
@@ -70,6 +72,14 @@ async function fetchHtml(url: string) {
   });
   return String(response.data ?? '');
 }
+
+const absoluteUrl = (value: string, baseUrl: string) => {
+  try {
+    return new URL(value, `${baseUrl}/`).toString();
+  } catch {
+    return '';
+  }
+};
 
 const fetchImageBuffer = async (url: string) => {
   const response = await axios.get<ArrayBuffer>(url, {
@@ -318,6 +328,72 @@ async function pickMileleVehicle(options: { recentStockNos?: Set<string> } = {})
   throw new Error('No usable Milele vehicle listing found');
 }
 
+/**
+ * Read the public CarMarketplace app inventory. The app exposes its current
+ * listings in server-rendered HTML, while each detail page contains the full
+ * gallery and vehicle facts needed for an autopost.
+ */
+async function fetchCarmarketAppVehicle(url: string): Promise<BeforwardVehicle> {
+  const vehicleUrl = absoluteUrl(url, CARMARKET_APP_URL);
+  if (!vehicleUrl) throw new Error('Invalid CarMarketplace vehicle URL');
+  const html = await fetchHtml(vehicleUrl);
+  const $ = cheerio.load(html);
+  const body = $('body').clone();
+  body.find('script, style, noscript').remove();
+  const bodyText = decodeHtmlText(body.text());
+  const title = decodeHtmlText(
+    $('meta[property="og:title"]').attr('content')?.replace(/\s*[—-]\s*\$[\d,]+.*$/i, '') ||
+      $('h1').first().text() ||
+      $('title').text().replace(/\s*[—-]\s*\$[\d,]+.*$/i, '') ||
+      'CarMarketplace vehicle',
+  );
+  const id = new URL(vehicleUrl).searchParams.get('id')?.trim() || '';
+  const imagePattern = id
+    ? new RegExp(`https://[^\\s"'<>]+/vehicles/${escapeRegExp(id)}/\\d+\\.(?:jpg|jpeg|png|webp)`, 'gi')
+    : /https:\/\/[^\s"'<>]+\/vehicles\/[^\s"'<>]+\/\d+\.(?:jpg|jpeg|png|webp)/gi;
+  const images = unique(Array.from(html.matchAll(imagePattern), match => match[0].replace(/&amp;/g, '&'))).slice(0, 10);
+  if (images.length < 2) throw new Error('CarMarketplace listing has no usable gallery');
+  const year = bodyText.match(/\b(?:19|20)\d{2}\b/)?.[0] || title.match(/\b(?:19|20)\d{2}\b/)?.[0] || '';
+  const priceUsd =
+    bodyText.match(/\bat\s+\$\s*([\d,]+(?:\.\d+)?)/i)?.[1]?.replace(/,/g, '') ||
+    bodyText.match(/\$\s*([\d,]+(?:\.\d+)?)/)?.[1]?.replace(/,/g, '');
+  const mileage = bodyText.match(/([\d,]+)\s*mi\b/i)?.[1]?.replace(/,/g, '') || '';
+  return {
+    title,
+    stockNo: id ? `CARMARKET-${id}` : `CARMARKET-${crypto.createHash('sha1').update(vehicleUrl).digest('hex').slice(0, 12)}`,
+    priceUsd,
+    priceUgx: estimateUgxFromUsd(priceUsd),
+    source: 'CarMarketplace',
+    url: vehicleUrl,
+    images,
+    summary: { year, mileage },
+  };
+}
+
+async function pickCarmarketAppVehicle(options: { recentStockNos?: Set<string> } = {}): Promise<BeforwardVehicle> {
+  const html = await fetchHtml(`${CARMARKET_APP_URL}/homepage`);
+  const $ = cheerio.load(html);
+  const links = unique(
+    $('a[href*="/vehicle-detail?id="]')
+      .toArray()
+      .map(element => absoluteUrl($(element).attr('href') || '', CARMARKET_APP_URL)),
+  );
+  if (!links.length) throw new Error('No public CarMarketplace listings found');
+  const start = Math.floor(Math.random() * links.length);
+  const ordered = links.slice(start).concat(links.slice(0, start));
+  const errors: string[] = [];
+  for (const link of ordered.slice(0, 12)) {
+    try {
+      const vehicle = await fetchCarmarketAppVehicle(link);
+      if (vehicle.stockNo && options.recentStockNos?.has(vehicle.stockNo)) continue;
+      if (isEligibleCarmarketVehicle(vehicle)) return vehicle;
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  throw new Error(`No eligible CarMarketplace listing found: ${errors.join('; ')}`);
+}
+
 export async function pickBeforwardVehicle(options: {
   searchUrl?: string;
   recentStockNos?: Set<string>;
@@ -347,6 +423,7 @@ export async function pickBeforwardVehicle(options: {
 
 export async function pickCarmarketVehicle(options: { recentStockNos?: Set<string> } = {}) {
   const allSources = [
+    { key: 'carmarketplace', pick: pickCarmarketAppVehicle },
     { key: 'carbarn', pick: pickCarbarnVehicle },
     { key: 'milele', pick: pickMileleVehicle },
     { key: 'beforward', pick: pickBeforwardVehicle },
@@ -436,6 +513,9 @@ export function buildCarmarketVehicleCaption(vehicle: BeforwardVehicle) {
     'Imported vehicle options are subject to availability, shipping, taxes, clearing, inspection, and local registration costs.',
     '',
     vehicle.url,
+    vehicle.source === 'CarMarketplace'
+      ? `Browse more listings: ${CARMARKET_PUBLIC_URL}\nOpen the marketplace app: ${CARMARKET_APP_URL}`
+      : '',
     '',
     '#Carmarketug #CarMarketUg #UgandaCars #ToyotaUganda #CarImportUganda #KampalaCars',
   ];
