@@ -17,7 +17,7 @@ import { validateVideoUrl } from '../services/videoUrlService';
 import { enqueueYouTubeUpload, enqueueYouTubeSoraUpload, getYouTubeJobStatus } from '../services/youtubeUploadService';
 import { firestore } from '../db/firestore';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
-import { oauthSuccessRedirect } from '../utils/oauthRedirect';
+import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect';
 
 const router = Router();
 
@@ -50,9 +50,14 @@ const ensureYouTubeClientConfig = (req: Request) => {
   return { clientId, clientSecret, redirectUri };
 };
 
-const buildOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
+const buildOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null, returnUrl?: unknown) => {
   const { clientId, redirectUri } = ensureYouTubeClientConfig(req);
-  const state = createSignedState(userId, { platform: 'youtube', orgId: orgId || undefined, email: email || undefined });
+  const state = createSignedState(userId, {
+    platform: 'youtube',
+    orgId: orgId || undefined,
+    email: email || undefined,
+    returnUrl: sanitizeOAuthReturnUrl(returnUrl),
+  });
   const oauthUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   oauthUrl.searchParams.set('client_id', clientId);
   oauthUrl.searchParams.set('redirect_uri', redirectUri);
@@ -167,7 +172,7 @@ router.get('/integrations/youtube/connect', ...userGate, async (req, res, next) 
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
+    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl);
     res.redirect(oauthUrl);
   } catch (error) {
     next(error);
@@ -179,7 +184,7 @@ router.post('/integrations/youtube/start', requireFirebaseForm, async (req, res,
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
     const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
-    res.redirect(303, buildOAuthUrl(req, authUser.uid, orgId, authUser.email));
+    res.redirect(303, buildOAuthUrl(req, authUser.uid, orgId, authUser.email, req.body?.returnUrl));
   } catch (error) {
     next(error);
   }
@@ -190,7 +195,7 @@ router.get('/integrations/youtube/connect-url', ...userGate, async (req, res, ne
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
+    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl);
     res.json({ url: oauthUrl });
   } catch (error) {
     next(error);
@@ -294,7 +299,7 @@ router.get('/integrations/youtube/callback', async (req, res) => {
     return;
   }
 
-  res.redirect(303, oauthSuccessRedirect('youtube'));
+  res.redirect(303, oauthSuccessRedirect('youtube', state.returnUrl));
 });
 
 const pasteSchema = z.object({

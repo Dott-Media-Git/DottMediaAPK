@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
+import * as ExpoLinking from 'expo-linking';
 import { Alert, AppState, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { doc, getDoc } from 'firebase/firestore';
@@ -50,6 +51,11 @@ import {
   type TikTokConfig,
   type TikTokStatus
 } from '@services/tiktokIntegration';
+
+// Completes any pending auth session when the web build is resumed after an
+// OAuth provider redirects back to it. Native sessions use the app deep link
+// passed to openAuthSessionAsync below.
+if (Platform.OS === 'web') WebBrowser.maybeCompleteAuthSession();
 
 type ManualPlatform = 'facebook' | 'linkedin' | 'instagram' | 'threads' | 'twitter' | 'whatsapp';
 type PlatformKey = ManualPlatform | 'tiktok' | 'youtube';
@@ -317,6 +323,9 @@ export const AccountIntegrationsScreen: React.FC = () => {
     if (popup && !popup.closed) popup.close();
   };
 
+  const nativeOAuthReturnUrl = (platform: PlatformKey) =>
+    ExpoLinking.createURL('integrations', { queryParams: { connected: platform } });
+
   const openOAuthUrl = async (
     url: string | undefined,
     label: string,
@@ -354,7 +363,15 @@ export const AccountIntegrationsScreen: React.FC = () => {
     }
 
     try {
-      await WebBrowser.openBrowserAsync(parsedUrl.toString());
+      // Use an auth session on iOS/Android so the provider callback can return
+      // to Dotti through its deep link. Opening a plain browser leaves users on
+      // the provider callback page and is the source of the iPhone error.
+      const redirectUrl = nativeOAuthReturnUrl(platform);
+      const result = await WebBrowser.openAuthSessionAsync(parsedUrl.toString(), redirectUrl);
+      if (result.type === 'success' || result.type === 'dismiss' || result.type === 'cancel') {
+        await refreshPlatformConnection(platform);
+        setPendingOAuthPlatform(null);
+      }
     } catch (error) {
       const canOpen = await Linking.canOpenURL(parsedUrl.toString());
       if (!canOpen) {
@@ -369,7 +386,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
     try {
       if (await submitWebOAuth('/integrations/youtube/start', 'youtube')) return;
       const oauthWindow = reserveOAuthWindow();
-      const response = await fetchYouTubeConnectUrl(orgId);
+      const response = await fetchYouTubeConnectUrl(orgId, nativeOAuthReturnUrl('youtube'));
       await openOAuthUrl(response?.url as string | undefined, 'YouTube', 'youtube', oauthWindow);
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Unable to open the YouTube connect URL.'));
@@ -446,7 +463,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
     try {
       if (await submitWebOAuth('/integrations/tiktok/start', 'tiktok')) return;
       const oauthWindow = reserveOAuthWindow();
-      const response = await fetchTikTokConnectUrl(orgId);
+      const response = await fetchTikTokConnectUrl(orgId, nativeOAuthReturnUrl('tiktok'));
       await openOAuthUrl(response?.url as string | undefined, 'TikTok', 'tiktok', oauthWindow);
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Unable to open the TikTok connect URL.'));
@@ -511,7 +528,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
     try {
       if (await submitWebOAuth('/integrations/meta/start', platform, { platform })) return;
       const oauthWindow = reserveOAuthWindow();
-      const response = await fetchMetaConnectUrl(platform);
+      const response = await fetchMetaConnectUrl(platform, nativeOAuthReturnUrl(platform));
       await openOAuthUrl(response?.url, 'Meta', platform, oauthWindow);
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Unable to open the Meta connect URL.'));
@@ -525,7 +542,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
     try {
       if (await submitWebOAuth('/integrations/threads/start', 'threads')) return;
       const oauthWindow = reserveOAuthWindow();
-      const response = await fetchThreadsConnectUrl();
+      const response = await fetchThreadsConnectUrl(nativeOAuthReturnUrl('threads'));
       await openOAuthUrl(response?.url, 'Threads', 'threads', oauthWindow);
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Unable to open the Threads connect URL.'));
@@ -539,7 +556,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
     try {
       if (await submitWebOAuth('/integrations/linkedin/start', 'linkedin')) return;
       const oauthWindow = reserveOAuthWindow();
-      const response = await fetchLinkedInConnectUrl();
+      const response = await fetchLinkedInConnectUrl(nativeOAuthReturnUrl('linkedin'));
       await openOAuthUrl(response?.url, 'LinkedIn', 'linkedin', oauthWindow);
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Unable to open the LinkedIn connect URL.'));
@@ -553,7 +570,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
     try {
       if (await submitWebOAuth('/integrations/twitter/start', 'twitter')) return;
       const oauthWindow = reserveOAuthWindow();
-      const response = await fetchTwitterConnectUrl();
+      const response = await fetchTwitterConnectUrl(nativeOAuthReturnUrl('twitter'));
       await openOAuthUrl(response?.url, 'X', 'twitter', oauthWindow);
     } catch (error: any) {
       Alert.alert(t('Error'), error.message ?? t('Unable to open the X connect URL.'));

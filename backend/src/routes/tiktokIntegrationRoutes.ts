@@ -14,7 +14,7 @@ import {
 } from '../services/socialIntegrationService';
 import { firestore } from '../db/firestore';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
-import { oauthSuccessRedirect } from '../utils/oauthRedirect';
+import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const router = Router();
@@ -105,9 +105,14 @@ const ensureTikTokClientConfig = (req: Request) => {
   return { clientKey, clientSecret, redirectUri, scopes: getScopes() };
 };
 
-const buildOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
+const buildOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null, returnUrl?: unknown) => {
   const { clientKey, redirectUri, scopes } = ensureTikTokClientConfig(req);
-  const state = createSignedState(userId, { platform: 'tiktok', orgId: orgId || undefined, email: email || undefined });
+  const state = createSignedState(userId, {
+    platform: 'tiktok',
+    orgId: orgId || undefined,
+    email: email || undefined,
+    returnUrl: sanitizeOAuthReturnUrl(returnUrl),
+  });
   const oauthUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
   oauthUrl.searchParams.set('client_key', clientKey);
   oauthUrl.searchParams.set('redirect_uri', redirectUri);
@@ -175,7 +180,7 @@ router.get('/integrations/tiktok/connect', ...userGate, async (req, res, next) =
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
+    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl);
     res.redirect(oauthUrl);
   } catch (error) {
     next(error);
@@ -187,7 +192,7 @@ router.post('/integrations/tiktok/start', requireFirebaseForm, async (req, res, 
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
     const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
-    res.redirect(303, buildOAuthUrl(req, authUser.uid, orgId, authUser.email));
+    res.redirect(303, buildOAuthUrl(req, authUser.uid, orgId, authUser.email, req.body?.returnUrl));
   } catch (error) {
     next(error);
   }
@@ -198,7 +203,7 @@ router.get('/integrations/tiktok/connect-url', ...userGate, async (req, res, nex
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
+    const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl);
     res.json({ url: oauthUrl });
   } catch (error) {
     next(error);
@@ -302,7 +307,7 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
     return;
   }
 
-  res.redirect(303, oauthSuccessRedirect('tiktok'));
+  res.redirect(303, oauthSuccessRedirect('tiktok', state.returnUrl));
 });
 
 router.post('/integrations/tiktok/token', ...userGate, async (req, res, next) => {

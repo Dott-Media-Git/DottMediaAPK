@@ -10,7 +10,7 @@ import { firestore } from '../db/firestore';
 import { autoPostService } from '../services/autoPostService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
-import { oauthSuccessRedirect } from '../utils/oauthRedirect';
+import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect';
 
 const router = Router();
 
@@ -273,9 +273,21 @@ const normalizeMetaConnectPlatform = (value: unknown): MetaConnectPlatform => {
   return 'all';
 };
 
-const buildOAuthUrl = (req: Request, userId: string, platform: MetaConnectPlatform = 'all', orgId?: string | null, email?: string | null) => {
+const buildOAuthUrl = (
+  req: Request,
+  userId: string,
+  platform: MetaConnectPlatform = 'all',
+  orgId?: string | null,
+  email?: string | null,
+  returnUrl?: unknown,
+) => {
   const { appId, redirectUri } = getMetaAppConfig(req);
-  const state = createSignedState(userId, { platform, orgId: orgId || undefined, email: email || undefined });
+  const state = createSignedState(userId, {
+    platform,
+    orgId: orgId || undefined,
+    email: email || undefined,
+    returnUrl: sanitizeOAuthReturnUrl(returnUrl),
+  });
   const url = new URL(`https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`);
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
@@ -306,9 +318,14 @@ const getThreadsScopes = () => {
   return ['threads_basic', 'threads_content_publish'];
 };
 
-const buildThreadsOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
+const buildThreadsOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null, returnUrl?: unknown) => {
   const { appId, redirectUri } = getThreadsAppConfig(req);
-  const state = createSignedState(userId, { platform: 'threads', orgId: orgId || undefined, email: email || undefined });
+  const state = createSignedState(userId, {
+    platform: 'threads',
+    orgId: orgId || undefined,
+    email: email || undefined,
+    returnUrl: sanitizeOAuthReturnUrl(returnUrl),
+  });
   const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://www.threads.net/oauth/authorize');
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
@@ -371,9 +388,14 @@ const getInstagramLoginScopes = () => {
   return ['instagram_business_basic', 'instagram_business_content_publish'];
 };
 
-const buildInstagramOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
+const buildInstagramOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null, returnUrl?: unknown) => {
   const { appId, redirectUri } = getInstagramAppConfig(req);
-  const state = createSignedState(userId, { platform: 'instagram', orgId: orgId || undefined, email: email || undefined });
+  const state = createSignedState(userId, {
+    platform: 'instagram',
+    orgId: orgId || undefined,
+    email: email || undefined,
+    returnUrl: sanitizeOAuthReturnUrl(returnUrl),
+  });
   const url = new URL(process.env.INSTAGRAM_AUTHORIZE_URL ?? 'https://www.instagram.com/oauth/authorize');
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
@@ -808,7 +830,7 @@ router.get('/integrations/meta/connect', requireFirebase, async (req, res, next)
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
     const platform = normalizeMetaConnectPlatform(req.query.platform);
-    res.redirect(buildOAuthUrl(req, userId, platform, req.header('x-org-id'), authUser?.email));
+    res.redirect(buildOAuthUrl(req, userId, platform, req.header('x-org-id'), authUser?.email, req.query.returnUrl));
   } catch (error) {
     next(error);
   }
@@ -820,7 +842,7 @@ router.post('/integrations/meta/start', requireFirebaseForm, async (req, res, ne
     if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
     const platform = normalizeMetaConnectPlatform(req.body?.platform);
     const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
-    res.redirect(303, buildOAuthUrl(req, authUser.uid, platform, orgId, authUser.email));
+    res.redirect(303, buildOAuthUrl(req, authUser.uid, platform, orgId, authUser.email, req.body?.returnUrl));
   } catch (error) {
     next(error);
   }
@@ -832,7 +854,7 @@ router.get('/integrations/meta/connect-url', requireFirebase, async (req, res, n
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
     const platform = normalizeMetaConnectPlatform(req.query.platform);
-    res.json({ url: buildOAuthUrl(req, userId, platform, req.header('x-org-id'), authUser?.email), platform });
+    res.json({ url: buildOAuthUrl(req, userId, platform, req.header('x-org-id'), authUser?.email, req.query.returnUrl), platform });
   } catch (error) {
     next(error);
   }
@@ -873,7 +895,7 @@ router.get('/integrations/instagram/connect', requireFirebase, async (req, res, 
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.redirect(buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email));
+    res.redirect(buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl));
   } catch (error) {
     next(error);
   }
@@ -884,7 +906,7 @@ router.get('/integrations/instagram/connect-url', requireFirebase, async (req, r
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.json({ url: buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email) });
+    res.json({ url: buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl) });
   } catch (error) {
     next(error);
   }
@@ -895,7 +917,7 @@ router.get('/integrations/threads/connect', requireFirebase, async (req, res, ne
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.redirect(buildThreadsHandoffUrl(req, buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email)));
+    res.redirect(buildThreadsHandoffUrl(req, buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl)));
   } catch (error) {
     next(error);
   }
@@ -936,7 +958,7 @@ router.post('/integrations/threads/start', requireFirebaseForm, async (req, res,
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
     const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
-    res.status(200).send(renderThreadsHandoffHtml(buildThreadsOAuthUrl(req, authUser.uid, orgId, authUser.email)));
+    res.status(200).send(renderThreadsHandoffHtml(buildThreadsOAuthUrl(req, authUser.uid, orgId, authUser.email, req.body?.returnUrl)));
   } catch (error) {
     next(error);
   }
@@ -947,7 +969,7 @@ router.get('/integrations/threads/connect-url', requireFirebase, async (req, res
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    const authorizationUrl = buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email);
+    const authorizationUrl = buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl);
     res.json({ url: buildThreadsHandoffUrl(req, authorizationUrl), authorizationUrl });
   } catch (error) {
     next(error);
@@ -1093,7 +1115,10 @@ router.get('/integrations/meta/callback', async (req, res) => {
       .filter(Boolean)
       .join(', ');
 
-    res.redirect(303, oauthSuccessRedirect(requestedPlatform === 'ads' ? 'ads' : requestedPlatform === 'instagram' ? 'instagram' : 'facebook'));
+    res.redirect(303, oauthSuccessRedirect(
+      requestedPlatform === 'ads' ? 'ads' : requestedPlatform === 'instagram' ? 'instagram' : 'facebook',
+      state.returnUrl,
+    ));
   } catch (error) {
     console.error('[meta] connection failed', error);
     res
@@ -1181,7 +1206,7 @@ router.get('/integrations/instagram/callback', async (req, res) => {
       });
     }
 
-    res.redirect(303, oauthSuccessRedirect('instagram'));
+    res.redirect(303, oauthSuccessRedirect('instagram', state.returnUrl));
   } catch (error) {
     console.error('[instagram] connection failed', error);
     res
@@ -1262,7 +1287,7 @@ router.get('/integrations/threads/callback', async (req, res) => {
       });
     }
 
-    res.redirect(303, oauthSuccessRedirect('threads'));
+    res.redirect(303, oauthSuccessRedirect('threads', state.returnUrl));
   } catch (error) {
     console.error('[threads] connection failed', error);
     res

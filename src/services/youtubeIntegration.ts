@@ -25,8 +25,8 @@ export const fetchYouTubeConfig = async (orgId?: string) =>
 export const fetchYouTubeStatus = async (orgId?: string) =>
   adminFetch('/integrations/youtube/status', {}, orgId);
 
-export const fetchYouTubeConnectUrl = async (orgId?: string) =>
-  adminFetch('/integrations/youtube/connect-url', {}, orgId);
+export const fetchYouTubeConnectUrl = async (orgId?: string, returnUrl?: string) =>
+  adminFetch(`/integrations/youtube/connect-url${returnUrl ? `?returnUrl=${encodeURIComponent(returnUrl)}` : ''}`, {}, orgId);
 
 export const pasteYouTubeToken = async (
   payload: {

@@ -7,6 +7,7 @@ import {
   Modal,
   Platform,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -50,6 +51,13 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
   const { state } = useAuth();
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
+  // Some downloaded Android builds use edge-to-edge mode and report a zero
+  // safe-area inset even while the status bar is drawing over the app. Keep a
+  // platform fallback so the custom Dotti header never sits under system UI.
+  const topInset = Math.max(
+    insets.top,
+    Platform.OS === 'android' ? Number(StatusBar.currentHeight ?? 0) : 0,
+  );
   const [input, setInput] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
@@ -274,11 +282,9 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
         style={[
           styles.topbar,
           compact && styles.topbarCompact,
-          // Android edge-to-edge draws this screen behind the status bar. Keep
-          // the brand row and actions inside the safe area on downloaded builds.
           {
-            height: (compact ? 64 : 72) + insets.top,
-            paddingTop: insets.top,
+            minHeight: (compact ? 64 : 72) + topInset,
+            paddingTop: topInset,
           },
         ]}
       >
@@ -376,7 +382,13 @@ export const WebChatScreen: React.FC<Props> = ({ navigation }) => {
         )}
       </ScrollView>
 
-      <View style={[styles.composerArea, compact && styles.composerAreaCompact]}>
+      <View
+        style={[
+          styles.composerArea,
+          compact && styles.composerAreaCompact,
+          { paddingBottom: (compact ? 10 : 16) + insets.bottom },
+        ]}
+      >
         {attachments.length ? (
           <ScrollView horizontal style={styles.attachmentStrip} contentContainerStyle={styles.attachmentStripContent} showsHorizontalScrollIndicator={false}>
             {attachments.map(file => (

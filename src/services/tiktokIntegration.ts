@@ -53,8 +53,8 @@ export const fetchTikTokConfig = async (orgId?: string) =>
 export const fetchTikTokStatus = async (orgId?: string) =>
   adminFetch('/integrations/tiktok/status', {}, orgId);
 
-export const fetchTikTokConnectUrl = async (orgId?: string) =>
-  adminFetch('/integrations/tiktok/connect-url', {}, orgId);
+export const fetchTikTokConnectUrl = async (orgId?: string, returnUrl?: string) =>
+  adminFetch(`/integrations/tiktok/connect-url${returnUrl ? `?returnUrl=${encodeURIComponent(returnUrl)}` : ''}`, {}, orgId);
 
 export const pasteTikTokToken = async (
   payload: { accessToken?: string; json?: string },

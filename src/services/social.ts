@@ -289,17 +289,22 @@ export const fetchSocialStatus = async (): Promise<{ status: SocialConnectionSta
   return authedFetch('/api/social/status');
 };
 
-export const fetchMetaConnectUrl = async (platform?: 'facebook' | 'instagram' | 'ads'): Promise<{ url?: string }> => {
-  const query = platform ? `?platform=${encodeURIComponent(platform)}` : '';
+export const fetchMetaConnectUrl = async (platform?: 'facebook' | 'instagram' | 'ads', returnUrl?: string): Promise<{ url?: string }> => {
+  const params = new URLSearchParams();
+  if (platform) params.set('platform', platform);
+  if (returnUrl) params.set('returnUrl', returnUrl);
+  const query = params.toString() ? `?${params.toString()}` : '';
   return authedFetch(`/integrations/meta/connect-url${query}`);
 };
 
-export const fetchInstagramConnectUrl = async (): Promise<{ url?: string }> => {
-  return authedFetch('/integrations/instagram/connect-url');
+export const fetchInstagramConnectUrl = async (returnUrl?: string): Promise<{ url?: string }> => {
+  const query = returnUrl ? `?returnUrl=${encodeURIComponent(returnUrl)}` : '';
+  return authedFetch(`/integrations/instagram/connect-url${query}`);
 };
 
-export const fetchThreadsConnectUrl = async (): Promise<{ url?: string }> => {
-  return authedFetch('/integrations/threads/connect-url');
+export const fetchThreadsConnectUrl = async (returnUrl?: string): Promise<{ url?: string }> => {
+  const query = returnUrl ? `?returnUrl=${encodeURIComponent(returnUrl)}` : '';
+  return authedFetch(`/integrations/threads/connect-url${query}`);
 };
 
 export type WhatsAppEmbeddedSignupConfig = { appId: string; configId: string; graphVersion: string };
@@ -307,12 +312,14 @@ export const fetchWhatsAppEmbeddedSignupConfig = async (): Promise<WhatsAppEmbed
 export const completeWhatsAppEmbeddedSignup = async (payload: { code: string; wabaId: string; phoneNumberId: string; businessId?: string; orgId?: string | null }) =>
   authedFetch('/integrations/whatsapp/complete', { method: 'POST', body: JSON.stringify(payload) });
 
-export const fetchLinkedInConnectUrl = async (): Promise<{ url?: string }> => {
-  return authedFetch('/integrations/linkedin/connect-url');
+export const fetchLinkedInConnectUrl = async (returnUrl?: string): Promise<{ url?: string }> => {
+  const query = returnUrl ? `?returnUrl=${encodeURIComponent(returnUrl)}` : '';
+  return authedFetch(`/integrations/linkedin/connect-url${query}`);
 };
 
-export const fetchTwitterConnectUrl = async (): Promise<{ url?: string }> => {
-  return authedFetch('/integrations/twitter/connect-url');
+export const fetchTwitterConnectUrl = async (returnUrl?: string): Promise<{ url?: string }> => {
+  const query = returnUrl ? `?returnUrl=${encodeURIComponent(returnUrl)}` : '';
+  return authedFetch(`/integrations/twitter/connect-url${query}`);
 };
 
 export const saveSocialCredentials = async (userId: string, credentials: any) => {
