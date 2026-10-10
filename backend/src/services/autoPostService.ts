@@ -6252,6 +6252,32 @@ export class AutoPostService {
         };
       }
     > = {
+      cMPZQccGggbhZe9dbvtxFmBehP02: {
+        key: 'auxwellness',
+        brand: 'AUX WELLNESS HUB',
+        accent: '#63d6c6',
+        dark: '#102421',
+        light: '#f3fffd',
+        hooks: ['Move with confidence', 'Everyday support', 'Comfort in motion', 'Support that fits', 'Wellness made practical', 'Active days, supported'],
+        sublines: ['Message for product guidance', 'Ask about fit and availability', 'Support for your active routine', 'Comfort for every day'],
+        queries: ['wellness active lifestyle', 'fitness stretching', 'knee support fitness', 'back support wellness', 'athlete recovery'],
+        curatedImages: {
+          feed: [
+            'https://images.pexels.com/photos/3768916/pexels-photo-3768916.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/4056532/pexels-photo-4056532.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/4498574/pexels-photo-4498574.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/6740741/pexels-photo-6740741.jpeg?auto=compress&cs=tinysrgb&w=1600',
+            'https://images.pexels.com/photos/6111616/pexels-photo-6111616.jpeg?auto=compress&cs=tinysrgb&w=1600',
+          ],
+          story: [
+            'https://images.pexels.com/photos/3768916/pexels-photo-3768916.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/4056532/pexels-photo-4056532.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/4498574/pexels-photo-4498574.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/6740741/pexels-photo-6740741.jpeg?auto=compress&cs=tinysrgb&h=1920',
+            'https://images.pexels.com/photos/6111616/pexels-photo-6111616.jpeg?auto=compress&cs=tinysrgb&h=1920',
+          ],
+        },
+      },
       acmVetCcOiTHeGk5D7eDYieamDF3: {
         key: 'carmarketplace',
         brand: 'CARMARKETUG',
