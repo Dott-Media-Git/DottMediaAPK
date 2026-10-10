@@ -4,7 +4,11 @@ import crypto from 'crypto';
 import https from 'https';
 import sharp from 'sharp';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
-import { isEligibleCarmarketVehicle, isPreferredCarmarketModel } from './carmarketVehicleSelection.js';
+import {
+  isEligibleCarmarketVehicle,
+  isHighValueCarmarketVehicle,
+  isPreferredCarmarketModel,
+} from './carmarketVehicleSelection.js';
 
 export type BeforwardVehicle = {
   title: string;
@@ -223,10 +227,15 @@ export async function fetchBeforwardVehicle(url: string): Promise<BeforwardVehic
 
 async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}): Promise<BeforwardVehicle> {
   const html = await fetchHtml('https://www.carbarn.ug/cars');
+  let fallback: BeforwardVehicle | null = null;
   for (const vehicle of parseCarbarnEmbeddedVehicles(html)) {
     if (vehicle.stockNo && options.recentStockNos?.has(vehicle.stockNo)) continue;
-    if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) return vehicle;
+    if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) {
+      if (isHighValueCarmarketVehicle(vehicle)) return vehicle;
+      fallback ??= vehicle;
+    }
   }
+  if (fallback) return fallback;
   const $ = cheerio.load(html);
   const scripts = $('script[type="application/ld+json"]')
     .toArray()
@@ -239,7 +248,8 @@ async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}
       if (!Array.isArray(items)) continue;
       for (const entry of items) {
         const item = entry?.item;
-        if (!isEligibleCarmarketVehicle({ title: String(item?.name ?? ''), summary: {} })) continue;
+        const title = String(item?.name ?? '');
+        if (!isEligibleCarmarketVehicle({ title, summary: {}, priceUgx: Number(item?.offers?.price) })) continue;
         const url = String(item?.url ?? '').trim();
         const stockNo = url.match(/-(\d+)$/)?.[1] || url.split('/').pop() || '';
         if (stockNo && options.recentStockNos?.has(`CARBARN-${stockNo}`)) continue;
@@ -247,8 +257,8 @@ async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}
         if (!url || !image) continue;
         const embeddedImages = extractCarbarnEmbeddedImages(html, String(item?.name ?? '').trim());
         const priceUgx = Number(item?.offers?.price);
-        return {
-          title: String(item?.name ?? 'Carbarn vehicle').trim(),
+        const vehicle = {
+          title: title.trim() || 'Carbarn vehicle',
           stockNo: `CARBARN-${stockNo}`,
           priceUsd: item?.offers?.price ? undefined : undefined,
           priceUgx: Number.isFinite(priceUgx) ? priceUgx : undefined,
@@ -262,11 +272,14 @@ async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}
             color: String(item?.color ?? '').trim(),
           },
         };
+        if (isHighValueCarmarketVehicle(vehicle)) return vehicle;
+        fallback ??= vehicle;
       }
     } catch {
       // Try the next structured data block.
     }
   }
+  if (fallback) return fallback;
   throw new Error('No usable Carbarn vehicle listing found');
 }
 
@@ -315,16 +328,21 @@ async function pickMileleVehicle(options: { recentStockNos?: Set<string> } = {})
     ...links.filter(link => !/\/rhd-/i.test(link) && /toyota|lexus|nissan|mercedes|mitsubishi|suzuki/i.test(link)),
     ...links,
   ];
+  let fallback: BeforwardVehicle | null = null;
   for (const link of unique(preferred)) {
     const stockKey = `MILELE-${link.replace(/\/+$/, '').split('/').pop()?.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 42)}`;
     if (stockKey && options.recentStockNos?.has(stockKey)) continue;
     try {
       const vehicle = await fetchMileleVehicle(link);
-      if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) return vehicle;
+      if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) {
+        if (isHighValueCarmarketVehicle(vehicle)) return vehicle;
+        fallback ??= vehicle;
+      }
     } catch {
       // Try the next Milele listing.
     }
   }
+  if (fallback) return fallback;
   throw new Error('No usable Milele vehicle listing found');
 }
 
@@ -382,15 +400,20 @@ async function pickCarmarketAppVehicle(options: { recentStockNos?: Set<string> }
   const start = Math.floor(Math.random() * links.length);
   const ordered = links.slice(start).concat(links.slice(0, start));
   const errors: string[] = [];
+  let fallback: BeforwardVehicle | null = null;
   for (const link of ordered.slice(0, 12)) {
     try {
       const vehicle = await fetchCarmarketAppVehicle(link);
       if (vehicle.stockNo && options.recentStockNos?.has(vehicle.stockNo)) continue;
-      if (isEligibleCarmarketVehicle(vehicle)) return vehicle;
+      if (isEligibleCarmarketVehicle(vehicle)) {
+        if (isHighValueCarmarketVehicle(vehicle)) return vehicle;
+        fallback ??= vehicle;
+      }
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }
   }
+  if (fallback) return fallback;
   throw new Error(`No eligible CarMarketplace listing found: ${errors.join('; ')}`);
 }
 
@@ -405,6 +428,7 @@ export async function pickBeforwardVehicle(options: {
       normalizeUrl(match[1]),
     ),
   );
+  let fallback: BeforwardVehicle | null = null;
   for (const link of links) {
     // Model names are available in listing URLs; avoid fetching economy cars.
     const modelTitle = link.replace(BASE_URL, '').split('/').slice(1, 3).join(' ').replace(/-/g, ' ');
@@ -413,15 +437,31 @@ export async function pickBeforwardVehicle(options: {
     if (stockNo && options.recentStockNos?.has(stockNo)) continue;
     try {
       const vehicle = await fetchBeforwardVehicle(link);
-      if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) return vehicle;
+      if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) {
+        if (isHighValueCarmarketVehicle(vehicle)) return vehicle;
+        fallback ??= vehicle;
+      }
     } catch {
       // Try the next listing.
     }
   }
+  if (fallback) return fallback;
   throw new Error('No usable BE FORWARD vehicle listing found');
 }
 
-export async function pickCarmarketVehicle(options: { recentStockNos?: Set<string> } = {}) {
+export function getCarmarketSourceKey(vehicle: Pick<BeforwardVehicle, 'source'>): string {
+  const source = String(vehicle.source ?? '').toLowerCase();
+  if (source.includes('carbarn')) return 'carbarn';
+  if (source.includes('milele')) return 'milele';
+  if (source.includes('forward')) return 'beforward';
+  if (source.includes('carmarket')) return 'carmarketplace';
+  return 'carmarketplace';
+}
+
+export async function pickCarmarketVehicle(options: {
+  recentStockNos?: Set<string>;
+  recentSourceKeys?: string[];
+} = {}) {
   const allSources = [
     { key: 'carmarketplace', pick: pickCarmarketAppVehicle },
     { key: 'carbarn', pick: pickCarbarnVehicle },
@@ -429,13 +469,21 @@ export async function pickCarmarketVehicle(options: { recentStockNos?: Set<strin
     { key: 'beforward', pick: pickBeforwardVehicle },
   ];
   const priority = (process.env.CARMARKET_SOURCE_PRIORITY ?? '').trim().toLowerCase();
-  const sources = priority
+  const configured = priority
     ? [...allSources.filter(source => source.key === priority), ...allSources.filter(source => source.key !== priority)]
     : allSources;
-  const start = Math.floor(Math.random() * sources.length);
+  const lastSource = options.recentSourceKeys?.find(key => allSources.some(source => source.key === key));
+  const start = lastSource
+    ? (allSources.findIndex(source => source.key === lastSource) + 1) % allSources.length
+    : priority
+      ? 0
+      : Math.floor(Math.random() * allSources.length);
+  const sources = lastSource
+    ? allSources.slice(start).concat(allSources.slice(0, start))
+    : configured;
   const errors: string[] = [];
   for (let index = 0; index < sources.length; index += 1) {
-    const source = priority ? sources[index] : sources[(start + index) % sources.length];
+    const source = sources[index];
     try {
       return await source.pick(options);
     } catch (error) {

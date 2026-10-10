@@ -6,6 +6,7 @@ import {
   buildCarmarketVehicleCaption,
   fetchBeforwardVehicle,
   fetchCarmarketAppVehicle,
+  pickCarmarketVehicle,
   pickBeforwardVehicle,
   renderCarmarketCoverImage,
 } from '../src/services/beforwardVehicleService.js';
@@ -53,7 +54,7 @@ async function main() {
     ? /app\.dott-media\.org/i.test(url)
       ? await fetchCarmarketAppVehicle(url)
       : await fetchBeforwardVehicle(url)
-    : await pickBeforwardVehicle({ recentStockNos: await loadRecentStockNos() });
+    : await pickCarmarketVehicle({ recentStockNos: await loadRecentStockNos() });
   const caption = buildCarmarketVehicleCaption(vehicle);
   const credentials = await resolveCredentials();
   const brandedCover = await renderCarmarketCoverImage(vehicle).catch(error => {

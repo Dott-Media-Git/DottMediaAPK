@@ -3,7 +3,20 @@ const preferredModels = /\b(?:lexus|mercedes(?:[ -]benz)?|bmw|audi|porsche|volvo
 
 export const isPreferredCarmarketModel = (title: string): boolean => preferredModels.test(title);
 
-export function isEligibleCarmarketVehicle(vehicle: { title: string; summary: Record<string, string> }): boolean {
+const configuredHighValueMinimum = Number(process.env.CARMARKET_HIGH_VALUE_MIN_UGX ?? 100_000_000);
+export const CARMARKET_HIGH_VALUE_MIN_UGX = Number.isFinite(configuredHighValueMinimum)
+  ? Math.max(configuredHighValueMinimum, 0)
+  : 100_000_000;
+
+export function isHighValueCarmarketVehicle(vehicle: { priceUgx?: number }): boolean {
+  return Number.isFinite(vehicle.priceUgx) && Number(vehicle.priceUgx) >= CARMARKET_HIGH_VALUE_MIN_UGX;
+}
+
+export function isEligibleCarmarketVehicle(vehicle: {
+  title: string;
+  summary: Record<string, string>;
+  priceUgx?: number;
+}): boolean {
   const yearText = vehicle.summary.year || vehicle.title;
   const years = Array.from(yearText.matchAll(/\b(?:19|20)\d{2}\b/g), match => Number(match[0]));
   // Unknown or conflicting years must not silently admit an older vehicle.

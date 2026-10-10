@@ -37,6 +37,7 @@ import { metaAdsService } from './metaAdsService.js';
 import { consumeUsageBatch, resolveBillingScope } from './billing/billingService.js';
 import {
   buildCarmarketVehicleCaption,
+  getCarmarketSourceKey,
   pickCarmarketVehicle,
   prepareCarmarketVehicleImage,
   renderCarmarketCoverImage,
@@ -4887,6 +4888,7 @@ export class AutoPostService {
     let usedClientSourceImageUrl: string | null = null;
     let carmarketVehicleCaption: string | null = null;
     let usedBeforwardStockKey: string | null = null;
+    let usedCarmarketSourceKey: string | null = null;
     let staysphereListingCaption: string | null = null;
     let usedStaysphereListingKey: string | null = null;
     let gamersSteamCaption: string | null = null;
@@ -4901,19 +4903,25 @@ export class AutoPostService {
         const recentStockNos = new Set(
           [...recentImages, ...recentCaptions]
             .map(value => {
-              const stockKey = String(value).match(/beforward-stock:([^\s,]+)/i)?.[1]?.toUpperCase();
+              const stockKey = String(value)
+                .match(/(?:beforward-stock|carmarket-stock):([^\s,]+)/i)?.[1]
+                ?.toUpperCase();
               if (stockKey) return stockKey;
               return String(value).match(/\b[A-Z]{2}\d{6}\b/i)?.[0]?.toUpperCase();
             })
             .filter((value): value is string => Boolean(value)),
         );
-        const vehicle = await pickCarmarketVehicle({ recentStockNos });
+        const recentSourceKeys = [...recentCaptions, ...recentImages]
+          .map(value => String(value).match(/carmarket-source:([a-z]+)/i)?.[1]?.toLowerCase())
+          .filter((value): value is string => Boolean(value));
+        const vehicle = await pickCarmarketVehicle({ recentStockNos, recentSourceKeys });
+        usedCarmarketSourceKey = `carmarket-source:${getCarmarketSourceKey(vehicle)}`;
         const vehicleImages = vehicle.images.slice(0, isStoryRun ? 1 : 10);
         clientInstagramSourceImageUrls = vehicleImages.slice(0, isStoryRun ? 1 : 5);
         if (isStoryRun) {
           imageUrls = clientInstagramSourceImageUrls;
           carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
-          usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
+          usedBeforwardStockKey = vehicle.stockNo ? `carmarket-stock:${vehicle.stockNo}` : null;
         } else {
           const coverImageUrl = await renderCarmarketCoverImage(vehicle).catch(error => {
             console.warn('[autopost] Carmarket cover image render failed; skipping vehicle listing to avoid raw cover', {
@@ -4941,7 +4949,7 @@ export class AutoPostService {
           );
           imageUrls = [coverImageUrl, ...preparedVehicleImages.filter((url): url is string => Boolean(url))];
           carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
-          usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
+          usedBeforwardStockKey = vehicle.stockNo ? `carmarket-stock:${vehicle.stockNo}` : null;
         }
       } catch (error) {
         console.warn('[autopost] Carmarket vehicle lookup failed; skipping unverified vehicle fallback', {
@@ -5376,6 +5384,7 @@ export class AutoPostService {
         ...imageUrls,
         usedClientSourceImageUrl,
         usedBeforwardStockKey,
+        usedCarmarketSourceKey,
         usedStaysphereListingKey,
         usedGamersSteamKey,
         usedDottEnergyProductKey,
@@ -5391,6 +5400,7 @@ export class AutoPostService {
       [
         ...usedCaptions,
         usedBeforwardStockKey,
+        usedCarmarketSourceKey,
         usedStaysphereListingKey,
         usedGamersSteamKey,
         usedDottEnergyProductKey,
