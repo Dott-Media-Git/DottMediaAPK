@@ -16,12 +16,31 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Trigger live social queue
+        env:
+          AUTOPOST_RUN_TOKEN: ${{ secrets.AUTOPOST_RUN_TOKEN }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl --fail --show-error --silent --max-time 540 \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -d '{"background":true}' \
-            https://dottmediaapk.onrender.com/api/autopost/runDue || echo "General autopost runner requires its configured cron token; continuing with gallery wake."
+          if [ -n "${AUTOPOST_RUN_TOKEN:-}" ]; then
+            curl --fail --show-error --silent --max-time 540 \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -H "x-autopost-token: ${AUTOPOST_RUN_TOKEN}" \
+              -d '{"background":true}' \
+              https://dottmediaapk.onrender.com/api/autopost/runDue || echo "General autopost runner failed; continuing with gallery wake."
+          elif [ -n "${CRON_SECRET:-}" ]; then
+            curl --fail --show-error --silent --max-time 540 \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -H "x-cron-token: ${CRON_SECRET}" \
+              -d '{"background":true}' \
+              https://dottmediaapk.onrender.com/api/autopost/runDue || echo "General autopost runner failed; continuing with gallery wake."
+          else
+            curl --fail --show-error --silent --max-time 540 \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -d '{"background":true}' \
+              https://dottmediaapk.onrender.com/api/autopost/runDue || echo "General autopost runner requires its configured cron token; continuing with gallery wake."
+          fi
           curl --fail --show-error --silent --max-time 540 \
             -X POST \
             -H "Content-Type: application/json" \

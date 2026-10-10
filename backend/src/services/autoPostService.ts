@@ -237,6 +237,11 @@ const TOP_FIVE_LEAGUES: LeagueDefinition[] = [
 const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId: string; instagramUsername: string }> = {
+  cMPZQccGggbhZe9dbvtxFmBehP02: {
+    pageId: '1371096759416007',
+    instagramAccountId: '17841420336656466',
+    instagramUsername: 'aux_wellness_hub',
+  },
   acmVetCcOiTHeGk5D7eDYieamDF3: {
     pageId: '1191892417341226',
     instagramAccountId: '17841414110816982',
@@ -255,6 +260,7 @@ const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId
 };
 
 const CLIENT_ENV_PREFIXES: Record<string, string> = {
+  cMPZQccGggbhZe9dbvtxFmBehP02: 'AUXWELLNESS',
   acmVetCcOiTHeGk5D7eDYieamDF3: 'CARMARKETPLACE',
   D1iNgjLKNRaQhH35M0NmGfw1LVD2: 'STAYSPHERE',
   vzdH1DnfFLVjlY8bBgC26WACmmw2: 'GAMERS44LIFE',
@@ -262,6 +268,11 @@ const CLIENT_ENV_PREFIXES: Record<string, string> = {
 };
 
 const PINNED_CLIENT_RUNTIME_PROMPTS: Record<string, Pick<AutoPostJob, 'prompt' | 'businessType' | 'fallbackHashtags'>> = {
+  cMPZQccGggbhZe9dbvtxFmBehP02: {
+    prompt: 'Create a warm, product-led AUX Wellness Hub post for wellness support, pain relief, knee support, back support, or active lifestyle products. Use practical customer language, avoid medical guarantees, and invite customers to message for sizing, availability, and ordering.',
+    businessType: 'wellness support and active lifestyle products',
+    fallbackHashtags: '#AUXWellnessHub #WellnessUganda #PainReliefSupport #KneeSupport #BackSupport #ActiveLifestyle',
+  },
   acmVetCcOiTHeGk5D7eDYieamDF3: {
     prompt: 'Create a marketplace post for a real car listing suitable for Uganda buyers. Use practical, direct language and avoid generic Dott Media copy.',
     businessType: 'Uganda car marketplace',

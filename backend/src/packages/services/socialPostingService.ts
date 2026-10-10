@@ -33,6 +33,11 @@ const withFirestoreDeadline = <T>(promise: Promise<T>, label: string, timeoutMs 
 const socialLogsCollection = firestore.collection('socialLogs');
 const supabasePrimary = (process.env.PRIMARY_DATA_STORE ?? 'supabase').toLowerCase() === 'supabase';
 const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId: string; instagramUsername: string }> = {
+  cMPZQccGggbhZe9dbvtxFmBehP02: {
+    pageId: '1371096759416007',
+    instagramAccountId: '17841420336656466',
+    instagramUsername: 'aux_wellness_hub',
+  },
   acmVetCcOiTHeGk5D7eDYieamDF3: {
     pageId: '1191892417341226',
     instagramAccountId: '17841414110816982',
@@ -56,6 +61,7 @@ const CLIENT_META_FALLBACKS: Record<string, { pageId: string; instagramAccountId
 };
 
 const CLIENT_ENV_PREFIXES: Record<string, string> = {
+  cMPZQccGggbhZe9dbvtxFmBehP02: 'AUXWELLNESS',
   acmVetCcOiTHeGk5D7eDYieamDF3: 'CARMARKETPLACE',
   D1iNgjLKNRaQhH35M0NmGfw1LVD2: 'STAYSPHERE',
   vzdH1DnfFLVjlY8bBgC26WACmmw2: 'GAMERS44LIFE',

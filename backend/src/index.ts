@@ -427,6 +427,7 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
     }
 
     const allAccounts = [
+      { label: 'Aux Wellness Hub', uid: 'cMPZQccGggbhZe9dbvtxFmBehP02', platforms: ['facebook', 'instagram'], reels: false },
       { label: 'Bwin', uid: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', bwin: true, platforms: ['facebook', 'instagram', 'threads'] },
       { label: 'DottHR', uid: '80bYIeiuukNFtUvXTUobXmfC7pu1', platforms: ['facebook', 'instagram', 'threads'], reels: false },
       { label: 'Carmarketug', uid: 'acmVetCcOiTHeGk5D7eDYieamDF3', platforms: ['facebook', 'instagram', 'threads'], reels: true },

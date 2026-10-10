@@ -37,6 +37,14 @@ type ComplianceIssue = {
 
 const pinnedAccounts: MonitoredAccount[] = [
   {
+    label: 'Aux Wellness Hub',
+    userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
+    channels: [
+      { name: 'feed', intervalField: 'intervalHours', nextRunField: 'nextRun', lastRunField: 'lastRunAt', resultField: 'lastResult', fallbackIntervalHours: 4 },
+      { name: 'stories', intervalField: 'storyIntervalHours', nextRunField: 'storyNextRun', lastRunField: 'storyLastRunAt', resultField: 'storyLastResult', fallbackIntervalHours: 2 },
+    ],
+  },
+  {
     label: 'Bwin',
     userId: '1zvY9nNyXMcfxdPQEyx0bIdK7r53',
     channels: [
