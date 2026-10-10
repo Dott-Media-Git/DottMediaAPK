@@ -264,7 +264,12 @@ export async function publishToInstagramStory(input: StoryPublishInput): Promise
     });
 
     if (publishedId) {
-      await verifyPublishedMedia(credentials.instagram, publishedId, accessToken, false);
+      // Story publishing already returns a successful remote ID. Story objects are
+      // ephemeral and the media endpoint does not consistently expose a permalink,
+      // so a post-publish verification poll can hold the queue for minutes.
+      if (process.env.INSTAGRAM_STORY_VERIFY === 'true') {
+        await verifyPublishedMedia(credentials.instagram, publishedId, accessToken, false);
+      }
       return { remoteId: publishedId };
     }
     throw new Error('No ID returned from Instagram Story publish');
