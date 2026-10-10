@@ -298,6 +298,7 @@ const PINNED_CLIENT_RUNTIME_PROMPTS: Record<string, Pick<AutoPostJob, 'prompt' |
 const NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS = 3;
 const NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS = 4;
 const DOTT_ENERGY_USER_ID = 'LVR7p3WzdFM51ds92Kacf6S40og2';
+const AUX_WELLNESS_USER_ID = 'cMPZQccGggbhZe9dbvtxFmBehP02';
 
 const logSafeError = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -576,7 +577,12 @@ export class AutoPostService {
       const envAccounts = this.getPinnedClientEnvAccounts(userId);
       const clientFallback = CLIENT_META_FALLBACKS[userId];
       const prefix = CLIENT_ENV_PREFIXES[userId];
-      const token = (prefix ? (process.env[`${prefix}_META_USER_TOKEN`] ?? '') : '').trim();
+      const token = (
+        (prefix ? (process.env[`${prefix}_META_USER_TOKEN`] ?? '') : '') ||
+        (userId === AUX_WELLNESS_USER_ID
+          ? (process.env.CLIENT_META_USER_TOKEN ?? process.env.FACEBOOK_PAGE_TOKEN ?? process.env.META_GRAPH_TOKEN ?? '')
+          : '')
+      ).trim();
       if (!clientFallback || !token) return envAccounts;
       try {
         const resolved = await resolveFacebookPageId(token, clientFallback.pageId);

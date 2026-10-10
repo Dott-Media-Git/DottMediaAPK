@@ -67,6 +67,7 @@ const CLIENT_ENV_PREFIXES: Record<string, string> = {
   vzdH1DnfFLVjlY8bBgC26WACmmw2: 'GAMERS44LIFE',
   LVR7p3WzdFM51ds92Kacf6S40og2: 'DOTTENERGY',
 };
+const AUX_WELLNESS_USER_ID = 'cMPZQccGggbhZe9dbvtxFmBehP02';
 
 const MAX_PER_DAY = 5;
 const DEPRECATED_CLIENT_CAMPAIGN_USER_IDS = new Set([
@@ -200,7 +201,10 @@ export class SocialPostingService {
         }
         if (fallback.facebook || fallback.instagram) return fallback;
       }
-      const token = (process.env.CLIENT_META_USER_TOKEN ?? process.env.FACEBOOK_PAGE_TOKEN ?? process.env.META_GRAPH_TOKEN ?? '').trim();
+      const token = (
+        (userId === AUX_WELLNESS_USER_ID ? process.env.AUXWELLNESS_META_USER_TOKEN : '') ||
+        process.env.CLIENT_META_USER_TOKEN || process.env.FACEBOOK_PAGE_TOKEN || process.env.META_GRAPH_TOKEN || ''
+      ).trim();
       if (!clientFallback || !token) return fallback;
       try {
         const resolved = await resolveFacebookPageId(token, clientFallback.pageId);
