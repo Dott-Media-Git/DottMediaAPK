@@ -1465,7 +1465,11 @@ export class AutoPostService {
   }
 
   private async resolveCredentialsForSubmittedPost(userId: string): Promise<SocialAccounts> {
-    const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+    const fallback = await this.withTimeout(
+      supabaseFallbackService.getSocialAccounts(userId),
+      Math.max(Number(process.env.AUTOPOST_CREDENTIALS_TIMEOUT_MS ?? 12000), 3000),
+      'supabase_social_accounts_lookup',
+    ).catch(() => null);
     const userData = fallback as { email?: string | null; socialAccounts?: SocialAccounts } | null;
     const allowDefaults = !this.isNicheClientAccount(userId) && canUsePrimarySocialDefaults(userData ?? undefined, userId);
     return {
@@ -5600,7 +5604,11 @@ export class AutoPostService {
   private async resolveCredentials(userId: string): Promise<SocialAccounts> {
     let userData: { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
     try {
-      const userDoc = await firestore.collection('users').doc(userId).get();
+      const userDoc = await this.withTimeout(
+        firestore.collection('users').doc(userId).get(),
+        Math.max(Number(process.env.AUTOPOST_CREDENTIALS_TIMEOUT_MS ?? 12000), 3000),
+        'firestore_user_credentials_lookup',
+      );
       userData = userDoc.data() as { email?: string | null; socialAccounts?: SocialAccounts } | undefined;
       if (userData?.socialAccounts) {
         void supabaseFallbackService.upsertSocialAccounts(userId, {
@@ -5614,7 +5622,11 @@ export class AutoPostService {
         error: error instanceof Error ? error.message : String(error),
       });
       try {
-        const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+        const fallback = await this.withTimeout(
+          supabaseFallbackService.getSocialAccounts(userId),
+          Math.max(Number(process.env.AUTOPOST_CREDENTIALS_TIMEOUT_MS ?? 12000), 3000),
+          'supabase_social_accounts_lookup',
+        );
         if (fallback) {
           userData = fallback as { email?: string | null; socialAccounts?: SocialAccounts };
         }
