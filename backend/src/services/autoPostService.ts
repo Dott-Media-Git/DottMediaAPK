@@ -751,7 +751,11 @@ export class AutoPostService {
   private async mirrorAutopostJob(userId: string, job: AutoPostJob) {
     this.cacheJob(userId, job);
     try {
-      await supabaseFallbackService.upsertAutopostJob(userId, job as Record<string, unknown>);
+      await this.withTimeout(
+        supabaseFallbackService.upsertAutopostJob(userId, job as Record<string, unknown>),
+        Math.max(Number(process.env.AUTOPOST_MIRROR_TIMEOUT_MS ?? 12000), 3000),
+        'supabase_autopost_job_mirror',
+      );
     } catch (error) {
       console.warn('[autopost] supabase job mirror failed', logSafeError(error));
     }
@@ -5591,21 +5595,33 @@ export class AutoPostService {
         }
         batch.set(ref, payload);
       });
-      await batch.commit();
-      await Promise.all(
-        entries.map(entry =>
-          socialAnalyticsService.incrementDaily({
-            userId,
-            platform: entry.platform,
-            status: entry.status,
-          }),
+      await this.withTimeout(
+        batch.commit(),
+        Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000),
+        'firestore_history_write',
+      );
+      await this.withTimeout(
+        Promise.all(
+          entries.map(entry =>
+            socialAnalyticsService.incrementDaily({
+              userId,
+              platform: entry.platform,
+              status: entry.status,
+            }),
+          ),
         ),
+        Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000),
+        'social_analytics_history_write',
       );
     } catch (error) {
       console.warn('[autopost] failed to record history', error);
     }
     try {
-      await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
+      await this.withTimeout(
+        supabaseFallbackService.upsertScheduledPosts(fallbackRows),
+        Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000),
+        'supabase_history_write',
+      );
     } catch (error) {
       console.warn('[autopost] failed to mirror history to supabase', logSafeError(error));
     }
