@@ -6013,11 +6013,15 @@ export class AutoPostService {
     };
 
     try {
-      const snapshot = await scheduledPostsCollection
-        .where('userId', '==', userId)
-        .orderBy('createdAt', 'desc')
-        .limit(maxHistory)
-        .get();
+      const snapshot = await this.withTimeout(
+        scheduledPostsCollection
+          .where('userId', '==', userId)
+          .orderBy('createdAt', 'desc')
+          .limit(maxHistory)
+          .get(),
+        Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000),
+        'firestore_scheduled_history_lookup',
+      );
       return collect(snapshot.docs);
     } catch (error) {
       console.warn('[autopost] scheduled post history lookup with ordering failed; retrying without order', {
@@ -6027,7 +6031,11 @@ export class AutoPostService {
     }
 
     try {
-      const snapshot = await scheduledPostsCollection.where('userId', '==', userId).limit(maxHistory).get();
+      const snapshot = await this.withTimeout(
+        scheduledPostsCollection.where('userId', '==', userId).limit(maxHistory).get(),
+        Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000),
+        'firestore_scheduled_history_lookup_unordered',
+      );
       return collect(snapshot.docs);
     } catch (error) {
       console.warn('[autopost] scheduled post history lookup failed', {
@@ -6037,7 +6045,11 @@ export class AutoPostService {
     }
 
     try {
-      const fallbackHistory = await collectSupabaseHistory();
+      const fallbackHistory = await this.withTimeout(
+        collectSupabaseHistory(),
+        Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000),
+        'supabase_scheduled_history_lookup',
+      );
       if (
         fallbackHistory.imageUrls.length ||
         fallbackHistory.videoUrls.length ||
@@ -6054,7 +6066,11 @@ export class AutoPostService {
     }
 
     try {
-      const job = (await supabaseFallbackService.getAutopostJob(userId)) as AutoPostJob | null;
+      const job = (await this.withTimeout(
+        supabaseFallbackService.getAutopostJob(userId),
+        Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000),
+        'supabase_autopost_history_lookup',
+      )) as AutoPostJob | null;
       if (job) {
         return {
           imageUrls: this.uniqueHistoryValues(Array.isArray(job.recentImageUrls) ? job.recentImageUrls.filter(Boolean) : []),
