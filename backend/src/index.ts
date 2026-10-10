@@ -470,7 +470,9 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
     const runFreshSet = async () => {
       const results = [];
       for (const account of accounts) {
-        const job = await service.loadAutopostJob(account.uid);
+        const job = account.uid === 'cMPZQccGggbhZe9dbvtxFmBehP02'
+          ? (service.buildPinnedClientRuntimeJob(account.uid) ?? await service.loadAutopostJob(account.uid))
+          : await service.loadAutopostJob(account.uid);
         if (!job) {
           results.push({ account: account.label, error: 'autopost_job_missing' });
           continue;
