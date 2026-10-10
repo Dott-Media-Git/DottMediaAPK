@@ -776,7 +776,11 @@ export class AutoPostService {
       console.warn('[autopost] firestore job fetch failed; checking fallback store', error);
     }
     try {
-      const fallback = await supabaseFallbackService.getAutopostJob(userId);
+      const fallback = await this.withTimeout(
+        supabaseFallbackService.getAutopostJob(userId),
+        Math.max(Number(process.env.AUTOPOST_JOB_LOOKUP_TIMEOUT_MS ?? 12000), 3000),
+        'supabase_autopost_job_fetch',
+      );
       if (fallback) {
         const job = fallback as AutoPostJob;
         this.cacheJob(userId, job);
