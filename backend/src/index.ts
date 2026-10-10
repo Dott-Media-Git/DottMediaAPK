@@ -453,6 +453,7 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
     const accounts = requestedAccounts
       ? allAccounts.filter(account => requestedAccounts.has(account.label.toLowerCase()) || requestedAccounts.has(account.uid))
       : allAccounts;
+    const storiesOnly = req.body?.storiesOnly === true || req.body?.storiesOnly === 'true';
     const service = autoPostService as any;
     const summarize = (outcome: any) => ({
       posted: outcome?.posted ?? 0,
@@ -486,15 +487,19 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
           result.feed = summarize(await service.executeTrendPosts(account.uid, newsJob));
           result.stories = summarize(await service.executeTrendStories(account.uid, newsJob));
         } else {
-          result.feed = summarize(
-            await service.executeJob(account.uid, job, {
-              platforms: account.platforms,
-              intervalHours: job.intervalHours ?? 1,
-              nextRunField: 'nextRun',
-              lastRunField: 'lastRunAt',
-              resultField: 'lastResult',
-            }),
-          );
+          if (!storiesOnly) {
+            result.feed = summarize(
+              await service.executeJob(account.uid, job, {
+                platforms: account.platforms,
+                intervalHours: job.intervalHours ?? 1,
+                nextRunField: 'nextRun',
+                lastRunField: 'lastRunAt',
+                resultField: 'lastResult',
+              }),
+            );
+          } else {
+            result.feed = { skipped: true };
+          }
           const afterFeedJob = (await service.loadAutopostJob(account.uid)) ?? job;
           result.stories = summarize(
             await service.executeJob(account.uid, afterFeedJob, {
