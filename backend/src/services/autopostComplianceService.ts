@@ -41,7 +41,7 @@ const pinnedAccounts: MonitoredAccount[] = [
     userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
     channels: [
       { name: 'feed', intervalField: 'intervalHours', nextRunField: 'nextRun', lastRunField: 'lastRunAt', resultField: 'lastResult', fallbackIntervalHours: 4 },
-      { name: 'stories', intervalField: 'storyIntervalHours', nextRunField: 'storyNextRun', lastRunField: 'storyLastRunAt', resultField: 'storyLastResult', fallbackIntervalHours: 2 },
+      { name: 'stories', intervalField: 'storyIntervalHours', nextRunField: 'storyNextRun', lastRunField: 'storyLastRunAt', resultField: 'storyLastResult', fallbackIntervalHours: 3 },
     ],
   },
   {
@@ -98,6 +98,16 @@ const pinnedAccounts: MonitoredAccount[] = [
 const autopostCollection = firestore.collection('autopostJobs');
 const stateRef = firestore.collection('system').doc('autopostCompliance');
 const OBSOLETE_AUTOPOST_USER_IDS = new Set(['meta-page-1321705594350297']);
+const AUX_WELLNESS_USER_ID = 'cMPZQccGggbhZe9dbvtxFmBehP02';
+const AUX_WELLNESS_STORY_INTERVAL_HOURS = 3;
+
+const effectiveIntervalHours = (
+  account: MonitoredAccount,
+  channel: ChannelConfig,
+  job: Record<string, unknown>,
+) => account.userId === AUX_WELLNESS_USER_ID && channel.name === 'stories'
+  ? AUX_WELLNESS_STORY_INTERVAL_HOURS
+  : numberValue(job[channel.intervalField], channel.fallbackIntervalHours);
 
 const timeoutMs = (name: string, fallback: number) => Math.max(Number(process.env[name] ?? fallback), 3000);
 
@@ -432,7 +442,7 @@ const forceAccountsDueNow = async (
     channels.forEach(channel => {
       if (predicate && !predicate(account, channel)) return;
       patch[channel.nextRunField] = nowTimestamp;
-      patch[channel.intervalField] = numberValue(job[channel.intervalField], channel.fallbackIntervalHours);
+      patch[channel.intervalField] = effectiveIntervalHours(account, channel, job);
       updatedChannels += 1;
     });
     if (Object.keys(patch).length > 0) {
@@ -504,7 +514,7 @@ export const autopostComplianceService = {
       const channels = account.pinned ? account.channels : genericChannelsForJob(job);
       const patch: Record<string, unknown> = {};
       for (const channel of channels) {
-        const intervalHours = numberValue(job[channel.intervalField], channel.fallbackIntervalHours);
+        const intervalHours = effectiveIntervalHours(account, channel, job);
         const intervalMs = intervalHours * 60 * 60 * 1000;
         const nextRunMs = toMillis(job[channel.nextRunField]);
         const lastRunMs = toMillis(job[channel.lastRunField]);
