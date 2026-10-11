@@ -691,10 +691,25 @@ export const AccountIntegrationsScreen: React.FC = () => {
   const loadFacebookSdk = async (appId: string, graphVersion: string) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || typeof document === 'undefined') throw new Error('WhatsApp self-connect is currently available on the Dotti web app.');
     if (window.FB) return window.FB;
+
+    const waitForExistingSdk = async () => {
+      const deadline = Date.now() + 15000;
+      while (!window.FB && Date.now() < deadline) {
+        await new Promise(resolve => window.setTimeout(resolve, 100));
+      }
+      if (!window.FB) throw new Error('Meta login did not initialize. Refresh the page and retry.');
+      return window.FB;
+    };
+
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => reject(new Error('Meta login took too long to load.')), 15000);
       window.fbAsyncInit = () => { window.clearTimeout(timeout); window.FB?.init({ appId, cookie: true, xfbml: false, version: graphVersion }); resolve(); };
-      if (document.getElementById('facebook-jssdk')) return;
+      if (document.getElementById('facebook-jssdk')) {
+        void waitForExistingSdk()
+          .then(sdk => { sdk.init({ appId, cookie: true, xfbml: false, version: graphVersion }); resolve(); })
+          .catch(reject);
+        return;
+      }
       const script = document.createElement('script');
       script.id = 'facebook-jssdk'; script.async = true; script.defer = true; script.crossOrigin = 'anonymous'; script.src = 'https://connect.facebook.net/en_US/sdk.js';
       script.onerror = () => { window.clearTimeout(timeout); reject(new Error('Unable to load Meta login. Check your connection and retry.')); };
@@ -734,10 +749,18 @@ export const AccountIntegrationsScreen: React.FC = () => {
       };
       window.addEventListener('message', sessionListener);
       try {
-        const response = await new Promise<any>(resolve => fb.login(resolve, { config_id: config.configId, response_type: 'code', override_default_response_type: true, extras: { setup: {} } }));
+        const response = await new Promise<any>(resolve => fb.login(resolve, {
+          config_id: config.configId,
+          response_type: 'code',
+          override_default_response_type: true,
+          extras: { setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3' },
+        }));
         const code = response?.authResponse?.code as string | undefined;
         if (!code) throw new Error('WhatsApp connection was cancelled or Meta did not return an authorization code.');
-        await new Promise(resolve => window.setTimeout(resolve, sessionData ? 0 : 600));
+        const deadline = Date.now() + 5000;
+        while (!sessionData && Date.now() < deadline) {
+          await new Promise(resolve => window.setTimeout(resolve, 100));
+        }
         if (!sessionData?.waba_id || !sessionData?.phone_number_id) throw new Error('Meta did not return the WhatsApp account and phone number. Please finish every step and retry.');
         await completeWhatsAppEmbeddedSignup({ code, wabaId: sessionData.waba_id, phoneNumberId: sessionData.phone_number_id, businessId: sessionData.business_id, orgId });
       } finally { window.removeEventListener('message', sessionListener); }
