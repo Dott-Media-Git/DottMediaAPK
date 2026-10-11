@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import { colors } from '@constants/colors';
@@ -27,6 +28,23 @@ import {
 
 type Filter = 'all' | 'image' | 'video';
 
+const AUX_WELLNESS_USER_ID = 'cMPZQccGggbhZe9dbvtxFmBehP02';
+const AUX_WELLNESS_GALLERY_SEEDED_KEY = `dott.auxWellnessGallerySeeded.v1:${AUX_WELLNESS_USER_ID}`;
+const AUX_WELLNESS_GALLERY_ASSETS: MediaLibraryAsset[] = Array.from(
+  { length: 32 },
+  (_, index) => {
+    const number = String(index + 1).padStart(2, '0');
+    return {
+      id: `aux-wellness-${number}`,
+      name: `Aux Wellness Hub ${number}.jpeg`,
+      url: `https://dottmediaapk.onrender.com/public/client-media/auxwellness/auxwellness-${number}.jpeg`,
+      kind: 'image' as const,
+      mimeType: 'image/jpeg',
+      createdAt: '2026-10-11T00:00:00.000Z',
+    };
+  },
+);
+
 export const ContentGalleryScreen: React.FC = () => {
   const { state } = useAuth();
   const navigation = useNavigation<any>();
@@ -41,7 +59,22 @@ export const ContentGalleryScreen: React.FC = () => {
 
   useEffect(() => {
     if (!userId) return;
-    loadMediaLibrary(userId).then(setAssets).catch(() => setMessage('Unable to load your gallery.'));
+    let cancelled = false;
+    const load = async () => {
+      const current = await loadMediaLibrary(userId);
+      let next = current;
+      if (userId === AUX_WELLNESS_USER_ID && !(await AsyncStorage.getItem(AUX_WELLNESS_GALLERY_SEEDED_KEY))) {
+        const seen = new Set(current.map(asset => asset.url));
+        next = [...AUX_WELLNESS_GALLERY_ASSETS.filter(asset => !seen.has(asset.url)), ...current];
+        await saveMediaLibrary(userId, next);
+        await AsyncStorage.setItem(AUX_WELLNESS_GALLERY_SEEDED_KEY, 'true');
+      }
+      if (!cancelled) setAssets(next);
+    };
+    void load().catch(() => {
+      if (!cancelled) setMessage('Unable to load your gallery.');
+    });
+    return () => { cancelled = true; };
   }, [userId]);
 
   const visibleAssets = useMemo(
