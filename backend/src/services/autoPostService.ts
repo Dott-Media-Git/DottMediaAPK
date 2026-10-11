@@ -6575,7 +6575,11 @@ export class AutoPostService {
     format: 'feed' | 'story',
     recentSet: Set<string>,
   ) {
-    const pool = [...(profile.curatedImages[format] ?? []), ...this.generatedClientPhotoPool(profile, format)];
+    // Aux Wellness Hub uses verified JPEG sources only. Generic generated
+    // LoremFlickr URLs are not accepted by Meta's media fetcher.
+    const pool = profile.key === 'auxwellness'
+      ? [...(profile.curatedImages[format] ?? [])]
+      : [...(profile.curatedImages[format] ?? []), ...this.generatedClientPhotoPool(profile, format)];
     const candidates = this.shuffled(pool).filter(url => !recentSet.has(url));
     return candidates[0] ?? null;
   }
