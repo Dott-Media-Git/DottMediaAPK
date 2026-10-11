@@ -299,6 +299,11 @@ const NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS = 3;
 const NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS = 4;
 const DOTT_ENERGY_USER_ID = 'LVR7p3WzdFM51ds92Kacf6S40og2';
 const AUX_WELLNESS_USER_ID = 'cMPZQccGggbhZe9dbvtxFmBehP02';
+const AUX_WELLNESS_MEDIA_BASE_URL = 'https://dottmediaapk.onrender.com/public/fallback-images/auxwellness';
+const AUX_WELLNESS_MEDIA_URLS = Array.from(
+  { length: 32 },
+  (_, index) => `${AUX_WELLNESS_MEDIA_BASE_URL}/auxwellness-${String(index + 1).padStart(2, '0')}.jpeg`,
+);
 
 const logSafeError = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -6316,20 +6321,8 @@ export class AutoPostService {
         sublines: ['Message for product guidance', 'Ask about fit and availability', 'Support for your active routine', 'Comfort for every day'],
         queries: ['wellness active lifestyle', 'fitness stretching', 'knee support fitness', 'back support wellness', 'athlete recovery'],
         curatedImages: {
-          feed: [
-            'https://images.pexels.com/photos/3768916/pexels-photo-3768916.jpeg?auto=compress&cs=tinysrgb&w=1600',
-            'https://images.pexels.com/photos/4056532/pexels-photo-4056532.jpeg?auto=compress&cs=tinysrgb&w=1600',
-            'https://images.pexels.com/photos/4498574/pexels-photo-4498574.jpeg?auto=compress&cs=tinysrgb&w=1600',
-            'https://images.pexels.com/photos/6740741/pexels-photo-6740741.jpeg?auto=compress&cs=tinysrgb&w=1600',
-            'https://images.pexels.com/photos/6111616/pexels-photo-6111616.jpeg?auto=compress&cs=tinysrgb&w=1600',
-          ],
-          story: [
-            'https://images.pexels.com/photos/3768916/pexels-photo-3768916.jpeg?auto=compress&cs=tinysrgb&h=1920',
-            'https://images.pexels.com/photos/4056532/pexels-photo-4056532.jpeg?auto=compress&cs=tinysrgb&h=1920',
-            'https://images.pexels.com/photos/4498574/pexels-photo-4498574.jpeg?auto=compress&cs=tinysrgb&h=1920',
-            'https://images.pexels.com/photos/6740741/pexels-photo-6740741.jpeg?auto=compress&cs=tinysrgb&h=1920',
-            'https://images.pexels.com/photos/6111616/pexels-photo-6111616.jpeg?auto=compress&cs=tinysrgb&h=1920',
-          ],
+          feed: AUX_WELLNESS_MEDIA_URLS,
+          story: AUX_WELLNESS_MEDIA_URLS,
         },
       },
       acmVetCcOiTHeGk5D7eDYieamDF3: {
