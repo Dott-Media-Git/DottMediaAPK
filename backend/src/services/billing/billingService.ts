@@ -25,7 +25,14 @@ const OWNER_MANAGED_BILLING_EXEMPT_USER_IDS = new Set([
   'acmVetCcOiTHeGk5D7eDYieamDF3', // Carmarketplace
   'vzdH1DnfFLVjlY8bBgC26WACmmw2', // Gamers44life
   'X0ObAFQft0UWZee9IbUyYaeaBfO2', // Simplicity Home Decor managed campaign (restored from #83)
+  'cMPZQccGggbhZe9dbvtxFmBehP02', // Aux Wellness Hub temporary owner-managed access
 ]);
+
+// Aux Wellness Hub has been granted temporary Agency capacity while its paid
+// billing is completed. Keep this override scoped to the single managed account.
+const OWNER_MANAGED_BILLING_PLAN_OVERRIDES: Record<string, string> = {
+  cMPZQccGggbhZe9dbvtxFmBehP02: 'agency',
+};
 
 type CheckoutProvider = 'stripe' | 'flutterwave_mobile_money';
 
@@ -51,6 +58,9 @@ export const resolveBillingScope = (userId: string, orgId?: string | null, email
 const monthlyUsageId = (scope: BillingScope, month = currentMonthKey()) => `${scope.orgId}_${month}`;
 
 export async function getPlanForScope(scope: BillingScope) {
+  const managedPlan = OWNER_MANAGED_BILLING_PLAN_OVERRIDES[scope.userId];
+  if (managedPlan) return getPlan(managedPlan);
+
   const orgSnap = await orgsCollection.doc(scope.orgId).get().catch(() => null);
   const orgPlan = orgSnap?.exists ? orgSnap.data()?.plan : null;
   const orgData = orgSnap?.exists ? orgSnap.data() : null;
