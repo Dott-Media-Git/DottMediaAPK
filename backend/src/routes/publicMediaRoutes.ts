@@ -7,6 +7,13 @@ import { LeagueTableRow, renderLeagueTableImage } from '../services/tableImageSe
 
 const router = Router();
 
+// Client campaign media is bundled with the backend so social providers can
+// fetch the original product images from a stable public URL.
+const auxWellnessMediaDir = path.resolve('./public/fallback-images/auxwellness');
+if (fs.existsSync(auxWellnessMediaDir)) {
+  router.use('/public/client-media/auxwellness', express.static(auxWellnessMediaDir));
+}
+
 const helpDir = process.env.HELP_DOCS_DIR?.trim() || './public/help';
 if (helpDir) {
   const resolved = path.resolve(helpDir);

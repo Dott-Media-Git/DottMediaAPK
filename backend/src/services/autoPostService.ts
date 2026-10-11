@@ -299,7 +299,7 @@ const NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS = 3;
 const NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS = 4;
 const DOTT_ENERGY_USER_ID = 'LVR7p3WzdFM51ds92Kacf6S40og2';
 const AUX_WELLNESS_USER_ID = 'cMPZQccGggbhZe9dbvtxFmBehP02';
-const AUX_WELLNESS_MEDIA_BASE_URL = 'https://dottmediaapk.onrender.com/public/fallback-images/auxwellness';
+const AUX_WELLNESS_MEDIA_BASE_URL = 'https://dottmediaapk.onrender.com/public/client-media/auxwellness';
 const AUX_WELLNESS_MEDIA_URLS = Array.from(
   { length: 32 },
   (_, index) => `${AUX_WELLNESS_MEDIA_BASE_URL}/auxwellness-${String(index + 1).padStart(2, '0')}.jpeg`,
