@@ -6676,6 +6676,9 @@ export class AutoPostService {
     format: 'feed' | 'story',
     recentSet: Set<string>,
   ) {
+    if (profile.key === 'auxwellness') {
+      return this.pickCuratedClientPhoto(profile, format, recentSet);
+    }
     return (
       (await this.fetchPexelsClientPhoto(profile, format, recentSet)) ||
       (await this.fetchPixabayClientPhoto(profile, format, recentSet)) ||
