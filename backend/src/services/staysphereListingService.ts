@@ -7,7 +7,7 @@ import sharp from 'sharp';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
 
 export type StaysphereListing = {
-  source: 'Aderok Estates' | 'Simba Properties' | 'Jiji Uganda';
+  source: 'StaySphere app' | 'Aderok Estates' | 'Simba Properties' | 'Jiji Uganda';
   title: string;
   url: string;
   location?: string;
@@ -25,6 +25,22 @@ const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const httpsAgent =
   process.env.STAYSPHERE_SOURCE_TLS_INSECURE === 'false' ? undefined : new https.Agent({ rejectUnauthorized: false });
+
+// The StaySphere app uses a public Supabase client for approved listings. The
+// publishable key is safe to use for read-only, RLS-protected public data; a
+// Render variable can override it if the app project changes credentials.
+const STAYSPHERE_APP_URL = (process.env.STAYSPHERE_APP_URL || 'https://staysphere-ashy.vercel.app').replace(/\/+$/, '');
+const STAYSPHERE_APP_SUPABASE_URL = (
+  process.env.STAYSPHERE_APP_SUPABASE_URL ||
+  'https://krwnwucjwypcenrztjvf.supabase.co'
+).replace(/\/+$/, '');
+const STAYSPHERE_APP_SUPABASE_KEY =
+  process.env.STAYSPHERE_APP_SUPABASE_ANON_KEY ||
+  'sb_publishable_tJUyzO25JJIYkrSZt9uPYA_kvEYek7e';
+const STAYSPHERE_APP_PROPERTY_LIMIT = Math.min(
+  Math.max(Number(process.env.STAYSPHERE_APP_PROPERTY_LIMIT ?? 40) || 40, 1),
+  100,
+);
 
 const ADEROK_SEARCH_URLS = [
   'https://aderokestates.com/?s=furnished+rentals',
@@ -53,6 +69,34 @@ const JIJI_INDEX_URLS = [
   'https://jiji.ug/kampala/temporary-and-vacation-rentals',
   'https://jiji.ug/temporary-and-vacation-rentals',
 ];
+
+type StaySphereAppProperty = {
+  id?: string | number;
+  title?: string;
+  name?: string;
+  location?: string;
+  address?: string;
+  city?: string;
+  area?: string;
+  description?: string;
+  short_description?: string;
+  summary?: string;
+  price_per_night?: number | string;
+  currency?: string;
+  bedrooms?: number | string;
+  bathrooms?: number | string;
+  max_guests?: number | string;
+  property_type?: string;
+  slug?: string;
+  property_url?: string;
+  property_images?: Array<{
+    url?: string;
+    alt_text?: string;
+    is_primary?: boolean;
+    display_order?: number;
+  }>;
+  property_amenities?: Array<{ amenity?: { name?: string } | null }>;
+};
 
 const decodeHtml = (value: string) =>
   value
@@ -163,6 +207,93 @@ async function fetchHtml(url: string) {
     timeout: 30000,
   });
   return String(response.data ?? '');
+}
+
+const appPropertyImageUrls = (property: StaySphereAppProperty) =>
+  unique(
+    (Array.isArray(property.property_images) ? property.property_images : [])
+      .slice()
+      .sort((a, b) => {
+        if (Boolean(a.is_primary) !== Boolean(b.is_primary)) return a.is_primary ? -1 : 1;
+        return Number(a.display_order ?? 0) - Number(b.display_order ?? 0);
+      })
+      .map(image => normalizeImage(String(image.url ?? ''), STAYSPHERE_APP_URL))
+      .filter(Boolean),
+  ).slice(0, 10);
+
+const appPropertyUrl = (property: StaySphereAppProperty) => {
+  const configured = cleanText(property.property_url ?? '');
+  if (configured) return normalizeUrl(configured, STAYSPHERE_APP_URL);
+  const id = cleanText(String(property.id ?? ''));
+  return id ? `${STAYSPHERE_APP_URL}/property-detail-page?id=${encodeURIComponent(id)}` : '';
+};
+
+const appPropertyText = (property: StaySphereAppProperty) =>
+  cleanText(
+    property.description ??
+      property.short_description ??
+      property.summary ??
+      '',
+  );
+
+/**
+ * Reads approved, publicly visible properties from the StaySphere app's
+ * Supabase project. The app itself uses this exact public read model, so new
+ * approved properties become eligible without another Dotti deployment.
+ */
+export async function fetchStaysphereAppListings(): Promise<StaysphereListing[]> {
+  try {
+    const response = await axios.get<StaySphereAppProperty[]>(`${STAYSPHERE_APP_SUPABASE_URL}/rest/v1/properties`, {
+      params: {
+        select: '*,property_images(url,alt_text,is_primary,display_order),property_amenities(amenity:amenities(id,name,icon,category))',
+        status: 'eq.approved',
+        limit: STAYSPHERE_APP_PROPERTY_LIMIT,
+      },
+      headers: {
+        apikey: STAYSPHERE_APP_SUPABASE_KEY,
+        Authorization: `Bearer ${STAYSPHERE_APP_SUPABASE_KEY}`,
+        Accept: 'application/json',
+      },
+      httpsAgent,
+      timeout: 30000,
+    });
+
+    return (Array.isArray(response.data) ? response.data : [])
+      .map(property => {
+        const title = cleanText(property.title ?? property.name ?? '');
+        const url = appPropertyUrl(property);
+        const images = appPropertyImageUrls(property);
+        if (!title || !url || images.length < 1) return null;
+
+        const priceValue = cleanText(String(property.price_per_night ?? ''));
+        const currency = cleanText(property.currency ?? 'UGX');
+        const amenities = unique(
+          (Array.isArray(property.property_amenities) ? property.property_amenities : [])
+            .map(item => cleanText(item.amenity?.name ?? ''))
+            .filter(Boolean),
+        ).slice(0, 8);
+
+        return {
+          source: 'StaySphere app' as const,
+          title,
+          url,
+          location: cleanText(property.location ?? property.address ?? property.area ?? property.city ?? ''),
+          price: priceValue ? `${currency} ${priceValue}` : undefined,
+          bedrooms: property.bedrooms === undefined || property.bedrooms === null ? undefined : String(property.bedrooms),
+          bathrooms: property.bathrooms === undefined || property.bathrooms === null ? undefined : String(property.bathrooms),
+          propertyType: cleanText(property.property_type ?? ''),
+          summary: appPropertyText(property),
+          amenities,
+          images,
+        } satisfies StaysphereListing;
+      })
+      .filter((listing): listing is StaysphereListing => Boolean(listing));
+  } catch (error) {
+    console.warn('[staysphere] StaySphere app listing lookup failed; continuing with external sources', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
 }
 
 async function fetchImageBuffer(url: string) {
@@ -416,6 +547,9 @@ export async function pickStaysphereListing(
   const recentOrdered = options.recentListingKeysOrdered ?? [];
   const collectCandidates = async (skipRecent: boolean) => {
     const candidates: StaysphereListing[] = [];
+
+    const appListings = await fetchStaysphereAppListings();
+    candidates.push(...(skipRecent ? appListings.filter(listing => !recent.has(listingKey(listing.url))) : appListings));
 
     for (const url of await discoverAderokUrls()) {
       if (skipRecent && recent.has(listingKey(url))) continue;

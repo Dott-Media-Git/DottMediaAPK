@@ -53,6 +53,12 @@ services:
         value: "https://app.dott-media.org"
       - key: CARMARKET_HIGH_VALUE_MIN_UGX
         value: "100000000"
+      - key: STAYSPHERE_APP_URL
+        value: "https://staysphere-ashy.vercel.app"
+      - key: STAYSPHERE_APP_SUPABASE_URL
+        value: "https://krwnwucjwypcenrztjvf.supabase.co"
+      - key: STAYSPHERE_APP_PROPERTY_LIMIT
+        value: "40"
       - key: ANALYTICS_ORG_ID
         value: "e3UXyD35FtaEtm0HMmQ4"
       - key: ANALYTICS_USER_ID
