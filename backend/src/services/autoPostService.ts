@@ -267,10 +267,11 @@ const CLIENT_ENV_PREFIXES: Record<string, string> = {
   LVR7p3WzdFM51ds92Kacf6S40og2: 'DOTTENERGY',
 };
 
-const PINNED_CLIENT_RUNTIME_PROMPTS: Record<string, Pick<AutoPostJob, 'prompt' | 'businessType' | 'fallbackHashtags'>> = {
+const PINNED_CLIENT_RUNTIME_PROMPTS: Record<string, Pick<AutoPostJob, 'prompt' | 'businessType' | 'fallbackCaption' | 'fallbackHashtags'>> = {
   cMPZQccGggbhZe9dbvtxFmBehP02: {
-    prompt: 'Create a warm, product-led AUX Wellness Hub post for wellness support, pain relief, knee support, back support, or active lifestyle products. Use practical customer language, avoid medical guarantees, and invite customers to message for sizing, availability, and ordering.',
+    prompt: 'Create a warm, product-led AUX Wellness Hub post for the exact wellness or sports product shown in the image. Identify the product category from the image when possible (back support, knee stabilizer, ankle support, pain relief cream or balm, gym bag, duffel bag, or gym wear). Mention only benefits supported by the product image, avoid medical guarantees, never mention Dotti or Dott Media, and invite customers to message AUX Wellness Hub for sizing, availability, and ordering.',
     businessType: 'wellness support and active lifestyle products',
+    fallbackCaption: 'AUX Wellness Hub products for everyday comfort, movement, and active routines. Message us for product guidance, sizing, availability, and ordering. ✨',
     fallbackHashtags: '#AUXWellnessHub #WellnessUganda #PainReliefSupport #KneeSupport #BackSupport #ActiveLifestyle',
   },
   acmVetCcOiTHeGk5D7eDYieamDF3: {
@@ -304,6 +305,52 @@ const AUX_WELLNESS_MEDIA_URLS = Array.from(
   { length: 32 },
   (_, index) => `${AUX_WELLNESS_MEDIA_BASE_URL}/auxwellness-${String(index + 1).padStart(2, '0')}.jpeg`,
 );
+
+const AUX_WELLNESS_PRODUCT_COPY: Record<number, { name: string; body: string; hashtags: string }> = {
+  1: { name: 'Copper Fit Back Support', body: 'A practical support option for everyday movement, work, and active routines. Ask us about fit and availability.', hashtags: '#BackSupport #EverydayComfort' },
+  2: { name: 'AUX Double Support Back Care', body: 'Designed for added support through your daily routine. Message us for sizing and product guidance.', hashtags: '#BackSupport #ActiveLifestyle' },
+  3: { name: 'Sombra Warm Pain Relief', body: 'A warm-care option for people who want comfort after busy days or active routines. Ask about the available sizes.', hashtags: '#Sombra #WellnessSupport' },
+  4: { name: 'AUX Sports Duffle Bag', body: 'A roomy companion for training gear, travel essentials, and busy days on the move.', hashtags: '#SportsBag #ActiveLifestyle' },
+  5: { name: 'Mueller Knee Stabilizer', body: 'A supportive knee option for training, movement, and everyday activity. Ask us about fit before ordering.', hashtags: '#KneeSupport #MoveWithConfidence' },
+  6: { name: 'SNEINO Ankle Support', body: 'Lightweight support for active routines and movement. Message us for sizing and availability.', hashtags: '#AnkleSupport #ActiveLifestyle' },
+  7: { name: 'Self-Adjusting Knee Stabilizer', body: 'A practical support option for active days, training, and everyday movement. Ask about the right fit.', hashtags: '#KneeSupport #WellnessUganda' },
+  8: { name: 'Mueller Knee Stabilizer', body: 'Comfortable support for people staying active. Message AUX Wellness Hub for guidance and availability.', hashtags: '#KneeSupport #ActiveDays' },
+  9: { name: 'AUX Everyday Duffel Bag', body: 'Carry your essentials from the gym to the weekend with a simple, practical duffel.', hashtags: '#DuffelBag #ActiveLifestyle' },
+  10: { name: 'AUX Performance Duffel Bag', body: 'Built for organised gym days, short trips, and keeping your essentials together.', hashtags: '#DuffelBag #GymGear' },
+  11: { name: 'AUX Gym Bag', body: 'A practical gym companion with room for the gear you use on active days.', hashtags: '#GymBag #ActiveLifestyle' },
+  12: { name: 'AUX Sport Duffle Bag', body: 'Pack your training essentials and keep moving. Ask us about colours and availability.', hashtags: '#SportsBag #GymGear' },
+  13: { name: 'AUX Performance Duffel Bag', body: 'A clean, spacious option for gym gear, travel, and everyday carry.', hashtags: '#DuffelBag #EverydayCarry' },
+  14: { name: 'AUX Gym Wear Set', body: 'Comfortable activewear for training, movement, and days that keep you moving.', hashtags: '#GymWear #ActiveLifestyle' },
+  15: { name: 'Sombra Move Better Care', body: 'Warm-care products for active routines and everyday comfort. Message us for the options available.', hashtags: '#Sombra #WellnessSupport' },
+  16: { name: 'Sombra Wellness Samples', body: 'Explore Sombra care options and find the product that fits your routine. Ask us about samples and availability.', hashtags: '#Sombra #WellnessUganda' },
+  17: { name: 'Sombra Warm Pain Relief', body: 'A practical warm-care option after busy days, training, or everyday activity.', hashtags: '#Sombra #ActiveRecovery' },
+  18: { name: 'Sombra Warm Pain Relief', body: 'Support your everyday comfort routine with Sombra. Message us for product guidance.', hashtags: '#Sombra #EverydayComfort' },
+  19: { name: 'Sombra Pain Relief Gel', body: 'A convenient gel option for your personal comfort routine. Ask about sizes and availability.', hashtags: '#Sombra #WellnessSupport' },
+  20: { name: 'Sombra Care Range', body: 'Choose from practical Sombra care options for different everyday routines. Message us to find your match.', hashtags: '#Sombra #WellnessUganda' },
+  21: { name: 'Sombra Care Benefits', body: 'Learn how Sombra products can fit into a simple comfort and recovery routine. Ask us for guidance.', hashtags: '#Sombra #ActiveRecovery' },
+  22: { name: 'Sombra Warm Relief Cream', body: 'A simple cream option for an everyday comfort routine. Message AUX Wellness Hub for availability.', hashtags: '#Sombra #EverydayComfort' },
+  23: { name: 'AUX Carry More Sports Bag', body: 'Keep your sports essentials organised in a practical bag made for active days.', hashtags: '#SportsBag #GymGear' },
+  24: { name: 'AUX Sport Duffel Bag', body: 'A dependable carry option for training, travel, and everyday movement.', hashtags: '#DuffelBag #ActiveLifestyle' },
+  25: { name: 'Sombra Care Collection', body: 'Browse the Sombra range and choose the option that suits your comfort routine.', hashtags: '#Sombra #WellnessSupport' },
+  26: { name: 'Sombra Warm Pain Relief Cream', body: 'A convenient cream for people building a simple everyday comfort routine.', hashtags: '#Sombra #EverydayComfort' },
+  27: { name: 'Sombra Care Collection', body: 'Multiple Sombra options, one place to find practical everyday support. Message us for guidance.', hashtags: '#Sombra #WellnessUganda' },
+  28: { name: 'Sombra Pain Relief Gel', body: 'Keep your comfort routine simple with a convenient Sombra gel option.', hashtags: '#Sombra #ActiveRecovery' },
+  29: { name: 'Sombra Warm Relief Cream', body: 'Check the product details and ask us how this Sombra option can fit your routine.', hashtags: '#Sombra #WellnessSupport' },
+  30: { name: 'Sombra Muscle and Joint Care', body: 'A practical care option for active people and everyday routines. Message us for availability.', hashtags: '#Sombra #ActiveLifestyle' },
+  31: { name: 'Sombra Product Details', body: 'See the product information clearly, then message us for guidance before ordering.', hashtags: '#Sombra #WellnessUganda' },
+  32: { name: 'Sombra Care Range', body: 'Find practical comfort options for your routine from AUX Wellness Hub.', hashtags: '#Sombra #WellnessSupport' },
+};
+
+const buildAuxWellnessProductCaption = (sourceUrl?: string) => {
+  const match = String(sourceUrl ?? '').match(/auxwellness-(\d{1,2})\.(?:jpe?g|png|webp)/i);
+  const copy = match ? AUX_WELLNESS_PRODUCT_COPY[Number(match[1])] : undefined;
+  const product = copy ?? {
+    name: 'AUX Wellness Hub',
+    body: 'Practical wellness, comfort, and active-lifestyle products for everyday routines. Message us for product guidance and availability.',
+    hashtags: '#WellnessUganda #ActiveLifestyle',
+  };
+  return `${product.name} ✨\n\n${product.body}\n\nMessage AUX Wellness Hub for sizing, availability, and ordering. ${product.hashtags} #AUXWellnessHub`;
+};
 
 const logSafeError = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -693,6 +740,7 @@ export class AutoPostService {
       storyPlatforms: ['facebook_story', 'instagram_story'],
       prompt: profile.prompt,
       businessType: profile.businessType,
+      fallbackCaption: profile.fallbackCaption,
       fallbackHashtags: profile.fallbackHashtags,
       requireAiImages: false,
       intervalHours: NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS,
@@ -4796,7 +4844,10 @@ export class AutoPostService {
     ]);
     const enableYouTubeShorts = this.useYouTubeShorts(job);
     const isBwinUser = this.isBwinScopeUser(userId);
+    const pinnedClientProfile = PINNED_CLIENT_RUNTIME_PROMPTS[userId];
+    const isAuxWellness = userId === AUX_WELLNESS_USER_ID;
     const basePrompt =
+      (isAuxWellness ? pinnedClientProfile?.prompt : undefined) ??
       job.prompt ??
       (isBwinUser
         ? 'Create a sharp football matchday visual featuring real match energy, players in action, stadium atmosphere, and clean editorial sports composition.'
@@ -4804,7 +4855,10 @@ export class AutoPostService {
     let runPrompt = isBwinUser
       ? this.buildBwinVisualPrompt(basePrompt)
       : this.buildVisualPrompt(this.applyNeonPreference(basePrompt));
-    const businessType = job.businessType ?? (isBwinUser ? 'Sports betting brand' : 'AI CRM + automation agency');
+    const businessType =
+      (isAuxWellness ? pinnedClientProfile?.businessType : undefined) ??
+      job.businessType ??
+      (isBwinUser ? 'Sports betting brand' : 'AI CRM + automation agency');
     const scheduledHistory = await this.getScheduledPostContentHistory(userId);
     const recentImages = this.mergeRecentImages(this.getRecentImageHistory(job), [
       ...scheduledHistory.imageUrls,
@@ -5211,6 +5265,12 @@ export class AutoPostService {
       };
     }
 
+    const auxWellnessCaptionSource = usedClientSourceImageUrl || configuredImage?.url || imageUrls[0];
+    const auxWellnessCaption =
+      clientPhotoProfile?.key === 'auxwellness'
+        ? buildAuxWellnessProductCaption(auxWellnessCaptionSource)
+        : null;
+
     await consumeUsageBatch(resolveBillingScope(userId), [
       { resource: 'scheduledPosts', amount: Math.max(publishPlatforms.length, 1) },
     ]);
@@ -5221,7 +5281,9 @@ export class AutoPostService {
       const isDottEnergyCaptionPlatform =
         isFeedCaptionPlatform || platform === 'facebook_story' || platform === 'instagram_story';
       const rawCaption =
-        carmarketVehicleCaption && (isFeedCaptionPlatform || platform === 'facebook_story' || platform === 'instagram_story')
+        auxWellnessCaption && (isFeedCaptionPlatform || platform === 'facebook_story' || platform === 'instagram_story')
+          ? auxWellnessCaption
+          : carmarketVehicleCaption && (isFeedCaptionPlatform || platform === 'facebook_story' || platform === 'instagram_story')
           ? carmarketVehicleCaption
           : staysphereListingCaption && isFeedCaptionPlatform
             ? staysphereListingCaption
@@ -5236,7 +5298,7 @@ export class AutoPostService {
       const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
       const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
       const threadSafeCaption = this.limitThreadsCaption(platform, brandedCaption);
-      let captionSelection = configuredImage || job.reelsSourceMode === 'static' || carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption || dottEnergyProductCaption
+      let captionSelection = configuredImage || job.reelsSourceMode === 'static' || auxWellnessCaption || carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption || dottEnergyProductCaption
         ? { caption: threadSafeCaption, signature: this.buildCaptionSignature(platform, threadSafeCaption) }
         : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
       let caption = this.limitThreadsCaption(platform, captionSelection.caption);
@@ -5818,8 +5880,16 @@ export class AutoPostService {
 
   private buildFallbackCopy(job: AutoPostJob, userId?: string) {
     const isBwinUser = userId ? this.isBwinScopeUser(userId) : false;
-    const caption = job.fallbackCaption?.trim() || (isBwinUser ? this.defaultBwinFallbackCaption : this.defaultFallbackCaption);
-    let hashtags = job.fallbackHashtags?.trim() || (isBwinUser ? this.defaultBwinFallbackHashtags : this.defaultFallbackHashtags);
+    const pinnedProfile = userId ? PINNED_CLIENT_RUNTIME_PROMPTS[userId] : undefined;
+    const isAuxWellness = userId === AUX_WELLNESS_USER_ID;
+    const caption =
+      (isAuxWellness ? pinnedProfile?.fallbackCaption?.trim() : undefined) ||
+      job.fallbackCaption?.trim() ||
+      (isBwinUser ? this.defaultBwinFallbackCaption : this.defaultFallbackCaption);
+    let hashtags =
+      (isAuxWellness ? pinnedProfile?.fallbackHashtags?.trim() : undefined) ||
+      job.fallbackHashtags?.trim() ||
+      (isBwinUser ? this.defaultBwinFallbackHashtags : this.defaultFallbackHashtags);
     if (!this.formatHashtags(hashtags)) {
       hashtags = isBwinUser ? this.defaultBwinFallbackHashtags : this.defaultFallbackHashtags;
     }
