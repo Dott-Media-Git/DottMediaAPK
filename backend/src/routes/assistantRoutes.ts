@@ -97,10 +97,13 @@ const resolveAssistantUserId = async (authUserId: string) => {
 const boundConversationHistory = (messages: Array<{ role: 'user' | 'assistant'; content: string }>) => {
   const selected: Array<{ role: 'user' | 'assistant'; content: string }> = [];
   let characters = 0;
-  for (let index = messages.length - 1; index >= 0 && selected.length < 120; index -= 1) {
+  // Keep enough recent context for continuity without sending an ever-growing
+  // transcript to the model. Long transcripts are a common cause of slow or
+  // timed-out completion requests on mobile conversations.
+  for (let index = messages.length - 1; index >= 0 && selected.length < 60; index -= 1) {
     const message = messages[index];
     const content = message.content.slice(0, 4000);
-    if (selected.length && characters + content.length > 60_000) break;
+    if (selected.length && characters + content.length > 32_000) break;
     const previous = selected[0];
     if (!previous || previous.role !== message.role || previous.content !== content) {
       selected.unshift({ role: message.role, content });

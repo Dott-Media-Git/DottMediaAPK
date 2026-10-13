@@ -39,6 +39,12 @@ const assistantAI = new OpenAI({
   timeout: Number(process.env.ASSISTANT_AI_TIMEOUT_MS ?? 30_000),
   maxRetries: 2,
 });
+const assistantFastRetryAI = new OpenAI({
+  apiKey: config.assistantAI.apiKey,
+  baseURL: config.assistantAI.baseURL,
+  timeout: Number(process.env.ASSISTANT_FAST_RETRY_TIMEOUT_MS ?? 12_000),
+  maxRetries: 0,
+});
 const analyticsService = new AnalyticsService();
 const socialAnalyticsService = new SocialAnalyticsService();
 const strategyService = new AssistantStrategyService();
@@ -56,6 +62,23 @@ const extractOpenAIError = (error: unknown) => {
   const code = err?.code ?? err?.error?.code ?? err?.response?.data?.error?.code;
   const message = err?.message ?? err?.error?.message ?? err?.response?.data?.error?.message;
   return { status, code, message };
+};
+
+const buildLocalAssistantFallback = (question: string, locale: Locale) => {
+  const normalized = question.toLowerCase();
+  if (/(payment|checkout|pay online|subscription|billing|payment gateway)/i.test(normalized)) {
+    return locale === 'en'
+      ? 'The immediate blocker is checkout. Prioritize one reliable payment path first, then connect it to your plan selection, successful-payment confirmation, receipts, and access activation. For an East African launch, compare a local gateway such as Flutterwave or Pesapal with Stripe, test a real low-value payment in production mode, and only then scale the marketing traffic. I can help you map the payment flow and launch checklist step by step.'
+      : 'The payment flow is the immediate blocker. Start with one reliable gateway, connect successful payment to receipts and access activation, test a real low-value transaction, and then scale marketing. I can help you plan the implementation step by step.';
+  }
+  if (/(raise capital|books? (are|is) negative|cash flow|operating at a loss|make .* money)/i.test(normalized)) {
+    return locale === 'en'
+      ? 'When the books are negative, focus first on cash flow and a clear path to paid conversion. List your monthly fixed costs, current runway, price, gross margin, and the number of paying users needed to break even. Then finish the smallest payment-enabled version, sell it to a narrow audience, and use those early sales and retention numbers to support a capital raise. I can help you turn your figures into a simple break-even and fundraising plan.'
+      : 'Start with cash flow and a clear path to paid conversion. Gather your monthly costs, runway, price, margin, and break-even customer count, then finish the smallest payment-enabled version and use early sales and retention to support fundraising.';
+  }
+  return locale === 'en'
+    ? 'I can still help, but the live AI response is taking longer than expected. Please send the question again, or include the goal and the key details you want me to work with.'
+    : 'The live AI response is taking longer than expected. Please send the question again with the goal and key details.';
 };
 
 const buildAssistantErrorText = (kind: 'billing' | 'auth' | 'generic') => {
@@ -1557,12 +1580,13 @@ export class AssistantService {
       return false;
     });
 
+    const completionStartedAt = Date.now();
     try {
       const completion = await assistantAI.chat.completions.create({
         model: config.assistantAI.model,
         messages: [
           { role: 'system', content: systemPrompt },
-          ...(context.conversationHistory ?? []).slice(-120).map(message => ({
+          ...(context.conversationHistory ?? []).slice(-60).map(message => ({
             role: message.role,
             content: message.content.slice(0, 4000),
           })),
@@ -1581,7 +1605,14 @@ export class AssistantService {
         ],
         ...(availableTools.length ? { tools: availableTools, tool_choice: 'auto' as const } : {}),
         temperature: 0.3,
-        max_tokens: 900,
+        max_tokens: 600,
+      });
+
+      console.info('[assistant] completion succeeded', {
+        provider: config.assistantAI.provider,
+        model: config.assistantAI.model,
+        durationMs: Date.now() - completionStartedAt,
+        questionLength: question.length,
       });
 
       const message = completion.choices[0].message;
@@ -1769,7 +1800,54 @@ export class AssistantService {
         kind = 'billing';
       }
 
-      console.error('OpenAI Error:', { status, code, message });
+      console.error('OpenAI Error:', {
+        status,
+        code,
+        message,
+        provider: config.assistantAI.provider,
+        model: config.assistantAI.model,
+        durationMs: Date.now() - completionStartedAt,
+        questionLength: question.length,
+      });
+
+      // Retry transient failures with a compact prompt and no tools. This
+      // avoids turning a slow or oversized request into a dead conversation.
+      if (kind === 'generic' && !availableTools.length) {
+        try {
+          const compactSystemPrompt = [
+            'You are Dotti, a helpful business and everyday AI assistant.',
+            'Answer the user directly in no more than two short paragraphs.',
+            'Use only the account facts supplied below; if they are absent, say what information is needed instead of inventing it.',
+            accountContextBlock ? `Account facts:\n${accountContextBlock.slice(0, 12_000)}` : '',
+            `Respond in ${responseLanguage}.`,
+          ].filter(Boolean).join('\n');
+          const retryCompletion = await assistantFastRetryAI.chat.completions.create({
+            model: config.assistantAI.model,
+            messages: [
+              { role: 'system', content: compactSystemPrompt },
+              { role: 'user', content: question.slice(0, 12_000) },
+            ],
+            temperature: 0.2,
+            max_tokens: 450,
+          });
+          const retryText = retryCompletion.choices?.[0]?.message?.content?.trim();
+          if (retryText) {
+            console.warn('[assistant] compact retry recovered completion', {
+              provider: config.assistantAI.provider,
+              model: config.assistantAI.model,
+              durationMs: Date.now() - completionStartedAt,
+            });
+            return { type: 'text', text: retryText };
+          }
+        } catch (retryError) {
+          const retryInfo = extractOpenAIError(retryError);
+          console.warn('[assistant] compact retry failed', {
+            status: retryInfo.status,
+            code: retryInfo.code,
+            message: retryInfo.message,
+          });
+        }
+      }
       if (webSearchRequest && webResearchBlock) {
         return {
           type: 'text',
@@ -1805,19 +1883,7 @@ export class AssistantService {
       if (kind !== 'generic') {
         return { type: 'text', text: buildAssistantErrorText(kind) };
       }
-      return {
-        type: 'text',
-        text:
-          locale === 'fr'
-            ? "Je rencontre un souci temporaire en me connectant. Merci de reessayer."
-            : locale === 'de'
-              ? 'Ich habe vorubergehend Probleme bei der Verbindung. Bitte versuch es gleich noch einmal.'
-              : locale === 'ar'
-                ? 'واجهت مشكلة مؤقتة في الاتصال. يرجى المحاولة مرة اخرى.'
-              : locale === 'zh'
-                ? '连接时遇到临时问题，请稍后再试。'
-                : 'I encountered a temporary issue connecting to my brain. Please try again shortly.',
-      };
+      return { type: 'text', text: buildLocalAssistantFallback(question, locale) };
     }
   }
 }
