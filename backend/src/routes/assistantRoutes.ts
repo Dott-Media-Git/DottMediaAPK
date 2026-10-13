@@ -11,12 +11,20 @@ import { saveUploadedMediaBuffer } from '../services/generatedMediaService';
 const router = Router();
 const assistant = new AssistantService();
 const assistantLookupTimeoutMs = Number(process.env.ASSISTANT_LOOKUP_TIMEOUT_MS ?? 1_200);
+const assistantHistoryTimeoutMs = Number(process.env.ASSISTANT_HISTORY_TIMEOUT_MS ?? 8_000);
+const assistantSaveTimeoutMs = Number(process.env.ASSISTANT_SAVE_TIMEOUT_MS ?? 8_000);
 const supabasePrimary = (process.env.PRIMARY_DATA_STORE ?? 'supabase').toLowerCase() === 'supabase';
 
 const withFallbackTimeout = <T>(action: Promise<T>, fallback: T) =>
   Promise.race([
     action,
     new Promise<T>(resolve => setTimeout(() => resolve(fallback), assistantLookupTimeoutMs)),
+  ]);
+
+const withTimeout = <T>(action: Promise<T>, timeoutMs: number, fallback: T) =>
+  Promise.race([
+    action,
+    new Promise<T>(resolve => setTimeout(() => resolve(fallback), timeoutMs)),
   ]);
 
 const isFirestoreQuotaError = (error: unknown) => {
@@ -118,7 +126,7 @@ router.get('/assistant/conversations', requireFirebase, async (req, res, next) =
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
     const effectiveUserId = await resolveAssistantUserId(authUser.uid);
-    const conversations = await getAssistantConversations(effectiveUserId);
+    const conversations = await withTimeout(getAssistantConversations(effectiveUserId), assistantHistoryTimeoutMs, []);
     res.json({ conversations });
   } catch (error) {
     next(error);
@@ -234,8 +242,9 @@ router.post(
       if (!isFirestoreQuotaError(error)) throw error;
       console.warn('[assistant] Firestore usage metering quota exhausted; continuing authenticated request');
     }
-    const cloudConversations = await withFallbackTimeout(
+    const cloudConversations = await withTimeout(
       getAssistantConversations(effectiveUserId),
+      assistantHistoryTimeoutMs,
       [],
     ).catch(error => {
       console.warn('[assistant] conversation history unavailable; continuing without history', error instanceof Error ? error.message : error);
@@ -284,9 +293,11 @@ router.post(
         ? answer.text
         : '';
     if (answerText) {
-      const conversationId = parsed.conversationId ?? `chat-${Date.now()}`;
+      // Keep a stable server-side thread even for older clients that do not
+      // send a conversation ID. New clients always send their active ID.
+      const conversationId = parsed.conversationId?.trim() || 'default';
       if (typeof conversationStore.saveAssistantExchange === 'function') {
-        await withFallbackTimeout(
+        await withTimeout(
           conversationStore.saveAssistantExchange({
             userId: effectiveUserId,
             conversationId,
@@ -294,6 +305,7 @@ router.post(
             question: parsed.question,
             answer: answerText,
           }),
+          assistantSaveTimeoutMs,
           undefined,
         ).catch(error => {
           console.warn('[assistant] conversation save failed after response; keeping response successful', error instanceof Error ? error.message : error);

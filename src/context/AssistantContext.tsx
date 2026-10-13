@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { deleteSyncedConversation, fetchSyncedConversations, sendChatQuery } from '@services/chatService';
 import { navigationRef } from '@navigation/navigationRef';
@@ -47,18 +47,16 @@ const conversationsStorageKey = (userId?: string) => `@dott/conversations/${user
 
 const AssistantContext = createContext<AssistantContextValue | undefined>(undefined);
 
-const buildConversationContext = (conversations: Conversation[], currentMessages: Message[]) => {
-  const orderedConversations = [...conversations].sort(
-    (left, right) => new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime(),
-  );
-  const combined = [...orderedConversations.flatMap(conversation => conversation.messages), ...currentMessages];
-  const deduplicated = combined.filter((message, index) => {
+const buildConversationContext = (currentMessages: Message[]) => {
+  // Only send the active thread. Including every previous conversation makes
+  // short follow-ups such as “option 3 and 2” ambiguous and can cause Dotti to
+  // answer from an unrelated chat.
+  const deduplicated = currentMessages.filter((message, index) => {
     if (index === 0) return true;
-    const previous = combined[index - 1];
+    const previous = currentMessages[index - 1];
     return previous.role !== message.role || previous.content !== message.content;
   });
 
-  // Keep a broad cross-conversation memory while staying safely inside provider context limits.
   const selected: Message[] = [];
   let characterCount = 0;
   for (let index = deduplicated.length - 1; index >= 0 && selected.length < 120; index -= 1) {
@@ -85,6 +83,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isTyping, setIsTyping] = useState(false);
   const [assistantTone, setAssistantToneValue] = useState('fresh');
   const [assistantVoice, setAssistantVoiceValue] = useState('neutral');
+  const messagesRef = useRef<Message[]>([]);
+  const activeConversationIdRef = useRef<string>();
 
   useEffect(() => {
     AsyncStorage.multiGet([STORAGE_KEY, STORAGE_KEY_ASSISTANT_TONE, STORAGE_KEY_ASSISTANT_VOICE, STORAGE_KEY_ALWAYS_ON_MIGRATION])
@@ -139,6 +139,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           .slice(0, 50);
         setConversations(next);
         void AsyncStorage.setItem(conversationsStorageKey(authState.user?.uid), JSON.stringify(next));
+        messagesRef.current = [];
+        activeConversationIdRef.current = undefined;
         setMessages([]);
         setActiveConversationId(undefined);
       })
@@ -183,6 +185,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const startNewChat = () => {
+    messagesRef.current = [];
+    activeConversationIdRef.current = undefined;
     setMessages([]);
     setIsTyping(false);
     setActiveConversationId(undefined);
@@ -191,6 +195,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const openConversation = (id: string) => {
     const conversation = conversations.find(item => item.id === id);
     if (!conversation) return;
+    activeConversationIdRef.current = id;
+    messagesRef.current = conversation.messages;
     setActiveConversationId(id);
     setMessages(conversation.messages);
     setIsTyping(false);
@@ -228,10 +234,15 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const sendMessage = async (text: string, attachments?: Array<{ name: string; mimeType: string; size?: number; text?: string; dataUrl?: string }>) => {
-    const conversationId = activeConversationId ?? `chat-${Date.now()}`;
-    if (!activeConversationId) setActiveConversationId(conversationId);
+    const hadActiveConversation = Boolean(activeConversationIdRef.current);
+    const conversationId = activeConversationIdRef.current ?? `chat-${Date.now()}`;
+    activeConversationIdRef.current = conversationId;
+    if (!hadActiveConversation) setActiveConversationId(conversationId);
     const userMsg: Message = { role: 'user', content: text };
-    setMessages(prev => [...prev, userMsg]);
+    const currentMessages = messagesRef.current;
+    const nextMessages = [...currentMessages, userMsg];
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
     setIsTyping(true);
 
     try {
@@ -254,8 +265,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         assistantVoice,
       };
 
-      const conversationContext = buildConversationContext(conversations, messages);
-      const conversationTitle = (messages.find(message => message.role === 'user')?.content ?? text)
+      const conversationContext = buildConversationContext(currentMessages);
+      const conversationTitle = (currentMessages.find(message => message.role === 'user')?.content ?? text)
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 52) || 'Chat with Dotti';
@@ -279,7 +290,9 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
 
       const botMsg: Message = { role: 'assistant', content: botText };
-      setMessages(prev => [...prev, botMsg]);
+      const completedMessages = [...messagesRef.current, botMsg];
+      messagesRef.current = completedMessages;
+      setMessages(completedMessages);
       return botText;
     } catch (error) {
       const fallbackText = t("I'm sorry, I ran into an issue. Please try again.");
@@ -287,7 +300,9 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         role: 'assistant',
         content: fallbackText,
       };
-      setMessages(prev => [...prev, errorMsg]);
+      const completedMessages = [...messagesRef.current, errorMsg];
+      messagesRef.current = completedMessages;
+      setMessages(completedMessages);
       return fallbackText;
     } finally {
       setIsTyping(false);

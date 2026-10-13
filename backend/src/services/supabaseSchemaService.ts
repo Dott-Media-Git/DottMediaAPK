@@ -60,6 +60,19 @@ create index if not exists dott_profiles_email_idx
   on public.dott_profiles (lower(email))
   where email is not null;
 
+create table if not exists public.dott_assistant_conversations (
+  user_id text not null,
+  conversation_id text not null,
+  title text not null default 'Chat with Dotti',
+  messages jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  primary key (user_id, conversation_id)
+);
+
+create index if not exists dott_assistant_conversations_user_updated_idx
+  on public.dott_assistant_conversations (user_id, updated_at desc);
+
 create table if not exists public.dott_scheduled_posts (
   id text primary key,
   user_id text not null,

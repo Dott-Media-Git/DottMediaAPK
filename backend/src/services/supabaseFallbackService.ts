@@ -102,6 +102,15 @@ type InboundMessageRecord = {
   payload?: Record<string, unknown>;
 };
 
+type AssistantConversationRecord = {
+  userId: string;
+  conversationId: string;
+  title?: string;
+  messages: Array<{ role: 'user' | 'assistant'; content: string; createdAt: string }>;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+};
+
 type MetricCounterTree = Record<string, unknown>;
 
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
@@ -1577,6 +1586,133 @@ class SupabaseFallbackService {
         counters: (row.counters as Record<string, unknown>) ?? {},
       })),
     );
+  }
+
+  async getAssistantConversations(userId: string): Promise<AssistantConversationRecord[]> {
+    if (!userId) return [];
+    let rows: any[] = [];
+    try {
+      if (this.isConfigured()) {
+        rows = await this.request<any[]>('GET', 'dott_assistant_conversations', {
+          params: {
+            select: '*',
+            user_id: `eq.${userId}`,
+            order: 'updated_at.desc',
+            limit: 50,
+          },
+        });
+      } else if (this.hasDatabaseFallback()) {
+        rows = await this.databaseQuery<any>(
+          `select * from public.dott_assistant_conversations
+           where user_id = $1 order by updated_at desc limit 50`,
+          [userId],
+        );
+      } else {
+        this.warnUnavailableOnce();
+        return [];
+      }
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      rows = await this.databaseQuery<any>(
+        `select * from public.dott_assistant_conversations
+         where user_id = $1 order by updated_at desc limit 50`,
+        [userId],
+      );
+    }
+    return (Array.isArray(rows) ? rows : []).map(row => ({
+      userId: String(row.user_id ?? userId),
+      conversationId: String(row.conversation_id ?? ''),
+      title: String(row.title ?? 'Chat with Dotti'),
+      messages: Array.isArray(row.messages)
+        ? row.messages
+            .filter((message: any) => message?.role === 'user' || message?.role === 'assistant')
+            .map((message: any) => ({
+              role: message.role,
+              content: String(message.content ?? '').slice(0, 4000),
+              createdAt: String(message.createdAt ?? message.created_at ?? row.updated_at ?? NOW()),
+            }))
+        : [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  async saveAssistantExchange(input: {
+    userId: string;
+    conversationId: string;
+    title?: string;
+    question: string;
+    answer: string;
+  }) {
+    if (!input.userId || !input.conversationId) return;
+    const now = NOW();
+    const existing = (await this.getAssistantConversations(input.userId))
+      .find(conversation => conversation.conversationId === input.conversationId);
+    const messages = [
+      ...(existing?.messages ?? []),
+      { role: 'user' as const, content: input.question.slice(0, 4000), createdAt: now },
+      { role: 'assistant' as const, content: input.answer.slice(0, 4000), createdAt: now },
+    ].slice(-120);
+    const row = {
+      user_id: input.userId,
+      conversation_id: input.conversationId,
+      title: input.title?.trim().slice(0, 80) || existing?.title || 'Chat with Dotti',
+      messages: sanitizeJson(messages) ?? [],
+      created_at: existing?.createdAt ? toIsoString(existing.createdAt) ?? now : now,
+      updated_at: now,
+    };
+    try {
+      if (this.isConfigured()) {
+        await this.request('POST', 'dott_assistant_conversations', {
+          params: { on_conflict: 'user_id,conversation_id' },
+          prefer: 'resolution=merge-duplicates,return=minimal',
+          body: [row],
+        });
+      } else if (this.hasDatabaseFallback()) {
+        await this.databaseQuery(
+          `insert into public.dott_assistant_conversations
+             (user_id, conversation_id, title, messages, created_at, updated_at)
+           values ($1, $2, $3, $4::jsonb, $5, $6)
+           on conflict (user_id, conversation_id) do update set
+             title = excluded.title, messages = excluded.messages, updated_at = excluded.updated_at`,
+          [row.user_id, row.conversation_id, row.title, JSON.stringify(row.messages), row.created_at, row.updated_at],
+        );
+      } else {
+        this.warnUnavailableOnce();
+      }
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      await this.databaseQuery(
+        `insert into public.dott_assistant_conversations
+           (user_id, conversation_id, title, messages, created_at, updated_at)
+         values ($1, $2, $3, $4::jsonb, $5, $6)
+         on conflict (user_id, conversation_id) do update set
+           title = excluded.title, messages = excluded.messages, updated_at = excluded.updated_at`,
+        [row.user_id, row.conversation_id, row.title, JSON.stringify(row.messages), row.created_at, row.updated_at],
+      );
+    }
+  }
+
+  async deleteAssistantConversation(userId: string, conversationId: string) {
+    if (!userId || !conversationId) return;
+    try {
+      if (this.isConfigured()) {
+        await this.request('DELETE', 'dott_assistant_conversations', {
+          params: { user_id: `eq.${userId}`, conversation_id: `eq.${conversationId}` },
+        });
+      } else if (this.hasDatabaseFallback()) {
+        await this.databaseQuery(
+          'delete from public.dott_assistant_conversations where user_id = $1 and conversation_id = $2',
+          [userId, conversationId],
+        );
+      }
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      await this.databaseQuery(
+        'delete from public.dott_assistant_conversations where user_id = $1 and conversation_id = $2',
+        [userId, conversationId],
+      );
+    }
   }
 }
 
