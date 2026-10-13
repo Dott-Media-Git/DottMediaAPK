@@ -84,7 +84,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [assistantTone, setAssistantToneValue] = useState('fresh');
   const [assistantVoice, setAssistantVoiceValue] = useState('neutral');
   const messagesRef = useRef<Message[]>([]);
-  const activeConversationIdRef = useRef<string>();
+  const activeConversationIdRef = useRef<string | undefined>(undefined);
+  const hydratedConversationUserRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     AsyncStorage.multiGet([STORAGE_KEY, STORAGE_KEY_ASSISTANT_TONE, STORAGE_KEY_ASSISTANT_VOICE, STORAGE_KEY_ALWAYS_ON_MIGRATION])
@@ -114,11 +115,22 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   useEffect(() => {
+    const conversationUserId = authState.user?.uid;
+    // Clear a previous user's thread immediately, before asynchronous storage
+    // and cloud reads begin. This prevents an account switch from leaking
+    // messages while still allowing a fast first message to survive hydration.
+    if (hydratedConversationUserRef.current !== conversationUserId) {
+      hydratedConversationUserRef.current = conversationUserId;
+      messagesRef.current = [];
+      activeConversationIdRef.current = undefined;
+      setMessages([]);
+      setActiveConversationId(undefined);
+    }
     setConversationsHydrated(false);
-    const localPromise = AsyncStorage.getItem(conversationsStorageKey(authState.user?.uid))
+    const localPromise = AsyncStorage.getItem(conversationsStorageKey(conversationUserId))
       .then(value => value ? JSON.parse(value) : [])
       .catch(() => []);
-    const cloudPromise = authState.user?.uid
+    const cloudPromise = conversationUserId
       ? fetchSyncedConversations().catch(error => {
           console.warn('Cloud conversation sync unavailable; using local conversations', error);
           return [];
@@ -138,11 +150,14 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
           .slice(0, 50);
         setConversations(next);
-        void AsyncStorage.setItem(conversationsStorageKey(authState.user?.uid), JSON.stringify(next));
-        messagesRef.current = [];
-        activeConversationIdRef.current = undefined;
-        setMessages([]);
-        setActiveConversationId(undefined);
+        void AsyncStorage.setItem(conversationsStorageKey(conversationUserId), JSON.stringify(next));
+        // A fast message may arrive while storage is loading. Do not erase it
+        // when the hydration request completes.
+        if (messagesRef.current.length === 0) {
+          activeConversationIdRef.current = undefined;
+          setActiveConversationId(undefined);
+          setMessages([]);
+        }
       })
       .catch(() => setConversations([]))
       .finally(() => setConversationsHydrated(true));
