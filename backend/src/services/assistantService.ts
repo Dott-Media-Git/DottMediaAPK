@@ -64,8 +64,32 @@ const extractOpenAIError = (error: unknown) => {
   return { status, code, message };
 };
 
-const buildLocalAssistantFallback = (question: string, locale: Locale) => {
+const buildLocalAssistantFallback = (
+  question: string,
+  locale: Locale,
+  conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+) => {
   const normalized = question.toLowerCase();
+  const latestAssistantMessage = [...conversationHistory]
+    .reverse()
+    .find(message => message.role === 'assistant' && /(?:^|\n)\s*\d+[.)]\s+/.test(message.content));
+  const numberedOptions = latestAssistantMessage
+    ? [...latestAssistantMessage.content.matchAll(/(?:^|\n)\s*(\d+)[.)]\s+([^\n]+)/g)]
+        .map(match => ({ number: Number(match[1]), text: match[2].replace(/[*_`]/g, '').trim() }))
+    : [];
+  const optionReference = question.match(/\boptions?\s+([0-9]+(?:\s*(?:and|,|&)\s*[0-9]+)*)/i);
+  if (numberedOptions.length && optionReference) {
+    const selectedNumbers = [...optionReference[1].matchAll(/\d+/g)].map(match => Number(match[0]));
+    const selected = selectedNumbers
+      .map(number => numberedOptions.find(option => option.number === number))
+      .filter((option): option is { number: number; text: string } => Boolean(option));
+    if (selected.length) {
+      const choices = selected.map(option => `${option.number}. ${option.text}`).join('\n');
+      return locale === 'en'
+        ? `I’m following the options from my previous message. You selected:\n${choices}\n\nI’ll help you combine these into a practical next step.`
+        : `I’m following the options from my previous message. You selected:\n${choices}`;
+    }
+  }
   if (/(payment|checkout|pay online|subscription|billing|payment gateway)/i.test(normalized)) {
     return locale === 'en'
       ? 'The immediate blocker is checkout. Prioritize one reliable payment path first, then connect it to your plan selection, successful-payment confirmation, receipts, and access activation. For an East African launch, compare a local gateway such as Flutterwave or Pesapal with Stripe, test a real low-value payment in production mode, and only then scale the marketing traffic. I can help you map the payment flow and launch checklist step by step.'
@@ -1884,7 +1908,7 @@ export class AssistantService {
       if (kind !== 'generic') {
         return { type: 'text', text: buildAssistantErrorText(kind) };
       }
-      return { type: 'text', text: buildLocalAssistantFallback(question, locale) };
+      return { type: 'text', text: buildLocalAssistantFallback(question, locale, context.conversationHistory) };
     }
   }
 }
