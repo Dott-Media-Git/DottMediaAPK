@@ -126,6 +126,11 @@ const EMPTY_DRAFTS: Record<ManualPlatform, Record<string, string>> = {
   whatsapp: { accessToken: '', phoneNumberId: '', recipientPhoneNumbers: '' }
 };
 
+const KNOWN_ACCOUNT_LABELS: Record<string, string> = {
+  cMPZQccGggbhZe9dbvtxFmBehP02: 'Aux Wellness Hub',
+  HAo6YtFvhKgSySa8EoERKYYq2IV2: 'Dotti AI',
+};
+
 export const AccountIntegrationsScreen: React.FC = () => {
   const { state, orgId } = useAuth();
   const { t } = useI18n();
@@ -595,6 +600,8 @@ export const AccountIntegrationsScreen: React.FC = () => {
 
   const getConnectedAccountLabel = (platform: ManualPlatform) => {
     if (platform !== 'threads') return null;
+    const accountLabel = state.user?.uid ? KNOWN_ACCOUNT_LABELS[state.user.uid] : undefined;
+    if (accountLabel) return accountLabel;
     const account = (socialAccounts?.[platform] ?? {}) as Record<string, unknown>;
     const username = String(account.username ?? '').trim();
     if (username) return username.startsWith('@') ? username : `@${username}`;
