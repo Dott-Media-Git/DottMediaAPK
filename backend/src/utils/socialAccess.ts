@@ -1,5 +1,8 @@
 const DEFAULT_PRIMARY_SOCIAL_EMAILS = ['brasioxirin@gmail.com'];
-const DEFAULT_PRIMARY_SOCIAL_USER_IDS = ['cMPZQccGggbhZe9dbvtxFmBehP02'];
+// The Dotti AI account owns the server-wide primary social defaults. Aux
+// Wellness Hub has its own stored account credentials and must never inherit
+// Dotti AI's Threads profile through this allowlist.
+const DEFAULT_PRIMARY_SOCIAL_USER_IDS = ['HAo6YtFvhKgSySa8EoERKYYq2IV2'];
 
 const normalizeEmail = (value?: string | null) => value?.trim().toLowerCase() ?? '';
 const normalizeId = (value?: string | null) => value?.trim() ?? '';

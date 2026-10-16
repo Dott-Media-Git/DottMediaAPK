@@ -38,7 +38,7 @@ import { supabaseFallbackService } from '../services/supabaseFallbackService';
 const router = Router();
 
 const ADMIN_LIVE_SOCIAL_CLIENTS = [
-  { label: 'Dott Media', userId: 'cMPZQccGggbhZe9dbvtxFmBehP02', email: 'xbrasio@gmail.com' },
+  { label: 'Aux Wellness Hub', userId: 'cMPZQccGggbhZe9dbvtxFmBehP02', email: 'xbrasio@gmail.com' },
   { label: 'SheCare Doctor', userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1', email: 'shecaredoctor@gmail.com' },
   { label: 'Dott HR', userId: '80bYIeiuukNFtUvXTUobXmfC7pu1', email: 'kingbrasio100@gmail.com' },
   { label: 'Dott Energy', userId: 'LVR7p3WzdFM51ds92Kacf6S40og2' },

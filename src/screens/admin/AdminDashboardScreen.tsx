@@ -135,7 +135,7 @@ const knownAccountNames: Record<string, string> = {
   '1zvY9nNyXMcfxdPQEyx0bIdK7r53': 'Bwin / Ball Analytics',
   tCE1FQ1cOFgdupOXP23mPUMQRAz1: 'SheCare Doctor',
   '80bYIeiuukNFtUvXTUobXmfC7pu1': 'Dott HR',
-  cMPZQccGggbhZe9dbvtxFmBehP02: 'Dott Media',
+  cMPZQccGggbhZe9dbvtxFmBehP02: 'Aux Wellness Hub',
   LVR7p3WzdFM51ds92Kacf6S40og2: 'Dott Energy',
   acmVetCcOiTHeGk5D7eDYieamDF3: 'Car Marketplace',
   D1iNgjLKNRaQhH35M0NmGfw1LVD2: 'Staysphere',

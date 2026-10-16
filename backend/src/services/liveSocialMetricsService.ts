@@ -547,14 +547,15 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
 }> = [
   {
     userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
-    facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1120716914467835',
-    instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '17841448754415534',
-    threadsAccountId: '28808899498698518',
-    linkedinAuthorUrn: 'urn:li:person:VQV6WSzWDf',
-    facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'DOTT_MAIN_FACEBOOK_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
-    instagramTokenEnv: ['DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
-    threadsTokenEnv: ['DOTT_MAIN_THREADS_ACCESS_TOKEN', 'THREADS_ACCESS_TOKEN'],
-    linkedinTokenEnv: ['DOTT_MAIN_LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_ACCESS_TOKEN'],
+    // This UID belongs to Aux Wellness Hub. Keep its live-account fallback
+    // separate from the Dotti AI profile below so the integration page and
+    // dashboard cannot display Dotti's accounts for Aux.
+    facebookPageId: process.env.AUXWELLNESS_FACEBOOK_PAGE_ID ?? '1371096759416007',
+    instagramAccountId: process.env.AUXWELLNESS_INSTAGRAM_BUSINESS_ID ?? '17841420336656466',
+    threadsAccountId: process.env.AUXWELLNESS_THREADS_PROFILE_ID ?? '',
+    facebookTokenEnv: ['AUXWELLNESS_FACEBOOK_PAGE_TOKEN', 'AUXWELLNESS_FACEBOOK_ACCESS_TOKEN'],
+    instagramTokenEnv: ['AUXWELLNESS_INSTAGRAM_ACCESS_TOKEN', 'AUXWELLNESS_FACEBOOK_PAGE_TOKEN'],
+    threadsTokenEnv: ['AUXWELLNESS_THREADS_ACCESS_TOKEN', 'AUXWELLNESS_THREADS_TOKEN'],
   },
   {
     userId: 'HAo6YtFvhKgSySa8EoERKYYq2IV2',
