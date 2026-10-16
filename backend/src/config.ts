@@ -146,7 +146,9 @@ export const config = {
     provider: assistantAIProvider,
     apiKey: assistantAIKey,
     baseURL: process.env.NVIDIA_BASE_URL ?? (assistantAIProvider === 'nvidia' ? 'https://integrate.api.nvidia.com/v1' : 'https://api.openai.com/v1'),
-    model: process.env.NVIDIA_AI_MODEL ?? (assistantAIProvider === 'nvidia' ? 'meta/llama-3.1-8b-instruct' : 'gpt-4o-mini'),
+    model: assistantAIProvider === 'nvidia'
+      ? process.env.NVIDIA_AI_MODEL ?? 'meta/llama-3.1-8b-instruct'
+      : process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
   }),
   calendar: {
     timezone: process.env.DEFAULT_TIMEZONE ?? 'UTC',

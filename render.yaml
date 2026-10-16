@@ -21,6 +21,8 @@ services:
         value: your_service_account_json_stringified
       - key: OPENAI_API_KEY
         value: ""
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
       - key: AI_PROVIDER
         value: nvidia
       - key: NVIDIA_API_KEY
