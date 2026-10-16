@@ -145,7 +145,9 @@ export const config = {
   assistantAI: required({
     provider: assistantAIProvider,
     apiKey: assistantAIKey,
-    baseURL: process.env.NVIDIA_BASE_URL ?? (assistantAIProvider === 'nvidia' ? 'https://integrate.api.nvidia.com/v1' : 'https://api.openai.com/v1'),
+    baseURL: assistantAIProvider === 'nvidia'
+      ? process.env.NVIDIA_BASE_URL ?? 'https://integrate.api.nvidia.com/v1'
+      : process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
     model: assistantAIProvider === 'nvidia'
       ? process.env.NVIDIA_AI_MODEL ?? 'meta/llama-3.1-8b-instruct'
       : process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
