@@ -476,7 +476,10 @@ router.post('/meta/webhook', async (req, res) => {
             const commentToDm = isCommentToDmTrigger(text);
             const reply = commentToDm
               ? buildCommentToDmPublicReply({ platform: 'instagram', userId: instagramContext?.userId })
-              : await generateReply(text, 'instagram', instagramContext?.userId, 'comment');
+              : await generateReply(text, 'instagram', instagramContext?.userId, 'comment', {
+                accountId: instagramContext?.accountId,
+                pageId: instagramContext?.pageId,
+              });
             await likeInstagramComment(commentId, instagramContext?.accessToken).catch(err => console.warn('IG comment like failed', err));
             await replyToInstagramComment(commentId, reply, instagramContext?.accessToken);
             await updateReplyStatus(inbound.ref, 'sent');
@@ -526,7 +529,10 @@ router.post('/meta/webhook', async (req, res) => {
               continue;
             }
             try {
-              const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'message');
+              const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'message', {
+                accountId: instagramContext?.accountId,
+                pageId: instagramContext?.pageId,
+              });
               await replyToInstagramMessage(senderId, reply, {
                 accessToken: instagramContext?.accessToken,
                 igBusinessId: igAccountId ?? undefined,
@@ -573,7 +579,9 @@ router.post('/meta/webhook', async (req, res) => {
               const commentToDm = isCommentToDmTrigger(message);
               const reply = commentToDm
                 ? buildCommentToDmPublicReply({ platform: 'facebook', userId: facebookContext?.userId })
-                : await generateReply(message, 'facebook', facebookContext?.userId, 'comment');
+                : await generateReply(message, 'facebook', facebookContext?.userId, 'comment', {
+                  pageId: facebookContext?.pageId,
+                });
               await likeFacebookComment(commentId, facebookContext?.accessToken).catch(err =>
                 console.warn('FB comment like failed', err)
               );
@@ -646,7 +654,10 @@ router.post('/meta/webhook', async (req, res) => {
           }
           try {
             const platform = body.object === 'instagram' ? 'instagram' : 'facebook';
-            const reply = await generateReply(message, platform, context?.userId, 'message');
+            const reply = await generateReply(message, platform, context?.userId, 'message', {
+              accountId: context?.accountId,
+              pageId: context?.pageId,
+            });
             if (body.object === 'instagram') {
               await replyToInstagramMessage(senderId, reply, {
                 accessToken: context?.accessToken,

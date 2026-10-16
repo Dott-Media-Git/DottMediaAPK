@@ -13,6 +13,26 @@ const replyPromptCache = new Map<string, { value: string; fetchedAt: number; loa
 const replyProfileCache = new Map<string, { value: string; fetchedAt: number; loaded: boolean }>();
 
 type Platform = 'instagram' | 'facebook' | 'threads';
+type ReplyAccountIdentity = {
+  accountId?: string;
+  pageId?: string;
+  username?: string;
+};
+
+const ACCOUNT_REPLY_PROFILES: Array<{ profile: string; accountIds: string[]; pageIds: string[]; usernames: string[] }> = [
+  {
+    profile: 'auxwellness',
+    accountIds: ['17841420336656466', process.env.AUXWELLNESS_THREADS_PROFILE_ID ?? ''].filter(Boolean),
+    pageIds: ['1371096759416007'],
+    usernames: ['aux_wellness_hub'],
+  },
+  {
+    profile: 'default',
+    accountIds: ['17841448754415534', '28808899498698518', process.env.DOTT_MAIN_THREADS_PROFILE_ID ?? ''].filter(Boolean),
+    pageIds: ['1120716914467835'],
+    usernames: ['dotti_ai', 'dottimedia'],
+  },
+];
 
 const CLIENT_REPLY_PROFILES: Record<string, string> = {
   cmpzqccgggbhze9dbvtxfmbehp02: 'auxwellness',
@@ -70,7 +90,22 @@ const getAutoReplyPromptOverride = async (userId?: string) => {
   }
 };
 
-const getReplyProfile = async (userId?: string) => {
+const getIdentityReplyProfile = (identity?: ReplyAccountIdentity) => {
+  if (!identity) return null;
+  const accountId = identity.accountId?.trim();
+  const pageId = identity.pageId?.trim();
+  const username = identity.username?.trim().toLowerCase().replace(/^@/, '');
+  const match = ACCOUNT_REPLY_PROFILES.find(profile =>
+    (accountId && profile.accountIds.includes(accountId)) ||
+    (pageId && profile.pageIds.includes(pageId)) ||
+    (username && profile.usernames.includes(username)),
+  );
+  return match?.profile ?? null;
+};
+
+const getReplyProfile = async (userId?: string, identity?: ReplyAccountIdentity) => {
+  const identityProfile = getIdentityReplyProfile(identity);
+  if (identityProfile) return identityProfile;
   if (!userId) return null;
   const userProfile = CLIENT_REPLY_PROFILES[userId.trim().toLowerCase()];
   if (userProfile) return userProfile;
@@ -130,8 +165,9 @@ export async function generateReply(
   platform: Platform,
   userId?: string,
   kind: FallbackKind = 'message',
+  identity?: ReplyAccountIdentity,
 ) {
-  const profile = await getReplyProfile(userId);
+  const profile = await getReplyProfile(userId, identity);
   if (profile === 'bwinbetug' && kind === 'comment') {
     return 'Thanks for the support. For more football updates or to place bets, follow the link in the bio.';
   }

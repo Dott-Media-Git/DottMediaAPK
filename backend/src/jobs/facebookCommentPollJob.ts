@@ -157,7 +157,7 @@ const processComment = async (comment: CommentItem, target: PollTarget) => {
     const commentToDm = isCommentToDmTrigger(reserved.text);
     const reply = commentToDm
       ? buildCommentToDmPublicReply({ platform: 'facebook', userId: target.userId })
-      : await generateReply(reserved.text, 'facebook', target.userId, 'comment');
+    : await generateReply(reserved.text, 'facebook', target.userId, 'comment', { pageId: target.pageId });
     await replyToFacebookComment(reserved.commentId, reply, target.accessToken);
     await upsertReplyStatus(reserved.docRef, 'sent');
     await likeFacebookComment(reserved.commentId, target.accessToken).catch(err =>

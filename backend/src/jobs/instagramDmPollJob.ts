@@ -142,7 +142,7 @@ export const pollInstagramDmsOnce = async () => {
           const reserved = await reserveMessage(target, message);
           if (!reserved) continue;
           try {
-            const reply = await generateReply(reserved.text, 'instagram', target.userId, 'message');
+            const reply = await generateReply(reserved.text, 'instagram', target.userId, 'message', { username: target.username });
             await replyToInstagramLoginMessage(reserved.senderId, reply, accessToken);
             await upsertReplyStatus(reserved.docRef, 'sent');
           } catch (error) {

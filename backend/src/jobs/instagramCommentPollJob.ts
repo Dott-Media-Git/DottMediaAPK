@@ -161,7 +161,7 @@ const processComment = async (comment: CommentItem, target: PollTarget) => {
     const commentToDm = isCommentToDmTrigger(text);
     const reply = commentToDm
       ? buildCommentToDmPublicReply({ platform: 'instagram', userId: target.userId })
-      : await generateReply(text, 'instagram', target.userId, 'comment');
+      : await generateReply(text, 'instagram', target.userId, 'comment', { accountId: target.igBusinessId });
     await replyToInstagramComment(commentId, reply, target.accessToken);
     await upsertReplyStatus(docRef, 'sent');
     await likeInstagramComment(commentId, target.accessToken).catch(err =>

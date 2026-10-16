@@ -158,7 +158,7 @@ const processReply = async (reply: ReplyItem, threadId: string, target: PollTarg
   if (!reserved) return;
 
   try {
-    const response = await generateReply(reserved.text, 'threads', target.userId, 'comment');
+    const response = await generateReply(reserved.text, 'threads', target.userId, 'comment', { accountId: target.accountId });
     await replyToThreadsComment(reserved.replyId, response, {
       accountId: target.accountId,
       accessToken: target.accessToken,
