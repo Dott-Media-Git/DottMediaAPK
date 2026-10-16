@@ -40,9 +40,22 @@ const WORKER_CONFIG_BUCKET = 'worker-config';
 const CONTEXT_CACHE_TTL_MS = 60 * 1000;
 const KNOWN_FALLBACK_CONTEXTS = [
   { userId: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', objectName: 'bwin-meta-accounts.json' },
-  { userId: 'cMPZQccGggbhZe9dbvtxFmBehP02', objectName: 'dott-main-meta-accounts.json' },
+  { userId: 'HAo6YtFvhKgSySa8EoERKYYq2IV2', objectName: 'dott-main-meta-accounts.json' },
+  { userId: 'cMPZQccGggbhZe9dbvtxFmBehP02', objectName: 'aux-wellness-meta-accounts.json' },
 ] as const;
 const KNOWN_META_ACCOUNTS = [
+  {
+    userId: 'HAo6YtFvhKgSySa8EoERKYYq2IV2',
+    pageId: '1120716914467835',
+    instagramAccountId: '17841448754415534',
+    pageTokenEnv: 'DOTT_MAIN_FACEBOOK_PAGE_TOKEN',
+  },
+  {
+    userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
+    pageId: '1371096759416007',
+    instagramAccountId: '17841420336656466',
+    pageTokenEnv: 'AUXWELLNESS_FACEBOOK_PAGE_TOKEN',
+  },
   {
     userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
     pageId: '1114686181730831',
