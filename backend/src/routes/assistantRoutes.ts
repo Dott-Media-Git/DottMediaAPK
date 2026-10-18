@@ -314,6 +314,19 @@ router.post(
     }
     res.json({ answer });
   } catch (err) {
+    // Keep chat recoverable when a non-AI dependency fails before
+    // AssistantService can produce its own local fallback. The client should
+    // receive a successful, useful answer instead of a generic HTTP 500.
+    if (err instanceof z.ZodError) return next(err);
+    console.error('[assistant] request preparation failed; returning recoverable response', err);
+    if (!res.headersSent) {
+      return res.json({
+        answer: {
+          type: 'text',
+          text: 'I’m still here, but I’m temporarily reconnecting to your account data. Your message was received; please send it again in a moment and I’ll continue from this conversation.',
+        },
+      });
+    }
     next(err);
   }
   },
