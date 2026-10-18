@@ -175,6 +175,15 @@ const LOCALE_RESPONSE_LANGUAGE: Record<string, string> = {
   ne: 'Nepali',
 };
 
+const buildGreetingText = (locale: Locale) =>
+  locale === 'fr'
+    ? 'Bonjour ! Je suis Dotti. Comment puis-je vous aider aujourd’hui ?'
+    : locale === 'de'
+      ? 'Hallo! Ich bin Dotti. Wie kann ich dir heute helfen?'
+      : locale === 'es'
+        ? '¡Hola! Soy Dotti. ¿Cómo puedo ayudarte hoy?'
+        : 'Hi! I’m Dotti. How can I help you today?';
+
 type AssistantContext = {
   userId?: string;
   userEmail?: string;
@@ -1307,12 +1316,15 @@ export class AssistantService {
   async answer(question: string, context: AssistantContext) {
     const locale = this.resolveLocale(context.locale);
     const webSearchRequest = /\b(research|search|look\s*up|find\s+out|trending|trend|latest|current|today|news|recent|this\s+week|what(?:'s| is) happening)\b/i.test(question);
+    const isSimpleGreeting = /^(?:hi|hello|hey|howdy|good\s+(?:morning|afternoon|evening)|how are you(?: doing)?|how's it going|(?:hi|hello|hey)[,!?\s]+how are you)[!.?,\s]*$/i.test(question.trim());
+    if (isSimpleGreeting) {
+      return { type: 'text', text: buildGreetingText(locale) };
+    }
     const accountSnapshot = webSearchRequest ? null : await this.loadAccountSnapshot(context);
     const asksForOverallPerformance =
       /\b(review|check|show|summari[sz]e|analy[sz]e|tell me about)\b[\s\S]{0,60}\b(performance|results|metrics|stats)\b/i.test(question) ||
       /\b(account|overall|business|marketing)\s+(performance|results|metrics|stats)\b/i.test(question) ||
       /\bhow(?:'s| is| are)\b[\s\S]{0,50}\b(account|business|performance|performing)\b/i.test(question);
-    const isSimpleGreeting = /^(?:hi|hello|hey|howdy|good\s+(?:morning|afternoon|evening))[!.?,\s]*$/i.test(question.trim());
     const asksForAdsPerformance = /\b(ad spend|ad performance|ads? report(?:ing)?|campaign reporting|impressions|click-through rate|\bctr\b)\b/i.test(question);
     const adsConnection = accountSnapshot?.adsAccount ?? {};
     const hasConnectedAdsAccount = Boolean(

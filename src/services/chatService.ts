@@ -9,8 +9,8 @@ const API_URL = (
     env.apiUrl ||
     (typeof __DEV__ !== 'undefined' && __DEV__ ? 'http://localhost:4000' : 'https://dottmediaapk.onrender.com')
 ).replace(/\/$/, '');
-const REQUEST_TIMEOUT_MS = Math.max(Number(process.env.EXPO_PUBLIC_ASSISTANT_TIMEOUT_MS ?? 45_000), 10_000);
-const MAX_ATTEMPTS = 3;
+const REQUEST_TIMEOUT_MS = Math.max(Number(process.env.EXPO_PUBLIC_ASSISTANT_TIMEOUT_MS ?? 60_000), 10_000);
+const MAX_ATTEMPTS = 2;
 
 export type ChatResponse =
     | { type: 'text'; text: string }
@@ -44,7 +44,7 @@ const isRetryableStatus = (status: number) => status === 408 || status === 425 |
 
 const buildUnavailableResponse = (question: string, locale: Locale) => {
     const normalized = question.trim().toLowerCase();
-    if (/^(hi|hello|hey|howdy|good morning|good afternoon|good evening)[!.?,\s]*$/i.test(normalized)) {
+    if (/^(?:hi|hello|hey|howdy|good morning|good afternoon|good evening|how are you(?: doing)?|how's it going|(?:hi|hello|hey)[,!?\s]+how are you)[!.?,\s]*$/i.test(normalized)) {
         return translate(locale, 'Hi! I’m Dotti. The live brain is reconnecting, but I’m here. What would you like to work on?');
     }
     return translate(
