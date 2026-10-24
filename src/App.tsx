@@ -34,12 +34,77 @@ if (Platform.OS === 'android') {
 }
 
 const WARM_CACHE_COOLDOWN_MS = 1000 * 60 * 3;
+const WEB_SCROLLBAR_STYLE_ID = 'dotti-web-scrollbars';
+
+const installWebScrollbarStyles = (mode: 'dark' | 'light') => {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+
+  const isDark = mode === 'dark';
+  const track = isDark ? 'rgba(13, 17, 40, 0.72)' : 'rgba(226, 232, 240, 0.86)';
+  const thumb = isDark ? '#6F4FD2' : '#8B5CF6';
+  const thumbHover = isDark ? '#A98BFF' : '#6D28D9';
+
+  let style = document.getElementById(WEB_SCROLLBAR_STYLE_ID) as HTMLStyleElement | null;
+  if (!style) {
+    style = document.createElement('style');
+    style.id = WEB_SCROLLBAR_STYLE_ID;
+    document.head.appendChild(style);
+  }
+
+  // React Native Web renders ScrollView containers as regular DOM elements.
+  // Styling the native web scrollbar here keeps touch scrolling unchanged on
+  // phones while giving desktop users a compact, branded control.
+  style.textContent = `
+    html,
+    body,
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: ${thumb} ${track};
+    }
+
+    *::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    *::-webkit-scrollbar-track {
+      background: ${track};
+      border-radius: 999px;
+    }
+
+    *::-webkit-scrollbar-thumb {
+      background: ${thumb};
+      border: 3px solid transparent;
+      border-radius: 999px;
+      background-clip: content-box;
+      min-height: 36px;
+    }
+
+    *::-webkit-scrollbar-thumb:hover {
+      background: ${thumbHover};
+      background-clip: content-box;
+    }
+
+    *::-webkit-scrollbar-thumb:active {
+      background: ${thumbHover};
+      background-clip: content-box;
+    }
+
+    *::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+  `;
+};
 
 const RootView: React.FC = () => {
   const { state } = useAuth();
   const { mode } = useThemeMode();
   const lastWarmAtRef = useRef(0);
   const warmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    installWebScrollbarStyles(mode);
+  }, [mode]);
 
   const warmSnapshots = useCallback(
     (force = false) => {
