@@ -3,6 +3,11 @@ apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
+def releaseKeystorePath = findProperty('dottiReleaseKeystore') ?: System.getenv('DOTTI_RELEASE_KEYSTORE') ?: ''
+def releaseKeystorePassword = findProperty('dottiReleaseStorePassword') ?: System.getenv('DOTTI_RELEASE_STORE_PASSWORD') ?: ''
+def releaseKeyAlias = findProperty('dottiReleaseKeyAlias') ?: System.getenv('DOTTI_RELEASE_KEY_ALIAS') ?: ''
+def releaseKeyPassword = findProperty('dottiReleaseKeyPassword') ?: System.getenv('DOTTI_RELEASE_KEY_PASSWORD') ?: releaseKeystorePassword
+def hasReleaseKeystore = releaseKeystorePath && releaseKeystorePassword && releaseKeyAlias && releaseKeyPassword && file(releaseKeystorePath).exists()
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -92,12 +97,22 @@ android {
         applicationId 'com.dottmedia.dotti'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "1.0.3"
+        versionCode 5
+        versionName "1.0.4"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
     signingConfigs {
+        release {
+            // Supply these values through Gradle properties or environment variables;
+            // never commit a private keystore or password to the repository.
+            if (hasReleaseKeystore) {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseKeystorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
         debug {
             storeFile file('debug.keystore')
             storePassword 'android'
@@ -112,11 +127,13 @@ android {
         release {
             // Caution! In production, you need to generate your own keystore file.
             // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // Local builds without a supplied key retain the historical debug fallback;
+            // production builds pass the release keystore properties above.
+            signingConfig hasReleaseKeystore ? signingConfigs.release : signingConfigs.debug
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds
-            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             def enablePngCrunchInRelease = findProperty('android.enablePngCrunchInReleaseBuilds') ?: 'true'
             crunchPngs enablePngCrunchInRelease.toBoolean()
         }
