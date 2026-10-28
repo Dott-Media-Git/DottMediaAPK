@@ -8,7 +8,6 @@ import { classifyIntentText } from '../brain/nlu/intentClassifier.js';
 import { LeadService } from './leadService.js';
 import { NotificationService } from './notificationService.js';
 import { incrementEngagementAnalytics } from '../../services/analyticsService.js';
-import { consumeUsageForUserId } from '../../services/billing/billingService.js';
 const engagementsCollection = firestore.collection('engagements');
 const KEYWORDS = ['price', 'cost', 'crm', 'automation', 'ai', 'demo'];
 export class EngagementHandler {
@@ -19,10 +18,6 @@ export class EngagementHandler {
     }
     async handle(payload) {
         const shouldRespond = KEYWORDS.some(keyword => payload.text.toLowerCase().includes(keyword));
-        if (!payload.ownerId) {
-            throw new Error('Missing ownerId for metered engagement automation');
-        }
-        await consumeUsageForUserId(payload.ownerId, 'aiReplies', 1);
         const classification = await classifyIntentText(payload.text);
         await engagementsCollection.add({
             ...payload,

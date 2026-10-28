@@ -7,8 +7,7 @@ import { sendInstagramMessage, likeInstagramMedia, commentInstagramMedia } from 
 import { sendWhatsAppMessage } from './senders/whatsappSender.js';
 import { sendXDirectMessage } from './senders/xSender.js';
 import { incrementMetric } from '../../../services/analyticsService.js';
-import { canUseOutboundPipeline, canUsePrimarySocialDefaults } from '../../../utils/socialAccess.js';
-import { loadWarmOutreachState, normalizeOutreachRecipient } from '../../../services/outreachConsentService.js';
+import { canUsePrimarySocialDefaults } from '../../../utils/socialAccess.js';
 const prospectsCollection = firestore.collection('prospects');
 const outreachCollection = firestore.collection('outreach');
 const leadsCollection = firestore.collection('leads');
@@ -29,18 +28,6 @@ export class OutreachAgent {
      */
     async runDailyOutreach(seedProspects = [], options) {
         const userId = options?.userId;
-        if (!canUseOutboundPipeline(undefined, userId ?? null)) {
-            await outboundLogsCollection.add({
-                ranAt: admin.firestore.FieldValue.serverTimestamp(),
-                prospectsConsidered: 0,
-                messagesSent: 0,
-                skipped: seedProspects.length,
-                errors: [],
-                userId: userId ?? null,
-                restrictedToPrimaryAccount: true,
-            });
-            return { messagesSent: 0, skipped: seedProspects.length, errors: [{ error: 'restricted_to_primary_account' }] };
-        }
         const perChannelCap = Math.max(0, Number(process.env.OUTBOUND_DAILY_CAP_PER_CHANNEL ?? 20));
         const runContext = await this.buildRunContext(userId, perChannelCap);
         const perChannelCaps = this.resolvePerChannelCaps(perChannelCap, runContext.xPolicy.dailyCap);
@@ -92,7 +79,7 @@ export class OutreachAgent {
             x: [],
         };
         for (const prospect of candidates) {
-            const reason = await this.skipReason(prospect, runContext);
+            const reason = this.skipReason(prospect, runContext);
             if (reason) {
                 skipped.push({ prospectId: prospect.id, reason });
                 continue;
@@ -254,11 +241,11 @@ Max 3 sentences. Add natural emoji if suitable.
                 ],
             });
             const base = completion.choices?.[0]?.message?.content?.trim() ?? this.fallbackMessage(prospect);
-            return this.appendComplianceFooter(this.appendXComplianceLine(base), context.userId);
+            return this.appendComplianceFooter(base, context.userId);
         }
         catch (error) {
             console.error('Failed to generate outreach copy', error);
-            return this.appendComplianceFooter(this.appendXComplianceLine(this.fallbackMessage(prospect)), context.userId);
+            return this.appendComplianceFooter(this.fallbackMessage(prospect), context.userId);
         }
     }
     fallbackMessage(prospect) {
@@ -344,7 +331,7 @@ Max 3 sentences. Add natural emoji if suitable.
                     console.warn('Instagram like/comment failed', error);
                 }
             }
-            await sendInstagramMessage(username, text, { userId: context.userId });
+            await sendInstagramMessage(username, text);
             return 'instagram';
         }
         if (prospect.channel === 'whatsapp') {
@@ -392,7 +379,7 @@ Max 3 sentences. Add natural emoji if suitable.
             return base;
         return `${base} | Grab the Dott Media AI Sales Agent for more demos.`;
     }
-    async skipReason(prospect, context) {
+    skipReason(prospect, context) {
         if (!['linkedin', 'instagram', 'whatsapp', 'x'].includes(prospect.channel)) {
             return 'unsupported_channel';
         }
@@ -404,25 +391,6 @@ Max 3 sentences. Add natural emoji if suitable.
         }
         if (prospect.channel === 'whatsapp' && !prospect.phone) {
             return 'missing_whatsapp_phone';
-        }
-        if (prospect.channel === 'instagram') {
-            const recipient = this.resolveInstagramRecipient(prospect.profileUrl);
-            const normalized = normalizeOutreachRecipient('instagram', recipient);
-            const key = `instagram:${normalized}`;
-            if (context.suppressedRecipients.has(key))
-                return 'recipient_opted_out';
-            if (process.env.OUTBOUND_REQUIRE_WARM_OPT_IN !== 'false' && !context.optedInRecipients.has(key)) {
-                return 'warm_opt_in_required';
-            }
-        }
-        if (prospect.channel === 'whatsapp') {
-            const normalized = normalizeOutreachRecipient('whatsapp', prospect.phone);
-            const key = `whatsapp:${normalized}`;
-            if (context.suppressedRecipients.has(key))
-                return 'recipient_opted_out';
-            if (process.env.OUTBOUND_REQUIRE_WARM_OPT_IN !== 'false' && !context.optedInRecipients.has(key)) {
-                return 'warm_opt_in_required';
-            }
         }
         if (prospect.channel === 'x') {
             const recipient = this.resolveXRecipient(prospect.profileUrl);
@@ -484,18 +452,15 @@ Max 3 sentences. Add natural emoji if suitable.
     }
     async buildRunContext(userId, perChannelCap) {
         const xPolicy = this.resolveXPolicy(perChannelCap);
-        const [xCredentials, xSuppressedHandles, isSportsBrand, warmState] = await Promise.all([
+        const [xCredentials, xSuppressedHandles, isSportsBrand] = await Promise.all([
             this.resolveXCredentials(userId),
             this.loadSuppressedXHandles(userId),
             this.resolveSportsBrandContext(userId),
-            loadWarmOutreachState(userId),
         ]);
         return {
             userId,
             xCredentials,
             xSuppressedHandles,
-            optedInRecipients: warmState.optedIn,
-            suppressedRecipients: warmState.suppressed,
             xPolicy,
             isSportsBrand,
         };

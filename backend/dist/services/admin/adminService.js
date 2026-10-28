@@ -4,13 +4,12 @@ import createHttpError from 'http-errors';
 import { firestore } from '../../db/firestore.js';
 import { putSecret, getSecret } from '../secretVaultService.js';
 import { validateSettingsPatch } from './settingsValidator.js';
-import { listBillingPlans } from '../billing/billingService.js';
-import { getPlan, getStripePriceId } from '../billing/planCatalog.js';
 const orgsCollection = firestore.collection('orgs');
 const orgUsersCollection = firestore.collection('orgUsers');
 const orgSettingsCollection = firestore.collection('orgSettings');
 const secretsCollection = firestore.collection('secrets');
 const usageCollection = firestore.collection('usageDaily');
+const plansCollection = firestore.collection('plans');
 const auditCollection = firestore.collection('audit');
 const opsJobsCollection = firestore.collection('ops').doc('jobs').collection('queue');
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
@@ -27,7 +26,7 @@ const defaultSettings = {
         crm: true,
         support: true,
         booking: true,
-        outbound: false,
+        outbound: true,
         contentEngagement: true,
         retargeting: true,
     },
@@ -156,13 +155,17 @@ export async function getUsage(orgId, from, to) {
     return snap.docs.map(doc => doc.data());
 }
 export async function listPlans() {
-    return listBillingPlans();
+    const snap = await plansCollection.get();
+    return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
 export async function swapPlan(orgId, plan, successUrl, cancelUrl) {
     if (!stripe)
         throw createHttpError(500, 'Stripe is not configured');
-    const planDefinition = getPlan(plan);
-    const priceId = getStripePriceId(planDefinition);
+    const priceId = plan === 'Enterprise'
+        ? process.env.STRIPE_PRICE_ENTERPRISE
+        : plan === 'Pro'
+            ? process.env.STRIPE_PRICE_PRO
+            : null;
     if (!priceId)
         throw createHttpError(400, 'Unsupported plan for checkout');
     const session = await stripe.checkout.sessions.create({
@@ -170,10 +173,7 @@ export async function swapPlan(orgId, plan, successUrl, cancelUrl) {
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: successUrl,
         cancel_url: cancelUrl,
-        metadata: { orgId, plan: planDefinition.id },
-        subscription_data: {
-            metadata: { orgId, plan: planDefinition.id },
-        },
+        metadata: { orgId, plan },
     });
     return { checkoutUrl: session.url };
 }

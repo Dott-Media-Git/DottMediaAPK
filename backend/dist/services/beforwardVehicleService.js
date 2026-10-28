@@ -4,10 +4,7 @@ import crypto from 'crypto';
 import https from 'https';
 import sharp from 'sharp';
 import { saveGeneratedImageBuffer } from './generatedMediaService.js';
-import { isEligibleCarmarketVehicle, isHighValueCarmarketVehicle, isPreferredCarmarketModel, } from './carmarketVehicleSelection.js';
 const BASE_URL = 'https://www.beforward.jp';
-const CARMARKET_PUBLIC_URL = (process.env.CARMARKET_PUBLIC_URL || 'https://cmp.dott-media.org').trim().replace(/\/$/, '');
-const CARMARKET_APP_URL = (process.env.CARMARKET_APP_URL || 'https://app.dott-media.org').trim().replace(/\/$/, '');
 const USER_AGENT = process.env.BEFORWARD_USER_AGENT ||
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const httpsAgent = process.env.BEFORWARD_TLS_INSECURE === 'false' ? undefined : new https.Agent({ rejectUnauthorized: false });
@@ -54,14 +51,6 @@ async function fetchHtml(url) {
     });
     return String(response.data ?? '');
 }
-const absoluteUrl = (value, baseUrl) => {
-    try {
-        return new URL(value, `${baseUrl}/`).toString();
-    }
-    catch {
-        return '';
-    }
-};
 const fetchImageBuffer = async (url) => {
     const response = await axios.get(url, {
         responseType: 'arraybuffer',
@@ -183,18 +172,12 @@ export async function fetchBeforwardVehicle(url) {
 }
 async function pickCarbarnVehicle(options = {}) {
     const html = await fetchHtml('https://www.carbarn.ug/cars');
-    let fallback = null;
     for (const vehicle of parseCarbarnEmbeddedVehicles(html)) {
         if (vehicle.stockNo && options.recentStockNos?.has(vehicle.stockNo))
             continue;
-        if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) {
-            if (isHighValueCarmarketVehicle(vehicle))
-                return vehicle;
-            fallback ?? (fallback = vehicle);
-        }
+        if (vehicle.images.length > 1)
+            return vehicle;
     }
-    if (fallback)
-        return fallback;
     const $ = cheerio.load(html);
     const scripts = $('script[type="application/ld+json"]')
         .toArray()
@@ -208,9 +191,6 @@ async function pickCarbarnVehicle(options = {}) {
                 continue;
             for (const entry of items) {
                 const item = entry?.item;
-                const title = String(item?.name ?? '');
-                if (!isEligibleCarmarketVehicle({ title, summary: {}, priceUgx: Number(item?.offers?.price) }))
-                    continue;
                 const url = String(item?.url ?? '').trim();
                 const stockNo = url.match(/-(\d+)$/)?.[1] || url.split('/').pop() || '';
                 if (stockNo && options.recentStockNos?.has(`CARBARN-${stockNo}`))
@@ -220,8 +200,8 @@ async function pickCarbarnVehicle(options = {}) {
                     continue;
                 const embeddedImages = extractCarbarnEmbeddedImages(html, String(item?.name ?? '').trim());
                 const priceUgx = Number(item?.offers?.price);
-                const vehicle = {
-                    title: title.trim() || 'Carbarn vehicle',
+                return {
+                    title: String(item?.name ?? 'Carbarn vehicle').trim(),
                     stockNo: `CARBARN-${stockNo}`,
                     priceUsd: item?.offers?.price ? undefined : undefined,
                     priceUgx: Number.isFinite(priceUgx) ? priceUgx : undefined,
@@ -235,17 +215,12 @@ async function pickCarbarnVehicle(options = {}) {
                         color: String(item?.color ?? '').trim(),
                     },
                 };
-                if (isHighValueCarmarketVehicle(vehicle))
-                    return vehicle;
-                fallback ?? (fallback = vehicle);
             }
         }
         catch {
             // Try the next structured data block.
         }
     }
-    if (fallback)
-        return fallback;
     throw new Error('No usable Carbarn vehicle listing found');
 }
 async function fetchMileleVehicle(url) {
@@ -283,162 +258,54 @@ async function pickMileleVehicle(options = {}) {
         ...links.filter(link => !/\/rhd-/i.test(link) && /toyota|lexus|nissan|mercedes|mitsubishi|suzuki/i.test(link)),
         ...links,
     ];
-    let fallback = null;
     for (const link of unique(preferred)) {
         const stockKey = `MILELE-${link.replace(/\/+$/, '').split('/').pop()?.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 42)}`;
         if (stockKey && options.recentStockNos?.has(stockKey))
             continue;
         try {
             const vehicle = await fetchMileleVehicle(link);
-            if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) {
-                if (isHighValueCarmarketVehicle(vehicle))
-                    return vehicle;
-                fallback ?? (fallback = vehicle);
-            }
+            if (vehicle.images.length > 1)
+                return vehicle;
         }
         catch {
             // Try the next Milele listing.
         }
     }
-    if (fallback)
-        return fallback;
     throw new Error('No usable Milele vehicle listing found');
 }
-/**
- * Read the public CarMarketplace app inventory. The app exposes its current
- * listings in server-rendered HTML, while each detail page contains the full
- * gallery and vehicle facts needed for an autopost.
- */
-export async function fetchCarmarketAppVehicle(url) {
-    const vehicleUrl = absoluteUrl(url, CARMARKET_APP_URL);
-    if (!vehicleUrl)
-        throw new Error('Invalid CarMarketplace vehicle URL');
-    const html = await fetchHtml(vehicleUrl);
-    const $ = cheerio.load(html);
-    const body = $('body').clone();
-    body.find('script, style, noscript').remove();
-    const bodyText = decodeHtmlText(body.text());
-    const title = decodeHtmlText($('meta[property="og:title"]').attr('content')?.replace(/\s*[—-]\s*\$[\d,]+.*$/i, '') ||
-        $('h1').first().text() ||
-        $('title').text().replace(/\s*[—-]\s*\$[\d,]+.*$/i, '') ||
-        'CarMarketplace vehicle');
-    const id = new URL(vehicleUrl).searchParams.get('id')?.trim() || '';
-    const imagePattern = id
-        ? new RegExp(`https://[^\\s"'<>]+/vehicles/${escapeRegExp(id)}/\\d+\\.(?:jpg|jpeg|png|webp)`, 'gi')
-        : /https:\/\/[^\s"'<>]+\/vehicles\/[^\s"'<>]+\/\d+\.(?:jpg|jpeg|png|webp)/gi;
-    const images = unique(Array.from(html.matchAll(imagePattern), match => match[0].replace(/&amp;/g, '&'))).slice(0, 10);
-    if (images.length < 2)
-        throw new Error('CarMarketplace listing has no usable gallery');
-    const year = bodyText.match(/\b(?:19|20)\d{2}\b/)?.[0] || title.match(/\b(?:19|20)\d{2}\b/)?.[0] || '';
-    const priceUsd = bodyText.match(/\bat\s+\$\s*([\d,]+(?:\.\d+)?)/i)?.[1]?.replace(/,/g, '') ||
-        bodyText.match(/\$\s*([\d,]+(?:\.\d+)?)/)?.[1]?.replace(/,/g, '');
-    const mileage = bodyText.match(/([\d,]+)\s*mi\b/i)?.[1]?.replace(/,/g, '') || '';
-    return {
-        title,
-        stockNo: id ? `CARMARKET-${id}` : `CARMARKET-${crypto.createHash('sha1').update(vehicleUrl).digest('hex').slice(0, 12)}`,
-        priceUsd,
-        priceUgx: estimateUgxFromUsd(priceUsd),
-        source: 'CarMarketplace',
-        url: vehicleUrl,
-        images,
-        summary: { year, mileage },
-    };
-}
-async function pickCarmarketAppVehicle(options = {}) {
-    const html = await fetchHtml(`${CARMARKET_APP_URL}/homepage`);
-    const $ = cheerio.load(html);
-    const links = unique($('a[href*="/vehicle-detail?id="]')
-        .toArray()
-        .map(element => absoluteUrl($(element).attr('href') || '', CARMARKET_APP_URL)));
-    if (!links.length)
-        throw new Error('No public CarMarketplace listings found');
-    const start = Math.floor(Math.random() * links.length);
-    const ordered = links.slice(start).concat(links.slice(0, start));
-    const errors = [];
-    let fallback = null;
-    for (const link of ordered.slice(0, 12)) {
-        try {
-            const vehicle = await fetchCarmarketAppVehicle(link);
-            if (vehicle.stockNo && options.recentStockNos?.has(vehicle.stockNo))
-                continue;
-            if (isEligibleCarmarketVehicle(vehicle)) {
-                if (isHighValueCarmarketVehicle(vehicle))
-                    return vehicle;
-                fallback ?? (fallback = vehicle);
-            }
-        }
-        catch (error) {
-            errors.push(error instanceof Error ? error.message : String(error));
-        }
-    }
-    if (fallback)
-        return fallback;
-    throw new Error(`No eligible CarMarketplace listing found: ${errors.join('; ')}`);
-}
 export async function pickBeforwardVehicle(options = {}) {
-    const searchUrl = options.searchUrl || `${BASE_URL}/stocklist/year_from=2016/sortkey=n/`;
+    const searchUrl = options.searchUrl || `${BASE_URL}/stocklist/make=1/sortkey=n/`;
     const html = await fetchHtml(searchUrl);
     const links = unique(Array.from(html.matchAll(/href="(\/[a-z0-9-]+\/[a-z0-9-]+\/[a-z]{2}\d{6}\/id\/\d+\/)"/gi)).map(match => normalizeUrl(match[1])));
-    let fallback = null;
     for (const link of links) {
-        // Model names are available in listing URLs; avoid fetching economy cars.
-        const modelTitle = link.replace(BASE_URL, '').split('/').slice(1, 3).join(' ').replace(/-/g, ' ');
-        if (!isPreferredCarmarketModel(modelTitle))
-            continue;
         const stockNo = link.match(/\/([a-z]{2}\d{6})\//i)?.[1]?.toUpperCase();
         if (stockNo && options.recentStockNos?.has(stockNo))
             continue;
         try {
             const vehicle = await fetchBeforwardVehicle(link);
-            if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) {
-                if (isHighValueCarmarketVehicle(vehicle))
-                    return vehicle;
-                fallback ?? (fallback = vehicle);
-            }
+            if (vehicle.images.length > 1)
+                return vehicle;
         }
         catch {
             // Try the next listing.
         }
     }
-    if (fallback)
-        return fallback;
     throw new Error('No usable BE FORWARD vehicle listing found');
-}
-export function getCarmarketSourceKey(vehicle) {
-    const source = String(vehicle.source ?? '').toLowerCase();
-    if (source.includes('carbarn'))
-        return 'carbarn';
-    if (source.includes('milele'))
-        return 'milele';
-    if (source.includes('forward'))
-        return 'beforward';
-    if (source.includes('carmarket'))
-        return 'carmarketplace';
-    return 'carmarketplace';
 }
 export async function pickCarmarketVehicle(options = {}) {
     const allSources = [
-        { key: 'carmarketplace', pick: pickCarmarketAppVehicle },
         { key: 'carbarn', pick: pickCarbarnVehicle },
         { key: 'milele', pick: pickMileleVehicle },
         { key: 'beforward', pick: pickBeforwardVehicle },
     ];
     const priority = (process.env.CARMARKET_SOURCE_PRIORITY ?? '').trim().toLowerCase();
-    const configured = priority
+    const sources = priority
         ? [...allSources.filter(source => source.key === priority), ...allSources.filter(source => source.key !== priority)]
         : allSources;
-    const lastSource = options.recentSourceKeys?.find(key => allSources.some(source => source.key === key));
-    const start = lastSource
-        ? (allSources.findIndex(source => source.key === lastSource) + 1) % allSources.length
-        : priority
-            ? 0
-            : Math.floor(Math.random() * allSources.length);
-    const sources = lastSource
-        ? allSources.slice(start).concat(allSources.slice(0, start))
-        : configured;
+    const start = Math.floor(Math.random() * sources.length);
     const errors = [];
     for (let index = 0; index < sources.length; index += 1) {
-        const source = sources[index];
+        const source = priority ? sources[index] : sources[(start + index) % sources.length];
         try {
             return await source.pick(options);
         }
@@ -513,9 +380,6 @@ export function buildCarmarketVehicleCaption(vehicle) {
         'Imported vehicle options are subject to availability, shipping, taxes, clearing, inspection, and local registration costs.',
         '',
         vehicle.url,
-        vehicle.source === 'CarMarketplace'
-            ? `Browse more listings: ${CARMARKET_PUBLIC_URL}\nOpen the marketplace app: ${CARMARKET_APP_URL}`
-            : '',
         '',
         '#Carmarketug #CarMarketUg #UgandaCars #ToyotaUganda #CarImportUganda #KampalaCars',
     ];

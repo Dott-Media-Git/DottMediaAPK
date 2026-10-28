@@ -10,16 +10,10 @@ import { LeadService } from './leadService.js';
 import { QualificationAgent } from './qualificationAgent.js';
 import { OutboundMessenger } from '../../services/outboundMessenger.js';
 import { incrementInboundAnalytics, incrementWebLeadAnalytics } from '../../services/analyticsService.js';
-import { consumeUsageForUserId } from '../../services/billing/billingService.js';
 const messagesCollection = firestore.collection('messages');
 const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
 const replyPromptCache = new Map();
 const replyProfileCache = new Map();
-const DIRECT_REPLY_PROFILES = {
-    tce1fq1cofgdupoxp23mpumqraz1: 'shecare',
-    '80byieiuuknftuvxtuobxmfc7pu1': 'dotthr',
-    lvr7p3wzdfm51ds92kacf6s40og2: 'dottenergy',
-};
 export class InboundHandler {
     constructor() {
         this.leadService = new LeadService();
@@ -28,10 +22,6 @@ export class InboundHandler {
         this.aiClient = new OpenAI({ apiKey: config.openAI.apiKey, timeout: OPENAI_REPLY_TIMEOUT_MS });
     }
     async handle(payload) {
-        if (!payload.ownerId) {
-            throw new Error('Missing ownerId for metered inbound automation');
-        }
-        await consumeUsageForUserId(payload.ownerId, 'aiReplies', 1);
         const classification = await classifyIntentText(payload.text);
         const replyClassification = toReplyClassification(classification);
         const messageRef = await this.logMessage(payload, classification);
@@ -89,22 +79,10 @@ export class InboundHandler {
         const override = await getAutoReplyPromptOverride(ownerId);
         const identityLine = profile === 'bwinbetug'
             ? `You are our sports team's sports assistant, responding on ${payload.channel}.`
-            : profile === 'shecare'
-                ? `You are SheCare Doctor support, responding privately on ${payload.channel}.`
-                : profile === 'dotthr'
-                    ? `You are Dott Human Resource support, responding on ${payload.channel}.`
-                    : profile === 'dottenergy'
-                        ? `You are Dott Energy support, responding on ${payload.channel}.`
-                        : `You are Dotti from Dott Media, responding on ${payload.channel}.`;
+            : `You are Dotti from Dott Media, responding on ${payload.channel}.`;
         const goalLine = profile === 'bwinbetug'
             ? 'Goal: keep it sports-focused, helpful, concise (<=3 sentences), and direct them to the link in bio for full details, fixtures, markets, and support.'
-            : profile === 'shecare'
-                ? 'Goal: be warm, discreet, respectful, and concise. Encourage a private DM or WhatsApp for confidential women’s health support. Do not give medical instructions.'
-                : profile === 'dotthr'
-                    ? 'Goal: be professional and practical. Ask about hiring needs, team size, HR structure, onboarding, policy, or staff management support.'
-                    : profile === 'dottenergy'
-                        ? 'Goal: ask about location, power needs, turbine size, battery/inverter setup, and whether they need a turbine, generator, or controller.'
-                        : 'Goal: move them toward buying or booking a demo of the Dott Media AI Sales Agent. Keep it friendly, concise (<=3 sentences), give a clear CTA (book a demo or get the Sales Agent), and offer a link or next step.';
+            : 'Goal: move them toward buying or booking a demo of the Dott Media AI Sales Agent. Keep it friendly, concise (<=3 sentences), give a clear CTA (book a demo or get the Sales Agent), and offer a link or next step.';
         const prompt = `
 ${identityLine}
 Message: """${payload.text}"""
@@ -201,9 +179,6 @@ const getAutoReplyPromptOverride = async (userId) => {
 const getReplyProfile = async (userId) => {
     if (!userId)
         return null;
-    const directProfile = DIRECT_REPLY_PROFILES[userId.trim().toLowerCase()];
-    if (directProfile)
-        return directProfile;
     const now = Date.now();
     const cached = replyProfileCache.get(userId);
     if (cached?.loaded && now - cached.fetchedAt < SETTINGS_CACHE_TTL_MS) {

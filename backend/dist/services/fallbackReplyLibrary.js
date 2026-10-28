@@ -188,124 +188,12 @@ const gamersLibrary = {
         ],
     },
 };
-const shecareLibrary = {
-    message: {
-        default: [
-            'Thank you for reaching out to SheCare Doctor. Your privacy matters. Please send us a private message or WhatsApp us so we can support you discreetly.',
-            'We are here to listen with care and respect. For confidential support, please continue privately or use the WhatsApp link in our bio.',
-            'You are not alone. SheCare Doctor can support you privately and respectfully. Please message us directly when you are ready.',
-        ],
-        instagram: [
-            'Thank you for messaging SheCare Doctor. We are here privately and without judgement. Please share what support you need when you are ready.',
-            'Your privacy matters. Continue here in DM or use our WhatsApp link for confidential SheCare Doctor support.',
-        ],
-        facebook: [
-            'Thank you for contacting SheCare Doctor. We offer private, respectful support. Please message us with what you need when you are ready.',
-            'We are here to listen confidentially. Please continue privately or use the WhatsApp link for SheCare Doctor support.',
-        ],
-    },
-    comment: {
-        default: [
-            'Thank you for reaching out. Please message SheCare Doctor privately so we can support you confidentially.',
-            'We are here to help privately and respectfully. Please send us a direct message.',
-            'Your privacy matters. Please DM SheCare Doctor for confidential support.',
-        ],
-    },
-};
-const dottHrLibrary = {
-    message: {
-        default: [
-            'Thanks for reaching out to Dott Human Resource. Tell us your hiring or HR support need, team size, and the issue you want solved.',
-            'Welcome to Dott HR. Share whether you need recruitment, onboarding, policies, staff management, or HR structure support.',
-            'Happy to help. Send your business type, team size, and HR challenge so we can guide you clearly.',
-        ],
-        instagram: [
-            'Thanks for messaging Dott HR. What HR support do you need: hiring, onboarding, policies, or team structure?',
-            'Welcome. Share your team size and the HR issue you want to improve, and we will guide you.',
-        ],
-        facebook: [
-            'Thanks for contacting Dott HR. Send your hiring or HR support need, team size, and timeline so we can help.',
-            'Happy to help with HR support. Tell us whether you need recruitment, policies, onboarding, or staff management.',
-        ],
-        threads: [
-            'Thanks for reaching out to Dott HR. Tell us the people-management challenge you want to solve.',
-            'Appreciate the message. Share your team size and HR support need so we can guide you.',
-        ],
-    },
-    comment: {
-        default: [
-            'Thanks for the interest. Message Dott HR with your team size and HR support need.',
-            'Appreciate the comment. DM us if you need hiring, onboarding, policy, or staff-management support.',
-            'Thanks. Send Dott HR a message and we will help you map the next HR step.',
-        ],
-    },
-};
-const dottEnergyLibrary = {
-    message: {
-        default: [
-            'Thanks for contacting Dott Energy. Please share your location, power need, and whether you want a turbine, generator, controller, or full setup.',
-            'Happy to help with clean power. Send your site location, daily power needs, battery/inverter setup, and preferred turbine size.',
-            'Welcome to Dott Energy. Tell us what you want to power and your location so we can guide you to the right wind setup.',
-        ],
-        instagram: [
-            'Thanks for messaging Dott Energy. Share your location, power needs, and whether you need a turbine, generator, or controller.',
-            'Happy to help. Tell us your site, battery/inverter setup, and preferred wind turbine size.',
-        ],
-        facebook: [
-            'Thanks for contacting Dott Energy. Send your location, load size, and whether you need a wind turbine, generator, or controller.',
-            'We can help you choose the right setup. Please share your power needs, location, and current battery/inverter details.',
-        ],
-        threads: [
-            'Thanks for reaching out to Dott Energy. Share your location and power need so we can recommend a wind setup.',
-            'Appreciate the message. Tell us whether you need a turbine, generator, controller, or full off-grid setup.',
-        ],
-    },
-    comment: {
-        default: [
-            'Thanks for the interest. Message Dott Energy with your location and power needs so we can guide you.',
-            'Appreciate the comment. DM us if you need a turbine, generator, controller, or full clean-power setup.',
-            'Thanks. Send your site and power needs to Dott Energy and we will recommend the right setup.',
-        ],
-    },
-};
-const auxWellnessLibrary = {
-    message: {
-        default: [
-            'Thanks for reaching out to AUX Wellness Hub. Tell us whether you need back support, pain relief, knee support, or gym wear, and we will help you choose.',
-            'Happy to help. Send us the product you are interested in, your size if relevant, and your preferred way to order.',
-            'Welcome to AUX Wellness Hub. Message us with your comfort or activity goal and we will guide you to a suitable product.',
-        ],
-        instagram: [
-            'Thanks for messaging AUX Wellness Hub. Tell us whether you need back support, pain relief, knee support, or gym wear and we will help.',
-            'Happy to help. Send the product name and your size if relevant, and we will guide you on ordering.',
-        ],
-        facebook: [
-            'Thanks for contacting AUX Wellness Hub. Send us the product you need and we will help with fit, availability, and ordering.',
-            'Happy to help with back support, pain relief, knee stabilizers, and gym wear. Message us with what you are looking for.',
-        ],
-        threads: [
-            'Thanks for reaching out to AUX Wellness Hub. Tell us what support or active-lifestyle product you need and we will guide you.',
-            'Appreciate the message. Send the product name and your size if relevant so we can help you order.',
-        ],
-    },
-    comment: {
-        default: [
-            'Thanks for the interest. Send AUX Wellness Hub a message with the product or support you need and we will help.',
-            'Appreciate the comment. DM us for product guidance, sizing, availability, and ordering.',
-            'Thanks for engaging. Message us if you would like help choosing back support, pain relief, knee support, or gym wear.',
-        ],
-    },
-};
 const profileLibraries = {
     default: defaultLibrary,
-    auxwellness: auxWellnessLibrary,
     bwinbetug: bwinbetLibrary,
     carmarketplace: carMarketplaceLibrary,
     staysphere: staySphereLibrary,
     gamers44life: gamersLibrary,
-    shecare: shecareLibrary,
-    dotthr: dottHrLibrary,
-    dottenergy: dottEnergyLibrary,
 };
 const pickRandom = (items) => items[Math.floor(Math.random() * items.length)];
 export function pickFallbackReply(options) {

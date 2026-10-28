@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { refreshLinkedInAccount } from '../../../services/linkedinTokenService.js';
 const LINKEDIN_API = 'https://api.linkedin.com/v2';
 const REQUEST_TIMEOUT_MS = 30000;
 const ALLOW_PERSON_FALLBACK = process.env.LINKEDIN_ALLOW_PERSON_FALLBACK === 'true';
@@ -129,8 +128,7 @@ const createUgcPost = async (accessToken, author, caption, mediaCategory, asset)
     return response.data?.id ?? response.headers?.['x-restli-id'];
 };
 export async function publishToLinkedIn(input) {
-    const storedAccount = input.credentials?.linkedin;
-    const account = storedAccount ? await refreshLinkedInAccount(storedAccount) : undefined;
+    const account = input.credentials?.linkedin;
     if (!account?.accessToken) {
         throw new Error('Missing LinkedIn credentials');
     }

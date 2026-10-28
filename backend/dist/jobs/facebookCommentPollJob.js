@@ -3,8 +3,7 @@ import axios from 'axios';
 import admin from 'firebase-admin';
 import { config } from '../config.js';
 import { firestore } from '../db/firestore.js';
-import { generateReply, likeFacebookComment, replyToFacebookComment, replyToFacebookMessage } from '../services/autoReplyService.js';
-import { buildCommentToDmMessage, buildCommentToDmPublicReply, isCommentToDmTrigger, } from '../services/commentToDmService.js';
+import { generateReply, likeFacebookComment, replyToFacebookComment } from '../services/autoReplyService.js';
 import { supabaseFallbackService } from '../services/supabaseFallbackService.js';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const enabled = process.env.FB_COMMENT_POLL_ENABLED !== 'false';
@@ -13,14 +12,9 @@ const postLimit = Math.max(Number(process.env.FB_COMMENT_POST_LIMIT ?? 8), 1);
 const commentLimit = Math.max(Number(process.env.FB_COMMENT_LIMIT ?? 25), 1);
 const windowHours = Math.max(Number(process.env.FB_COMMENT_WINDOW_HOURS ?? 24), 1);
 const CLIENT_POLL_USER_IDS = [
-    'cMPZQccGggbhZe9dbvtxFmBehP02',
-    'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
-    '80bYIeiuukNFtUvXTUobXmfC7pu1',
-    'LVR7p3WzdFM51ds92Kacf6S40og2',
     'acmVetCcOiTHeGk5D7eDYieamDF3',
     'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
     'vzdH1DnfFLVjlY8bBgC26WACmmw2',
-    'X0ObAFQft0UWZee9IbUyYaeaBfO2',
 ];
 const isAlreadyExistsError = (error) => {
     const err = error;
@@ -112,7 +106,7 @@ const reserveComment = async (comment, target) => {
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
-        return { docRef, text, commentId, fromId };
+        return { docRef, text, commentId };
     }
     catch (error) {
         if (!isAlreadyExistsError(error))
@@ -132,7 +126,7 @@ const reserveComment = async (comment, target) => {
             replyStatus: 'pending',
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
-        return { docRef, text, commentId, fromId };
+        return { docRef, text, commentId };
     }
 };
 const processComment = async (comment, target) => {
@@ -140,16 +134,10 @@ const processComment = async (comment, target) => {
     if (!reserved)
         return;
     try {
-        const commentToDm = isCommentToDmTrigger(reserved.text);
-        const reply = commentToDm
-            ? buildCommentToDmPublicReply({ platform: 'facebook', userId: target.userId })
-            : await generateReply(reserved.text, 'facebook', target.userId, 'comment', { pageId: target.pageId });
+        const reply = await generateReply(reserved.text, 'facebook', target.userId, 'comment');
         await replyToFacebookComment(reserved.commentId, reply, target.accessToken);
         await upsertReplyStatus(reserved.docRef, 'sent');
         await likeFacebookComment(reserved.commentId, target.accessToken).catch(err => console.warn('[fb-comment-poll] like failed', err.message));
-        if (commentToDm && reserved.fromId) {
-            await replyToFacebookMessage(reserved.fromId, buildCommentToDmMessage({ platform: 'facebook', userId: target.userId, commentText: reserved.text }), target.accessToken).catch(err => console.warn('[fb-comment-poll] DM follow-up failed', err.message));
-        }
     }
     catch (error) {
         await upsertReplyStatus(reserved.docRef, 'failed', error.message);

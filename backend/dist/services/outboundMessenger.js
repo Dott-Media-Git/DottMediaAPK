@@ -2,10 +2,10 @@ import axios from 'axios';
 import { config } from '../config.js';
 import { withRetry } from '../utils/retry.js';
 export class OutboundMessenger {
-    async send(platform, recipientId, text, options = {}) {
-        await withRetry(() => this.dispatch(platform, recipientId, text, options));
+    async send(platform, recipientId, text) {
+        await withRetry(() => this.dispatch(platform, recipientId, text));
     }
-    async dispatch(platform, recipientId, text, options) {
+    async dispatch(platform, recipientId, text) {
         switch (platform) {
             case 'whatsapp':
                 if (!config.whatsapp.token || !config.whatsapp.phoneNumberId) {
@@ -25,51 +25,27 @@ export class OutboundMessenger {
                 });
                 return;
             case 'facebook':
-                {
-                    const { getFacebookPageToken, resolveFacebookPageAccount } = await import('./facebookAccountRegistry.js');
-                    const account = resolveFacebookPageAccount({ userId: options.userId });
-                    const pageToken = (account ? getFacebookPageToken(account) : '') || config.channels.facebook.pageToken;
-                    if (!pageToken) {
-                        console.info('[outbound] Facebook disabled; skipping send');
-                        return;
-                    }
-                    await axios.post('https://graph.facebook.com/v19.0/me/messages', {
-                        recipient: { id: recipientId },
-                        messaging_type: 'RESPONSE',
-                        message: { text },
-                    }, { params: { access_token: pageToken } });
-                }
+                await axios.post('https://graph.facebook.com/v19.0/me/messages', {
+                    recipient: { id: recipientId },
+                    messaging_type: 'RESPONSE',
+                    message: { text },
+                }, { params: { access_token: config.channels.facebook.pageToken } });
                 return;
             case 'instagram':
-                {
-                    const { getInstagramLoginToken, resolveInstagramLoginAccount } = await import('./instagramAccountRegistry.js');
-                    const account = resolveInstagramLoginAccount({ userId: options.userId });
-                    const loginToken = account ? getInstagramLoginToken(account) : '';
-                    if (account && loginToken && /^\d+$/.test(recipientId)) {
-                        await axios.post('https://graph.instagram.com/me/messages', {
-                            recipient: { id: recipientId },
-                            message: { text },
-                        }, {
-                            params: { access_token: loginToken },
-                            headers: { 'Content-Type': 'application/json' },
-                        });
-                        return;
-                    }
-                    if (account && loginToken && !config.channels.instagram.businessId) {
-                        throw new Error('Instagram Login outbound requires a numeric Instagram recipient ID from an existing conversation.');
-                    }
-                    if (!config.channels.instagram.businessId || !config.channels.instagram.accessToken) {
-                        console.info('[outbound] Instagram disabled; skipping send');
-                        return;
-                    }
-                    await axios.post(`https://graph.facebook.com/v19.0/${config.channels.instagram.businessId}/messages`, {
-                        recipient: { id: recipientId },
-                        message: { text },
-                    }, { params: { access_token: config.channels.instagram.accessToken } });
-                }
+                await axios.post(`https://graph.facebook.com/v19.0/${config.channels.instagram.businessId}/messages`, {
+                    recipient: { id: recipientId },
+                    message: { text },
+                }, { params: { access_token: config.channels.instagram.accessToken } });
                 return;
             case 'threads':
-                console.info('[outbound] Threads private messaging is not supported by the official Threads API; skipping send');
+                if (!config.channels.threads.profileId || !config.channels.threads.accessToken) {
+                    console.info('[outbound] Threads disabled; skipping send');
+                    return;
+                }
+                await axios.post(`https://graph.facebook.com/v19.0/${config.channels.threads.profileId}/messages`, {
+                    recipient: { id: recipientId },
+                    message: { text },
+                }, { params: { access_token: config.channels.threads.accessToken } });
                 return;
             case 'linkedin':
                 await axios.post('https://api.linkedin.com/v2/messages', {

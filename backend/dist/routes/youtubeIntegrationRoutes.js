@@ -4,17 +4,14 @@ import createHttpError from 'http-errors';
 import axios from 'axios';
 import { google } from 'googleapis';
 import { config } from '../config.js';
-import { requireFirebase, requireFirebaseForm } from '../middleware/firebaseAuth.js';
+import { requireFirebase } from '../middleware/firebaseAuth.js';
 import { createSignedState, verifySignedState } from '../utils/oauthState.js';
 import { disconnectYouTube, getYouTubeIntegration, revealYouTubeRefreshToken, upsertYouTubeIntegration, updateYouTubeIntegrationDefaults, } from '../services/socialIntegrationService.js';
 import { validateVideoUrl } from '../services/videoUrlService.js';
 import { enqueueYouTubeUpload, enqueueYouTubeSoraUpload, getYouTubeJobStatus } from '../services/youtubeUploadService.js';
 import { firestore } from '../db/firestore.js';
-import { consumeUsage, resolveBillingScope } from '../services/billing/billingService.js';
-import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect.js';
 const router = Router();
 const CALLBACK_PATH = '/integrations/youtube/callback';
-const REQUIRED_SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
 const normalizeBaseUrl = (value) => value.replace(/\/+$/, '');
 const getBaseUrl = (req) => {
     const envBase = process.env.BASE_URL ?? process.env.RENDER_EXTERNAL_URL;
@@ -37,34 +34,19 @@ const ensureYouTubeClientConfig = (req) => {
     }
     return { clientId, clientSecret, redirectUri };
 };
-const buildOAuthUrl = (req, userId, orgId, email, returnUrl) => {
+const buildOAuthUrl = (req, userId) => {
     const { clientId, redirectUri } = ensureYouTubeClientConfig(req);
-    const state = createSignedState(userId, {
-        platform: 'youtube',
-        orgId: orgId || undefined,
-        email: email || undefined,
-        returnUrl: sanitizeOAuthReturnUrl(returnUrl),
-    });
+    const state = createSignedState(userId);
     const oauthUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     oauthUrl.searchParams.set('client_id', clientId);
     oauthUrl.searchParams.set('redirect_uri', redirectUri);
     oauthUrl.searchParams.set('response_type', 'code');
-    oauthUrl.searchParams.set('scope', REQUIRED_SCOPE);
+    oauthUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/youtube.upload');
     oauthUrl.searchParams.set('access_type', 'offline');
     oauthUrl.searchParams.set('prompt', 'consent');
     oauthUrl.searchParams.set('include_granted_scopes', 'true');
     oauthUrl.searchParams.set('state', state);
     return oauthUrl.toString();
-};
-const splitScopes = (value) => String(value ?? '')
-    .split(/[,\s]+/)
-    .map(scope => scope.trim())
-    .filter(Boolean);
-const assertRequiredScope = (value) => {
-    const granted = new Set(splitScopes(value));
-    if (granted.size > 0 && !granted.has(REQUIRED_SCOPE)) {
-        throw new Error(`Missing required YouTube permission: ${REQUIRED_SCOPE}`);
-    }
 };
 const requireOrgAdminIfPresent = async (req, _res, next) => {
     try {
@@ -89,8 +71,7 @@ const requireOrgAdminIfPresent = async (req, _res, next) => {
     }
 };
 const adminGate = [requireFirebase, requireOrgAdminIfPresent];
-const userGate = [requireFirebase];
-router.get('/integrations/youtube/config', ...userGate, async (req, res, next) => {
+router.get('/integrations/youtube/config', ...adminGate, async (req, res, next) => {
     try {
         const computedRedirectUri = computeRedirectUri(req);
         const configuredRedirectUri = config.youtube.redirectUri || '';
@@ -144,7 +125,7 @@ router.get('/integrations/youtube/health', ...adminGate, async (req, res, next) 
         next(error);
     }
 });
-router.get('/integrations/youtube/status', ...userGate, async (req, res, next) => {
+router.get('/integrations/youtube/status', ...adminGate, async (req, res, next) => {
     try {
         const userId = req.authUser?.uid;
         if (!userId)
@@ -156,38 +137,24 @@ router.get('/integrations/youtube/status', ...userGate, async (req, res, next) =
         next(error);
     }
 });
-router.get('/integrations/youtube/connect', ...userGate, async (req, res, next) => {
+router.get('/integrations/youtube/connect', ...adminGate, async (req, res, next) => {
     try {
-        const authUser = req.authUser;
-        const userId = authUser?.uid;
+        const userId = req.authUser?.uid;
         if (!userId)
             throw createHttpError(401, 'Unauthorized');
-        const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl);
+        const oauthUrl = buildOAuthUrl(req, userId);
         res.redirect(oauthUrl);
     }
     catch (error) {
         next(error);
     }
 });
-router.post('/integrations/youtube/start', requireFirebaseForm, async (req, res, next) => {
+router.get('/integrations/youtube/connect-url', ...adminGate, async (req, res, next) => {
     try {
-        const authUser = req.authUser;
-        if (!authUser?.uid)
-            throw createHttpError(401, 'Unauthorized');
-        const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
-        res.redirect(303, buildOAuthUrl(req, authUser.uid, orgId, authUser.email, req.body?.returnUrl));
-    }
-    catch (error) {
-        next(error);
-    }
-});
-router.get('/integrations/youtube/connect-url', ...userGate, async (req, res, next) => {
-    try {
-        const authUser = req.authUser;
-        const userId = authUser?.uid;
+        const userId = req.authUser?.uid;
         if (!userId)
             throw createHttpError(401, 'Unauthorized');
-        const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl);
+        const oauthUrl = buildOAuthUrl(req, userId);
         res.json({ url: oauthUrl });
     }
     catch (error) {
@@ -224,18 +191,10 @@ router.get('/integrations/youtube/callback', async (req, res) => {
     const refreshToken = tokenResponse?.data?.refresh_token;
     const accessToken = tokenResponse?.data?.access_token;
     const expiresIn = Number(tokenResponse?.data?.expires_in ?? 0);
-    const grantedScope = tokenResponse?.data?.scope;
     if (!refreshToken) {
         res
             .status(400)
             .send(renderCallbackHtml('Refresh token missing', 'Google did not return a refresh token. Please reconnect with prompt=consent or revoke access in Google and try again.'));
-        return;
-    }
-    try {
-        assertRequiredScope(grantedScope);
-    }
-    catch (error) {
-        res.status(400).send(renderCallbackHtml('YouTube connection failed', error.message));
         return;
     }
     let channelId = null;
@@ -254,12 +213,6 @@ router.get('/integrations/youtube/callback', async (req, res) => {
         console.warn('[youtube] channel lookup failed', error);
     }
     try {
-        const existing = await getYouTubeIntegration(state.userId).catch(() => null);
-        if (!existing?.connected) {
-            const userSnap = await firestore.collection('users').doc(state.userId).get().catch(() => null);
-            const userData = userSnap?.exists ? userSnap.data() : {};
-            await consumeUsage(resolveBillingScope(state.userId, typeof state.orgId === 'string' ? state.orgId : undefined, typeof state.email === 'string' ? state.email : typeof userData?.email === 'string' ? userData.email : undefined), 'connectedSocials', 1);
-        }
         await upsertYouTubeIntegration(state.userId, {
             refreshToken,
             accessToken,
@@ -275,7 +228,7 @@ router.get('/integrations/youtube/callback', async (req, res) => {
         res.status(500).send(renderCallbackHtml('YouTube connection failed', 'Unable to store refresh token.'));
         return;
     }
-    res.redirect(303, oauthSuccessRedirect('youtube', state.returnUrl));
+    res.status(200).send(renderCallbackHtml('YouTube connected', 'You can close this window and return to Dott Media.'));
 });
 const pasteSchema = z.object({
     refreshToken: z.string().min(1).optional(),
@@ -287,7 +240,7 @@ const pasteSchema = z.object({
     redirectUri: z.string().optional(),
     privacyStatus: z.enum(['private', 'public', 'unlisted']).optional(),
 });
-router.post('/integrations/youtube/paste-token', ...userGate, async (req, res, next) => {
+router.post('/integrations/youtube/paste-token', ...adminGate, async (req, res, next) => {
     try {
         const payload = pasteSchema.parse(req.body ?? {});
         let refreshToken = payload.refreshToken || payload.token || payload.raw || '';
@@ -334,7 +287,7 @@ router.post('/integrations/youtube/paste-token', ...userGate, async (req, res, n
         next(error);
     }
 });
-router.post('/integrations/youtube/defaults', ...userGate, async (req, res, next) => {
+router.post('/integrations/youtube/defaults', ...adminGate, async (req, res, next) => {
     try {
         const payload = z
             .object({
@@ -351,7 +304,7 @@ router.post('/integrations/youtube/defaults', ...userGate, async (req, res, next
         next(error);
     }
 });
-router.post('/integrations/youtube/reveal', ...userGate, async (req, res, next) => {
+router.post('/integrations/youtube/reveal', ...adminGate, async (req, res, next) => {
     try {
         const userId = req.authUser?.uid;
         if (!userId)
@@ -363,7 +316,7 @@ router.post('/integrations/youtube/reveal', ...userGate, async (req, res, next) 
         next(error);
     }
 });
-router.post('/integrations/youtube/disconnect', ...userGate, async (req, res, next) => {
+router.post('/integrations/youtube/disconnect', ...adminGate, async (req, res, next) => {
     try {
         const userId = req.authUser?.uid;
         if (!userId)
@@ -446,7 +399,6 @@ router.post('/youtube/sora', ...adminGate, async (req, res, next) => {
         if (!config.openAI.apiKey) {
             throw createHttpError(400, 'Missing OPENAI_API_KEY');
         }
-        await consumeUsage(resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email), payload.model === 'sora-2-pro' ? 'proVideos' : 'basicVideos', 1);
         const scheduledPublishTime = payload.scheduledPublishTime?.trim();
         if (scheduledPublishTime) {
             const parsed = new Date(scheduledPublishTime);

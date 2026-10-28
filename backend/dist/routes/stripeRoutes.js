@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import Stripe from 'stripe';
 import createHttpError from 'http-errors';
-import { applyStripeCheckoutCompleted, applyStripeInvoicePaid, applyStripeSubscription } from '../services/billing/billingService.js';
+import { updateOrg } from '../services/admin/adminService.js';
 const router = Router();
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 router.post('/', async (req, res, next) => {
@@ -12,23 +12,9 @@ router.post('/', async (req, res, next) => {
         const sig = req.headers['stripe-signature'];
         const event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
         if (event.type === 'checkout.session.completed') {
-            await applyStripeCheckoutCompleted(event.data.object);
-        }
-        if (event.type === 'invoice.payment_succeeded') {
-            await applyStripeInvoicePaid(event.data.object);
-        }
-        if (event.type === 'customer.subscription.updated' ||
-            event.type === 'customer.subscription.deleted' ||
-            event.type === 'invoice.payment_failed') {
-            const payload = event.data.object;
-            const subscriptionId = payload.object === 'subscription'
-                ? payload.id
-                : typeof payload.subscription === 'string'
-                    ? payload.subscription
-                    : payload.subscription?.id;
-            if (subscriptionId && stripe) {
-                const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-                await applyStripeSubscription(subscription);
+            const metadata = event.data.object.metadata ?? {};
+            if (metadata.orgId && metadata.plan) {
+                await updateOrg(metadata.orgId, { plan: metadata.plan });
             }
         }
         res.json({ received: true });

@@ -24,53 +24,6 @@ create table if not exists public.dott_social_accounts (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
-create table if not exists public.dott_users (
-  user_id text primary key,
-  email text null,
-  name text null,
-  photo_url text null,
-  auth_provider text null,
-  is_admin boolean not null default false,
-  data jsonb not null default '{}'::jsonb,
-  created_at timestamptz null,
-  last_login_at timestamptz null,
-  updated_at timestamptz not null default timezone('utc', now())
-);
-
-create unique index if not exists dott_users_email_idx
-  on public.dott_users (lower(email))
-  where email is not null;
-
-create table if not exists public.dott_profiles (
-  user_id text primary key,
-  email text null,
-  name text null,
-  subscription_status text null,
-  onboarding_complete boolean not null default false,
-  user_data jsonb not null default '{}'::jsonb,
-  crm_data jsonb not null default '{}'::jsonb,
-  data jsonb not null default '{}'::jsonb,
-  created_at timestamptz null,
-  updated_at timestamptz not null default timezone('utc', now())
-);
-
-create index if not exists dott_profiles_email_idx
-  on public.dott_profiles (lower(email))
-  where email is not null;
-
-create table if not exists public.dott_assistant_conversations (
-  user_id text not null,
-  conversation_id text not null,
-  title text not null default 'Chat with Dotti',
-  messages jsonb not null default '[]'::jsonb,
-  created_at timestamptz not null default timezone('utc', now()),
-  updated_at timestamptz not null default timezone('utc', now()),
-  primary key (user_id, conversation_id)
-);
-
-create index if not exists dott_assistant_conversations_user_updated_idx
-  on public.dott_assistant_conversations (user_id, updated_at desc);
-
 create table if not exists public.dott_scheduled_posts (
   id text primary key,
   user_id text not null,
@@ -146,11 +99,6 @@ create index if not exists dott_inbound_messages_channel_received_idx
   on public.dott_inbound_messages (channel, received_at desc);
 create index if not exists dott_inbound_messages_sender_received_idx
   on public.dott_inbound_messages (sender_id, received_at desc);
-create index if not exists dott_inbound_messages_sender_channel_received_idx
-  on public.dott_inbound_messages (sender_id, channel, received_at desc);
-
-alter table public.dott_inbound_messages enable row level security;
-revoke all on table public.dott_inbound_messages from anon, authenticated;
 
 create table if not exists public.dott_social_daily (
   id text primary key,

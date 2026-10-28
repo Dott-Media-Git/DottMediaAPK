@@ -1,6 +1,6 @@
 import { createHmac, randomBytes } from 'crypto';
 import { config } from '../config.js';
-const STATE_TTL_MS = 60 * 60 * 1000;
+const STATE_TTL_MS = 15 * 60 * 1000;
 const base64UrlEncode = (value) => Buffer.from(value, 'utf8').toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 const base64UrlDecode = (value) => {
     const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
@@ -8,9 +8,8 @@ const base64UrlDecode = (value) => {
     return Buffer.from(normalized + padding, 'base64').toString('utf8');
 };
 const sign = (payload) => createHmac('sha256', config.widget.sharedSecret).update(payload).digest('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-export const createSignedState = (userId, extra = {}) => {
+export const createSignedState = (userId) => {
     const payload = {
-        ...extra,
         userId,
         nonce: randomBytes(16).toString('hex'),
         ts: Date.now(),

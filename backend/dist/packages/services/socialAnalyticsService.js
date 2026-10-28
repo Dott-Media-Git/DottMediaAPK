@@ -12,15 +12,6 @@ export class SocialAnalyticsService {
         const date = new Date().toISOString().slice(0, 10);
         const docRef = dailyCollection.doc(`${payload.userId}_${date}`);
         try {
-            await supabaseFallbackService.incrementSocialDaily({
-                userId: payload.userId,
-                date,
-                platform: payload.platform,
-                status: payload.status,
-            });
-        }
-        catch (error) {
-            console.warn('[social-analytics] Supabase primary increment failed; using Firebase fallback', error);
             await firestore.runTransaction(async (tx) => {
                 const snap = await tx.get(docRef);
                 const snapshotData = snap.data();
@@ -42,44 +33,68 @@ export class SocialAnalyticsService {
                 tx.set(docRef, update, { merge: true });
             });
         }
-    }
-    async getDailySummary(userId, limit = 14) {
-        const merged = new Map();
-        let supabaseAvailable = true;
+        catch (error) {
+            console.warn('[social-analytics] firestore increment failed; using fallback', error);
+        }
         try {
-            const primaryRows = await supabaseFallbackService.getSocialDailySummary(userId, limit);
-            primaryRows.forEach(row => {
-                const key = String(row.date ?? '');
-                if (key)
-                    merged.set(key, row);
+            await supabaseFallbackService.incrementSocialDaily({
+                userId: payload.userId,
+                date,
+                platform: payload.platform,
+                status: payload.status,
             });
         }
         catch (error) {
-            supabaseAvailable = false;
-            console.warn('[social-analytics] Supabase primary summary failed; using Firebase fallback', error);
+            console.warn('[social-analytics] supabase increment failed', error);
         }
-        if (!supabaseAvailable || merged.size === 0)
+    }
+    async getDailySummary(userId, limit = 14) {
+        const merged = new Map();
+        try {
+            let snap;
             try {
-                let snap;
-                try {
-                    snap = await dailyCollection.where('userId', '==', userId).orderBy('date', 'desc').limit(limit).get();
-                }
-                catch (error) {
-                    if (!this.isMissingIndexError(error))
-                        throw error;
-                    snap = await dailyCollection.where('userId', '==', userId).limit(limit).get();
-                }
-                snap.docs.forEach(doc => {
-                    const row = doc.data();
-                    const key = String(row.date ?? doc.id ?? '');
-                    if (!key)
-                        return;
-                    merged.set(key, row);
-                });
+                snap = await dailyCollection.where('userId', '==', userId).orderBy('date', 'desc').limit(limit).get();
             }
             catch (error) {
-                console.warn('[social-analytics] Firebase fallback summary failed', error);
+                if (!this.isMissingIndexError(error))
+                    throw error;
+                snap = await dailyCollection.where('userId', '==', userId).limit(limit).get();
             }
+            snap.docs.forEach(doc => {
+                const row = doc.data();
+                const key = String(row.date ?? doc.id ?? '');
+                if (!key)
+                    return;
+                merged.set(key, row);
+            });
+        }
+        catch (error) {
+            console.warn('[social-analytics] firestore daily summary failed', error);
+        }
+        try {
+            const fallbackRows = await supabaseFallbackService.getSocialDailySummary(userId, limit);
+            fallbackRows.forEach(row => {
+                const key = String(row.date ?? '');
+                if (!key)
+                    return;
+                const existing = merged.get(key) ?? {};
+                const next = {
+                    ...row,
+                    postsAttempted: Math.max(Number(existing.postsAttempted ?? 0), Number(row.postsAttempted ?? 0)),
+                    postsPosted: Math.max(Number(existing.postsPosted ?? 0), Number(row.postsPosted ?? 0)),
+                    postsFailed: Math.max(Number(existing.postsFailed ?? 0), Number(row.postsFailed ?? 0)),
+                    postsSkipped: Math.max(Number(existing.postsSkipped ?? 0), Number(row.postsSkipped ?? 0)),
+                    perPlatform: {
+                        ...(existing.perPlatform ?? {}),
+                        ...(row.perPlatform ?? {}),
+                    },
+                };
+                merged.set(key, next);
+            });
+        }
+        catch (error) {
+            console.warn('[social-analytics] supabase daily summary failed', error);
+        }
         return Array.from(merged.values())
             .sort((a, b) => `${b?.date ?? ''}`.localeCompare(`${a?.date ?? ''}`))
             .slice(0, limit);

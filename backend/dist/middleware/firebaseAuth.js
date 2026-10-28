@@ -35,11 +35,7 @@ const decodeFirebasePayloadFallback = (token) => {
             return null;
         if (projectId && payload.iss !== `https://securetoken.google.com/${projectId}`)
             return null;
-        return {
-            ...payload,
-            uid,
-            email: payload.email,
-        };
+        return { ...payload, uid, email: payload.email };
     }
     catch {
         return null;
@@ -88,28 +84,6 @@ export async function requireFirebase(req, _res, next) {
         return next(createHttpError(401, 'Invalid or expired token'));
     }
 }
-/** Sensitive account and publishing operations must be verified by Firebase Admin. */
-export async function requireFirebaseStrict(req, _res, next) {
-    const header = req.header('Authorization');
-    if (!header)
-        return next(createHttpError(401, 'Missing Authorization header'));
-    const [scheme, token] = header.split(' ');
-    if (scheme !== 'Bearer' || !token)
-        return next(createHttpError(401, 'Invalid auth header'));
-    if (config.security.allowMockAuth && token.startsWith('mock-')) {
-        return next(createHttpError(403, 'This action is unavailable in mock authentication mode'));
-    }
-    if (!firebaseApp)
-        return next(createHttpError(503, 'Firebase auth is not initialized'));
-    try {
-        const decoded = await firebaseApp.auth().verifyIdToken(token, true);
-        req.authUser = decoded;
-        return next();
-    }
-    catch {
-        return next(createHttpError(401, 'Please sign in again before continuing'));
-    }
-}
 export async function requireFirebaseForm(req, _res, next) {
     const token = typeof req.body?.idToken === 'string' ? req.body.idToken.trim() : '';
     if (!token)
@@ -147,10 +121,4 @@ export async function requireFirebaseForm(req, _res, next) {
         }
         return next(createHttpError(401, 'Invalid or expired token'));
     }
-}
-/** Uses a valid Firebase session when supplied, but permits a public guest request. */
-export async function optionalFirebase(req, res, next) {
-    if (!req.header('Authorization'))
-        return next();
-    return requireFirebase(req, res, next);
 }
