@@ -611,10 +611,21 @@ const exchangeInstagramCodeForToken = async (req: Request, code: string) => {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
 
+  // Instagram Login has returned both a flat payload and a `data` array over
+  // the lifetime of the API. Normalize both forms before the next step so a
+  // valid token is never mistaken for a missing token.
+  const payload = response.data as Record<string, unknown> | undefined;
+  const firstEntry = Array.isArray(payload?.data)
+    ? (payload.data[0] as Record<string, unknown> | undefined)
+    : payload;
+
   return {
-    accessToken: response.data?.access_token as string | undefined,
-    userId: response.data?.user_id ? String(response.data.user_id) : undefined,
-    grantedScopes: extractScopesFromPayload(response.data as Record<string, unknown> | undefined),
+    accessToken: firstEntry?.access_token as string | undefined,
+    userId: firstEntry?.user_id ? String(firstEntry.user_id) : undefined,
+    grantedScopes: new Set([
+      ...Array.from(extractScopesFromPayload(payload)),
+      ...Array.from(extractScopesFromPayload(firstEntry)),
+    ]),
   };
 };
 
@@ -1186,15 +1197,19 @@ router.get('/integrations/instagram/callback', async (req, res) => {
     return;
   }
 
+  let stage = 'validating Instagram permissions';
+
   try {
     const requiredScopes = getInstagramLoginScopes();
     assertRequiredInstagramScopes(requiredScopes, callbackGrantedScopes, deniedScopes);
 
+    stage = 'exchanging the OAuth code for a short-lived token';
     const shortLivedToken = await exchangeInstagramCodeForToken(req, code);
     if (!shortLivedToken.accessToken) {
       throw new Error('Missing short-lived Instagram token');
     }
 
+    stage = 'exchanging the short-lived token for a long-lived token';
     const longLivedToken = await exchangeInstagramLongLivedToken(req, shortLivedToken.accessToken);
     const grantedScopes = new Set([
       ...Array.from(callbackGrantedScopes),
@@ -1204,6 +1219,7 @@ router.get('/integrations/instagram/callback', async (req, res) => {
     assertRequiredInstagramScopes(requiredScopes, grantedScopes, deniedScopes);
 
     const accessToken = longLivedToken.accessToken;
+    stage = 'loading the Instagram profile';
     const profile = await fetchInstagramMe(accessToken, shortLivedToken.userId);
     const accountId = profile.id ?? profile.user_id ?? shortLivedToken.userId;
     if (!accountId) {
@@ -1257,7 +1273,7 @@ router.get('/integrations/instagram/callback', async (req, res) => {
 
     res.redirect(303, oauthSuccessRedirect('instagram', state.returnUrl));
   } catch (error) {
-    const message = formatProviderError(error, 'Instagram');
+    const message = `${stage}: ${formatProviderError(error, 'Instagram')}`;
     console.error('[instagram] connection failed', { message });
     res
       .status(400)
