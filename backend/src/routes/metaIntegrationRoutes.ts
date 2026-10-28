@@ -9,7 +9,7 @@ import { createSignedState, verifySignedState } from '../utils/oauthState';
 import { firestore } from '../db/firestore';
 import { autoPostService } from '../services/autoPostService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
-import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
+import { consumeUsage, isFirestoreResourceExhausted, resolveBillingScope } from '../services/billing/billingService';
 import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect';
 
 const router = Router();
@@ -1274,15 +1274,22 @@ router.get('/integrations/threads/callback', async (req, res) => {
     };
 
     if (!wasThreadsConnected) {
-      await consumeUsage(
-        resolveBillingScope(
-          state.userId,
-          typeof state.orgId === 'string' ? state.orgId : undefined,
-          typeof state.email === 'string' ? state.email : userData.email ?? undefined,
-        ),
-        'connectedSocials',
-        1,
-      );
+      try {
+        await consumeUsage(
+          resolveBillingScope(
+            state.userId,
+            typeof state.orgId === 'string' ? state.orgId : undefined,
+            typeof state.email === 'string' ? state.email : userData.email ?? undefined,
+          ),
+          'connectedSocials',
+          1,
+        );
+      } catch (error) {
+        if (!isFirestoreResourceExhausted(error)) throw error;
+        console.warn('[threads] usage metering skipped because Firestore quota is exhausted; connection will continue', {
+          userId: state.userId,
+        });
+      }
     }
 
     await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });

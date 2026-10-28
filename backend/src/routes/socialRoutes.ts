@@ -7,7 +7,7 @@ import admin from 'firebase-admin';
 import { z } from 'zod';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService';
-import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
+import { consumeUsage, isFirestoreResourceExhausted, resolveBillingScope } from '../services/billing/billingService';
 import { socialPostingService } from '../packages/services/socialPostingService';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService';
 import { autoPostService } from '../services/autoPostService';
@@ -1353,15 +1353,22 @@ router.get('/social/threads/callback', async (req, res) => {
     };
 
     if (!wasThreadsConnected) {
-      await consumeUsage(
-        resolveBillingScope(
-          state.userId,
-          typeof state.orgId === 'string' ? state.orgId : undefined,
-          typeof state.email === 'string' ? state.email : userData.email ?? undefined,
-        ),
-        'connectedSocials',
-        1,
-      );
+      try {
+        await consumeUsage(
+          resolveBillingScope(
+            state.userId,
+            typeof state.orgId === 'string' ? state.orgId : undefined,
+            typeof state.email === 'string' ? state.email : userData.email ?? undefined,
+          ),
+          'connectedSocials',
+          1,
+        );
+      } catch (error) {
+        if (!isFirestoreResourceExhausted(error)) throw error;
+        console.warn('[threads] usage metering skipped because Firestore quota is exhausted; connection will continue', {
+          userId: state.userId,
+        });
+      }
     }
 
     await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });

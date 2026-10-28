@@ -42,6 +42,18 @@ export type BillingScope = {
   email?: string;
 };
 
+/**
+ * Firestore can reject a non-critical usage-metering write when the project
+ * quota is exhausted. Account connections should still be able to finish;
+ * callers can log this condition and retry metering later.
+ */
+export const isFirestoreResourceExhausted = (error: unknown) => {
+  const candidate = error as { code?: unknown; message?: unknown } | null;
+  const code = String(candidate?.code ?? '').toUpperCase();
+  const message = String(candidate?.message ?? error ?? '').toUpperCase();
+  return code === '8' || code === 'RESOURCE_EXHAUSTED' || message.includes('RESOURCE_EXHAUSTED') || message.includes('QUOTA EXCEEDED');
+};
+
 export type UsageCharge = {
   resource: UsageResource;
   amount: number;
