@@ -620,13 +620,12 @@ const exchangeInstagramCodeForToken = async (req: Request, code: string) => {
 
 const exchangeInstagramLongLivedToken = async (req: Request, shortLivedToken: string) => {
   const { appSecret } = getInstagramAppConfig(req);
-  const body = new URLSearchParams({
-    grant_type: 'ig_exchange_token',
-    client_secret: appSecret,
-    access_token: shortLivedToken,
-  });
-  const response = await axios.post(`${INSTAGRAM_GRAPH_BASE_URL}/access_token`, body.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/access_token`, {
+    params: {
+      grant_type: 'ig_exchange_token',
+      client_secret: appSecret,
+      access_token: shortLivedToken,
+    },
   });
 
   return {
@@ -651,10 +650,11 @@ const assertRequiredInstagramScopes = (
   }
 };
 
-const fetchInstagramMe = async (accessToken: string) => {
-  const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/${INSTAGRAM_GRAPH_VERSION}/me`, {
+const fetchInstagramMe = async (accessToken: string, instagramUserId?: string) => {
+  const subject = instagramUserId ? encodeURIComponent(instagramUserId) : 'me';
+  const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/${INSTAGRAM_GRAPH_VERSION}/${subject}`, {
     params: {
-      fields: 'id,user_id,username,account_type,media_count',
+      fields: 'user_id,username,account_type,media_count',
       access_token: accessToken,
     },
   });
@@ -1204,7 +1204,7 @@ router.get('/integrations/instagram/callback', async (req, res) => {
     assertRequiredInstagramScopes(requiredScopes, grantedScopes, deniedScopes);
 
     const accessToken = longLivedToken.accessToken;
-    const profile = await fetchInstagramMe(accessToken);
+    const profile = await fetchInstagramMe(accessToken, shortLivedToken.userId);
     const accountId = profile.id ?? profile.user_id ?? shortLivedToken.userId;
     if (!accountId) {
       throw new Error('Unable to resolve Instagram professional account');
