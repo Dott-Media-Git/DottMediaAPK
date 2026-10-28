@@ -223,6 +223,13 @@ export const AccountIntegrationsScreen: React.FC = () => {
     await Promise.all([loadSocialAccounts(), loadSocialStatus()]);
   };
 
+  const markSocialConnected = (platform: PlatformKey) => {
+    setSocialStatus(prev => ({
+      ...(prev ?? {}),
+      [platform]: true,
+    } as SocialConnectionStatus));
+  };
+
   const refreshPlatformConnection = async (platform: PlatformKey) => {
     if (platform === 'youtube') {
       await loadYouTube();
@@ -269,6 +276,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
       message: t('Permissions were approved and the account is ready to use in Dott Media.'),
       expanded: true,
     });
+    markSocialConnected(connected);
     void refreshPlatformConnection(connected);
 
     url.searchParams.delete('connected');
@@ -374,6 +382,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
       const redirectUrl = nativeOAuthReturnUrl(platform);
       const result = await WebBrowser.openAuthSessionAsync(parsedUrl.toString(), redirectUrl);
       if (result.type === 'success' || result.type === 'dismiss' || result.type === 'cancel') {
+        if (result.type === 'success') markSocialConnected(platform);
         await refreshPlatformConnection(platform);
         setPendingOAuthPlatform(null);
       }
@@ -936,7 +945,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
               ? youtubeConnected
               : platform === 'tiktok'
                 ? tiktokConnected
-                : (socialStatus?.[manualPlatform] ?? isManualConnected(manualPlatform));
+                : Boolean(socialStatus?.[manualPlatform] || isManualConnected(manualPlatform));
           const isExpanded = expandedPlatform === platform;
           const missing =
             platform === 'youtube'
