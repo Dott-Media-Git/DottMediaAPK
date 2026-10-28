@@ -364,9 +364,6 @@ const normalizeSocialLogPost = (entry) => {
     };
 };
 const hasSocialAccounts = (profile) => Boolean(profile?.socialAccounts && Object.keys(profile.socialAccounts).length > 0);
-const isKnownLiveSocialProfile = (profile) => Boolean(profile?.id &&
-    KNOWN_LIVE_SOCIAL_PROFILES.some(known => known.userId === profile.id ||
-        (!!profile.email && known.email?.toLowerCase() === profile.email.toLowerCase())));
 const rootMetaToken = () => (process.env.META_GRAPH_TOKEN ??
     process.env.CLIENT_META_USER_TOKEN ??
     process.env.INSTAGRAM_ACCESS_TOKEN ??
@@ -398,21 +395,21 @@ const knownAccountToken = (envKeys, fallback) => {
 const KNOWN_LIVE_SOCIAL_PROFILES = [
     {
         userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
-        email: 'xbrasio@gmail.com',
-        facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1120716914467835',
-        instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '1861959871343966',
-        threadsAccountId: '28808899498698518',
-        linkedinAuthorUrn: 'urn:li:person:VQV6WSzWDf',
-        facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'DOTT_MAIN_FACEBOOK_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
-        instagramTokenEnv: ['DOTT_MAIN_INSTAGRAM_ACCESS_TOKEN', 'INSTAGRAM_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
-        threadsTokenEnv: ['DOTT_MAIN_THREADS_ACCESS_TOKEN', 'THREADS_ACCESS_TOKEN'],
-        linkedinTokenEnv: ['DOTT_MAIN_LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_ACCESS_TOKEN'],
+        // This UID belongs to Aux Wellness Hub. Keep its live-account fallback
+        // separate from the Dotti AI profile below so the integration page and
+        // dashboard cannot display Dotti's accounts for Aux.
+        facebookPageId: process.env.AUXWELLNESS_FACEBOOK_PAGE_ID ?? '1371096759416007',
+        instagramAccountId: process.env.AUXWELLNESS_INSTAGRAM_BUSINESS_ID ?? '17841420336656466',
+        threadsAccountId: process.env.AUXWELLNESS_THREADS_PROFILE_ID ?? '',
+        facebookTokenEnv: ['AUXWELLNESS_FACEBOOK_PAGE_TOKEN', 'AUXWELLNESS_FACEBOOK_ACCESS_TOKEN'],
+        instagramTokenEnv: ['AUXWELLNESS_INSTAGRAM_ACCESS_TOKEN', 'AUXWELLNESS_FACEBOOK_PAGE_TOKEN'],
+        threadsTokenEnv: ['AUXWELLNESS_THREADS_ACCESS_TOKEN', 'AUXWELLNESS_THREADS_TOKEN'],
     },
     {
         userId: 'HAo6YtFvhKgSySa8EoERKYYq2IV2',
         email: 'brasioxirin@gmail.com',
         facebookPageId: process.env.DOTT_MAIN_FACEBOOK_PAGE_ID ?? process.env.FACEBOOK_PAGE_ID ?? '1120716914467835',
-        instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '1861959871343966',
+        instagramAccountId: process.env.DOTT_MAIN_INSTAGRAM_BUSINESS_ID ?? process.env.INSTAGRAM_BUSINESS_ID ?? '17841448754415534',
         threadsAccountId: '28808899498698518',
         linkedinAuthorUrn: 'urn:li:person:VQV6WSzWDf',
         facebookTokenEnv: ['DOTT_MAIN_FACEBOOK_PAGE_TOKEN', 'DOTT_MAIN_FACEBOOK_ACCESS_TOKEN', 'FACEBOOK_PAGE_TOKEN'],
@@ -574,6 +571,31 @@ const mergeSocialAccountsPreservingTokens = (base, overlay) => {
     });
     return base;
 };
+const mergeSocialAccountsPreferOverlay = (base, overlay) => {
+    if (!overlay)
+        return base;
+    Object.entries(overlay).forEach(([platform, account]) => {
+        if (!account || typeof account !== 'object')
+            return;
+        const current = base[platform];
+        const mergedAccount = {
+            ...(current ?? {}),
+        };
+        Object.entries(account).forEach(([key, value]) => {
+            if (typeof value === 'string') {
+                const trimmed = value.trim();
+                if (trimmed)
+                    mergedAccount[key] = trimmed;
+                return;
+            }
+            if (value !== null && value !== undefined) {
+                mergedAccount[key] = value;
+            }
+        });
+        base[platform] = mergedAccount;
+    });
+    return base;
+};
 const fetchSupabaseSocialProfile = async (userId) => {
     try {
         const fallback = await supabaseFallbackService.getSocialAccounts(userId);
@@ -590,6 +612,22 @@ const fetchSupabaseSocialProfile = async (userId) => {
         return null;
     }
 };
+const fetchSupabaseSocialProfileByIdentifiers = async (userIds, emails) => {
+    try {
+        const fallback = await supabaseFallbackService.getSocialAccountsByIdentifiers(userIds, emails.filter((value) => typeof value === 'string'));
+        if (!fallback)
+            return null;
+        return {
+            id: fallback.userId ?? userIds.find(Boolean),
+            email: fallback.email ?? null,
+            socialAccounts: fallback.socialAccounts,
+        };
+    }
+    catch (error) {
+        console.warn('[socialLive] supabase social account identifier fetch failed', { userIds, emails, error });
+        return null;
+    }
+};
 const resolveLiveMetricOwners = async (userId, scope) => {
     const rawScopeId = scope?.scopeId?.trim();
     const rawEmail = scope?.email?.trim();
@@ -600,9 +638,6 @@ const resolveLiveMetricOwners = async (userId, scope) => {
     const addProfile = (profile) => {
         if (!profile)
             return;
-        if (isKnownLiveSocialProfile(profile)) {
-            accountLevelMetaOnly = true;
-        }
         const profileId = profile.id?.trim();
         if (profileId && profilesById.has(profileId)) {
             const existing = profilesById.get(profileId);
@@ -796,7 +831,9 @@ const fetchFacebookPageMetric = async (facebookAccount, cutoffMs) => {
     if (!pageId || !accessToken)
         return { views: 0, interactions: 0 };
     const until = Math.floor(Date.now() / 1000);
-    const since = Math.max(Math.floor(cutoffMs / 1000), until - (30 * 24 * 60 * 60 - 1));
+    const isCurrentDayWindow = Date.now() - cutoffMs <= 26 * 60 * 60 * 1000;
+    const queryCutoffMs = isCurrentDayWindow ? cutoffMs - 24 * 60 * 60 * 1000 : cutoffMs;
+    const since = Math.max(Math.floor(queryCutoffMs / 1000), until - (30 * 24 * 60 * 60 - 1));
     try {
         const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/insights`, {
             params: {
@@ -809,9 +846,20 @@ const fetchFacebookPageMetric = async (facebookAccount, cutoffMs) => {
             timeout: 30000,
         });
         const rows = Array.isArray(response.data?.data) ? response.data.data : [];
-        const metricTotal = (metric) => rows
-            .find((row) => row?.name === metric)
-            ?.values?.reduce((acc, entry) => acc + toNumber(entry?.value), 0) ?? 0;
+        const metricTotal = (metric) => {
+            const values = rows.find((row) => row?.name === metric)?.values ?? [];
+            if (isCurrentDayWindow) {
+                const latestCompleted = [...values]
+                    .filter((entry) => {
+                    const endMs = Date.parse(String(entry?.end_time ?? ''));
+                    return Number.isFinite(endMs) && endMs <= Date.now();
+                })
+                    .sort((a, b) => Date.parse(String(a?.end_time ?? '')) - Date.parse(String(b?.end_time ?? '')))
+                    .at(-1);
+                return toNumber(latestCompleted?.value);
+            }
+            return values.reduce((acc, entry) => acc + toNumber(entry?.value), 0);
+        };
         return {
             views: metricTotal('page_views_total'),
             interactions: metricTotal('page_total_actions'),
@@ -899,27 +947,41 @@ const fetchInstagramMetric = async (mediaId, accessToken) => {
             const comments = Number(basic.data?.comments_count ?? 0);
             let views = 0;
             let interactions = likes + comments;
-            try {
-                const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
-                    params: {
-                        metric: 'views,reach,saved,shares,total_interactions',
-                        access_token: accessToken,
-                    },
-                    timeout: 30000,
-                });
-                const rows = Array.isArray(insights.data?.data) ? insights.data.data : [];
-                views =
-                    parseInsightArrayValue(rows, 'views') ||
-                        parseInsightArrayValue(rows, 'reach');
-                interactions =
-                    parseInsightArrayValue(rows, 'total_interactions') ||
-                        likes +
-                            comments +
-                            parseInsightArrayValue(rows, 'saved') +
-                            parseInsightArrayValue(rows, 'shares');
-            }
-            catch {
-                // Optional insights can fail if scope is not available.
+            const insightMetricGroups = [
+                'views,reach,saved,shares,total_interactions',
+                'views,reach,total_interactions',
+                'plays,reach,saved,shares,total_interactions',
+                'impressions,reach,engagement',
+            ];
+            for (const metric of insightMetricGroups) {
+                try {
+                    const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
+                        params: {
+                            metric,
+                            access_token: accessToken,
+                        },
+                        timeout: 30000,
+                    });
+                    const rows = Array.isArray(insights.data?.data) ? insights.data.data : [];
+                    views =
+                        parseInsightArrayValue(rows, 'views') ||
+                            parseInsightArrayValue(rows, 'plays') ||
+                            parseInsightArrayValue(rows, 'impressions') ||
+                            parseInsightArrayValue(rows, 'reach') ||
+                            views;
+                    interactions =
+                        parseInsightArrayValue(rows, 'total_interactions') ||
+                            parseInsightArrayValue(rows, 'engagement') ||
+                            likes +
+                                comments +
+                                parseInsightArrayValue(rows, 'saved') +
+                                parseInsightArrayValue(rows, 'shares');
+                    if (views > 0 || interactions > likes + comments)
+                        break;
+                }
+                catch {
+                    // Try the next metric group because Meta availability varies by media type.
+                }
             }
             return { views, interactions };
         }
@@ -1109,15 +1171,54 @@ const fetchLinkedInMetric = async (shareUrn, accessToken) => {
         }
     });
 };
+const fetchLinkedInCreatorAnalytics = async (accessToken, cutoffMs) => {
+    if (!accessToken)
+        return null;
+    const start = new Date(cutoffMs);
+    const end = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const datePart = (value) => `(day:${value.getUTCDate()},month:${value.getUTCMonth() + 1},year:${value.getUTCFullYear()})`;
+    const dateRange = `(start:${datePart(start)},end:${datePart(end)})`;
+    const headers = {
+        Authorization: `Bearer ${accessToken}`,
+        'LinkedIn-Version': process.env.LINKEDIN_API_VERSION?.trim() || '202607',
+        'X-Restli-Protocol-Version': '2.0.0',
+    };
+    const fetchMetric = async (queryType) => {
+        const response = await axios.get('https://api.linkedin.com/rest/memberCreatorPostAnalytics', {
+            headers,
+            params: {
+                q: 'me',
+                queryType,
+                aggregation: 'TOTAL',
+                dateRange,
+            },
+            timeout: 30000,
+        });
+        const elements = Array.isArray(response.data?.elements) ? response.data.elements : [];
+        return elements.reduce((total, element) => total + toNumber(element?.count), 0);
+    };
+    try {
+        const [impressions, reactions, comments, reshares] = await Promise.all([
+            fetchMetric('IMPRESSION'),
+            fetchMetric('REACTION'),
+            fetchMetric('COMMENT'),
+            fetchMetric('RESHARE'),
+        ]);
+        return {
+            views: impressions,
+            interactions: reactions + comments + reshares,
+        };
+    }
+    catch (error) {
+        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        console.warn('[socialLive] LinkedIn creator analytics unavailable; using social-action fallback', {
+            status,
+            error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+    }
+};
 const applyPostedActivityFallback = (metric) => {
-    if (!metric.connected && metric.postsAnalyzed <= 0)
-        return;
-    if (metric.views <= 0 && metric.postsAnalyzed > 0) {
-        metric.views = metric.postsAnalyzed;
-    }
-    if (metric.interactions <= 0 && metric.postsAnalyzed > 0) {
-        metric.interactions = metric.postsAnalyzed;
-    }
     metric.engagementRate = formatRate(metric.interactions, metric.views);
 };
 const fetchOwnXTimelineMetrics = async (credentials) => {
@@ -1157,7 +1258,7 @@ export async function getLiveSocialMetrics(userId, options) {
     const cacheKey = `${userId}:${scopeKey}:${lookbackHours}`;
     const now = Date.now();
     const cached = liveMetricsCache.get(cacheKey);
-    if (cached && cached.expiresAt > now) {
+    if (!options?.forceRefresh && cached && cached.expiresAt > now) {
         return cached.data;
     }
     const cutoffMs = Date.now() - lookbackHours * 60 * 60 * 1000;
@@ -1260,6 +1361,10 @@ export async function getLiveSocialMetrics(userId, options) {
             resolveKnownLiveSocialProfile(userData?.email);
         if (knownRuntimeProfile?.socialAccounts) {
             mergeSocialAccountsPreservingTokens(accounts, knownRuntimeProfile.socialAccounts);
+        }
+        const storedRuntimeProfile = await fetchSupabaseSocialProfileByIdentifiers(Array.from(new Set([userId, options?.scope?.scopeId, primaryOwnerId, userData?.id].filter(Boolean))), [options?.scope?.email, userData?.email, knownRuntimeProfile?.email]);
+        if (storedRuntimeProfile?.socialAccounts) {
+            mergeSocialAccountsPreferOverlay(accounts, storedRuntimeProfile.socialAccounts);
         }
         if ([userId, options?.scope?.scopeId, primaryOwnerId].includes(SHECARE_USER_ID)) {
             const shecareMetaToken = process.env.SHECARE_INSTAGRAM_ACCESS_TOKEN?.trim() ||
@@ -1404,9 +1509,13 @@ export async function getLiveSocialMetrics(userId, options) {
             output.platforms.threads.engagementRate = formatRate(output.platforms.threads.interactions, output.platforms.threads.views);
         }
         if (accounts.linkedin?.accessToken && linkedinIds.length > 0) {
-            const rows = await Promise.all(linkedinIds.map(id => fetchLinkedInMetric(id, accounts.linkedin?.accessToken ?? '')));
-            output.platforms.linkedin.views = sum(rows.map(row => row.views));
-            output.platforms.linkedin.interactions = sum(rows.map(row => row.interactions));
+            const creatorAnalytics = await fetchLinkedInCreatorAnalytics(accounts.linkedin.accessToken, cutoffMs);
+            const rows = await Promise.all(creatorAnalytics
+                ? []
+                : linkedinIds.map(id => fetchLinkedInMetric(id, accounts.linkedin?.accessToken ?? '')));
+            output.platforms.linkedin.views = creatorAnalytics?.views ?? sum(rows.map(row => row.views));
+            output.platforms.linkedin.interactions =
+                creatorAnalytics?.interactions ?? sum(rows.map(row => row.interactions));
             output.platforms.linkedin.engagementRate = formatRate(output.platforms.linkedin.interactions, output.platforms.linkedin.views);
         }
         const twitterCredential = getTwitterCredential(accounts);
@@ -1415,6 +1524,13 @@ export async function getLiveSocialMetrics(userId, options) {
             output.platforms.x.views = sum(rows.map(row => row.views));
             output.platforms.x.interactions = sum(rows.map(row => row.interactions));
             output.platforms.x.engagementRate = formatRate(output.platforms.x.interactions, output.platforms.x.views);
+        }
+        else if (twitterCredential) {
+            const timelineStats = await fetchOwnXTimelineMetrics(twitterCredential);
+            output.platforms.x.views = timelineStats.views;
+            output.platforms.x.interactions = timelineStats.interactions;
+            output.platforms.x.postsAnalyzed = Math.max(output.platforms.x.postsAnalyzed, timelineStats.postsAnalyzed);
+            output.platforms.x.engagementRate = formatRate(timelineStats.interactions, timelineStats.views);
         }
         output.platforms.facebook.conversions = toNumber(sourceRedirectClicks.facebook);
         output.platforms.instagram.conversions = toNumber(sourceRedirectClicks.instagram);

@@ -43,9 +43,52 @@ export const saveGeneratedVideoFile = async (sourcePath, extension = 'mp4') => {
     return buildPublicUrl('videos', filename);
 };
 const normalizeExtension = (extension, fallback) => extension.replace(/^\./, '').trim() || fallback;
+const mediaContentType = (type, extension) => {
+    const ext = extension.toLowerCase();
+    if (type === 'videos') {
+        if (ext === 'mov')
+            return 'video/quicktime';
+        if (ext === 'webm')
+            return 'video/webm';
+        if (ext === 'mkv')
+            return 'video/x-matroska';
+        return 'video/mp4';
+    }
+    if (ext === 'jpg' || ext === 'jpeg')
+        return 'image/jpeg';
+    if (ext === 'webp')
+        return 'image/webp';
+    return 'image/png';
+};
+const saveUploadedMediaToSupabase = async (buffer, type, filename, extension) => {
+    const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/$/, '');
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !serviceKey)
+        return null;
+    const bucket = process.env.SUPABASE_MEDIA_BUCKET?.trim() || 'dott-campaign';
+    const objectPath = `app-uploads/${type}/${filename}`;
+    const response = await fetch(`${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath}`, {
+        method: 'POST',
+        headers: {
+            apikey: serviceKey,
+            Authorization: `Bearer ${serviceKey}`,
+            'Content-Type': mediaContentType(type, extension),
+            'x-upsert': 'false',
+        },
+        body: buffer,
+    });
+    if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(`Persistent media upload failed (${response.status})${detail ? `: ${detail}` : ''}`);
+    }
+    return `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(bucket)}/${objectPath}`;
+};
 export const saveUploadedMediaBuffer = async (buffer, type, extension) => {
     const safeExtension = normalizeExtension(extension, type === 'images' ? 'png' : 'mp4');
     const filename = `${crypto.randomUUID()}.${safeExtension}`;
+    const persistentUrl = await saveUploadedMediaToSupabase(buffer, type, filename, safeExtension);
+    if (persistentUrl)
+        return persistentUrl;
     const dir = ensureDir(type);
     const filePath = path.join(dir, filename);
     await fs.promises.writeFile(filePath, buffer);

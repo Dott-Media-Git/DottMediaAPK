@@ -2,11 +2,15 @@ import { Router } from 'express';
 import { z } from 'zod';
 import axios from 'axios';
 import createHttpError from 'http-errors';
+import admin from 'firebase-admin';
 import { config } from '../config.js';
-import { requireFirebase } from '../middleware/firebaseAuth.js';
+import { requireFirebase, requireFirebaseForm } from '../middleware/firebaseAuth.js';
 import { createSignedState, verifySignedState } from '../utils/oauthState.js';
 import { disconnectTikTok, getTikTokIntegration, revealTikTokRefreshToken, upsertTikTokIntegration, } from '../services/socialIntegrationService.js';
 import { firestore } from '../db/firestore.js';
+import { consumeUsage, resolveBillingScope } from '../services/billing/billingService.js';
+import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect.js';
+import { supabaseFallbackService } from '../services/supabaseFallbackService.js';
 const router = Router();
 const CALLBACK_PATH = '/integrations/tiktok/callback';
 const normalizeBaseUrl = (value) => value.replace(/\/+$/, '');
@@ -22,9 +26,54 @@ const getBaseUrl = (req) => {
 };
 const computeRedirectUri = (req) => `${getBaseUrl(req)}${CALLBACK_PATH}`;
 const computeConnectUrl = (req) => `${getBaseUrl(req)}/integrations/tiktok/connect`;
+const ensureTikTokAutopostPlatform = async (userId) => {
+    const fallbackJob = await supabaseFallbackService.getAutopostJob(userId).catch(() => null);
+    if (fallbackJob) {
+        const platforms = Array.from(new Set([
+            ...(Array.isArray(fallbackJob.platforms) ? fallbackJob.platforms.map(value => String(value)) : []),
+            'tiktok',
+        ]));
+        const currentNextRun = Date.parse(String(fallbackJob.nextRun ?? ''));
+        await supabaseFallbackService.upsertAutopostJob(userId, {
+            ...fallbackJob,
+            active: true,
+            platforms,
+            nextRun: Number.isFinite(currentNextRun) && currentNextRun > Date.now()
+                ? fallbackJob.nextRun
+                : new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        });
+    }
+    await firestore
+        .collection('autopostJobs')
+        .doc(userId)
+        .set({
+        active: true,
+        platforms: admin.firestore.FieldValue.arrayUnion('tiktok'),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true })
+        .catch(error => {
+        console.warn('[tiktok] Firestore autopost merge failed; Supabase schedule remains active', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    });
+};
 const getScopes = () => {
     const raw = process.env.TIKTOK_SCOPES?.trim();
     return raw ? raw.split(',').map(scope => scope.trim()).filter(Boolean) : ['user.info.basic', 'video.upload', 'video.publish'];
+};
+const splitScopes = (value) => String(value ?? '')
+    .split(/[,\s]+/)
+    .map(scope => scope.trim())
+    .filter(Boolean);
+const assertRequiredScopes = (required, value) => {
+    const granted = new Set(splitScopes(value));
+    if (granted.size === 0)
+        return;
+    const missing = required.filter(scope => !granted.has(scope));
+    if (missing.length) {
+        throw new Error(`Missing required TikTok permissions: ${missing.join(', ')}`);
+    }
 };
 const ensureTikTokClientConfig = (req) => {
     const clientKey = config.tiktok.clientKey;
@@ -35,9 +84,14 @@ const ensureTikTokClientConfig = (req) => {
     }
     return { clientKey, clientSecret, redirectUri, scopes: getScopes() };
 };
-const buildOAuthUrl = (req, userId) => {
+const buildOAuthUrl = (req, userId, orgId, email, returnUrl) => {
     const { clientKey, redirectUri, scopes } = ensureTikTokClientConfig(req);
-    const state = createSignedState(userId);
+    const state = createSignedState(userId, {
+        platform: 'tiktok',
+        orgId: orgId || undefined,
+        email: email || undefined,
+        returnUrl: sanitizeOAuthReturnUrl(returnUrl),
+    });
     const oauthUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
     oauthUrl.searchParams.set('client_key', clientKey);
     oauthUrl.searchParams.set('redirect_uri', redirectUri);
@@ -69,7 +123,8 @@ const requireOrgAdminIfPresent = async (req, _res, next) => {
     }
 };
 const adminGate = [requireFirebase, requireOrgAdminIfPresent];
-router.get('/integrations/tiktok/config', ...adminGate, async (req, res, next) => {
+const userGate = [requireFirebase];
+router.get('/integrations/tiktok/config', ...userGate, async (req, res, next) => {
     try {
         const computedRedirectUri = computeRedirectUri(req);
         const configuredRedirectUri = config.tiktok.redirectUri || '';
@@ -89,7 +144,7 @@ router.get('/integrations/tiktok/config', ...adminGate, async (req, res, next) =
         next(error);
     }
 });
-router.get('/integrations/tiktok/status', ...adminGate, async (req, res, next) => {
+router.get('/integrations/tiktok/status', ...userGate, async (req, res, next) => {
     try {
         const userId = req.authUser?.uid;
         if (!userId)
@@ -101,24 +156,38 @@ router.get('/integrations/tiktok/status', ...adminGate, async (req, res, next) =
         next(error);
     }
 });
-router.get('/integrations/tiktok/connect', ...adminGate, async (req, res, next) => {
+router.get('/integrations/tiktok/connect', ...userGate, async (req, res, next) => {
     try {
-        const userId = req.authUser?.uid;
+        const authUser = req.authUser;
+        const userId = authUser?.uid;
         if (!userId)
             throw createHttpError(401, 'Unauthorized');
-        const oauthUrl = buildOAuthUrl(req, userId);
+        const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl);
         res.redirect(oauthUrl);
     }
     catch (error) {
         next(error);
     }
 });
-router.get('/integrations/tiktok/connect-url', ...adminGate, async (req, res, next) => {
+router.post('/integrations/tiktok/start', requireFirebaseForm, async (req, res, next) => {
     try {
-        const userId = req.authUser?.uid;
+        const authUser = req.authUser;
+        if (!authUser?.uid)
+            throw createHttpError(401, 'Unauthorized');
+        const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
+        res.redirect(303, buildOAuthUrl(req, authUser.uid, orgId, authUser.email, req.body?.returnUrl));
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.get('/integrations/tiktok/connect-url', ...userGate, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        const userId = authUser?.uid;
         if (!userId)
             throw createHttpError(401, 'Unauthorized');
-        const oauthUrl = buildOAuthUrl(req, userId);
+        const oauthUrl = buildOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl);
         res.json({ url: oauthUrl });
     }
     catch (error) {
@@ -128,9 +197,26 @@ router.get('/integrations/tiktok/connect-url', ...adminGate, async (req, res, ne
 router.get('/integrations/tiktok/callback', async (req, res) => {
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     const stateParam = typeof req.query.state === 'string' ? req.query.state : '';
+    const oauthError = typeof req.query.error === 'string' ? req.query.error : '';
+    const oauthErrorDescription = typeof req.query.error_description === 'string' ? req.query.error_description : '';
+    const oauthLogId = typeof req.query.log_id === 'string' ? req.query.log_id : '';
     const state = verifySignedState(stateParam);
-    if (!code || !state) {
-        res.status(400).send(renderCallbackHtml('TikTok connection failed', 'Invalid OAuth state or missing code.'));
+    if (oauthError) {
+        const detail = oauthErrorDescription || oauthError;
+        const supportId = oauthLogId ? ` TikTok reference: ${oauthLogId}.` : '';
+        res.status(400).send(renderCallbackHtml('TikTok connection failed', `${detail}.${supportId}`));
+        return;
+    }
+    if (!state) {
+        res
+            .status(400)
+            .send(renderCallbackHtml('TikTok connection failed', 'The secure OAuth session expired. Return to Dott Media and tap Connect TikTok again.'));
+        return;
+    }
+    if (!code) {
+        res
+            .status(400)
+            .send(renderCallbackHtml('TikTok connection failed', 'TikTok did not return an authorization code. Confirm this account is a target user for the app sandbox, then retry.'));
         return;
     }
     let tokenResponse;
@@ -164,6 +250,19 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
         return;
     }
     try {
+        assertRequiredScopes(getScopes(), scope);
+    }
+    catch (error) {
+        res.status(400).send(renderCallbackHtml('TikTok connection failed', error.message));
+        return;
+    }
+    try {
+        const existing = await getTikTokIntegration(state.userId).catch(() => null);
+        if (!existing?.connected) {
+            const userSnap = await firestore.collection('users').doc(state.userId).get().catch(() => null);
+            const userData = userSnap?.exists ? userSnap.data() : {};
+            await consumeUsage(resolveBillingScope(state.userId, typeof state.orgId === 'string' ? state.orgId : undefined, typeof state.email === 'string' ? state.email : typeof userData?.email === 'string' ? userData.email : undefined), 'connectedSocials', 1);
+        }
         await upsertTikTokIntegration(state.userId, {
             accessToken,
             refreshToken,
@@ -173,15 +272,16 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
             scope,
             revealToken: true,
         });
+        await ensureTikTokAutopostPlatform(state.userId);
     }
     catch (error) {
         console.error('[tiktok] failed to store integration', error);
         res.status(500).send(renderCallbackHtml('TikTok connection failed', 'Unable to store access token.'));
         return;
     }
-    res.status(200).send(renderCallbackHtml('TikTok connected', 'You can close this window and return to Dott Media.'));
+    res.redirect(303, oauthSuccessRedirect('tiktok', state.returnUrl));
 });
-router.post('/integrations/tiktok/token', ...adminGate, async (req, res, next) => {
+router.post('/integrations/tiktok/token', ...userGate, async (req, res, next) => {
     try {
         const payload = z
             .object({
@@ -205,13 +305,14 @@ router.post('/integrations/tiktok/token', ...adminGate, async (req, res, next) =
             scope: payload.scope,
             revealToken: true,
         });
+        await ensureTikTokAutopostPlatform(userId);
         res.json({ ok: true });
     }
     catch (error) {
         next(error);
     }
 });
-router.post('/integrations/tiktok/reveal', ...adminGate, async (req, res, next) => {
+router.post('/integrations/tiktok/reveal', ...userGate, async (req, res, next) => {
     try {
         const userId = req.authUser?.uid;
         if (!userId)
@@ -223,7 +324,7 @@ router.post('/integrations/tiktok/reveal', ...adminGate, async (req, res, next) 
         next(error);
     }
 });
-router.post('/integrations/tiktok/disconnect', ...adminGate, async (req, res, next) => {
+router.post('/integrations/tiktok/disconnect', ...userGate, async (req, res, next) => {
     try {
         const userId = req.authUser?.uid;
         if (!userId)

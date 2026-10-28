@@ -5,6 +5,10 @@ import { validateBwinSportsContent } from '../../services/bwinContentGuard.js';
 import { getBwinAccountClosureMessage, getBwinAccountClosureState, isBwinAccountClosureActive, } from '../../services/bwinAccountClosureService.js';
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const socialLimitsCollection = firestore.collection('socialLimits');
+const withFirestoreDeadline = (promise, label, timeoutMs = 8000) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs)),
+]);
 export class SocialSchedulingService {
     async schedulePosts(payload) {
         if (!payload.platforms.length)
@@ -39,6 +43,8 @@ export class SocialSchedulingService {
         const hasImagePlatform = payload.platforms.some(platform => {
             if (platform === 'youtube' || platform === 'tiktok' || platform === 'instagram_reels')
                 return false;
+            if (platform === 'whatsapp')
+                return false;
             if (videoCapable.has(platform) && payload.videoUrl)
                 return false;
             return true;
@@ -63,22 +69,38 @@ export class SocialSchedulingService {
         if (Number.isNaN(scheduledDate.getTime()))
             throw new Error('Invalid scheduledFor date');
         const targetDate = scheduledDate.toISOString().slice(0, 10);
-        const existingSnap = await scheduledPostsCollection
-            .where('userId', '==', payload.userId)
-            .where('targetDate', '==', targetDate)
-            .get();
-        const existingCount = existingSnap.size;
-        const limitDoc = await socialLimitsCollection.doc(`${payload.userId}_${targetDate}`).get();
-        const postedCount = limitDoc.data()?.postedCount ?? 0;
+        const limitKey = `${payload.userId}_${targetDate}`;
+        let existingCount;
+        let postedCount;
+        try {
+            const [posts, limit] = await Promise.all([
+                supabaseFallbackService.getPostsByUser(payload.userId, 500),
+                supabaseFallbackService.getSocialLimit(limitKey),
+            ]);
+            existingCount = posts.filter(post => post.targetDate === targetDate && String(post.status ?? 'pending') === 'pending').length;
+            postedCount = limit?.postedCount ?? 0;
+        }
+        catch (error) {
+            console.warn('[social-schedule] Supabase primary lookup failed; using Firebase fallback', error);
+            const [existingSnap, limitDoc] = await withFirestoreDeadline(Promise.all([
+                scheduledPostsCollection
+                    .where('userId', '==', payload.userId)
+                    .where('targetDate', '==', targetDate)
+                    .get(),
+                socialLimitsCollection.doc(limitKey).get(),
+            ]), 'Firebase schedule fallback lookup');
+            existingCount = existingSnap.docs.filter(doc => String(doc.data()?.status ?? 'pending') === 'pending').length;
+            postedCount = limitDoc.data()?.postedCount ?? 0;
+        }
         const maxPerDay = 5;
         if (existingCount >= maxPerDay) {
-            return { scheduled: [], trimmed: true, reason: 'limit_reached' };
+            return { scheduled: [], postIds: [], trimmed: true, reason: 'limit_reached' };
         }
         const requestedTotal = payload.platforms.length * timesPerDay;
         const remaining = Math.max(0, maxPerDay - existingCount - postedCount);
         const totalToSchedule = Math.min(requestedTotal, remaining);
         if (totalToSchedule <= 0) {
-            return { scheduled: [], trimmed: true, reason: 'limit_reached', remaining };
+            return { scheduled: [], postIds: [], trimmed: true, reason: 'limit_reached', remaining };
         }
         const slotCount = Math.max(1, Math.ceil(totalToSchedule / payload.platforms.length));
         const timeSlots = buildTimeSlots(scheduledDate, slotCount);
@@ -128,6 +150,7 @@ export class SocialSchedulingService {
                 createdAt,
                 postedAt: null,
                 errorMessage: undefined,
+                billingUsageConsumed: Boolean(payload.billingUsageConsumed),
             };
         });
         docsToCreate.forEach(doc => {
@@ -165,39 +188,28 @@ export class SocialSchedulingService {
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
                 postedAt: null,
                 errorMessage: null,
+                billingUsageConsumed: Boolean(payload.billingUsageConsumed),
             });
         });
-        batch.set(socialLimitsCollection.doc(`${payload.userId}_${targetDate}`), {
+        batch.set(socialLimitsCollection.doc(limitKey), {
             userId: payload.userId,
             date: targetDate,
             scheduledCount: admin.firestore.FieldValue.increment(docsToCreate.length),
         }, { merge: true });
-        let firestoreError = null;
-        try {
-            await batch.commit();
-        }
-        catch (error) {
-            firestoreError = error;
-            console.warn('[social-schedule] firestore schedule write failed; attempting Supabase fallback', error);
-        }
-        let supabaseError = null;
         try {
             await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
             await supabaseFallbackService.incrementSocialLimit({
-                key: `${payload.userId}_${targetDate}`,
+                key: limitKey,
                 userId: payload.userId,
                 date: targetDate,
                 scheduledCount: docsToCreate.length,
             });
         }
         catch (error) {
-            supabaseError = error;
-            console.warn('[social-schedule] supabase schedule mirror failed', error);
+            console.warn('[social-schedule] Supabase primary write failed; using Firebase fallback', error);
+            await withFirestoreDeadline(batch.commit(), 'Firebase schedule fallback write');
         }
-        if (firestoreError && supabaseError) {
-            throw firestoreError;
-        }
-        return { scheduled: docsToCreate.length, trimmed: docsToCreate.length < requestedTotal, remaining: remaining - docsToCreate.length };
+        return { scheduled: docsToCreate.length, postIds: docsToCreate.map(doc => doc.id), trimmed: docsToCreate.length < requestedTotal, remaining: remaining - docsToCreate.length };
     }
 }
 export const socialSchedulingService = new SocialSchedulingService();

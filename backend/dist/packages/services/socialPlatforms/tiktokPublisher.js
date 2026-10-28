@@ -22,7 +22,7 @@ const tikTokApi = async (accessToken, path, payload) => {
     return body;
 };
 const chooseChunkSize = (size) => {
-    if (size <= MIN_CHUNK_BYTES)
+    if (size <= MAX_CHUNK_BYTES)
         return size;
     return Math.min(Math.max(DEFAULT_CHUNK_BYTES, MIN_CHUNK_BYTES), MAX_CHUNK_BYTES);
 };
@@ -48,12 +48,35 @@ const shouldFallbackToFileUpload = (error) => {
     return code === 'url_ownership_unverified' || code === 'video_pull_failed' || message.includes('url');
 };
 const pickPrivacyLevel = (creatorInfo) => {
-    const options = Array.isArray(creatorInfo?.privacy_level_options) ? creatorInfo?.privacy_level_options : [];
-    if (options.includes('SELF_ONLY'))
-        return 'SELF_ONLY';
-    if (options.length)
-        return options[0];
-    return 'SELF_ONLY';
+    const options = Array.isArray(creatorInfo?.privacy_level_options) ? creatorInfo.privacy_level_options : [];
+    const preferred = ['PUBLIC_TO_EVERYONE', 'FOLLOWER_OF_CREATOR', 'MUTUAL_FOLLOW_FRIENDS', 'SELF_ONLY'];
+    return preferred.find(level => options.includes(level)) || options[0] || 'SELF_ONLY';
+};
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const waitForPublishCompletion = async (accessToken, publishId) => {
+    const attempts = 18;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        const statusRes = await tikTokApi(accessToken, '/v2/post/publish/status/fetch/', { publish_id: publishId });
+        const status = String(statusRes?.data?.status || '').trim();
+        const failReason = String(statusRes?.data?.fail_reason || '').trim();
+        const publicPostIds = Array.isArray(statusRes?.data?.publicly_available_post_id)
+            ? statusRes.data.publicly_available_post_id.map(String).filter(Boolean)
+            : [];
+        console.info('[tiktok] publish status', {
+            publishId,
+            status: status || null,
+            failReason: failReason || null,
+            publicPostIds,
+            attempt,
+        });
+        if (status === 'PUBLISH_COMPLETE')
+            return { status, publicPostIds };
+        if (status === 'FAILED')
+            throw new Error(`TikTok publish failed: ${failReason || 'unknown failure'}`);
+        if (attempt < attempts)
+            await wait(5000);
+    }
+    throw new Error('TikTok publish is still processing after 90 seconds; completion was not confirmed');
 };
 const uploadFileChunks = async (uploadUrl, buffer, mimeType, chunkSize) => {
     const total = buffer.length;
@@ -88,8 +111,13 @@ export async function publishToTikTok(input) {
     const caption = toCaption(input.caption);
     const creatorInfoRes = await tikTokApi(accessToken, '/v2/post/publish/creator_info/query/', {});
     const creatorInfo = creatorInfoRes.data ?? {};
+    const privacyLevel = pickPrivacyLevel(creatorInfo);
+    console.info('[tiktok] selected creator privacy', {
+        privacyLevel,
+        availableOptions: creatorInfo.privacy_level_options ?? [],
+    });
     const postInfo = {
-        privacy_level: pickPrivacyLevel(creatorInfo),
+        privacy_level: privacyLevel,
         disable_comment: Boolean(creatorInfo.comment_disabled),
         disable_duet: Boolean(creatorInfo.duet_disabled),
         disable_stitch: Boolean(creatorInfo.stitch_disabled),
@@ -146,20 +174,7 @@ export async function publishToTikTok(input) {
         const mimeType = String(download.headers?.['content-type'] || 'video/mp4').split(';')[0].trim() || 'video/mp4';
         await uploadFileChunks(uploadUrl, buffer, mimeType, chunkSize);
     }
-    try {
-        const statusRes = await tikTokApi(accessToken, '/v2/post/publish/status/fetch/', { publish_id: publishId });
-        const status = String(statusRes?.data?.status || '').trim();
-        const failReason = String(statusRes?.data?.fail_reason || '').trim();
-        if (status) {
-            console.info('[tiktok] publish status', { publishId, status, failReason: failReason || null });
-        }
-    }
-    catch (error) {
-        console.warn('[tiktok] status fetch failed', {
-            publishId,
-            code: parseTikTokCode(error) || null,
-            message: parseTikTokMessage(error),
-        });
-    }
-    return { remoteId: publishId };
+    const completion = await waitForPublishCompletion(accessToken, publishId);
+    const publicPostId = completion.publicPostIds[0];
+    return { remoteId: publicPostId || publishId };
 }

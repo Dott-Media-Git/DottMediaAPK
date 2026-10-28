@@ -5,6 +5,12 @@ import { firestore } from '../db/firestore.js';
 import { renderStoryImage } from '../services/storyImageService.js';
 import { renderLeagueTableImage } from '../services/tableImageService.js';
 const router = Router();
+// Client campaign media is bundled with the backend so social providers can
+// fetch the original product images from a stable public URL.
+const auxWellnessMediaDir = path.resolve('./public/fallback-images/auxwellness');
+if (fs.existsSync(auxWellnessMediaDir)) {
+    router.use('/public/client-media/auxwellness', express.static(auxWellnessMediaDir));
+}
 const helpDir = process.env.HELP_DOCS_DIR?.trim() || './public/help';
 if (helpDir) {
     const resolved = path.resolve(helpDir);
@@ -117,11 +123,11 @@ router.get('/public/table-image/:id', async (req, res) => {
             league: data?.league ?? 'League Table',
             rows: rows.slice(0, 8),
             source: data?.source ?? 'Live standings',
-            cta: data?.cta ?? 'More football updates in bio',
+            cta: data?.cta ?? 'www.bwinbetug.info',
             updatedAt: data?.updatedAt ?? new Date().toISOString(),
         });
         res.set({
-            'Content-Type': 'image/jpeg',
+            'Content-Type': 'image/png',
             'Cache-Control': 'public, max-age=900',
         });
         res.end(buffer);

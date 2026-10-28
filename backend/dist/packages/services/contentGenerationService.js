@@ -4,6 +4,7 @@ import { config } from '../../config.js';
 import { saveGeneratedImageBuffer, saveGeneratedVideoFile } from '../../services/generatedMediaService.js';
 import { generateSoraVideoFile } from '../../services/soraVideoService.js';
 import { cleanupTempFile } from '../../services/videoUrlService.js';
+import { consumeUsageBatch, resolveBillingScope } from '../../services/billing/billingService.js';
 const DEFAULT_OUTPUT = {
     images: [],
     caption_instagram: '',
@@ -21,6 +22,13 @@ export class ContentGenerationService {
     async generateContent(params) {
         const result = { ...DEFAULT_OUTPUT };
         const imageCount = Math.min(Math.max(params.imageCount ?? 2, 1), 4);
+        if (params.userId && !params.billingAlreadyConsumed) {
+            await consumeUsageBatch(resolveBillingScope(params.userId, params.orgId), [
+                { resource: 'aiReplies', amount: 1 },
+                { resource: 'images', amount: imageCount },
+                ...(params.generateVideo ? [{ resource: 'basicVideos', amount: 1 }] : []),
+            ]);
+        }
         const [images, captions, videoUrl] = await Promise.all([
             this.generateImages(params, imageCount),
             this.generateCaptions(params),

@@ -87,7 +87,7 @@ async function hasPostedMatchday(leagueId, date) {
     return Array.isArray(response.data) && response.data.length > 0;
 }
 function buildCaption(leagueLabel) {
-    return `${leagueLabel} matchday results are in.`;
+    return `${leagueLabel} matchday results are in.\n\nMore football updates: www.bwinbetug.info\nPlace bets: https://bwinbetug.com`;
 }
 export async function scheduleMatchdayTables({ date, startAt, spacingHours, }) {
     const schedules = [];
@@ -148,7 +148,7 @@ export async function scheduleMatchdayTables({ date, startAt, spacingHours, }) {
                 status: 'pending',
                 targetDate: schedule.date,
                 caption: buildCaption(schedule.leagueLabel),
-                hashtags: 'MatchdayResults, Football, Soccer, FootballResults',
+                hashtags: 'BwinbetUganda, MatchdayResults, Football, Soccer, BettingTips',
                 imageUrls: [schedule.imageUrl],
                 scheduledFor: new Date(cursor),
                 createdAt: new Date(),

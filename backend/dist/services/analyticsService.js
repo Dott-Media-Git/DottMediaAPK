@@ -2,6 +2,7 @@ import admin from 'firebase-admin';
 import { firebaseApp, firestore } from '../db/firestore.js';
 import { resolveAnalyticsScopeKey } from './analyticsScope.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
+import { canUseOutboundPipeline } from '../utils/socialAccess.js';
 const RatingWeights = {
     active: 1,
     queued: 0.6,
@@ -40,6 +41,7 @@ const buildScopeCandidates = (scope) => {
     }
     return candidates;
 };
+const supabasePrimary = (process.env.PRIMARY_DATA_STORE ?? 'supabase').toLowerCase() === 'supabase';
 const activityHeatmapScore = (rows) => rows.reduce((acc, row) => acc +
     Number(row.views ?? 0) +
     Number(row.interactions ?? 0) +
@@ -65,6 +67,97 @@ const mergeActivityHeatmapRow = (target, date, incoming) => {
     existing.conversions = Math.max(existing.conversions, Number(incoming.conversions ?? 0));
     existing.redirectClicks = Math.max(Number(existing.redirectClicks ?? 0), Number(incoming.redirectClicks ?? 0));
     target.set(date, existing);
+};
+const buildDateRange = (limitValue) => {
+    const dates = [];
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (limitValue - 1));
+    for (let index = 0; index < limitValue; index += 1) {
+        const date = new Date(start);
+        date.setDate(start.getDate() + index);
+        dates.push(date.toISOString().slice(0, 10));
+    }
+    return dates;
+};
+const analyticsDateKey = (date = new Date()) => {
+    const timeZone = process.env.ANALYTICS_TIME_ZONE?.trim() || 'Africa/Kampala';
+    try {
+        const parts = new Intl.DateTimeFormat('en-CA', {
+            timeZone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        }).formatToParts(date);
+        const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
+        return `${value.year}-${value.month}-${value.day}`;
+    }
+    catch {
+        return date.toISOString().slice(0, 10);
+    }
+};
+export async function recordLiveSocialHeatmapSnapshot(scope, counters) {
+    const date = analyticsDateKey();
+    const rows = buildScopeCandidates(scope).map(candidate => ({
+        scopeKey: resolveAnalyticsScopeKey(candidate),
+        userId: candidate.userId ?? scope.userId ?? null,
+        metric: 'liveSocialSnapshot',
+        date,
+        counters: {
+            views: Math.max(Number(counters.views ?? 0), 0),
+            interactions: Math.max(Number(counters.interactions ?? 0), 0),
+            outbound: Math.max(Number(counters.outbound ?? 0), 0),
+            conversions: Math.max(Number(counters.conversions ?? 0), 0),
+        },
+    }));
+    await supabaseFallbackService.upsertMetricDailyRows(rows);
+}
+const readActivityHeatmapSocialLogs = async (scope, limitValue, minDate) => {
+    const candidateIds = Array.from(new Set([scope?.scopeId, scope?.userId].map(value => String(value ?? '').trim()).filter(Boolean))).filter(value => value !== 'global');
+    if (!candidateIds.length)
+        return [];
+    const byDate = new Map();
+    const minMs = minDate ? Date.parse(`${minDate}T00:00:00.000Z`) : 0;
+    await Promise.all(candidateIds.map(async (userId) => {
+        try {
+            const logs = await supabaseFallbackService.getSocialLogsByUser(userId, 500);
+            logs.forEach(log => {
+                if (String(log.status ?? '').toLowerCase() !== 'posted')
+                    return;
+                const postedMs = (() => {
+                    const postedAt = log.postedAt;
+                    if (!postedAt)
+                        return 0;
+                    if (typeof postedAt === 'string')
+                        return Date.parse(postedAt);
+                    if (typeof postedAt?.toMillis === 'function')
+                        return postedAt.toMillis();
+                    if (typeof postedAt?.seconds === 'number')
+                        return postedAt.seconds * 1000;
+                    if (typeof postedAt?._seconds === 'number')
+                        return postedAt._seconds * 1000;
+                    return 0;
+                })();
+                if (!Number.isFinite(postedMs) || postedMs < minMs)
+                    return;
+                const date = new Date(postedMs).toISOString().slice(0, 10);
+                mergeActivityHeatmapRow(byDate, date, {
+                    views: 1,
+                    interactions: 1,
+                    outbound: 1,
+                });
+            });
+        }
+        catch (error) {
+            console.warn('Supabase activity heatmap social log fetch failed', {
+                userId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }));
+    return Array.from(byDate.values())
+        .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
+        .slice(-limitValue);
 };
 const readActivityHeatmapScope = async (scope, limitValue) => {
     const [webTrafficSnap, outboundSnap, engagementSnap, dailySnap] = await Promise.all([
@@ -112,11 +205,12 @@ const readActivityHeatmapScope = async (scope, limitValue) => {
 };
 const readActivityHeatmapSupabaseScope = async (scope, limitValue, minDate) => {
     const byDate = new Map();
-    const [webTrafficRows, outboundRows, engagementRows, dashboardRows] = await Promise.all([
+    const [webTrafficRows, outboundRows, engagementRows, dashboardRows, liveSocialRows] = await Promise.all([
         supabaseFallbackService.getMetricDailyRows('webTraffic', scope, limitValue, minDate),
         supabaseFallbackService.getMetricDailyRows('outbound', scope, limitValue, minDate),
         supabaseFallbackService.getMetricDailyRows('engagement', scope, limitValue, minDate),
         supabaseFallbackService.getMetricDailyRows('dashboardDaily', scope, limitValue, minDate),
+        supabaseFallbackService.getMetricDailyRows('liveSocialSnapshot', scope, limitValue, minDate),
     ]);
     webTrafficRows.forEach(row => {
         mergeActivityHeatmapRow(byDate, row.date, {
@@ -147,6 +241,14 @@ const readActivityHeatmapSupabaseScope = async (scope, limitValue, minDate) => {
             conversions: Math.round(Number(row.counters?.conversions ?? 0) / samples),
         });
     });
+    liveSocialRows.forEach(row => {
+        mergeActivityHeatmapRow(byDate, row.date, {
+            views: Number(row.counters?.views ?? 0),
+            interactions: Number(row.counters?.interactions ?? 0),
+            outbound: Number(row.counters?.outbound ?? 0),
+            conversions: Number(row.counters?.conversions ?? 0),
+        });
+    });
     return Array.from(byDate.values())
         .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
         .slice(-limitValue);
@@ -165,22 +267,67 @@ export async function getActivityHeatmap(scope, days = 14) {
         console.warn('Firestore activity heatmap fetch failed', error);
     }
     try {
-        const supabaseRows = await Promise.all(buildScopeCandidates(scope).map(candidate => readActivityHeatmapSupabaseScope(candidate, limitValue, minDate)));
+        const candidates = buildScopeCandidates(scope);
+        const [supabaseRows, liveSocialRows] = await Promise.all([
+            Promise.all(candidates.map(candidate => readActivityHeatmapSupabaseScope(candidate, limitValue, minDate))),
+            Promise.all(candidates.map(candidate => supabaseFallbackService.getMetricDailyRows('liveSocialSnapshot', candidate, limitValue, minDate))),
+        ]);
         supabaseRows.forEach(rows => {
             rows.forEach(row => mergeActivityHeatmapRow(merged, row.date, row));
+        });
+        // A live-social snapshot is a verified point-in-time daily total. Make it
+        // authoritative for social views/interactions so stale Firestore rolling
+        // totals cannot win merely because they are numerically larger.
+        liveSocialRows.forEach(rows => {
+            rows.forEach(row => {
+                const existing = merged.get(row.date);
+                if (!existing)
+                    return;
+                existing.views = Math.max(Number(row.counters?.views ?? 0), 0);
+                existing.interactions = Math.max(Number(row.counters?.interactions ?? 0), 0);
+                merged.set(row.date, existing);
+            });
         });
     }
     catch (error) {
         console.warn('Supabase activity heatmap fetch failed', error);
     }
+    try {
+        const socialLogRows = await Promise.all(buildScopeCandidates(scope).map(candidate => readActivityHeatmapSocialLogs(candidate, limitValue, minDate)));
+        socialLogRows.forEach(rows => {
+            rows.forEach(row => mergeActivityHeatmapRow(merged, row.date, row));
+        });
+    }
+    catch (error) {
+        console.warn('Supabase activity heatmap social log merge failed', error);
+    }
+    buildDateRange(limitValue).forEach(date => {
+        mergeActivityHeatmapRow(merged, date, {});
+    });
     const rows = Array.from(merged.values())
         .sort((a, b) => `${a.date}`.localeCompare(`${b.date}`))
         .slice(-limitValue);
-    return activityHeatmapScore(rows) > 0 ? rows : [];
+    return rows;
 }
 async function readSummaryWithFallback(summaryDocFactory, scope, positiveKeys, supabaseMetric) {
     const candidates = buildScopeCandidates(scope);
     let firstSeen = null;
+    if (supabasePrimary && supabaseMetric) {
+        for (const candidate of candidates) {
+            try {
+                const primary = (await supabaseFallbackService.getMetricSummary(supabaseMetric, candidate));
+                if (!primary)
+                    continue;
+                if (!firstSeen)
+                    firstSeen = primary;
+                if (hasPositiveMetric(primary, positiveKeys))
+                    return primary;
+            }
+            catch (error) {
+                console.warn(`[analytics] supabase primary summary fetch failed for ${supabaseMetric}`, error);
+            }
+        }
+    }
     for (const candidate of candidates) {
         try {
             const snap = await summaryDocFactory(candidate).get();
@@ -197,7 +344,7 @@ async function readSummaryWithFallback(summaryDocFactory, scope, positiveKeys, s
             console.warn('[analytics] firestore summary fetch failed', error);
         }
     }
-    if (supabaseMetric) {
+    if (supabaseMetric && !supabasePrimary) {
         for (const candidate of candidates) {
             try {
                 const fallback = (await supabaseFallbackService.getMetricSummary(supabaseMetric, candidate));
@@ -573,6 +720,17 @@ function sanitizeIndustryKey(industry) {
         .slice(0, 50);
 }
 export async function getOutboundStats(scope) {
+    if (!canUseOutboundPipeline(undefined, scope?.userId ?? null)) {
+        return {
+            prospectsContacted: 0,
+            responders: 0,
+            replies: 0,
+            positiveReplies: 0,
+            conversions: 0,
+            demoBookings: 0,
+            conversionRate: 0,
+        };
+    }
     if (useMockAnalytics) {
         return {
             prospectsContacted: 1250,
@@ -1070,6 +1228,37 @@ export async function getWebTrafficStats(scope) {
                 sourcePlacementRedirectClicks: result.sourcePlacementRedirectClicks,
             });
             return result;
+        }
+        if (supabasePrimary) {
+            try {
+                const fallbackRows = await supabaseFallbackService.getMetricDailyRows('dashboardDaily', { userId }, 14);
+                const history = fallbackRows.map(row => {
+                    const counters = row.counters;
+                    const samples = Number(counters.samples ?? 1) || 1;
+                    return {
+                        date: row.date,
+                        leads: Math.round(Number(counters.leads ?? 0) / samples),
+                        engagement: Math.round(Number(counters.engagement ?? 0) / samples),
+                        conversions: Math.round(Number(counters.conversions ?? 0) / samples),
+                        feedbackScore: Number(((Number(counters.feedbackScore ?? 0) / samples) || 0).toFixed(1)),
+                    };
+                }).reverse();
+                if (history.length) {
+                    const divisor = history.length;
+                    return {
+                        leads: Math.round(history.reduce((sum, day) => sum + day.leads, 0) / divisor),
+                        engagement: Math.round(history.reduce((sum, day) => sum + day.engagement, 0) / divisor),
+                        conversions: Math.round(history.reduce((sum, day) => sum + day.conversions, 0) / divisor),
+                        feedbackScore: Math.min(5, Number((history.reduce((sum, day) => sum + day.feedbackScore, 0) / divisor).toFixed(1))),
+                        jobBreakdown: { active: 0, queued: 0, failed: 0 },
+                        recentJobs: [],
+                        history,
+                    };
+                }
+            }
+            catch (error) {
+                console.warn('[analytics] Supabase primary dashboard summary failed; trying Firebase fallback', error);
+            }
         }
         try {
             const fallbackSummary = (await supabaseFallbackService.getMetricSummary('webTraffic', scope));

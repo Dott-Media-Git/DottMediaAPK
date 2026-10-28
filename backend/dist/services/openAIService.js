@@ -49,7 +49,8 @@ const buildSystemPrompt = (context) => {
 export class OpenAIService {
     constructor() {
         this.client = new OpenAI({
-            apiKey: config.openAI.apiKey,
+            apiKey: config.assistantAI.apiKey,
+            baseURL: config.assistantAI.baseURL,
             timeout: OPENAI_REPLY_TIMEOUT_MS,
         });
     }
@@ -58,7 +59,7 @@ export class OpenAIService {
         const fallback = pickFallbackReply({ channel: context.platform, kind: 'message' });
         try {
             const completion = await this.client.chat.completions.create({
-                model: 'gpt-4o-mini',
+                model: config.assistantAI.model,
                 temperature: 0.35,
                 max_tokens: 320,
                 messages: [
@@ -76,7 +77,7 @@ export class OpenAIService {
             };
         }
         catch (error) {
-            console.error('OpenAI completion failed', error);
+            console.error(`${config.assistantAI.provider} completion failed`, error);
             return {
                 reply: fallback,
                 responseType: detectResponseType(fallback),

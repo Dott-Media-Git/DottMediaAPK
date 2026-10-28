@@ -1,10 +1,18 @@
 import admin from 'firebase-admin';
+import axios from 'axios';
+import https from 'https';
 import { firestore } from '../../db/firestore.js';
 import { resolveAnalyticsScopeKey } from '../analyticsScope.js';
+import { supabaseFallbackService } from '../supabaseFallbackService.js';
+import { normalizePlanId, planCatalog } from '../billing/planCatalog.js';
 const usersCollection = firestore.collection('users');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const notificationsCollection = firestore.collection('notifications');
 const integrationsCollection = firestore.collection('socialIntegrations');
+const ADMIN_LIVE_META_CLIENT_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_META_CLIENT_TIMEOUT_MS ?? 5000);
+const ADMIN_LIVE_META_TOTAL_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_META_TOTAL_TIMEOUT_MS ?? 7000);
+const knownClientIds = () => KNOWN_CONNECTED_CLIENTS.map(client => client.userId).filter(Boolean);
+const adminSocialDailyUserIds = () => ['cMPZQccGggbhZe9dbvtxFmBehP02', ...knownClientIds()];
 const toMillis = (value) => {
     if (!value)
         return 0;
@@ -33,38 +41,368 @@ const isMissingIndexError = (error) => {
     const message = `${err?.message ?? ''} ${err?.details ?? ''}`.toLowerCase();
     return err?.code === 9 && message.includes('index');
 };
-const buildDateRange = (days) => {
+const buildDateRange = (days, endDate = new Date()) => {
     const result = [];
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    start.setDate(start.getDate() - (days - 1));
+    const start = new Date(endDate.getTime());
+    start.setUTCHours(0, 0, 0, 0);
+    start.setUTCDate(start.getUTCDate() - (days - 1));
     for (let i = 0; i < days; i += 1) {
         const date = new Date(start.getTime());
-        date.setDate(start.getDate() + i);
+        date.setUTCDate(start.getUTCDate() + i);
         result.push(date.toISOString().slice(0, 10));
     }
     return result;
 };
-export async function getAdminMetrics() {
+const timeout = (promise, ms, label) => Promise.race([
+    promise,
+    new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+]);
+const hasConnectedAccount = (account) => Boolean(account?.accessToken || account?.accountId || account?.pageId || account?.urn || account?.phoneId || account?.token);
+const fetchAuthUserMetadata = async () => {
+    const byUid = new Map();
+    let pageToken;
+    do {
+        const page = await admin.auth().listUsers(1000, pageToken);
+        page.users.forEach(user => {
+            byUid.set(user.uid, {
+                createdAt: user.metadata.creationTime,
+                lastLoginAt: user.metadata.lastSignInTime,
+                email: user.email,
+                name: user.displayName,
+            });
+        });
+        pageToken = page.pageToken;
+    } while (pageToken);
+    return byUid;
+};
+const fetchSummaryDoc = async (scopeKey, docId) => {
+    try {
+        const snap = await firestore.collection('analytics').doc(scopeKey).collection('summaries').doc(docId).get();
+        return snap.data() ?? {};
+    }
+    catch {
+        return {};
+    }
+};
+const aggregateAnalyticsSummaries = async (scopeKeys) => {
+    const uniqueKeys = Array.from(new Set(scopeKeys.map(key => key.trim()).filter(Boolean)));
+    const rows = await Promise.all(uniqueKeys.map(async (scopeKey) => {
+        const [engagement, outbound] = await Promise.all([
+            fetchSummaryDoc(scopeKey, 'engagement'),
+            fetchSummaryDoc(scopeKey, 'outbound'),
+        ]);
+        return { engagement, outbound };
+    }));
+    return rows.reduce((acc, row) => {
+        acc.aiResponsesSent += Number(row.engagement.repliesSent ?? row.engagement.replies ?? 0);
+        acc.outboundMessages += Number(row.outbound.messagesSent ?? row.outbound.prospectsFound ?? row.outbound.prospectsContacted ?? 0);
+        acc.leadConversions += Number(row.outbound.conversions ?? 0) + Number(row.engagement.conversions ?? 0);
+        return acc;
+    }, { aiResponsesSent: 0, outboundMessages: 0, leadConversions: 0 });
+};
+const KNOWN_CONNECTED_CLIENTS = [
+    {
+        name: 'Bwin / Ball Analytics',
+        userId: process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53',
+        email: 'ball_analytics',
+        socialAccounts: {
+            facebook: { pageId: process.env.BWIN_FACEBOOK_PAGE_ID || '' },
+            instagram: { accountId: process.env.BWIN_INSTAGRAM_ACCOUNT_ID || '' },
+        },
+    },
+    {
+        name: 'SheCare Doctor',
+        userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
+        email: 'shecaredoctor@gmail.com',
+        socialAccounts: {
+            facebook: { pageId: '1114686181730831' },
+            instagram: { accountId: '17841437471047291' },
+        },
+    },
+    {
+        name: 'Dott HR',
+        userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
+        email: 'kingbrasio100@gmail.com',
+        socialAccounts: {
+            facebook: { pageId: '1158550557346330' },
+            instagram: { accountId: '17841426388091930' },
+        },
+    },
+    {
+        name: 'Dott Energy',
+        userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
+        socialAccounts: {
+            facebook: { pageId: '1165009866702868' },
+        },
+    },
+    {
+        name: 'Car Marketplace',
+        userId: 'acmVetCcOiTHeGk5D7eDYieamDF3',
+        socialAccounts: {
+            facebook: { pageId: '1191892417341226' },
+            instagram: { accountId: '17841414110816982' },
+        },
+    },
+    {
+        name: 'Staysphere',
+        userId: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
+        socialAccounts: {
+            facebook: { pageId: '1254924081027995' },
+            instagram: { accountId: '17841448080672466' },
+        },
+    },
+    {
+        name: 'Gamers 4 Life',
+        userId: 'vzdH1DnfFLVjlY8bBgC26WACmmw2',
+        socialAccounts: {
+            facebook: { pageId: '1121885391014110' },
+            instagram: { accountId: '17841412643148539' },
+        },
+    },
+];
+const knownClientLookup = new Map(KNOWN_CONNECTED_CLIENTS.map(client => [
+    client.userId,
+    {
+        email: client.email,
+        name: client.name,
+    },
+]));
+const normalizeAutopostPlatform = (platform) => {
+    const raw = String(platform ?? '').trim().toLowerCase();
+    if (raw === 'instagram_reels')
+        return 'instagram';
+    if (raw === 'twitter')
+        return 'x';
+    return raw;
+};
+const mergeDailyCountersIntoSuccessRate = async (autopostSuccessRate, weekDates) => {
+    const weekSet = new Set(weekDates);
+    const rows = (await Promise.all(adminSocialDailyUserIds().map(userId => supabaseFallbackService.getSocialDailySummary(userId, 14).catch(() => [])))).flat();
+    rows
+        .filter(row => weekSet.has(row.date))
+        .forEach(row => {
+        Object.entries(row.perPlatform ?? {}).forEach(([rawPlatform, rawCount]) => {
+            const platform = normalizeAutopostPlatform(rawPlatform);
+            const entry = autopostSuccessRate[platform];
+            if (!entry)
+                return;
+            const posted = Math.max(entry.posted, Number(rawCount ?? 0));
+            const attempted = Math.max(entry.attempted, posted + entry.failed);
+            autopostSuccessRate[platform] = {
+                posted,
+                failed: entry.failed,
+                attempted,
+                rate: attempted ? Number((posted / attempted).toFixed(2)) : 0,
+            };
+        });
+    });
+};
+const planNameLookup = new Map(planCatalog.map(plan => [plan.id, plan.name]));
+const resolveClientPlanId = (client) => {
+    const explicitPlan = client.planId ?? client.plan ?? client.packageId ?? client.package;
+    if (explicitPlan)
+        return normalizePlanId(explicitPlan);
+    const status = String(client.subscriptionStatus ?? '').trim().toLowerCase();
+    return status === 'active' || status === 'trialing' ? 'creator' : 'free';
+};
+const buildClientPackageMetrics = (rawClients, activeUserIds, growthDates) => {
+    const deduped = new Map();
+    rawClients.forEach(client => {
+        const userId = String(client.userId || '').trim();
+        if (!userId)
+            return;
+        const existing = deduped.get(userId);
+        const packageId = resolveClientPlanId(client);
+        const next = {
+            userId,
+            email: client.email ?? existing?.email ?? knownClientLookup.get(userId)?.email ?? null,
+            name: client.name ?? existing?.name ?? knownClientLookup.get(userId)?.name ?? null,
+            packageId,
+            packageName: planNameLookup.get(packageId) ?? packageId,
+            subscriptionStatus: typeof client.subscriptionStatus === 'string'
+                ? client.subscriptionStatus
+                : existing?.subscriptionStatus ?? null,
+            createdAt: toIso(client.createdAt) || existing?.createdAt || null,
+            lastActiveAt: toIso(client.lastActiveAt) || existing?.lastActiveAt || null,
+        };
+        deduped.set(userId, next);
+    });
+    const clients = Array.from(deduped.values()).sort((a, b) => {
+        const aTime = toMillis(a.createdAt);
+        const bTime = toMillis(b.createdAt);
+        return bTime - aTime || String(a.email ?? a.name ?? a.userId).localeCompare(String(b.email ?? b.name ?? b.userId));
+    });
+    const activeClients = clients
+        .filter(client => activeUserIds.has(client.userId))
+        .sort((a, b) => toMillis(b.lastActiveAt) - toMillis(a.lastActiveAt));
+    const packageBreakdown = planCatalog.map(plan => ({
+        packageId: plan.id,
+        packageName: plan.name,
+        total: clients.filter(client => client.packageId === plan.id).length,
+        active: activeClients.filter(client => client.packageId === plan.id).length,
+    }));
+    const firstGrowthDate = growthDates[0] ?? new Date().toISOString().slice(0, 10);
+    const packageGrowth = growthDates.map(date => {
+        const dayEnd = Date.parse(`${date}T23:59:59.999Z`);
+        const row = { date };
+        planCatalog.forEach(plan => {
+            row[plan.id] = clients.filter(client => {
+                const createdAtMs = toMillis(client.createdAt) || Date.parse(`${firstGrowthDate}T00:00:00.000Z`);
+                return client.packageId === plan.id && createdAtMs <= dayEnd;
+            }).length;
+        });
+        return row;
+    });
+    return { clients, activeClients, packageBreakdown, packageGrowth };
+};
+const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
+const allowInsecureMetaTls = process.env.ALLOW_INSECURE_META_TLS === 'true' ||
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0' ||
+    (process.env.NODE_ENV !== 'production' && process.env.ALLOW_INSECURE_META_TLS !== 'false');
+const metaHttpsAgent = allowInsecureMetaTls ? new https.Agent({ rejectUnauthorized: false }) : undefined;
+const rootMetaToken = () => (process.env.META_GRAPH_TOKEN ??
+    process.env.CLIENT_META_USER_TOKEN ??
+    process.env.INSTAGRAM_ACCESS_TOKEN ??
+    process.env.FACEBOOK_PAGE_TOKEN ??
+    '').trim();
+const fetchMetaRowsForClient = async (client, weekStartMs) => {
+    const token = rootMetaToken();
+    if (!token)
+        return [];
+    const rows = [];
+    const instagramId = String(client.socialAccounts.instagram?.accountId ?? '').trim();
+    const pageId = String(client.socialAccounts.facebook?.pageId ?? '').trim();
+    if (instagramId) {
+        try {
+            const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${instagramId}/media`, {
+                ...(metaHttpsAgent ? { httpsAgent: metaHttpsAgent } : {}),
+                params: {
+                    fields: 'id,timestamp,media_type',
+                    limit: 30,
+                    access_token: token,
+                },
+                timeout: 12000,
+            });
+            const media = response.data?.data ?? [];
+            media.forEach(item => {
+                const timestamp = toMillis(item.timestamp);
+                if (!item.id || timestamp < weekStartMs)
+                    return;
+                rows.push({
+                    id: `instagram_${item.id}`,
+                    userId: client.userId,
+                    platform: 'instagram',
+                    status: 'posted',
+                    source: 'meta_live',
+                    timestamp,
+                });
+            });
+        }
+        catch (error) {
+            console.warn('[admin-metrics] live Instagram metrics failed', {
+                userId: client.userId,
+                error: error.message,
+            });
+        }
+    }
+    if (pageId) {
+        try {
+            const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/posts`, {
+                ...(metaHttpsAgent ? { httpsAgent: metaHttpsAgent } : {}),
+                params: {
+                    fields: 'id,created_time',
+                    limit: 30,
+                    access_token: token,
+                },
+                timeout: 12000,
+            });
+            const posts = response.data?.data ?? [];
+            posts.forEach(item => {
+                const timestamp = toMillis(item.created_time);
+                if (!item.id || timestamp < weekStartMs)
+                    return;
+                rows.push({
+                    id: `facebook_${item.id}`,
+                    userId: client.userId,
+                    platform: 'facebook',
+                    status: 'posted',
+                    source: 'meta_live',
+                    timestamp,
+                });
+            });
+        }
+        catch (error) {
+            console.warn('[admin-metrics] live Facebook metrics failed', {
+                userId: client.userId,
+                error: error.message,
+            });
+        }
+    }
+    return rows;
+};
+const fetchLiveMetaPostRows = async (weekStartMs) => {
+    const token = rootMetaToken();
+    if (!token)
+        return [];
+    const batches = await Promise.all(KNOWN_CONNECTED_CLIENTS.map(client => timeout(fetchMetaRowsForClient(client, weekStartMs), ADMIN_LIVE_META_CLIENT_TIMEOUT_MS, `live Meta metrics ${client.userId}`).catch(error => {
+        console.warn('[admin-metrics] live Meta client timeout', {
+            userId: client.userId,
+            error: error.message,
+        });
+        return [];
+    })));
+    return batches.flat();
+};
+async function getFirestoreAdminMetrics() {
     const now = new Date();
     const last24h = Date.now() - 24 * 60 * 60 * 1000;
-    const weekDates = buildDateRange(7);
+    let weekDates = buildDateRange(7);
     const weekStart = new Date();
     weekStart.setHours(0, 0, 0, 0);
     weekStart.setDate(weekStart.getDate() - 6);
     const weekStartTimestamp = admin.firestore.Timestamp.fromDate(weekStart);
-    const usersSnap = await usersCollection.get();
+    const [usersSnap, authMetadata, supabaseSocialRows] = await Promise.all([
+        usersCollection.get(),
+        fetchAuthUserMetadata().catch(error => {
+            console.warn('[admin-metrics] Firebase Auth metadata unavailable', error.message);
+            return new Map();
+        }),
+        supabaseFallbackService.getAllSocialAccounts(1000).catch(error => {
+            console.warn('[admin-metrics] Supabase social account lookup unavailable', error.message);
+            return [];
+        }),
+    ]);
     const users = usersSnap.docs.map(doc => {
         const data = doc.data();
+        const authData = authMetadata.get(doc.id) ?? authMetadata.get(data.uid ?? '');
         return {
             id: doc.id,
             uid: data.uid ?? doc.id,
-            email: data.email,
-            name: data.name,
+            email: data.email ?? authData?.email,
+            name: data.name ?? authData?.name,
             socialAccounts: (data.socialAccounts ?? {}),
-            createdAt: data.createdAt,
-            lastLoginAt: data.lastLoginAt,
+            planId: data.planId ?? data.plan ?? data.packageId ?? data.package,
+            subscriptionStatus: data.subscriptionStatus,
+            createdAt: data.createdAt ?? authData?.createdAt,
+            lastLoginAt: data.lastLoginAt ?? authData?.lastLoginAt,
         };
+    });
+    authMetadata.forEach((authData, uid) => {
+        if (users.some(user => user.uid === uid || user.id === uid))
+            return;
+        users.push({
+            id: uid,
+            uid,
+            email: authData.email,
+            name: authData.name,
+            socialAccounts: {},
+            planId: undefined,
+            subscriptionStatus: undefined,
+            createdAt: authData.createdAt,
+            lastLoginAt: authData.lastLoginAt,
+        });
     });
     const connectedPlatforms = {
         facebook: 0,
@@ -95,7 +433,7 @@ export async function getAdminMetrics() {
         const instagramConnected = Boolean(accounts.instagram?.accessToken && accounts.instagram?.accountId);
         const linkedinConnected = Boolean(accounts.linkedin?.accessToken && accounts.linkedin?.urn);
         const twitterConnected = Boolean(accounts.twitter?.accessToken && accounts.twitter?.accessSecret);
-        const whatsappConnected = Boolean(accounts.whatsapp?.accessToken || accounts.whatsapp?.token || accounts.whatsapp?.phoneId);
+        const whatsappConnected = Boolean(accounts.whatsapp?.accessToken || accounts.whatsapp?.token || accounts.whatsapp?.phoneNumberId || accounts.whatsapp?.phoneId);
         if (facebookConnected)
             connectedPlatforms.facebook += 1;
         if (instagramConnected)
@@ -111,19 +449,34 @@ export async function getAdminMetrics() {
         }
     });
     const integrationsSnap = await integrationsCollection.get();
+    const tiktokOwners = new Set();
+    const youtubeOwners = new Set();
     integrationsSnap.docs.forEach(doc => {
         const data = doc.data();
+        const ownerId = String(data.userId ?? doc.id).trim();
         if (data.provider === 'tiktok' && data.accessTokenEncrypted) {
-            connectedPlatforms.tiktok += 1;
-            if (data.userId)
-                connectedClients.add(data.userId);
+            if (ownerId)
+                tiktokOwners.add(ownerId);
         }
         if (data.provider === 'youtube' && data.refreshTokenEncrypted) {
-            connectedPlatforms.youtube += 1;
-            if (data.userId)
-                connectedClients.add(data.userId);
+            if (ownerId)
+                youtubeOwners.add(ownerId);
         }
     });
+    supabaseSocialRows.forEach(row => {
+        const ownerId = String(row.userId ?? '').trim();
+        if (!ownerId)
+            return;
+        const accounts = row.socialAccounts ?? {};
+        if (hasConnectedAccount(accounts.tiktok))
+            tiktokOwners.add(ownerId);
+        if (hasConnectedAccount(accounts.youtube))
+            youtubeOwners.add(ownerId);
+    });
+    connectedPlatforms.tiktok = tiktokOwners.size;
+    connectedPlatforms.youtube = youtubeOwners.size;
+    tiktokOwners.forEach(ownerId => connectedClients.add(ownerId));
+    youtubeOwners.forEach(ownerId => connectedClients.add(ownerId));
     let postsSnap;
     try {
         postsSnap = await scheduledPostsCollection.where('postedAt', '>=', weekStartTimestamp).get();
@@ -138,10 +491,59 @@ export async function getAdminMetrics() {
         ...doc.data(),
     }));
     const postedPosts = recentPosts.filter(post => post.status === 'posted');
+    const [liveMetaPostRows, socialLogRows, firestoreSocialLogsSnap] = await Promise.all([
+        timeout(fetchLiveMetaPostRows(weekStart.getTime()), ADMIN_LIVE_META_TOTAL_TIMEOUT_MS, 'admin live Meta posts').catch(error => {
+            console.warn('[admin-metrics] live Meta posts unavailable', error.message);
+            return [];
+        }),
+        timeout(supabaseFallbackService.getRecentSocialLogs(1000), 8000, 'admin social logs').catch(error => {
+            console.warn('[admin-metrics] social logs unavailable', error.message);
+            return [];
+        }),
+        firestore.collection('socialLogs').orderBy('postedAt', 'desc').limit(1000).get().catch(error => {
+            console.warn('[admin-metrics] Firestore social logs unavailable', error.message);
+            return null;
+        }),
+    ]);
+    const firestoreSocialLogRows = firestoreSocialLogsSnap?.docs.map(doc => {
+        const data = doc.data();
+        return {
+            id: String(data.responseId ?? data.scheduledPostId ?? doc.id),
+            userId: data.userId,
+            platform: String(data.platform ?? 'social'),
+            status: String(data.status ?? 'posted'),
+            source: 'social_log',
+            timestamp: toMillis(data.postedAt ?? data.createdAt),
+        };
+    }) ?? [];
     const weeklyCounts = new Map();
     weekDates.forEach(date => weeklyCounts.set(date, 0));
-    postedPosts.forEach(post => {
-        const dateKey = new Date(toMillis(post.postedAt || post.createdAt)).toISOString().slice(0, 10);
+    const postLikeRows = [
+        ...postedPosts.map(post => ({
+            id: post.id,
+            userId: post.userId,
+            platform: String(post.platform ?? 'social'),
+            status: String(post.status ?? 'posted'),
+            source: String(post.source ?? ''),
+            timestamp: toMillis(post.postedAt || post.createdAt),
+        })),
+        ...liveMetaPostRows,
+        ...firestoreSocialLogRows,
+        ...socialLogRows.map((log, index) => ({
+            id: String(log.responseId ?? log.scheduledPostId ?? `social-log-${index}`),
+            userId: log.userId,
+            platform: String(log.platform ?? 'social'),
+            status: String(log.status ?? 'posted'),
+            source: 'social_log',
+            timestamp: toMillis(log.postedAt),
+        })),
+    ];
+    const uniquePostLikeRows = Array.from(postLikeRows
+        .filter(row => row.status === 'posted' && row.timestamp >= weekStart.getTime())
+        .reduce((map, row) => map.set(row.id, row), new Map())
+        .values());
+    uniquePostLikeRows.forEach(post => {
+        const dateKey = new Date(post.timestamp).toISOString().slice(0, 10);
         if (weeklyCounts.has(dateKey)) {
             weeklyCounts.set(dateKey, (weeklyCounts.get(dateKey) ?? 0) + 1);
         }
@@ -151,13 +553,20 @@ export async function getAdminMetrics() {
         count: weeklyCounts.get(date) ?? 0,
     }));
     const userPostCounts = new Map();
-    postedPosts.forEach(post => {
+    uniquePostLikeRows.forEach(post => {
         const userId = post.userId;
         if (!userId)
             return;
         userPostCounts.set(userId, (userPostCounts.get(userId) ?? 0) + 1);
     });
     const userLookup = new Map(users.map(user => [user.uid, { email: user.email, name: user.name }]));
+    knownClientLookup.forEach((client, userId) => {
+        const existing = userLookup.get(userId);
+        userLookup.set(userId, {
+            email: existing?.email ?? client.email,
+            name: client.name ?? existing?.name,
+        });
+    });
     const topActiveAccounts = Array.from(userPostCounts.entries())
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5)
@@ -178,29 +587,49 @@ export async function getAdminMetrics() {
     }
     const autopostEntries = autopostSnap.docs
         .map(doc => doc.data())
-        .filter(entry => entry.source === 'autopost');
+        .filter(entry => {
+        const platform = normalizeAutopostPlatform(String(entry.platform ?? ''));
+        return ['instagram', 'instagram_story', 'facebook', 'facebook_story', 'linkedin'].includes(platform);
+    });
     const autopostPlatforms = ['instagram', 'instagram_story', 'facebook', 'facebook_story', 'linkedin'];
     const autopostSuccessRate = {};
     autopostPlatforms.forEach(platform => {
-        const relevant = autopostEntries.filter(entry => entry.platform === platform);
+        const relevant = autopostEntries.filter(entry => normalizeAutopostPlatform(String(entry.platform ?? '')) === platform);
         const posted = relevant.filter(entry => entry.status === 'posted').length;
         const failed = relevant.filter(entry => entry.status === 'failed' || entry.status === 'skipped_limit').length;
         const attempted = posted + failed;
         const rate = attempted ? Number((posted / attempted).toFixed(2)) : 0;
         autopostSuccessRate[platform] = { posted, failed, attempted, rate };
     });
-    const scopeKey = resolveAnalyticsScopeKey();
-    const summaries = firestore.collection('analytics').doc(scopeKey).collection('summaries');
-    const [engagementDoc, outboundDoc] = await Promise.all([
-        summaries.doc('engagement').get(),
-        summaries.doc('outbound').get(),
-    ]);
-    const engagement = engagementDoc.data() ?? {};
-    const outbound = outboundDoc.data() ?? {};
-    const aiResponsesSent = Number(engagement.repliesSent ?? engagement.replies ?? 0);
-    const outboundMessages = Number(outbound.messagesSent ?? outbound.prospectsFound ?? 0);
-    const leadConversions = Number(outbound.conversions ?? 0) + Number(engagement.conversions ?? 0);
+    await mergeDailyCountersIntoSuccessRate(autopostSuccessRate, weekDates);
+    const scopeKeys = [resolveAnalyticsScopeKey(), ...users.map(user => user.uid), ...knownClientIds()];
+    const summaryTotals = await aggregateAnalyticsSummaries(scopeKeys);
+    const aiResponsesSent = summaryTotals.aiResponsesSent;
+    const outboundMessages = summaryTotals.outboundMessages;
+    const leadConversions = summaryTotals.leadConversions;
     const totalAiMessages = outboundMessages + aiResponsesSent;
+    const [outboundRunsSnap, leadsSnap] = await Promise.all([
+        firestore.collection('logs').doc('outbound').collection('runs').limit(500).get().catch(() => null),
+        firestore.collection('leads').limit(1000).get().catch(() => null),
+    ]);
+    const crmCampaigns = outboundRunsSnap?.size ?? 0;
+    const leadCount = leadsSnap?.size ?? 0;
+    const imageGenerations = uniquePostLikeRows.filter(row => ['instagram', 'facebook', 'instagram_story', 'facebook_story'].includes(row.platform)).length;
+    const activeUserIds = new Set(users
+        .filter(user => toMillis(user.lastLoginAt) >= last24h)
+        .map(user => user.uid));
+    uniquePostLikeRows
+        .filter(row => row.userId && Date.now() - row.timestamp <= 24 * 60 * 60 * 1000)
+        .forEach(row => activeUserIds.add(row.userId));
+    const clientPackageMetrics = buildClientPackageMetrics(users.map(user => ({
+        userId: user.uid,
+        email: user.email,
+        name: user.name,
+        planId: user.planId,
+        subscriptionStatus: user.subscriptionStatus,
+        createdAt: user.createdAt,
+        lastActiveAt: user.lastLoginAt,
+    })), activeUserIds, weekDates);
     const liveLogins = users
         .map(user => ({
         id: `login_${user.uid}`,
@@ -211,12 +640,12 @@ export async function getAdminMetrics() {
         .filter(item => item.timestamp)
         .sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1))
         .slice(0, 8);
-    const livePosts = postedPosts
+    const livePosts = uniquePostLikeRows
         .map(post => ({
         id: `post_${post.id}`,
         type: 'post',
         label: `${post.platform ?? 'social'} post published`,
-        timestamp: toIso(post.postedAt),
+        timestamp: new Date(post.timestamp).toISOString(),
     }))
         .filter(item => item.timestamp)
         .sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1))
@@ -247,11 +676,15 @@ export async function getAdminMetrics() {
         .slice(0, 12);
     return {
         summary: {
-            totalClients: usersSnap.size,
-            activeSessions,
+            totalClients: users.length,
+            activeSessions: Math.max(activeSessions, clientPackageMetrics.activeClients.length),
             newSignupsThisWeek: weekDates.reduce((sum, date) => sum + (signupsByDay.get(date) ?? 0), 0),
             connectedClients: connectedClients.size,
         },
+        clients: clientPackageMetrics.clients,
+        activeClients: clientPackageMetrics.activeClients,
+        packageBreakdown: clientPackageMetrics.packageBreakdown,
+        packageGrowth: clientPackageMetrics.packageGrowth,
         signupsByDay: weekDates.map(date => ({ date, count: signupsByDay.get(date) ?? 0 })),
         connectedPlatforms,
         topActiveAccounts,
@@ -260,11 +693,277 @@ export async function getAdminMetrics() {
         aiResponsesSent,
         companyKpis: {
             totalAiMessages,
-            imageGenerations: 0,
-            crmCampaigns: 0,
+            imageGenerations,
+            crmCampaigns,
+            leadConversions: leadConversions || leadCount,
+        },
+        liveFeed,
+        updatedAt: now.toISOString(),
+    };
+}
+async function getSupabaseAdminMetrics() {
+    const now = new Date();
+    const last24h = Date.now() - 24 * 60 * 60 * 1000;
+    let weekDates = buildDateRange(7);
+    const weekStart = new Date();
+    weekStart.setHours(0, 0, 0, 0);
+    weekStart.setDate(weekStart.getDate() - 6);
+    const weekStartMs = weekStart.getTime();
+    const authMetadata = await fetchAuthUserMetadata().catch(error => {
+        console.warn('[admin-metrics] fallback Firebase Auth metadata unavailable', error.message);
+        return new Map();
+    });
+    const [socialRows, posts, socialLogs, engagement, outbound, fallbackIntegrationsSnap] = await Promise.all([
+        timeout(supabaseFallbackService.getAllSocialAccounts(1000), 12000, 'admin social accounts fallback').catch(() => []),
+        timeout(supabaseFallbackService.getRecentScheduledPosts(1000), 12000, 'admin scheduled posts fallback').catch(() => []),
+        timeout(supabaseFallbackService.getRecentSocialLogs(1000), 12000, 'admin social logs fallback').catch(() => []),
+        timeout(supabaseFallbackService.getMetricSummary('engagement'), 8000, 'admin engagement fallback').catch(() => null),
+        timeout(supabaseFallbackService.getMetricSummary('outbound'), 8000, 'admin outbound fallback').catch(() => null),
+        timeout(integrationsCollection.get(), 8000, 'admin integration fallback').catch(() => null),
+    ]);
+    const connectedPlatforms = {
+        facebook: 0,
+        instagram: 0,
+        linkedin: 0,
+        twitter: 0,
+        whatsapp: 0,
+        tiktok: 0,
+        youtube: 0,
+    };
+    const connectedClients = new Set();
+    const clientEmails = new Map();
+    const clientNames = new Map();
+    const signupsByDay = new Map();
+    weekDates.forEach(date => signupsByDay.set(date, 0));
+    let authActiveSessions = 0;
+    authMetadata.forEach((authData, uid) => {
+        if (toMillis(authData.lastLoginAt) >= last24h)
+            authActiveSessions += 1;
+        const createdAtMs = toMillis(authData.createdAt);
+        const dateKey = createdAtMs ? new Date(createdAtMs).toISOString().slice(0, 10) : '';
+        if (dateKey && signupsByDay.has(dateKey)) {
+            signupsByDay.set(dateKey, (signupsByDay.get(dateKey) ?? 0) + 1);
+        }
+        if (!clientEmails.has(uid) && authData.email)
+            clientEmails.set(uid, authData.email);
+        if (authData.name)
+            clientNames.set(uid, authData.name);
+    });
+    const accountRows = socialRows.length ? socialRows : KNOWN_CONNECTED_CLIENTS;
+    const tiktokOwners = new Set();
+    const youtubeOwners = new Set();
+    accountRows.forEach(row => {
+        if (!row.userId)
+            return;
+        clientEmails.set(row.userId, row.email ?? undefined);
+        if (row.name)
+            clientNames.set(row.userId, row.name);
+        const accounts = row.socialAccounts ?? {};
+        Object.entries(connectedPlatforms).forEach(([platform]) => {
+            if (hasConnectedAccount(accounts[platform])) {
+                connectedPlatforms[platform] += 1;
+                connectedClients.add(row.userId);
+                if (platform === 'tiktok')
+                    tiktokOwners.add(row.userId);
+                if (platform === 'youtube')
+                    youtubeOwners.add(row.userId);
+            }
+        });
+    });
+    fallbackIntegrationsSnap?.docs.forEach(doc => {
+        const data = doc.data();
+        const ownerId = String(data.userId ?? doc.id).trim();
+        if (!ownerId)
+            return;
+        if (data.provider === 'tiktok' && data.accessTokenEncrypted)
+            tiktokOwners.add(ownerId);
+        if (data.provider === 'youtube' && data.refreshTokenEncrypted)
+            youtubeOwners.add(ownerId);
+    });
+    connectedPlatforms.tiktok = tiktokOwners.size;
+    connectedPlatforms.youtube = youtubeOwners.size;
+    tiktokOwners.forEach(ownerId => connectedClients.add(ownerId));
+    youtubeOwners.forEach(ownerId => connectedClients.add(ownerId));
+    const allKnownClients = new Set(accountRows.map(row => row.userId).filter(Boolean));
+    posts.forEach(post => {
+        if (post.userId)
+            allKnownClients.add(post.userId);
+    });
+    socialLogs.forEach(log => {
+        if (log.userId)
+            allKnownClients.add(log.userId);
+    });
+    const postedPosts = posts.filter(post => {
+        const postedAt = toMillis(post.postedAt ?? post.createdAt);
+        return post.status === 'posted' && postedAt >= weekStartMs;
+    });
+    const recentLogs = socialLogs.filter(log => toMillis(log.postedAt) >= weekStartMs);
+    let postLikeRows = postedPosts.length
+        ? postedPosts.map(post => ({
+            id: post.id,
+            userId: post.userId,
+            platform: post.platform,
+            status: post.status,
+            source: post.source,
+            timestamp: toMillis(post.postedAt ?? post.createdAt),
+        }))
+        : recentLogs.map(log => ({
+            id: log.scheduledPostId,
+            userId: log.userId,
+            platform: log.platform,
+            status: log.status,
+            source: 'autopost',
+            timestamp: toMillis(log.postedAt),
+        }));
+    if (!postLikeRows.length) {
+        postLikeRows = await timeout(fetchLiveMetaPostRows(weekStartMs), ADMIN_LIVE_META_TOTAL_TIMEOUT_MS, 'admin live Meta fallback').catch(error => {
+            console.warn('[admin-metrics] live Meta fallback unavailable', error.message);
+            return [];
+        });
+    }
+    const latestPostMs = Math.max(0, ...postLikeRows.map(row => row.timestamp).filter(Boolean));
+    if (latestPostMs) {
+        const latestDateKey = new Date(latestPostMs).toISOString().slice(0, 10);
+        if (!weekDates.includes(latestDateKey)) {
+            weekDates = buildDateRange(7, new Date(latestPostMs));
+        }
+    }
+    const weeklyCounts = new Map();
+    weekDates.forEach(date => weeklyCounts.set(date, 0));
+    postLikeRows
+        .filter(row => row.status === 'posted')
+        .forEach(row => {
+        const dateKey = new Date(row.timestamp).toISOString().slice(0, 10);
+        if (weeklyCounts.has(dateKey)) {
+            weeklyCounts.set(dateKey, (weeklyCounts.get(dateKey) ?? 0) + 1);
+        }
+    });
+    const userPostCounts = new Map();
+    postLikeRows
+        .filter(row => row.status === 'posted')
+        .forEach(row => {
+        if (!row.userId)
+            return;
+        userPostCounts.set(row.userId, (userPostCounts.get(row.userId) ?? 0) + 1);
+    });
+    const topActiveAccounts = Array.from(userPostCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([userId, posts]) => ({
+        userId,
+        posts,
+        email: clientEmails.get(userId),
+        name: clientNames.get(userId) ?? knownClientLookup.get(userId)?.name,
+    }));
+    const autopostPlatforms = ['instagram', 'instagram_story', 'facebook', 'facebook_story', 'linkedin'];
+    const autopostSuccessRate = {};
+    autopostPlatforms.forEach(platform => {
+        const relevant = postLikeRows.filter(row => row.platform === platform);
+        const posted = relevant.filter(row => row.status === 'posted').length;
+        const failed = relevant.filter(row => row.status === 'failed' || row.status === 'skipped_limit').length;
+        const attempted = posted + failed;
+        autopostSuccessRate[platform] = {
+            posted,
+            failed,
+            attempted,
+            rate: attempted ? Number((posted / attempted).toFixed(2)) : 0,
+        };
+    });
+    await mergeDailyCountersIntoSuccessRate(autopostSuccessRate, weekDates);
+    const engagementCounters = (engagement ?? {});
+    const outboundCounters = (outbound ?? {});
+    const aiResponsesSent = Number(engagementCounters.repliesSent ?? engagementCounters.replies ?? 0);
+    const outboundMessages = Number(outboundCounters.messagesSent ?? outboundCounters.prospectsFound ?? 0);
+    const leadConversions = Number(outboundCounters.conversions ?? 0) + Number(engagementCounters.conversions ?? 0);
+    const totalAiMessages = outboundMessages + aiResponsesSent;
+    const imageGenerations = postLikeRows.filter(row => ['instagram', 'facebook', 'instagram_story', 'facebook_story'].includes(row.platform)).length;
+    const liveActiveClients = new Set(postLikeRows
+        .filter(row => row.userId && Date.now() - row.timestamp <= 24 * 60 * 60 * 1000)
+        .map(row => row.userId));
+    authMetadata.forEach((authData, uid) => {
+        if (toMillis(authData.lastLoginAt) >= last24h)
+            liveActiveClients.add(uid);
+    });
+    const fallbackClientRows = Array.from(allKnownClients).map(userId => {
+        const authData = authMetadata.get(userId);
+        const accountRow = accountRows.find(row => row.userId === userId);
+        return {
+            userId,
+            email: clientEmails.get(userId) ?? authData?.email ?? accountRow?.email ?? knownClientLookup.get(userId)?.email,
+            name: clientNames.get(userId) ?? authData?.name ?? accountRow?.name ?? knownClientLookup.get(userId)?.name,
+            planId: undefined,
+            subscriptionStatus: undefined,
+            createdAt: authData?.createdAt,
+            lastActiveAt: authData?.lastLoginAt,
+        };
+    });
+    authMetadata.forEach((authData, uid) => {
+        if (fallbackClientRows.some(row => row.userId === uid))
+            return;
+        fallbackClientRows.push({
+            userId: uid,
+            email: authData.email,
+            name: authData.name,
+            planId: undefined,
+            subscriptionStatus: undefined,
+            createdAt: authData.createdAt,
+            lastActiveAt: authData.lastLoginAt,
+        });
+    });
+    const clientPackageMetrics = buildClientPackageMetrics(fallbackClientRows, liveActiveClients, weekDates);
+    const liveFeed = postLikeRows
+        .filter(row => row.timestamp)
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 12)
+        .map(row => ({
+        id: `post_${row.id}`,
+        type: 'post',
+        label: `${row.platform ?? 'social'} ${row.status === 'posted' ? 'post published' : 'post attempted'}`,
+        timestamp: new Date(row.timestamp).toISOString(),
+    }));
+    return {
+        summary: {
+            totalClients: Math.max(clientPackageMetrics.clients.length, allKnownClients.size, authMetadata.size),
+            activeSessions: Math.max(clientPackageMetrics.activeClients.length, liveActiveClients.size, authActiveSessions),
+            newSignupsThisWeek: weekDates.reduce((sum, date) => sum + (signupsByDay.get(date) ?? 0), 0),
+            connectedClients: connectedClients.size,
+        },
+        clients: clientPackageMetrics.clients,
+        activeClients: clientPackageMetrics.activeClients,
+        packageBreakdown: clientPackageMetrics.packageBreakdown,
+        packageGrowth: clientPackageMetrics.packageGrowth,
+        signupsByDay: weekDates.map(date => ({ date, count: signupsByDay.get(date) ?? 0 })),
+        connectedPlatforms,
+        topActiveAccounts,
+        autopostSuccessRate,
+        weeklyPostVolume: weekDates.map(date => ({ date, count: weeklyCounts.get(date) ?? 0 })),
+        aiResponsesSent,
+        companyKpis: {
+            totalAiMessages,
+            imageGenerations,
+            crmCampaigns: socialLogs.length,
             leadConversions,
         },
         liveFeed,
         updatedAt: now.toISOString(),
     };
+}
+export async function getAdminMetrics() {
+    try {
+        const metrics = await timeout(getFirestoreAdminMetrics(), Number(process.env.ADMIN_METRICS_FIRESTORE_TIMEOUT_MS ?? 10000), 'admin Firestore metrics');
+        if ((metrics.summary.totalClients === 0 &&
+            metrics.summary.connectedClients === 0 &&
+            Object.values(metrics.connectedPlatforms).every(value => value === 0)) ||
+            (metrics.weeklyPostVolume.every(item => item.count === 0) &&
+                metrics.topActiveAccounts.length === 0 &&
+                metrics.liveFeed.length === 0)) {
+            console.warn('[admin-metrics] Firestore metrics returned empty admin activity; using fallback');
+            return getSupabaseAdminMetrics();
+        }
+        return metrics;
+    }
+    catch (error) {
+        console.warn('[admin-metrics] Firestore metrics unavailable; using fallback', error.message);
+        return getSupabaseAdminMetrics();
+    }
 }

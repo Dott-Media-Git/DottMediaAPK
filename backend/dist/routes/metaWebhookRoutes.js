@@ -7,6 +7,8 @@ import { getBwinAccountClosureMessage, getBwinAccountClosureState, isBwinAccount
 import fs from 'fs';
 import path from 'path';
 import { firestore } from '../db/firestore.js';
+import { recordOptOutIfRequested, recordOutreachOptIn, } from '../services/outreachConsentService.js';
+import { buildCommentToDmMessage, buildCommentToDmPublicReply, isCommentToDmTrigger, } from '../services/commentToDmService.js';
 const router = Router();
 const verifyToken = process.env.META_VERIFY_TOKEN ?? process.env.VERIFY_TOKEN;
 const igBusinessId = process.env.INSTAGRAM_BUSINESS_ID;
@@ -18,7 +20,57 @@ const WORKER_CONFIG_BUCKET = 'worker-config';
 const CONTEXT_CACHE_TTL_MS = 60 * 1000;
 const KNOWN_FALLBACK_CONTEXTS = [
     { userId: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', objectName: 'bwin-meta-accounts.json' },
-    { userId: 'cMPZQccGggbhZe9dbvtxFmBehP02', objectName: 'dott-main-meta-accounts.json' },
+    { userId: 'HAo6YtFvhKgSySa8EoERKYYq2IV2', objectName: 'dott-main-meta-accounts.json' },
+    { userId: 'cMPZQccGggbhZe9dbvtxFmBehP02', objectName: 'aux-wellness-meta-accounts.json' },
+];
+const KNOWN_META_ACCOUNTS = [
+    {
+        userId: 'HAo6YtFvhKgSySa8EoERKYYq2IV2',
+        pageId: '1120716914467835',
+        instagramAccountId: '17841448754415534',
+        pageTokenEnv: 'DOTT_MAIN_FACEBOOK_PAGE_TOKEN',
+    },
+    {
+        userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
+        pageId: '1371096759416007',
+        instagramAccountId: '17841420336656466',
+        pageTokenEnv: 'AUXWELLNESS_FACEBOOK_PAGE_TOKEN',
+    },
+    {
+        userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
+        pageId: '1114686181730831',
+        instagramAccountId: '17841437471047291',
+        pageTokenEnv: 'SHECARE_FACEBOOK_PAGE_TOKEN',
+    },
+    {
+        userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
+        pageId: '1158550557346330',
+        instagramAccountId: '17841426388091930',
+        pageTokenEnv: 'DOTT_HR_FACEBOOK_PAGE_TOKEN',
+    },
+    {
+        userId: 'LVR7p3WzdFM51ds92Kacf6S40og2',
+        pageId: '1165009866702868',
+        pageTokenEnv: 'DOTTENERGY_FACEBOOK_PAGE_TOKEN',
+    },
+    {
+        userId: 'acmVetCcOiTHeGk5D7eDYieamDF3',
+        pageId: '1191892417341226',
+        instagramAccountId: '17841414110816982',
+        pageTokenEnv: 'CARMARKETPLACE_FACEBOOK_PAGE_TOKEN',
+    },
+    {
+        userId: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
+        pageId: '1254924081027995',
+        instagramAccountId: '17841448080672466',
+        pageTokenEnv: 'STAYSPHERE_FACEBOOK_PAGE_TOKEN',
+    },
+    {
+        userId: 'vzdH1DnfFLVjlY8bBgC26WACmmw2',
+        pageId: '1121885391014110',
+        instagramAccountId: '17841412643148539',
+        pageTokenEnv: 'GAMERS44LIFE_FACEBOOK_PAGE_TOKEN',
+    },
 ];
 const workerConfigCache = new Map();
 const hasSupabaseConfig = () => Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
@@ -67,6 +119,64 @@ const resolvePlatformContextFromSupabase = async (platform, entryId) => {
     }
     return null;
 };
+const resolveKnownMetaContext = async (platform, entryId) => {
+    if (!entryId)
+        return null;
+    const known = KNOWN_META_ACCOUNTS.find(account => platform === 'facebook' ? account.pageId === entryId : account.instagramAccountId === entryId);
+    if (!known)
+        return null;
+    const knownPageToken = (process.env[known.pageTokenEnv] ?? '').trim();
+    if (knownPageToken) {
+        return {
+            userId: known.userId,
+            orgId: known.userId,
+            accessToken: knownPageToken,
+            accountId: known.instagramAccountId,
+            pageId: known.pageId,
+        };
+    }
+    const rootToken = (process.env.META_GRAPH_TOKEN ??
+        process.env.CLIENT_META_USER_TOKEN ??
+        process.env.FACEBOOK_PAGE_TOKEN ??
+        process.env.INSTAGRAM_ACCESS_TOKEN ??
+        '').trim();
+    if (!rootToken) {
+        return {
+            userId: known.userId,
+            orgId: known.userId,
+            accountId: known.instagramAccountId,
+            pageId: known.pageId,
+        };
+    }
+    try {
+        const response = await axios.get(`https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? 'v23.0'}/${known.pageId}`, {
+            params: {
+                fields: 'id,name,access_token,instagram_business_account{id,username}',
+                access_token: rootToken,
+            },
+            timeout: 30000,
+        });
+        const pageToken = String(response.data?.access_token || '').trim();
+        const instagramId = String(response.data?.instagram_business_account?.id || known.instagramAccountId);
+        return {
+            userId: known.userId,
+            orgId: known.userId,
+            accessToken: pageToken || rootToken,
+            accountId: instagramId,
+            pageId: known.pageId,
+        };
+    }
+    catch (error) {
+        console.warn('[meta-webhook] known Meta context fallback token lookup failed', error.message);
+        return {
+            userId: known.userId,
+            orgId: known.userId,
+            accessToken: rootToken,
+            accountId: known.instagramAccountId,
+            pageId: known.pageId,
+        };
+    }
+};
 const resolvePlatformContext = async (platform, entryId) => {
     if (!entryId)
         return null;
@@ -77,23 +187,23 @@ const resolvePlatformContext = async (platform, entryId) => {
             .where(`socialAccounts.${platform}.${field}`, '==', entryId)
             .limit(1)
             .get();
-        if (snap.empty)
-            return null;
-        const doc = snap.docs[0];
-        const data = doc.data();
-        const account = data.socialAccounts?.[platform] ?? {};
-        return {
-            userId: doc.id,
-            orgId: data.orgId,
-            accessToken: account.accessToken,
-            accountId: account.accountId,
-            pageId: account.pageId,
-        };
+        if (!snap.empty) {
+            const doc = snap.docs[0];
+            const data = doc.data();
+            const account = data.socialAccounts?.[platform] ?? {};
+            return {
+                userId: doc.id,
+                orgId: data.orgId,
+                accessToken: account.accessToken,
+                accountId: account.accountId,
+                pageId: account.pageId,
+            };
+        }
     }
     catch (error) {
         console.warn('[meta-webhook] failed to resolve user context', error.message);
     }
-    return resolvePlatformContextFromSupabase(platform, entryId);
+    return (await resolvePlatformContextFromSupabase(platform, entryId)) ?? resolveKnownMetaContext(platform, entryId);
 };
 const buildDedupeKey = (platform, type, id) => {
     if (!id)
@@ -144,6 +254,20 @@ const logEvent = (message, payload) => {
 };
 const saveInbound = async (event) => {
     try {
+        await recordOutreachOptIn({
+            platform: event.platform,
+            recipientId: event.senderId,
+            ownerId: event.ownerId,
+            source: event.type,
+            text: event.text,
+            metadata: event.commentId ? { commentId: event.commentId } : undefined,
+        }).catch(error => console.warn('Failed to record outreach opt-in', error.message));
+        await recordOptOutIfRequested({
+            platform: event.platform,
+            recipientId: event.senderId,
+            ownerId: event.ownerId,
+            text: event.text,
+        }).catch(error => console.warn('Failed to record outreach opt-out', error.message));
         const docRef = await firestore.collection('messages').add({
             ...event,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -177,6 +301,20 @@ const reserveInbound = async (event) => {
     }
     try {
         const ref = firestore.collection('messages').doc(dedupeKey);
+        await recordOutreachOptIn({
+            platform: event.platform,
+            recipientId: event.senderId,
+            ownerId: event.ownerId,
+            source: event.type,
+            text: event.text,
+            metadata: event.commentId ? { commentId: event.commentId } : undefined,
+        }).catch(error => console.warn('Failed to record outreach opt-in', error.message));
+        await recordOptOutIfRequested({
+            platform: event.platform,
+            recipientId: event.senderId,
+            ownerId: event.ownerId,
+            text: event.text,
+        }).catch(error => console.warn('Failed to record outreach opt-out', error.message));
         const payload = {
             ...event,
             replyStatus: 'pending',
@@ -249,9 +387,7 @@ router.post('/meta/webhook', async (req, res) => {
             const entryId = entry?.id;
             const instagramContext = body.object === 'instagram' ? await resolvePlatformContext('instagram', entryId) : null;
             const facebookContext = body.object === 'page' ? await resolvePlatformContext('facebook', entryId) : null;
-            if (!entry.changes)
-                continue;
-            for (const change of entry.changes) {
+            for (const change of entry.changes ?? []) {
                 // Instagram comments
                 if (change.field === 'comments' && body.object === 'instagram') {
                     const commentId = change.value?.id;
@@ -284,15 +420,25 @@ router.post('/meta/webhook', async (req, res) => {
                         continue;
                     }
                     try {
-                        const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'comment');
+                        const commentToDm = isCommentToDmTrigger(text);
+                        const reply = commentToDm
+                            ? buildCommentToDmPublicReply({ platform: 'instagram', userId: instagramContext?.userId })
+                            : await generateReply(text, 'instagram', instagramContext?.userId, 'comment', {
+                                accountId: instagramContext?.accountId,
+                                pageId: instagramContext?.pageId,
+                            });
                         await likeInstagramComment(commentId, instagramContext?.accessToken).catch(err => console.warn('IG comment like failed', err));
                         await replyToInstagramComment(commentId, reply, instagramContext?.accessToken);
                         await updateReplyStatus(inbound.ref, 'sent');
                         if (analyticsScopeId) {
                             await incrementEngagementAnalytics({ repliesSent: 1 }, { scopeId: analyticsScopeId });
                         }
-                        if (fromId) {
-                            const dmFollowUp = `${reply}\n\nWant a quick demo? I can send the link.`;
+                        if (commentToDm && fromId) {
+                            const dmFollowUp = buildCommentToDmMessage({
+                                platform: 'instagram',
+                                userId: instagramContext?.userId,
+                                commentText: text,
+                            });
                             await replyToInstagramMessage(fromId, dmFollowUp, {
                                 accessToken: instagramContext?.accessToken,
                                 igBusinessId: igAccountId ?? undefined,
@@ -332,7 +478,10 @@ router.post('/meta/webhook', async (req, res) => {
                             continue;
                         }
                         try {
-                            const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'message');
+                            const reply = await generateReply(text, 'instagram', instagramContext?.userId, 'message', {
+                                accountId: instagramContext?.accountId,
+                                pageId: instagramContext?.pageId,
+                            });
                             await replyToInstagramMessage(senderId, reply, {
                                 accessToken: instagramContext?.accessToken,
                                 igBusinessId: igAccountId ?? undefined,
@@ -377,21 +526,44 @@ router.post('/meta/webhook', async (req, res) => {
                             continue;
                         }
                         try {
-                            const reply = await generateReply(message, 'facebook', facebookContext?.userId, 'comment');
+                            const commentToDm = isCommentToDmTrigger(message);
+                            const reply = commentToDm
+                                ? buildCommentToDmPublicReply({ platform: 'facebook', userId: facebookContext?.userId })
+                                : await generateReply(message, 'facebook', facebookContext?.userId, 'comment', {
+                                    pageId: facebookContext?.pageId,
+                                });
                             await likeFacebookComment(commentId, facebookContext?.accessToken).catch(err => console.warn('FB comment like failed', err));
                             await replyToFacebookComment(commentId, reply, facebookContext?.accessToken);
                             await updateReplyStatus(inbound.ref, 'sent');
                             if (analyticsScopeId) {
                                 await incrementEngagementAnalytics({ repliesSent: 1 }, { scopeId: analyticsScopeId });
                             }
-                            if (fromId) {
-                                const dmFollowUp = `${reply}\n\nHappy to send a quick AI Sales Agent demo link — want it?`;
+                            if (commentToDm && fromId) {
+                                const dmFollowUp = buildCommentToDmMessage({
+                                    platform: 'facebook',
+                                    userId: facebookContext?.userId,
+                                    commentText: message,
+                                });
                                 await replyToFacebookMessage(fromId, dmFollowUp, facebookContext?.accessToken).catch(err => console.warn('FB DM follow-up failed', err));
                             }
                         }
                         catch (err) {
                             await updateReplyStatus(inbound.ref, 'failed', err.message);
                             logEvent('FB comment handler error', { commentId, error: err.message });
+                        }
+                    }
+                    if (item === 'leadgen') {
+                        const leadgenId = change.value?.leadgen_id;
+                        const formId = change.value?.form_id;
+                        const facebookUserId = change.value?.user_id;
+                        if (leadgenId || facebookUserId) {
+                            await recordOutreachOptIn({
+                                platform: 'facebook',
+                                recipientId: facebookUserId ?? leadgenId,
+                                ownerId: facebookContext?.userId,
+                                source: 'lead_form',
+                                metadata: { leadgenId, formId, pageId: facebookContext?.pageId ?? pageId },
+                            }).catch(error => console.warn('Failed to record Facebook lead opt-in', error.message));
                         }
                     }
                 }
@@ -428,7 +600,10 @@ router.post('/meta/webhook', async (req, res) => {
                     }
                     try {
                         const platform = body.object === 'instagram' ? 'instagram' : 'facebook';
-                        const reply = await generateReply(message, platform, context?.userId, 'message');
+                        const reply = await generateReply(message, platform, context?.userId, 'message', {
+                            accountId: context?.accountId,
+                            pageId: context?.pageId,
+                        });
                         if (body.object === 'instagram') {
                             await replyToInstagramMessage(senderId, reply, {
                                 accessToken: context?.accessToken,

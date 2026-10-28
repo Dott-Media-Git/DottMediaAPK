@@ -1,5 +1,9 @@
 import axios from 'axios';
+import { appendCommentToDmCaptionCta } from '../../../services/commentToDmService.js';
+const http = axios.create({ timeout: Math.max(Number(process.env.SOCIAL_PUBLISH_HTTP_TIMEOUT_MS ?? 20000), 5000) });
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
+const FACEBOOK_GRAPH_BASE_URL = 'https://graph.facebook.com';
+const INSTAGRAM_GRAPH_BASE_URL = process.env.INSTAGRAM_GRAPH_BASE_URL ?? 'https://graph.instagram.com';
 const READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_ATTEMPTS ?? 15), 3);
 const READY_DELAY_MS = Math.max(Number(process.env.INSTAGRAM_MEDIA_READY_DELAY_MS ?? 2000), 1000);
 const REELS_READY_ATTEMPTS = Math.max(Number(process.env.INSTAGRAM_REELS_READY_ATTEMPTS ?? 60), READY_ATTEMPTS);
@@ -34,13 +38,29 @@ function logInstagramError(label, error) {
     }
     console.error(label, String(error ?? 'unknown_error'));
 }
+function normalizeGraphBaseUrl(value) {
+    return (value || '').replace(/\/+$/, '');
+}
+function getInstagramGraphBaseUrl(credentials) {
+    const graphOrigin = credentials.provider === 'instagram_login'
+        ? normalizeGraphBaseUrl(credentials.graphBaseUrl) || INSTAGRAM_GRAPH_BASE_URL
+        : FACEBOOK_GRAPH_BASE_URL;
+    return `${normalizeGraphBaseUrl(graphOrigin)}/${GRAPH_VERSION}/${credentials.accountId}`;
+}
+function getInstagramMediaStatusUrl(credentials, creationId) {
+    const graphOrigin = credentials.provider === 'instagram_login'
+        ? normalizeGraphBaseUrl(credentials.graphBaseUrl) || INSTAGRAM_GRAPH_BASE_URL
+        : FACEBOOK_GRAPH_BASE_URL;
+    return `${normalizeGraphBaseUrl(graphOrigin)}/${GRAPH_VERSION}/${creationId}`;
+}
 export async function publishToInstagram(input) {
     const { credentials } = input;
     if (!credentials?.instagram) {
         throw new Error('Missing Instagram credentials');
     }
-    const { accessToken, accountId } = credentials.instagram;
-    const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
+    const { accessToken } = credentials.instagram;
+    const caption = appendCommentToDmCaptionCta(input.caption, { username: credentials.instagram.username });
+    const baseUrl = getInstagramGraphBaseUrl(credentials.instagram);
     if (!input.imageUrls || input.imageUrls.length === 0) {
         throw new Error('Instagram requires an image');
     }
@@ -49,7 +69,7 @@ export async function publishToInstagram(input) {
         if (input.imageUrls.length > 1) {
             const childContainers = [];
             for (const imageUrl of input.imageUrls.slice(0, CAROUSEL_MAX_IMAGES)) {
-                const childResponse = await axios.post(`${baseUrl}/media`, {
+                const childResponse = await http.post(`${baseUrl}/media`, {
                     image_url: imageUrl,
                     is_carousel_item: true,
                     access_token: accessToken,
@@ -58,25 +78,25 @@ export async function publishToInstagram(input) {
                 if (!childId) {
                     throw new Error('Failed to create Instagram carousel item');
                 }
-                const childReady = await waitForMediaReady(childId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
+                const childReady = await waitForMediaReady(credentials.instagram, childId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
                 if (!childReady) {
                     throw new Error('Instagram carousel item not ready for publishing');
                 }
                 childContainers.push(childId);
             }
-            const carouselResponse = await axios.post(`${baseUrl}/media`, {
+            const carouselResponse = await http.post(`${baseUrl}/media`, {
                 media_type: 'CAROUSEL',
                 children: childContainers.join(','),
-                caption: input.caption,
+                caption,
                 access_token: accessToken,
             });
             creationId = carouselResponse.data?.id;
         }
         else {
             // Step 1: Create Media Container
-            const createMediaResponse = await axios.post(`${baseUrl}/media`, {
+            const createMediaResponse = await http.post(`${baseUrl}/media`, {
                 image_url: input.imageUrls[0],
-                caption: input.caption,
+                caption,
                 access_token: accessToken,
             });
             creationId = createMediaResponse.data.id;
@@ -85,7 +105,7 @@ export async function publishToInstagram(input) {
             throw new Error('Failed to create Instagram media container');
         }
         // Wait for the media container to finish processing before publishing.
-        const isReady = await waitForMediaReady(creationId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
+        const isReady = await waitForMediaReady(credentials.instagram, creationId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
         if (!isReady) {
             throw new Error('Media container not ready for publishing');
         }
@@ -98,6 +118,7 @@ export async function publishToInstagram(input) {
             retryDelayMs: PUBLISH_RETRY_DELAY_MS,
         });
         if (publishedId) {
+            await verifyPublishedMedia(credentials.instagram, publishedId, accessToken, true);
             return { remoteId: publishedId };
         }
         throw new Error('No ID returned from Instagram publish');
@@ -115,20 +136,21 @@ export async function publishToInstagramReel(input) {
     if (!input.videoUrl) {
         throw new Error('Instagram Reels requires a video URL');
     }
-    const { accessToken, accountId } = credentials.instagram;
-    const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
+    const { accessToken } = credentials.instagram;
+    const caption = appendCommentToDmCaptionCta(input.caption, { username: credentials.instagram.username });
+    const baseUrl = getInstagramGraphBaseUrl(credentials.instagram);
     try {
-        const createMediaResponse = await axios.post(`${baseUrl}/media`, {
+        const createMediaResponse = await http.post(`${baseUrl}/media`, {
             media_type: 'REELS',
             video_url: input.videoUrl,
-            caption: input.caption,
+            caption,
             access_token: accessToken,
         });
         const creationId = createMediaResponse.data.id;
         if (!creationId) {
             throw new Error('Failed to create Instagram Reels container');
         }
-        const isReady = await waitForMediaReady(creationId, accessToken, REELS_READY_ATTEMPTS, REELS_READY_DELAY_MS);
+        const isReady = await waitForMediaReady(credentials.instagram, creationId, accessToken, REELS_READY_ATTEMPTS, REELS_READY_DELAY_MS);
         if (!isReady) {
             throw new Error('Reels container not ready for publishing');
         }
@@ -140,6 +162,7 @@ export async function publishToInstagramReel(input) {
             retryDelayMs: PUBLISH_RETRY_DELAY_MS,
         });
         if (publishedId) {
+            await verifyPublishedMedia(credentials.instagram, publishedId, accessToken, true);
             return { remoteId: publishedId };
         }
         throw new Error('No ID returned from Instagram Reels publish');
@@ -154,15 +177,15 @@ export async function publishToInstagramStory(input) {
     if (!credentials?.instagram) {
         throw new Error('Missing Instagram credentials');
     }
-    const { accessToken, accountId } = credentials.instagram;
-    const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${accountId}`;
+    const { accessToken } = credentials.instagram;
+    const baseUrl = getInstagramGraphBaseUrl(credentials.instagram);
     const hasVideo = Boolean(input.videoUrl);
     const mediaUrl = hasVideo ? input.videoUrl : input.imageUrls?.[0];
     if (!mediaUrl) {
         throw new Error('Instagram Story requires an image or video URL');
     }
     try {
-        const createMediaResponse = await axios.post(`${baseUrl}/media`, {
+        const createMediaResponse = await http.post(`${baseUrl}/media`, {
             media_type: 'STORIES',
             ...(hasVideo ? { video_url: mediaUrl } : { image_url: mediaUrl }),
             access_token: accessToken,
@@ -171,7 +194,7 @@ export async function publishToInstagramStory(input) {
         if (!creationId) {
             throw new Error('Failed to create Instagram Story container');
         }
-        const isReady = await waitForMediaReady(creationId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
+        const isReady = await waitForMediaReady(credentials.instagram, creationId, accessToken, READY_ATTEMPTS, READY_DELAY_MS);
         if (!isReady) {
             throw new Error('Story container not ready for publishing');
         }
@@ -183,6 +206,12 @@ export async function publishToInstagramStory(input) {
             retryDelayMs: PUBLISH_RETRY_DELAY_MS,
         });
         if (publishedId) {
+            // Story publishing already returns a successful remote ID. Story objects are
+            // ephemeral and the media endpoint does not consistently expose a permalink,
+            // so a post-publish verification poll can hold the queue for minutes.
+            if (process.env.INSTAGRAM_STORY_VERIFY === 'true') {
+                await verifyPublishedMedia(credentials.instagram, publishedId, accessToken, false);
+            }
             return { remoteId: publishedId };
         }
         throw new Error('No ID returned from Instagram Story publish');
@@ -192,9 +221,9 @@ export async function publishToInstagramStory(input) {
         throw new Error(formatInstagramError(error, 'Instagram Story publish failed'));
     }
 }
-async function waitForMediaReady(creationId, accessToken, maxAttempts = 5, delayMs = 2000) {
+async function waitForMediaReady(credentials, creationId, accessToken, maxAttempts = 5, delayMs = 2000) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const statusResp = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${creationId}`, {
+        const statusResp = await http.get(getInstagramMediaStatusUrl(credentials, creationId), {
             params: { fields: 'status_code,status', access_token: accessToken },
         });
         const status = statusResp.data?.status_code;
@@ -216,7 +245,7 @@ async function publishWithRetry({ baseUrl, creationId, accessToken, retries, ret
     let lastError;
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
-            const publishResponse = await axios.post(`${baseUrl}/media_publish`, {
+            const publishResponse = await http.post(`${baseUrl}/media_publish`, {
                 creation_id: creationId,
                 access_token: accessToken,
             });
@@ -239,4 +268,29 @@ async function publishWithRetry({ baseUrl, creationId, accessToken, retries, ret
         throw lastError;
     }
     return null;
+}
+async function verifyPublishedMedia(credentials, publishedId, accessToken, requirePermalink) {
+    let lastError;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+        try {
+            const response = await http.get(getInstagramMediaStatusUrl(credentials, publishedId), {
+                params: {
+                    fields: 'id,permalink,timestamp,media_type,username',
+                    access_token: accessToken,
+                },
+            });
+            const media = response.data ?? {};
+            const idMatches = String(media.id ?? '') === String(publishedId);
+            const hasPublicIdentity = Boolean(media.timestamp || media.media_type || media.username);
+            if (idMatches && hasPublicIdentity && (!requirePermalink || media.permalink)) {
+                return media;
+            }
+            lastError = new Error('Instagram returned a container ID but no confirmed public media');
+        }
+        catch (error) {
+            lastError = error;
+        }
+        await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    throw new Error(formatInstagramError(lastError, 'Instagram did not confirm that the media is publicly visible'));
 }

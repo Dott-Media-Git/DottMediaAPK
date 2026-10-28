@@ -1,4 +1,5 @@
 import axios from 'axios';
+const http = axios.create({ timeout: Math.max(Number(process.env.SOCIAL_PUBLISH_HTTP_TIMEOUT_MS ?? 20000), 5000) });
 const GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
 const READY_ATTEMPTS = Math.max(Number(process.env.THREADS_MEDIA_READY_ATTEMPTS ?? 12), 3);
@@ -23,7 +24,7 @@ function formatThreadsError(error, fallback) {
 async function waitForMediaReady(creationId, accessToken) {
     for (let attempt = 0; attempt < READY_ATTEMPTS; attempt += 1) {
         try {
-            const statusResp = await axios.get(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${creationId}`, {
+            const statusResp = await http.get(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${creationId}`, {
                 params: {
                     fields: 'id,status,error_message',
                     access_token: accessToken,
@@ -53,7 +54,7 @@ async function publishWithRetry(accountId, accessToken, creationId) {
     let lastError;
     for (let attempt = 0; attempt < PUBLISH_RETRIES; attempt += 1) {
         try {
-            const publishResp = await axios.post(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${accountId}/threads_publish`, null, {
+            const publishResp = await http.post(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${accountId}/threads_publish`, null, {
                 params: {
                     creation_id: creationId,
                     access_token: accessToken,
@@ -77,7 +78,7 @@ async function publishWithRetry(accountId, accessToken, creationId) {
     throw lastError ?? new Error('Threads publish failed');
 }
 async function createThreadsContainer(accountId, accessToken, payload) {
-    const createResp = await axios.post(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${accountId}/threads`, null, {
+    const createResp = await http.post(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${accountId}/threads`, null, {
         params: {
             ...payload,
             access_token: accessToken,

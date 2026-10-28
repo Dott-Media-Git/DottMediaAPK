@@ -4,19 +4,41 @@ import path from 'path';
 import axios from 'axios';
 import admin from 'firebase-admin';
 import createHttpError from 'http-errors';
-import { requireFirebase } from '../middleware/firebaseAuth.js';
+import { requireFirebase, requireFirebaseForm } from '../middleware/firebaseAuth.js';
 import { createSignedState, verifySignedState } from '../utils/oauthState.js';
 import { firestore } from '../db/firestore.js';
 import { autoPostService } from '../services/autoPostService.js';
 import { supabaseFallbackService } from '../services/supabaseFallbackService.js';
+import { consumeUsage, isFirestoreResourceExhausted, resolveBillingScope } from '../services/billing/billingService.js';
+import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect.js';
 const router = Router();
 const CALLBACK_PATH = '/integrations/meta/callback';
+const INSTAGRAM_CALLBACK_PATH = '/integrations/instagram/callback';
 const THREADS_CALLBACK_PATH = '/integrations/threads/callback';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
+const INSTAGRAM_GRAPH_VERSION = process.env.INSTAGRAM_GRAPH_VERSION ?? GRAPH_VERSION;
+const INSTAGRAM_GRAPH_BASE_URL = process.env.INSTAGRAM_GRAPH_BASE_URL ?? 'https://graph.instagram.com';
 const THREADS_GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const THREADS_GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
 let renderEnvCache;
 const normalizeBaseUrl = (value) => value.replace(/\/+$/, '');
+const formatProviderError = (error, provider) => {
+    if (axios.isAxiosError(error)) {
+        const payload = error.response?.data;
+        const nestedError = payload?.error && typeof payload.error === 'object' ? payload.error : undefined;
+        const message = payload?.error_message ??
+            payload?.message ??
+            (typeof payload?.error === 'string' ? payload.error : undefined) ??
+            nestedError?.message;
+        const type = payload?.error_type ?? nestedError?.type;
+        const code = payload?.code ?? nestedError?.code ?? error.response?.status;
+        const detail = [type, message].filter(Boolean).map(String).join(': ');
+        if (detail)
+            return `${provider} API error${code ? ` (${String(code)})` : ''}: ${detail}`;
+        return `${provider} API request failed with status ${error.response?.status ?? 'unknown'}`;
+    }
+    return error instanceof Error ? error.message : String(error);
+};
 const getBaseUrl = (req) => {
     const envBase = process.env.BASE_URL ?? process.env.RENDER_EXTERNAL_URL;
     if (envBase)
@@ -69,25 +91,55 @@ const getMetaAppConfig = (req) => {
     }
     return { appId, appSecret, redirectUri };
 };
+const getWhatsAppEmbeddedSignupConfig = (req) => {
+    const renderEnv = resolveRenderEnv();
+    const { appId, appSecret } = getMetaAppConfig(req);
+    const configId = (process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID ?? renderEnv.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID ?? '').trim();
+    if (!configId)
+        throw createHttpError(400, 'Missing WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID');
+    return { appId, appSecret, configId };
+};
 const getThreadsAppConfig = (req) => {
     const renderEnv = resolveRenderEnv();
     const appId = process.env.THREADS_APP_ID ??
-        process.env.INSTAGRAM_APP_ID ??
         process.env.META_APP_ID ??
+        process.env.FACEBOOK_APP_ID ??
+        process.env.INSTAGRAM_APP_ID ??
         renderEnv.THREADS_APP_ID ??
-        renderEnv.INSTAGRAM_APP_ID ??
         renderEnv.META_APP_ID ??
+        renderEnv.FACEBOOK_APP_ID ??
+        renderEnv.INSTAGRAM_APP_ID ??
         '';
     const appSecret = process.env.THREADS_APP_SECRET ??
-        process.env.INSTAGRAM_APP_SECRET ??
         process.env.META_APP_SECRET ??
+        process.env.FACEBOOK_APP_SECRET ??
+        process.env.INSTAGRAM_APP_SECRET ??
         renderEnv.THREADS_APP_SECRET ??
-        renderEnv.INSTAGRAM_APP_SECRET ??
         renderEnv.META_APP_SECRET ??
+        renderEnv.FACEBOOK_APP_SECRET ??
+        renderEnv.INSTAGRAM_APP_SECRET ??
         '';
     const redirectUri = process.env.THREADS_REDIRECT_URI ?? renderEnv.THREADS_REDIRECT_URI ?? `${getBaseUrl(req)}${THREADS_CALLBACK_PATH}`;
     if (!appId || !appSecret) {
         throw createHttpError(400, 'Missing THREADS_APP_ID or THREADS_APP_SECRET');
+    }
+    return { appId, appSecret, redirectUri };
+};
+const getInstagramAppConfig = (req) => {
+    const renderEnv = resolveRenderEnv();
+    const appId = process.env.INSTAGRAM_APP_ID ??
+        process.env.INSTAGRAM_CLIENT_ID ??
+        renderEnv.INSTAGRAM_APP_ID ??
+        renderEnv.INSTAGRAM_CLIENT_ID ??
+        '';
+    const appSecret = process.env.INSTAGRAM_APP_SECRET ??
+        process.env.INSTAGRAM_CLIENT_SECRET ??
+        renderEnv.INSTAGRAM_APP_SECRET ??
+        renderEnv.INSTAGRAM_CLIENT_SECRET ??
+        '';
+    const redirectUri = process.env.INSTAGRAM_REDIRECT_URI ?? renderEnv.INSTAGRAM_REDIRECT_URI ?? `${getBaseUrl(req)}${INSTAGRAM_CALLBACK_PATH}`;
+    if (!appId || !appSecret) {
+        throw createHttpError(400, 'Direct Instagram Login is not configured. Add INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET to the backend environment.');
     }
     return { appId, appSecret, redirectUri };
 };
@@ -111,13 +163,22 @@ const defaultInstagramScopes = [
     'instagram_content_publish',
     'business_management',
 ];
+const defaultAdsScopes = [
+    'ads_read',
+    'ads_management',
+    'business_management',
+    'pages_show_list',
+    'pages_read_engagement',
+];
 const getScopes = (platform = 'all') => {
     const renderEnv = resolveRenderEnv();
     const platformEnvKey = platform === 'facebook'
         ? 'META_FACEBOOK_SCOPES'
         : platform === 'instagram'
             ? 'META_INSTAGRAM_SCOPES'
-            : 'META_APP_SCOPES';
+            : platform === 'ads'
+                ? 'META_ADS_SCOPES'
+                : 'META_APP_SCOPES';
     const raw = process.env[platformEnvKey] ??
         renderEnv[platformEnvKey] ??
         process.env.META_APP_SCOPES ??
@@ -130,9 +191,17 @@ const getScopes = (platform = 'all') => {
         return defaultFacebookScopes;
     if (platform === 'instagram')
         return defaultInstagramScopes;
-    return uniqueScopes(defaultFacebookScopes, defaultInstagramScopes);
+    if (platform === 'ads')
+        return defaultAdsScopes;
+    // The combined Meta connection is also used by the dashboard's Ads
+    // Performance card. Request the Ads scopes here as well so a user who
+    // connects Meta once through the general flow receives a token that can
+    // read ad accounts and insights.
+    return uniqueScopes(defaultFacebookScopes, defaultInstagramScopes, defaultAdsScopes);
 };
 const getBusinessLoginConfigId = (platform = 'all') => {
+    if (platform === 'ads')
+        return '';
     const renderEnv = resolveRenderEnv();
     const platformEnvKey = platform === 'facebook'
         ? 'META_FACEBOOK_CONFIG_ID'
@@ -150,13 +219,18 @@ const shouldIncludeScopeWithBusinessConfig = () => String(process.env.META_INCLU
     .trim() === 'true';
 const normalizeMetaConnectPlatform = (value) => {
     const platform = String(value ?? '').toLowerCase();
-    if (platform === 'facebook' || platform === 'instagram')
+    if (platform === 'facebook' || platform === 'instagram' || platform === 'ads')
         return platform;
     return 'all';
 };
-const buildOAuthUrl = (req, userId, platform = 'all') => {
+const buildOAuthUrl = (req, userId, platform = 'all', orgId, email, returnUrl) => {
     const { appId, redirectUri } = getMetaAppConfig(req);
-    const state = createSignedState(userId, { platform });
+    const state = createSignedState(userId, {
+        platform,
+        orgId: orgId || undefined,
+        email: email || undefined,
+        returnUrl: sanitizeOAuthReturnUrl(returnUrl),
+    });
     const url = new URL(`https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`);
     url.searchParams.set('client_id', appId);
     url.searchParams.set('redirect_uri', redirectUri);
@@ -185,16 +259,83 @@ const getThreadsScopes = () => {
     }
     return ['threads_basic', 'threads_content_publish'];
 };
-const buildThreadsOAuthUrl = (req, userId) => {
+const buildThreadsOAuthUrl = (req, userId, orgId, email, returnUrl) => {
     const { appId, redirectUri } = getThreadsAppConfig(req);
-    const state = createSignedState(userId, { platform: 'threads' });
-    const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://threads.net/oauth/authorize');
+    const state = createSignedState(userId, {
+        platform: 'threads',
+        orgId: orgId || undefined,
+        email: email || undefined,
+        returnUrl: sanitizeOAuthReturnUrl(returnUrl),
+    });
+    const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://www.threads.net/oauth/authorize');
     url.searchParams.set('client_id', appId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', getThreadsScopes().join(','));
     url.searchParams.set('state', state);
     url.searchParams.set('return_scopes', 'true');
+    url.searchParams.set('auth_type', 'rerequest');
+    url.searchParams.set('prompt', 'consent');
+    return url.toString();
+};
+const encodeThreadsHandoffTarget = (value) => Buffer.from(value, 'utf8').toString('base64url');
+const decodeThreadsHandoffTarget = (value) => Buffer.from(value, 'base64url').toString('utf8');
+const buildThreadsHandoffUrl = (req, authorizationUrl) => {
+    const url = new URL(`${getBaseUrl(req)}/integrations/threads/handoff`);
+    url.searchParams.set('target', encodeThreadsHandoffTarget(authorizationUrl));
+    return url.toString();
+};
+const renderThreadsHandoffHtml = (authorizationUrl) => {
+    const safeUrl = JSON.stringify(authorizationUrl);
+    return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Connect Threads</title>
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; display: grid; min-height: 100vh; place-items: center; }
+      main { width: min(460px, calc(100vw - 32px)); background: #111827; border: 1px solid #334155; border-radius: 16px; padding: 24px; box-shadow: 0 24px 80px rgba(0,0,0,.35); }
+      h1 { font-size: 22px; margin: 0 0 10px; }
+      p { color: #cbd5e1; line-height: 1.5; margin: 0 0 18px; }
+      a { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 46px; border-radius: 12px; background: #38bdf8; color: #082f49; font-weight: 700; text-decoration: none; }
+      small { display: block; color: #94a3b8; margin-top: 14px; line-height: 1.4; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Continue to Threads permissions</h1>
+      <p>Dott Media is ready to open the official Threads authorization screen. Log in if Threads asks, then approve the permissions for Dott-Media.</p>
+      <a id="continueLink" href=${safeUrl}>Continue to Threads</a>
+      <small>If Threads opens your normal feed after login, come back to this page and press Continue to Threads again. If it still opens the feed, the Threads account may need to be added as a tester or the app must be live/reviewed for that user.</small>
+    </main>
+  </body>
+</html>`;
+};
+const getInstagramLoginScopes = () => {
+    const renderEnv = resolveRenderEnv();
+    const raw = process.env.INSTAGRAM_LOGIN_SCOPES ?? renderEnv.INSTAGRAM_LOGIN_SCOPES ?? '';
+    if (raw.trim()) {
+        return splitScopes(raw);
+    }
+    return ['instagram_business_basic', 'instagram_business_content_publish'];
+};
+const buildInstagramOAuthUrl = (req, userId, orgId, email, returnUrl) => {
+    const { appId, redirectUri } = getInstagramAppConfig(req);
+    const state = createSignedState(userId, {
+        platform: 'instagram',
+        orgId: orgId || undefined,
+        email: email || undefined,
+        returnUrl: sanitizeOAuthReturnUrl(returnUrl),
+    });
+    const url = new URL(process.env.INSTAGRAM_AUTHORIZE_URL ?? 'https://www.instagram.com/oauth/authorize');
+    url.searchParams.set('client_id', appId);
+    url.searchParams.set('redirect_uri', redirectUri);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', getInstagramLoginScopes().join(','));
+    url.searchParams.set('state', state);
+    url.searchParams.set('enable_fb_login', '0');
+    url.searchParams.set('force_authentication', '1');
     return url.toString();
 };
 const exchangeCodeForToken = async (req, code) => {
@@ -220,6 +361,29 @@ const exchangeLongLivedToken = async (req, shortLivedToken) => {
         },
     });
     return response.data?.access_token ?? shortLivedToken;
+};
+const exchangeWhatsAppBusinessToken = async (req, code) => {
+    const { appId, appSecret } = getWhatsAppEmbeddedSignupConfig(req);
+    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/oauth/access_token`, { params: { client_id: appId, client_secret: appSecret, code } });
+    const accessToken = response.data?.access_token;
+    if (!accessToken)
+        throw new Error('Meta did not return a WhatsApp business token');
+    return accessToken;
+};
+const assertMetaAssetId = (value, label) => {
+    const normalized = String(value ?? '').trim();
+    if (!/^\d{5,30}$/.test(normalized))
+        throw createHttpError(400, `Invalid ${label}`);
+    return normalized;
+};
+const fetchWhatsAppPhone = async (phoneNumberId, accessToken) => {
+    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}`, { params: { fields: 'id,display_phone_number,verified_name,quality_rating', access_token: accessToken } });
+    if (String(response.data?.id ?? '') !== phoneNumberId)
+        throw new Error('The selected WhatsApp phone number could not be verified');
+    return response.data;
+};
+const subscribeWhatsAppWebhooks = async (wabaId, accessToken) => {
+    await axios.post(`https://graph.facebook.com/${GRAPH_VERSION}/${wabaId}/subscribed_apps`, undefined, { params: { access_token: accessToken } });
 };
 const fetchGrantedPermissions = async (userAccessToken) => {
     const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/me/permissions`, {
@@ -320,6 +484,59 @@ const exchangeThreadsLongLivedToken = async (req, shortLivedToken) => {
         accessToken: response.data?.access_token ?? shortLivedToken,
         grantedScopes: extractScopesFromPayload(response.data),
     };
+};
+const exchangeInstagramCodeForToken = async (req, code) => {
+    const { appId, appSecret, redirectUri } = getInstagramAppConfig(req);
+    const body = new URLSearchParams({
+        client_id: appId,
+        client_secret: appSecret,
+        grant_type: 'authorization_code',
+        redirect_uri: redirectUri,
+        code,
+    });
+    const response = await axios.post('https://api.instagram.com/oauth/access_token', body.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+    return {
+        accessToken: response.data?.access_token,
+        userId: response.data?.user_id ? String(response.data.user_id) : undefined,
+        grantedScopes: extractScopesFromPayload(response.data),
+    };
+};
+const exchangeInstagramLongLivedToken = async (req, shortLivedToken) => {
+    const { appSecret } = getInstagramAppConfig(req);
+    const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/access_token`, {
+        params: {
+            grant_type: 'ig_exchange_token',
+            client_secret: appSecret,
+            access_token: shortLivedToken,
+        },
+    });
+    return {
+        accessToken: response.data?.access_token ?? shortLivedToken,
+        grantedScopes: extractScopesFromPayload(response.data),
+    };
+};
+const assertRequiredInstagramScopes = (requiredScopes, grantedScopes, deniedScopes) => {
+    const explicitlyDenied = requiredScopes.filter(scope => deniedScopes.has(scope));
+    if (explicitlyDenied.length) {
+        throw new Error(`Instagram did not grant required permissions: ${explicitlyDenied.join(', ')}`);
+    }
+    if (!grantedScopes.size)
+        return;
+    const missingScopes = requiredScopes.filter(scope => !grantedScopes.has(scope));
+    if (missingScopes.length) {
+        throw new Error(`Instagram did not grant required permissions: ${missingScopes.join(', ')}`);
+    }
+};
+const fetchInstagramMe = async (accessToken) => {
+    const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/${INSTAGRAM_GRAPH_VERSION}/me`, {
+        params: {
+            fields: 'id,user_id,username,account_type,media_count',
+            access_token: accessToken,
+        },
+    });
+    return response.data;
 };
 const fetchManagedPages = async (userAccessToken) => {
     const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/me/accounts`, {
@@ -496,11 +713,25 @@ router.get('/integrations/meta/config', requireFirebase, async (req, res, next) 
 });
 router.get('/integrations/meta/connect', requireFirebase, async (req, res, next) => {
     try {
-        const userId = req.authUser?.uid;
+        const authUser = req.authUser;
+        const userId = authUser?.uid;
         if (!userId)
             throw createHttpError(401, 'Unauthorized');
         const platform = normalizeMetaConnectPlatform(req.query.platform);
-        res.redirect(buildOAuthUrl(req, userId, platform));
+        res.redirect(buildOAuthUrl(req, userId, platform, req.header('x-org-id'), authUser?.email, req.query.returnUrl));
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.post('/integrations/meta/start', requireFirebaseForm, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        if (!authUser?.uid)
+            throw createHttpError(401, 'Unauthorized');
+        const platform = normalizeMetaConnectPlatform(req.body?.platform);
+        const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
+        res.redirect(303, buildOAuthUrl(req, authUser.uid, platform, orgId, authUser.email, req.body?.returnUrl));
     }
     catch (error) {
         next(error);
@@ -508,11 +739,12 @@ router.get('/integrations/meta/connect', requireFirebase, async (req, res, next)
 });
 router.get('/integrations/meta/connect-url', requireFirebase, async (req, res, next) => {
     try {
-        const userId = req.authUser?.uid;
+        const authUser = req.authUser;
+        const userId = authUser?.uid;
         if (!userId)
             throw createHttpError(401, 'Unauthorized');
         const platform = normalizeMetaConnectPlatform(req.query.platform);
-        res.json({ url: buildOAuthUrl(req, userId, platform), platform });
+        res.json({ url: buildOAuthUrl(req, userId, platform, req.header('x-org-id'), authUser?.email, req.query.returnUrl), platform });
     }
     catch (error) {
         next(error);
@@ -533,12 +765,112 @@ router.get('/integrations/threads/config', requireFirebase, async (req, res, nex
         next(error);
     }
 });
-router.get('/integrations/threads/connect', requireFirebase, async (req, res, next) => {
+router.get('/integrations/instagram/config', requireFirebase, async (req, res, next) => {
     try {
-        const userId = req.authUser?.uid;
+        const { appId, redirectUri } = getInstagramAppConfig(req);
+        res.json({
+            appIdConfigured: Boolean(appId),
+            appSecretConfigured: true,
+            redirectUri,
+            scopes: getInstagramLoginScopes(),
+            callbackPath: INSTAGRAM_CALLBACK_PATH,
+        });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.get('/integrations/instagram/connect', requireFirebase, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        const userId = authUser?.uid;
         if (!userId)
             throw createHttpError(401, 'Unauthorized');
-        res.redirect(buildThreadsOAuthUrl(req, userId));
+        res.redirect(buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl));
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.post('/integrations/instagram/start', requireFirebaseForm, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        if (!authUser?.uid)
+            throw createHttpError(401, 'Unauthorized');
+        res.redirect(303, buildInstagramOAuthUrl(req, authUser.uid, req.header('x-org-id'), authUser.email, req.body?.returnUrl));
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.get('/integrations/instagram/connect-url', requireFirebase, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        const userId = authUser?.uid;
+        if (!userId)
+            throw createHttpError(401, 'Unauthorized');
+        res.json({ url: buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl) });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.get('/integrations/threads/connect', requireFirebase, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        const userId = authUser?.uid;
+        if (!userId)
+            throw createHttpError(401, 'Unauthorized');
+        res.redirect(buildThreadsHandoffUrl(req, buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl)));
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.get('/integrations/whatsapp/config', requireFirebase, async (req, res, next) => {
+    try {
+        const { appId, configId } = getWhatsAppEmbeddedSignupConfig(req);
+        res.json({ appId, configId, graphVersion: GRAPH_VERSION });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.post('/integrations/whatsapp/complete', requireFirebase, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        if (!authUser?.uid)
+            throw createHttpError(401, 'Unauthorized');
+        const payload = (req.body ?? {});
+        const code = String(payload.code ?? '').trim();
+        if (!code || code.length > 4096)
+            throw createHttpError(400, 'Missing or invalid Embedded Signup code');
+        const wabaId = assertMetaAssetId(payload.wabaId, 'WhatsApp Business Account ID');
+        const phoneNumberId = assertMetaAssetId(payload.phoneNumberId, 'WhatsApp phone number ID');
+        const businessId = payload.businessId ? assertMetaAssetId(payload.businessId, 'Meta business ID') : undefined;
+        const accessToken = await exchangeWhatsAppBusinessToken(req, code);
+        const phone = await fetchWhatsAppPhone(phoneNumberId, accessToken);
+        await subscribeWhatsAppWebhooks(wabaId, accessToken);
+        const userData = await loadStoredSocialAccounts(authUser.uid);
+        const currentAccounts = { ...(userData.socialAccounts ?? {}) };
+        const wasConnected = Boolean(currentAccounts.whatsapp?.accessToken && currentAccounts.whatsapp?.phoneNumberId);
+        currentAccounts.whatsapp = { accessToken, phoneNumberId, wabaId, ...(businessId ? { businessId } : {}), ...(phone.display_phone_number ? { displayPhoneNumber: phone.display_phone_number } : {}), ...(phone.verified_name ? { verifiedName: phone.verified_name } : {}), ...(phone.quality_rating ? { qualityRating: phone.quality_rating } : {}), provider: 'meta_embedded_signup', connectedAt: new Date().toISOString() };
+        if (!wasConnected)
+            await consumeUsage(resolveBillingScope(authUser.uid, typeof payload.orgId === 'string' ? payload.orgId : undefined, authUser.email ?? userData.email ?? undefined), 'connectedSocials', 1);
+        await persistSocialAccounts(authUser.uid, { email: userData.email ?? authUser.email ?? null, socialAccounts: currentAccounts });
+        res.json({ connected: true, whatsapp: { phoneNumberId, wabaId, displayPhoneNumber: phone.display_phone_number, verifiedName: phone.verified_name } });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.post('/integrations/threads/start', requireFirebaseForm, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        if (!authUser?.uid)
+            throw createHttpError(401, 'Unauthorized');
+        const orgId = typeof req.body?.orgId === 'string' ? req.body.orgId : null;
+        res.status(200).send(renderThreadsHandoffHtml(buildThreadsOAuthUrl(req, authUser.uid, orgId, authUser.email, req.body?.returnUrl)));
     }
     catch (error) {
         next(error);
@@ -546,13 +878,29 @@ router.get('/integrations/threads/connect', requireFirebase, async (req, res, ne
 });
 router.get('/integrations/threads/connect-url', requireFirebase, async (req, res, next) => {
     try {
-        const userId = req.authUser?.uid;
+        const authUser = req.authUser;
+        const userId = authUser?.uid;
         if (!userId)
             throw createHttpError(401, 'Unauthorized');
-        res.json({ url: buildThreadsOAuthUrl(req, userId) });
+        const authorizationUrl = buildThreadsOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl);
+        res.json({ url: buildThreadsHandoffUrl(req, authorizationUrl), authorizationUrl });
     }
     catch (error) {
         next(error);
+    }
+});
+router.get('/integrations/threads/handoff', (req, res) => {
+    try {
+        const target = typeof req.query.target === 'string' ? req.query.target : '';
+        const authorizationUrl = decodeThreadsHandoffTarget(target);
+        const parsed = new URL(authorizationUrl);
+        if (!['threads.net', 'www.threads.net', 'threads.com', 'www.threads.com'].includes(parsed.hostname)) {
+            throw createHttpError(400, 'Invalid Threads authorization target');
+        }
+        res.status(200).send(renderThreadsHandoffHtml(parsed.toString()));
+    }
+    catch (error) {
+        res.status(400).send(renderCallbackHtml('Threads connection failed', 'Unable to open the Threads authorization handoff. Please start again from Dott Media.'));
     }
 });
 router.get('/integrations/meta/callback', async (req, res) => {
@@ -570,6 +918,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
         }
         const userData = await loadStoredSocialAccounts(state.userId);
         const currentAccounts = { ...(userData.socialAccounts ?? {}) };
+        const previouslyConnectedAccounts = { ...currentAccounts };
         const requestedPlatform = normalizeMetaConnectPlatform(state.platform);
         const userAccessToken = await exchangeLongLivedToken(req, shortLivedToken);
         await assertRequiredPermissions(userAccessToken, requestedPlatform);
@@ -592,7 +941,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
             throw new Error('Unable to resolve a usable Facebook Page token');
         }
         const connectedPlatforms = [];
-        if (requestedPlatform === 'facebook' || requestedPlatform === 'all') {
+        if (requestedPlatform === 'facebook' || requestedPlatform === 'ads' || requestedPlatform === 'all') {
             currentAccounts.facebook = {
                 accessToken: selectedPage.access_token,
                 userAccessToken,
@@ -600,6 +949,13 @@ router.get('/integrations/meta/callback', async (req, res) => {
                 pageName: selectedPage.name ?? currentAccounts.facebook?.pageName,
             };
             connectedPlatforms.push('facebook');
+        }
+        if (requestedPlatform === 'ads') {
+            currentAccounts.metaAds = {
+                connected: true,
+                userAccessToken,
+                connectedAt: new Date().toISOString(),
+            };
         }
         const instagramAccount = selectedPage.instagram_business_account;
         if (requestedPlatform === 'instagram' && !instagramAccount?.id) {
@@ -624,6 +980,10 @@ router.get('/integrations/meta/callback', async (req, res) => {
                 }
             }
         }
+        const newlyConnectedPlatforms = connectedPlatforms.filter(platform => !previouslyConnectedAccounts[platform]);
+        if (newlyConnectedPlatforms.length) {
+            await consumeUsage(resolveBillingScope(state.userId, typeof state.orgId === 'string' ? state.orgId : undefined, typeof state.email === 'string' ? state.email : userData.email ?? undefined), 'connectedSocials', newlyConnectedPlatforms.length);
+        }
         await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
         try {
             await mergeAutopostPlatforms(state.userId, connectedPlatforms);
@@ -641,15 +1001,89 @@ router.get('/integrations/meta/callback', async (req, res) => {
         ]
             .filter(Boolean)
             .join(', ');
-        res
-            .status(200)
-            .send(renderCallbackHtml('Meta connected', `${connectedChannels || 'Facebook'} is now connected. You can close this window and return to Dott Media.`));
+        res.redirect(303, oauthSuccessRedirect(requestedPlatform === 'ads' ? 'ads' : requestedPlatform === 'instagram' ? 'instagram' : 'facebook', state.returnUrl));
     }
     catch (error) {
         console.error('[meta] connection failed', error);
         res
             .status(400)
             .send(renderCallbackHtml('Meta connection failed', error.message || 'Unable to complete the Meta connection flow.'));
+    }
+});
+router.get('/integrations/instagram/callback', async (req, res) => {
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    const stateParam = typeof req.query.state === 'string' ? req.query.state : '';
+    const state = verifySignedState(stateParam);
+    const deniedScopes = extractScopesFromPayload({ denied_scopes: req.query.denied_scopes });
+    const callbackGrantedScopes = extractScopesFromPayload({ granted_scopes: req.query.granted_scopes, scope: req.query.scope });
+    if (!code || !state) {
+        res.status(400).send(renderCallbackHtml('Instagram connection failed', 'Invalid OAuth state or missing code.'));
+        return;
+    }
+    try {
+        const requiredScopes = getInstagramLoginScopes();
+        assertRequiredInstagramScopes(requiredScopes, callbackGrantedScopes, deniedScopes);
+        const shortLivedToken = await exchangeInstagramCodeForToken(req, code);
+        if (!shortLivedToken.accessToken) {
+            throw new Error('Missing short-lived Instagram token');
+        }
+        const longLivedToken = await exchangeInstagramLongLivedToken(req, shortLivedToken.accessToken);
+        const grantedScopes = new Set([
+            ...Array.from(callbackGrantedScopes),
+            ...Array.from(shortLivedToken.grantedScopes),
+            ...Array.from(longLivedToken.grantedScopes),
+        ]);
+        assertRequiredInstagramScopes(requiredScopes, grantedScopes, deniedScopes);
+        const accessToken = longLivedToken.accessToken;
+        const profile = await fetchInstagramMe(accessToken);
+        const accountId = profile.id ?? profile.user_id ?? shortLivedToken.userId;
+        if (!accountId) {
+            throw new Error('Unable to resolve Instagram professional account');
+        }
+        const userData = await loadStoredSocialAccounts(state.userId);
+        const currentAccounts = { ...(userData.socialAccounts ?? {}) };
+        const wasInstagramConnected = Boolean(currentAccounts.instagram);
+        currentAccounts.instagram = {
+            provider: 'instagram_login',
+            graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL,
+            accessToken,
+            accountId: String(accountId),
+            userId: profile.user_id ?? shortLivedToken.userId,
+            username: profile.username ?? currentAccounts.instagram?.username,
+            accountType: profile.account_type ?? currentAccounts.instagram?.accountType,
+            mediaCount: typeof profile.media_count === 'number' ? profile.media_count : currentAccounts.instagram?.mediaCount,
+            connectedAt: new Date().toISOString(),
+        };
+        if (!wasInstagramConnected) {
+            try {
+                await consumeUsage(resolveBillingScope(state.userId, typeof state.orgId === 'string' ? state.orgId : undefined, typeof state.email === 'string' ? state.email : userData.email ?? undefined), 'connectedSocials', 1);
+            }
+            catch (error) {
+                if (!isFirestoreResourceExhausted(error))
+                    throw error;
+                console.warn('[instagram] usage metering skipped because Firestore quota is exhausted; connection will continue', {
+                    userId: state.userId,
+                });
+            }
+        }
+        await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
+        try {
+            await mergeAutopostPlatforms(state.userId, ['instagram']);
+        }
+        catch (error) {
+            console.warn('[instagram] autopost platform merge failed after successful credential save', {
+                userId: state.userId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+        res.redirect(303, oauthSuccessRedirect('instagram', state.returnUrl));
+    }
+    catch (error) {
+        const message = formatProviderError(error, 'Instagram');
+        console.error('[instagram] connection failed', { message });
+        res
+            .status(400)
+            .send(renderCallbackHtml('Instagram connection failed', message || 'Unable to complete the Instagram connection flow.'));
     }
 });
 router.get('/integrations/threads/callback', async (req, res) => {
@@ -683,11 +1117,24 @@ router.get('/integrations/threads/callback', async (req, res) => {
         }
         const userData = await loadStoredSocialAccounts(state.userId);
         const currentAccounts = { ...(userData.socialAccounts ?? {}) };
+        const wasThreadsConnected = Boolean(currentAccounts.threads);
         currentAccounts.threads = {
             accessToken,
             accountId: profile.id,
             username: profile.username ?? currentAccounts.threads?.username,
         };
+        if (!wasThreadsConnected) {
+            try {
+                await consumeUsage(resolveBillingScope(state.userId, typeof state.orgId === 'string' ? state.orgId : undefined, typeof state.email === 'string' ? state.email : userData.email ?? undefined), 'connectedSocials', 1);
+            }
+            catch (error) {
+                if (!isFirestoreResourceExhausted(error))
+                    throw error;
+                console.warn('[threads] usage metering skipped because Firestore quota is exhausted; connection will continue', {
+                    userId: state.userId,
+                });
+            }
+        }
         await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
         try {
             await mergeAutopostPlatforms(state.userId, ['threads']);
@@ -698,9 +1145,7 @@ router.get('/integrations/threads/callback', async (req, res) => {
                 error: error instanceof Error ? error.message : String(error),
             });
         }
-        res
-            .status(200)
-            .send(renderCallbackHtml('Threads connected', `Threads${profile.username ? ` (@${profile.username})` : ''} is now connected. You can close this window and return to Dott Media.`));
+        res.redirect(303, oauthSuccessRedirect('threads', state.returnUrl));
     }
     catch (error) {
         console.error('[threads] connection failed', error);

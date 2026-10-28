@@ -7,7 +7,7 @@ import admin from 'firebase-admin';
 import { z } from 'zod';
 import { requireFirebase } from '../middleware/firebaseAuth.js';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService.js';
-import { consumeUsage, resolveBillingScope } from '../services/billing/billingService.js';
+import { consumeUsage, isFirestoreResourceExhausted, resolveBillingScope } from '../services/billing/billingService.js';
 import { socialPostingService } from '../packages/services/socialPostingService.js';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService.js';
 import { autoPostService } from '../services/autoPostService.js';
@@ -32,6 +32,7 @@ const HISTORY_SOCIAL_LOG_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_SOCIAL
 const HISTORY_USER_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_USER_LOOKUP_TIMEOUT_MS ?? 1000), 500);
 const SOCIAL_STATUS_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.SOCIAL_STATUS_LOOKUP_TIMEOUT_MS ?? 1500), 500);
 const router = Router();
+const immediatePublishRequests = new Map();
 let renderEnvCache;
 const BWIN_USER_ID = (process.env.BWIN_USER_ID ?? '1zvY9nNyXMcfxdPQEyx0bIdK7r53').trim();
 const BWIN_SCOPE_ALIASES = new Set(['bwinbetug', BWIN_USER_ID, process.env.BWIN_SCOPE_ID, process.env.BWIN_TRACK_OWNER_ID].filter(Boolean));
@@ -56,27 +57,63 @@ const deriveFacebookPageToken = async (pageId, accessToken) => {
         return accessToken;
     }
 };
+const mergeHistoryAccount = (base, overlay) => {
+    const merged = { ...(base ?? {}) };
+    Object.entries(overlay ?? {}).forEach(([key, value]) => {
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (trimmed)
+                merged[key] = trimmed;
+            return;
+        }
+        if (value !== null && value !== undefined) {
+            merged[key] = value;
+        }
+    });
+    return Object.keys(merged).length ? merged : undefined;
+};
 const mergeLiveHistoryProfiles = (...profiles) => {
     const merged = profiles.reduce((acc, profile) => {
         if (!profile)
             return acc;
+        const socialAccounts = { ...(acc?.socialAccounts ?? {}) };
+        Object.entries(profile.socialAccounts ?? {}).forEach(([platform, account]) => {
+            const mergedAccount = mergeHistoryAccount(socialAccounts[platform], account);
+            if (mergedAccount)
+                socialAccounts[platform] = mergedAccount;
+        });
         return {
             id: acc?.id ?? profile.id,
             email: acc?.email ?? profile.email,
-            socialAccounts: {
-                ...(acc?.socialAccounts ?? {}),
-                ...(profile.socialAccounts ?? {}),
-            },
+            socialAccounts,
         };
     }, null);
     return merged?.socialAccounts ? merged : null;
 };
+const fetchSupabaseLiveHistoryProfile = async (userIds, emails) => {
+    try {
+        const fallback = await supabaseFallbackService.getSocialAccountsByIdentifiers(userIds, emails.filter((value) => typeof value === 'string'));
+        if (!fallback?.socialAccounts)
+            return null;
+        return {
+            id: fallback.userId ?? userIds.find(Boolean) ?? '',
+            email: fallback.email ?? null,
+            socialAccounts: fallback.socialAccounts,
+        };
+    }
+    catch (error) {
+        console.warn('[social-history-route] Supabase social account lookup failed', error instanceof Error ? error.message : String(error));
+        return null;
+    }
+};
 const fetchKnownMetaHistoryPosts = async (knownProfile) => {
     if (!knownProfile?.socialAccounts)
         return [];
-    const posts = [];
     const facebook = knownProfile.socialAccounts.facebook;
-    if (facebook?.pageId && facebook?.accessToken) {
+    const fetchFacebook = async () => {
+        const posts = [];
+        if (!facebook?.pageId || !facebook?.accessToken)
+            return posts;
         try {
             const pageToken = await deriveFacebookPageToken(String(facebook.pageId), String(facebook.accessToken));
             const response = await axios.get(`${META_GRAPH_BASE}/${facebook.pageId}/posts`, {
@@ -108,9 +145,13 @@ const fetchKnownMetaHistoryPosts = async (knownProfile) => {
         catch (error) {
             console.warn('[social-history-route] live Facebook history fetch failed', error instanceof Error ? error.message : String(error));
         }
-    }
+        return posts;
+    };
     const instagram = knownProfile.socialAccounts.instagram;
-    if (instagram?.accountId && instagram?.accessToken) {
+    const fetchInstagram = async () => {
+        const posts = [];
+        if (!instagram?.accountId || !instagram?.accessToken)
+            return posts;
         try {
             const response = await axios.get(`${META_GRAPH_BASE}/${instagram.accountId}/media`, {
                 params: {
@@ -150,9 +191,13 @@ const fetchKnownMetaHistoryPosts = async (knownProfile) => {
         catch (error) {
             console.warn('[social-history-route] live Instagram history fetch failed', error instanceof Error ? error.message : String(error));
         }
-    }
+        return posts;
+    };
     const threads = knownProfile.socialAccounts.threads;
-    if (threads?.accountId && threads?.accessToken) {
+    const fetchThreads = async () => {
+        const posts = [];
+        if (!threads?.accountId || !threads?.accessToken)
+            return posts;
         try {
             const response = await axios.get(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/${threads.accountId}/threads`, {
                 params: {
@@ -183,9 +228,13 @@ const fetchKnownMetaHistoryPosts = async (knownProfile) => {
         catch (error) {
             console.warn('[social-history-route] live Threads history fetch failed', error instanceof Error ? error.message : String(error));
         }
-    }
+        return posts;
+    };
     const linkedin = knownProfile.socialAccounts.linkedin;
-    if (linkedin?.accessToken && linkedin?.urn) {
+    const fetchLinkedIn = async () => {
+        const posts = [];
+        if (!linkedin?.accessToken || !linkedin?.urn)
+            return posts;
         try {
             const response = await axios.get(`${LINKEDIN_API_BASE}/ugcPosts`, {
                 params: {
@@ -224,13 +273,36 @@ const fetchKnownMetaHistoryPosts = async (knownProfile) => {
         catch (error) {
             console.warn('[social-history-route] live LinkedIn history fetch failed', error instanceof Error ? error.message : String(error));
         }
-    }
-    return posts;
+        return posts;
+    };
+    const rows = await Promise.all([fetchFacebook(), fetchInstagram(), fetchThreads(), fetchLinkedIn()]);
+    return rows.flat();
 };
 const fetchSocialLogHistoryPosts = async (userId) => {
     if (!userId)
         return [];
     const posts = [];
+    try {
+        const logs = await supabaseFallbackService.getSocialLogsByUser(userId, 500);
+        logs.forEach((log, index) => {
+            posts.push({
+                id: `supabase-social-log-${log.responseId ?? log.scheduledPostId ?? index}`,
+                platform: String(log.platform ?? 'social'),
+                status: String(log.status ?? 'posted'),
+                remoteId: log.responseId ? String(log.responseId) : undefined,
+                postedAt: log.postedAt,
+                createdAt: log.postedAt,
+                caption: '',
+                source: 'supabase_social_log',
+                error: log.error ?? null,
+            });
+        });
+    }
+    catch (error) {
+        console.warn('[social-history-route] Supabase social log history fetch failed', error instanceof Error ? error.message : String(error));
+    }
+    if (posts.length > 0)
+        return posts;
     try {
         const snap = await firestore.collection('socialLogs').where('userId', '==', userId).orderBy('postedAt', 'desc').limit(100).get();
         snap.docs.forEach(doc => {
@@ -250,25 +322,6 @@ const fetchSocialLogHistoryPosts = async (userId) => {
     }
     catch (error) {
         console.warn('[social-history-route] Firestore social log history fetch failed', error instanceof Error ? error.message : String(error));
-    }
-    try {
-        const logs = await supabaseFallbackService.getSocialLogsByUser(userId, 500);
-        logs.forEach((log, index) => {
-            posts.push({
-                id: `supabase-social-log-${log.responseId ?? log.scheduledPostId ?? index}`,
-                platform: String(log.platform ?? 'social'),
-                status: String(log.status ?? 'posted'),
-                remoteId: log.responseId ? String(log.responseId) : undefined,
-                postedAt: log.postedAt,
-                createdAt: log.postedAt,
-                caption: '',
-                source: 'social_log',
-                error: log.error ?? null,
-            });
-        });
-    }
-    catch (error) {
-        console.warn('[social-history-route] Supabase social log history fetch failed', error instanceof Error ? error.message : String(error));
     }
     return posts;
 };
@@ -408,16 +461,20 @@ const getThreadsAppConfig = (req) => {
     const appId = process.env.THREADS_APP_ID ??
         process.env.INSTAGRAM_APP_ID ??
         process.env.META_APP_ID ??
+        process.env.FACEBOOK_APP_ID ??
         renderEnv.THREADS_APP_ID ??
         renderEnv.INSTAGRAM_APP_ID ??
         renderEnv.META_APP_ID ??
+        renderEnv.FACEBOOK_APP_ID ??
         '';
     const appSecret = process.env.THREADS_APP_SECRET ??
         process.env.INSTAGRAM_APP_SECRET ??
         process.env.META_APP_SECRET ??
+        process.env.FACEBOOK_APP_SECRET ??
         renderEnv.THREADS_APP_SECRET ??
         renderEnv.INSTAGRAM_APP_SECRET ??
         renderEnv.META_APP_SECRET ??
+        renderEnv.FACEBOOK_APP_SECRET ??
         '';
     const redirectUri = process.env.THREADS_REDIRECT_URI ??
         renderEnv.THREADS_REDIRECT_URI ??
@@ -489,7 +546,8 @@ const loadStoredSocialAccounts = async (userId) => {
     let userData = {};
     try {
         const userDoc = await firestore.collection('users').doc(userId).get();
-        userData = userDoc.data() ?? {};
+        userData =
+            userDoc.data() ?? {};
     }
     catch (error) {
         console.warn('[social] Firestore social account lookup failed; using fallback store', {
@@ -497,22 +555,32 @@ const loadStoredSocialAccounts = async (userId) => {
             error: error instanceof Error ? error.message : String(error),
         });
     }
-    if (!userData.socialAccounts || Object.keys(userData.socialAccounts).length === 0) {
-        try {
-            const fallback = await supabaseFallbackService.getSocialAccounts(userId);
-            if (fallback?.socialAccounts) {
-                userData = {
-                    email: fallback.email ?? userData.email ?? null,
-                    socialAccounts: fallback.socialAccounts,
-                };
-            }
-        }
-        catch (error) {
-            console.warn('[social] fallback social account lookup failed', {
-                userId,
-                error: error instanceof Error ? error.message : String(error),
+    // Supabase is the durable primary store when Firestore is unavailable or
+    // quota-limited. Always merge it: a partially populated Firestore document
+    // must not hide valid connections that were successfully persisted there.
+    try {
+        const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+        if (fallback?.socialAccounts) {
+            const mergedAccounts = { ...(userData.socialAccounts ?? {}) };
+            Object.entries(fallback.socialAccounts).forEach(([platform, account]) => {
+                const existing = mergedAccounts[platform];
+                mergedAccounts[platform] =
+                    existing && typeof existing === 'object' && account && typeof account === 'object'
+                        ? { ...existing, ...account }
+                        : account;
             });
+            userData = {
+                email: fallback.email ?? userData.email ?? null,
+                socialAccounts: mergedAccounts,
+                socialDisconnects: userData.socialDisconnects,
+            };
         }
+    }
+    catch (error) {
+        console.warn('[social] fallback social account lookup failed', {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+        });
     }
     return userData;
 };
@@ -531,9 +599,18 @@ const loadStatusSocialAccounts = async (userId, email) => {
             socialAccounts: stored.socialAccounts,
         }
         : null);
+    const socialAccounts = { ...(merged?.socialAccounts ?? stored.socialAccounts ?? {}) };
+    const socialDisconnects = stored.socialDisconnects ?? {};
+    Object.entries(socialDisconnects).forEach(([platform, disconnected]) => {
+        // A successful fallback-store connection supersedes an old Firestore-only
+        // disconnect marker. Explicit disconnects remove the fallback credential.
+        if (disconnected && !stored.socialAccounts?.[platform])
+            delete socialAccounts[platform];
+    });
     return {
         email: stored.email ?? email ?? null,
-        socialAccounts: merged?.socialAccounts ?? stored.socialAccounts ?? {},
+        socialAccounts,
+        socialDisconnects,
     };
 };
 const persistSocialAccounts = async (userId, payload) => {
@@ -562,6 +639,64 @@ const persistSocialAccounts = async (userId, payload) => {
     if (firestoreError && fallbackError) {
         throw fallbackError;
     }
+};
+const clearSocialDisconnects = async (userId, platforms) => {
+    const updates = platforms.reduce((acc, platform) => {
+        acc[`socialDisconnects.${platform}`] = admin.firestore.FieldValue.delete();
+        return acc;
+    }, {});
+    if (!Object.keys(updates).length)
+        return;
+    try {
+        await firestore.collection('users').doc(userId).update(updates);
+    }
+    catch (error) {
+        console.warn('[social] social disconnect marker cleanup failed', {
+            userId,
+            platforms,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+};
+const disconnectSocialPlatform = async (userId, platform) => {
+    const stored = await loadStoredSocialAccounts(userId);
+    const socialAccounts = { ...(stored.socialAccounts ?? {}) };
+    delete socialAccounts[platform];
+    let firestoreError = null;
+    let fallbackError = null;
+    try {
+        await firestore.collection('users').doc(userId).update({
+            [`socialAccounts.${platform}`]: admin.firestore.FieldValue.delete(),
+            [`socialDisconnects.${platform}`]: true,
+        });
+    }
+    catch (error) {
+        firestoreError = error;
+        console.warn('[social] Firestore social account disconnect failed; saving pruned fallback store', {
+            userId,
+            platform,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+    try {
+        await supabaseFallbackService.upsertSocialAccounts(userId, {
+            email: stored.email ?? null,
+            socialAccounts,
+            replace: true,
+        });
+    }
+    catch (error) {
+        fallbackError = error;
+        console.warn('[social] fallback social account disconnect failed', {
+            userId,
+            platform,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+    if (firestoreError && fallbackError) {
+        throw fallbackError;
+    }
+    return socialAccounts;
 };
 const mergeAutopostPlatforms = async (userId, platformsToAdd) => {
     const autopostRef = firestore.collection('autopostJobs').doc(userId);
@@ -814,6 +949,85 @@ router.post('/posts/schedule', requireFirebase, async (req, res, next) => {
         next(error);
     }
 });
+router.post('/posts/publish-now', requireFirebase, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        if (!authUser)
+            return res.status(401).json({ message: 'Unauthorized' });
+        const payload = scheduleSchema.parse({
+            ...(req.body ?? {}),
+            scheduledFor: new Date().toISOString(),
+            timesPerDay: 1,
+        });
+        if (authUser.uid !== payload.userId) {
+            return res.status(403).json({ message: 'Cannot publish for another user' });
+        }
+        // Durably create the queue records before acknowledging the request. This
+        // remains fast, but guarantees an accepted post cannot disappear if the
+        // hosting process is recycled immediately after sending the response.
+        await consumeUsage(resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email), 'scheduledPosts', Math.max(payload.platforms.length, 1));
+        const scheduled = await socialSchedulingService.schedulePosts({ ...payload, billingUsageConsumed: true });
+        const ids = scheduled.postIds ?? [];
+        if (!ids.length) {
+            return res.status(scheduled.reason === 'limit_reached' ? 429 : 400).json({
+                message: scheduled.reason === 'limit_reached'
+                    ? 'Today\'s posting limit has been reached.'
+                    : 'No posts were queued.',
+                reason: scheduled.reason,
+            });
+        }
+        const requestId = randomBytes(16).toString('hex');
+        immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: false, posted: 0, failed: 0, pending: ids.length, posts: [], updatedAt: Date.now() });
+        res.status(202).json({ requestId, queued: ids.length, postIds: ids });
+        void (async () => {
+            try {
+                await socialPostingService.runQueue(250, authUser.uid);
+                const history = await socialPostingService.getHistory(authUser.uid, 500);
+                const posts = history.posts.filter(post => ids.includes(String(post.id ?? ''))).map(post => ({ id: post.id, platform: post.platform, status: post.status, errorMessage: post.errorMessage, remoteId: post.remoteId }));
+                const posted = posts.filter(post => post.status === 'posted').length;
+                immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: true, posted, failed: Math.max(ids.length - posted, 0), pending: 0, posts, updatedAt: Date.now() });
+            }
+            catch (error) {
+                immediatePublishRequests.set(requestId, { userId: authUser.uid, complete: true, posted: 0, failed: ids.length, pending: 0, posts: [], error: error instanceof Error ? error.message : String(error), updatedAt: Date.now() });
+            }
+        })();
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.get('/posts/publish-status', requireFirebase, async (req, res, next) => {
+    try {
+        const authUser = req.authUser;
+        if (!authUser)
+            return res.status(401).json({ message: 'Unauthorized' });
+        const requestId = String(req.query.requestId ?? '').trim();
+        if (requestId) {
+            const state = immediatePublishRequests.get(requestId);
+            if (!state || state.userId !== authUser.uid)
+                return res.status(404).json({ message: 'Publish request not found' });
+            return res.json(state);
+        }
+        const ids = String(req.query.ids ?? '').split(',').map(value => value.trim()).filter(Boolean).slice(0, 12);
+        if (!ids.length)
+            return res.status(400).json({ message: 'Post IDs are required' });
+        const history = await socialPostingService.getHistory(authUser.uid, 500);
+        const posts = history.posts.filter(post => ids.includes(String(post.id ?? ''))).map(post => ({
+            id: post.id,
+            platform: post.platform,
+            status: post.status,
+            errorMessage: post.errorMessage,
+            remoteId: post.remoteId,
+        }));
+        const terminal = new Set(['posted', 'failed', 'skipped_limit', 'skipped_deprecated']);
+        const posted = posts.filter(post => post.status === 'posted').length;
+        const failed = posts.filter(post => terminal.has(String(post.status)) && post.status !== 'posted').length;
+        res.json({ posts, posted, failed, pending: Math.max(ids.length - posted - failed, 0), complete: posts.length === ids.length && posts.every(post => terminal.has(String(post.status))) });
+    }
+    catch (error) {
+        next(error);
+    }
+});
 router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
     try {
         const authUser = req.authUser;
@@ -840,8 +1054,9 @@ router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
             instagramReelsVideoUrls: payload.instagramReelsVideoUrls,
             reelsIntervalHours: payload.reelsIntervalHours,
             generatedContent: payload.generatedContent,
+            deferRun: true,
         });
-        res.json({ ok: true, ...result });
+        res.status(202).json({ ok: true, ...result });
     }
     catch (error) {
         next(error);
@@ -895,6 +1110,7 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
             ? await fetchBwinMetaSocialProfile()
             : null;
         const userId = requestedUserId || historyUserId || knownProfile?.id || bwinProfile?.id || authUser.uid;
+        const supabaseProfile = await withFallbackTimeout('supabase social account history lookup', fetchSupabaseLiveHistoryProfile(Array.from(new Set([requestedUserId, historyUserId, knownProfile?.id, bwinProfile?.id, authUser.uid].filter(Boolean))), [authUser.email, storedEmail, knownProfile?.email, bwinProfile?.email]), HISTORY_USER_LOOKUP_TIMEOUT_MS, null);
         const history = await withFallbackTimeout('stored posting history', socialPostingService.getHistory(userId), HISTORY_STORED_TIMEOUT_MS, { posts: [], todayPosts: [], summary: { perPlatform: {}, byStatus: {} }, daily: [] });
         const storedProfile = storedSocialAccounts
             ? {
@@ -903,7 +1119,7 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
                 socialAccounts: storedSocialAccounts,
             }
             : null;
-        const liveHistoryProfile = mergeLiveHistoryProfiles(knownProfile, bwinProfile, storedProfile);
+        const liveHistoryProfile = mergeLiveHistoryProfiles(knownProfile, bwinProfile, storedProfile, supabaseProfile);
         const [liveMetaPosts, socialLogPosts] = await Promise.all([
             withFallbackTimeout('live social history enrichment', fetchKnownMetaHistoryPosts(liveHistoryProfile), HISTORY_LIVE_FETCH_TIMEOUT_MS, []),
             withFallbackTimeout('social log history', fetchSocialLogHistoryPosts(userId), HISTORY_SOCIAL_LOG_TIMEOUT_MS, []),
@@ -1019,7 +1235,16 @@ router.get('/social/threads/callback', async (req, res) => {
             username: profile.username ?? currentAccounts.threads?.username,
         };
         if (!wasThreadsConnected) {
-            await consumeUsage(resolveBillingScope(state.userId, typeof state.orgId === 'string' ? state.orgId : undefined, typeof state.email === 'string' ? state.email : userData.email ?? undefined), 'connectedSocials', 1);
+            try {
+                await consumeUsage(resolveBillingScope(state.userId, typeof state.orgId === 'string' ? state.orgId : undefined, typeof state.email === 'string' ? state.email : userData.email ?? undefined), 'connectedSocials', 1);
+            }
+            catch (error) {
+                if (!isFirestoreResourceExhausted(error))
+                    throw error;
+                console.warn('[threads] usage metering skipped because Firestore quota is exhausted; connection will continue', {
+                    userId: state.userId,
+                });
+            }
         }
         await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
         try {
@@ -1162,6 +1387,23 @@ const credentialsSchema = z.object({
             .optional(),
     }),
 });
+const disconnectPlatformSchema = z.object({
+    platform: z.enum(['facebook', 'instagram', 'threads', 'linkedin', 'twitter', 'whatsapp']),
+});
+router.delete('/social/credentials/:platform', requireFirebase, async (req, res, next) => {
+    try {
+        const { platform } = disconnectPlatformSchema.parse(req.params);
+        const authUser = req.authUser;
+        if (!authUser) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+        const socialAccounts = await disconnectSocialPlatform(authUser.uid, platform);
+        res.json({ success: true, platform, socialAccounts });
+    }
+    catch (error) {
+        next(error);
+    }
+});
 router.post('/social/credentials', requireFirebase, async (req, res, next) => {
     try {
         const payload = credentialsSchema.parse(req.body);
@@ -1205,6 +1447,25 @@ router.post('/social/credentials', requireFirebase, async (req, res, next) => {
                 });
             }
         }
+        if (payload.credentials.threads) {
+            const suppliedToken = payload.credentials.threads.accessToken.trim();
+            if (!suppliedToken) {
+                return res.status(400).json({ message: 'Threads access token is required.' });
+            }
+            // Threads user tokens must be exchanged with the app secret before they
+            // are persisted. This keeps manually supplied credentials on the same
+            // long-lived-token path as the OAuth callback flow.
+            const longLivedToken = await exchangeThreadsLongLivedToken(req, suppliedToken);
+            payload.credentials.threads.accessToken = longLivedToken;
+            if (!payload.credentials.threads.accountId?.trim()) {
+                const profile = await fetchThreadsMe(longLivedToken);
+                if (profile.id)
+                    payload.credentials.threads.accountId = profile.id;
+                if (!payload.credentials.threads.username && profile.username) {
+                    payload.credentials.threads.username = profile.username;
+                }
+            }
+        }
         if (payload.credentials.instagram && !payload.credentials.threads) {
             const resolved = await resolveThreadsAccountId(payload.credentials.instagram.accessToken, payload.credentials.instagram.accountId);
             if (resolved?.accountId) {
@@ -1230,6 +1491,7 @@ router.post('/social/credentials', requireFirebase, async (req, res, next) => {
             });
         }
         await persistSocialAccounts(payload.userId, { socialAccounts: payload.credentials });
+        await clearSocialDisconnects(payload.userId, Object.keys(payload.credentials));
         res.json({ success: true });
     }
     catch (error) {

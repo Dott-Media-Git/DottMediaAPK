@@ -3,7 +3,8 @@ import axios from 'axios';
 import admin from 'firebase-admin';
 import { config } from '../config.js';
 import { firestore } from '../db/firestore.js';
-import { generateReply, likeInstagramComment, replyToInstagramComment } from '../services/autoReplyService.js';
+import { generateReply, likeInstagramComment, replyToInstagramComment, replyToInstagramMessage } from '../services/autoReplyService.js';
+import { buildCommentToDmMessage, buildCommentToDmPublicReply, isCommentToDmTrigger, } from '../services/commentToDmService.js';
 import { supabaseFallbackService } from '../services/supabaseFallbackService.js';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const enabled = process.env.IG_COMMENT_POLL_ENABLED !== 'false';
@@ -11,10 +12,19 @@ const scheduleExpression = process.env.IG_COMMENT_POLL_CRON ?? '*/1 * * * *';
 const mediaLimit = Math.max(Number(process.env.IG_COMMENT_MEDIA_LIMIT ?? 5), 1);
 const commentLimit = Math.max(Number(process.env.IG_COMMENT_LIMIT ?? 10), 1);
 const windowHours = Math.max(Number(process.env.IG_COMMENT_WINDOW_HOURS ?? 24), 1);
+const KNOWN_IG_TARGETS = {
+    tCE1FQ1cOFgdupOXP23mPUMQRAz1: { igBusinessId: '17841437471047291' },
+    '80bYIeiuukNFtUvXTUobXmfC7pu1': { igBusinessId: '17841426388091930' },
+};
 const CLIENT_POLL_USER_IDS = [
+    'cMPZQccGggbhZe9dbvtxFmBehP02',
+    'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
+    '80bYIeiuukNFtUvXTUobXmfC7pu1',
+    'LVR7p3WzdFM51ds92Kacf6S40og2',
     'acmVetCcOiTHeGk5D7eDYieamDF3',
     'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
     'vzdH1DnfFLVjlY8bBgC26WACmmw2',
+    'X0ObAFQft0UWZee9IbUyYaeaBfO2',
 ];
 const isAlreadyExistsError = (error) => {
     const err = error;
@@ -134,10 +144,19 @@ const processComment = async (comment, target) => {
         }
     }
     try {
-        const reply = await generateReply(text, 'instagram', target.userId, 'comment');
+        const commentToDm = isCommentToDmTrigger(text);
+        const reply = commentToDm
+            ? buildCommentToDmPublicReply({ platform: 'instagram', userId: target.userId })
+            : await generateReply(text, 'instagram', target.userId, 'comment', { accountId: target.igBusinessId });
         await replyToInstagramComment(commentId, reply, target.accessToken);
         await upsertReplyStatus(docRef, 'sent');
         await likeInstagramComment(commentId, target.accessToken).catch(err => console.warn('[ig-comment-poll] like failed', err.message));
+        if (commentToDm && fromId) {
+            await replyToInstagramMessage(fromId, buildCommentToDmMessage({ platform: 'instagram', userId: target.userId, commentText: text }), {
+                accessToken: target.accessToken,
+                igBusinessId: target.igBusinessId,
+            }).catch(err => console.warn('[ig-comment-poll] DM follow-up failed', err.message));
+        }
     }
     catch (error) {
         await upsertReplyStatus(docRef, 'failed', error.message);
@@ -146,6 +165,11 @@ const processComment = async (comment, target) => {
 };
 const loadClientTargets = async () => {
     const targets = [];
+    const rootToken = (process.env.META_GRAPH_TOKEN ??
+        process.env.CLIENT_META_USER_TOKEN ??
+        process.env.INSTAGRAM_ACCESS_TOKEN ??
+        process.env.FACEBOOK_PAGE_TOKEN ??
+        '').trim();
     if (config.channels.instagram.businessId && config.channels.instagram.accessToken) {
         targets.push({
             igBusinessId: config.channels.instagram.businessId,
@@ -176,10 +200,15 @@ const loadClientTargets = async () => {
                 ?.instagram;
             if (instagram?.accountId && instagram.accessToken) {
                 targets.push({ userId, igBusinessId: instagram.accountId, accessToken: instagram.accessToken });
+                return;
             }
         }
         catch (error) {
             console.warn('[ig-comment-poll] Supabase target lookup failed', userId, error.message);
+        }
+        const known = KNOWN_IG_TARGETS[userId];
+        if (known && rootToken) {
+            targets.push({ userId, igBusinessId: known.igBusinessId, accessToken: rootToken });
         }
     }));
     const seen = new Set();

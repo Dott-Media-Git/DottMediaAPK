@@ -9,9 +9,14 @@ import { getAdminMetrics } from '../services/admin/adminMetricsService.js';
 import { autopostComplianceService } from '../services/autopostComplianceService.js';
 import { firestore } from '../db/firestore.js';
 import { getLiveSocialMetrics } from '../services/liveSocialMetricsService.js';
+import { pollFacebookCommentsOnce } from '../jobs/facebookCommentPollJob.js';
+import { pollInstagramCommentsOnce } from '../jobs/instagramCommentPollJob.js';
+import { pollThreadsCommentsOnce } from '../jobs/threadsCommentPollJob.js';
+import { pollInstagramDmsOnce } from '../jobs/instagramDmPollJob.js';
+import { supabaseFallbackService } from '../services/supabaseFallbackService.js';
 const router = Router();
 const ADMIN_LIVE_SOCIAL_CLIENTS = [
-    { label: 'Dott Media', userId: 'cMPZQccGggbhZe9dbvtxFmBehP02', email: 'xbrasio@gmail.com' },
+    { label: 'Aux Wellness Hub', userId: 'cMPZQccGggbhZe9dbvtxFmBehP02', email: 'xbrasio@gmail.com' },
     { label: 'SheCare Doctor', userId: 'tCE1FQ1cOFgdupOXP23mPUMQRAz1', email: 'shecaredoctor@gmail.com' },
     { label: 'Dott HR', userId: '80bYIeiuukNFtUvXTUobXmfC7pu1', email: 'kingbrasio100@gmail.com' },
     { label: 'Dott Energy', userId: 'LVR7p3WzdFM51ds92Kacf6S40og2' },
@@ -20,7 +25,41 @@ const ADMIN_LIVE_SOCIAL_CLIENTS = [
     { label: 'Gamers 4 Life', userId: 'vzdH1DnfFLVjlY8bBgC26WACmmw2' },
     { label: 'Bwin / Ball Analytics', userId: process.env.BWIN_USER_ID || '1zvY9nNyXMcfxdPQEyx0bIdK7r53', scopeId: process.env.BWIN_SCOPE_ID || 'bwinbetug', email: 'ball_analytics' },
 ];
-const ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS ?? 12000);
+const loadAdminLiveSocialClients = async () => {
+    const clients = new Map(ADMIN_LIVE_SOCIAL_CLIENTS.map(client => [client.userId, client]));
+    try {
+        const [jobs, socialRows] = await Promise.all([
+            supabaseFallbackService.getActiveAutopostJobs(1000),
+            supabaseFallbackService.getAllSocialAccounts(1000),
+        ]);
+        const socialByUser = new Map(socialRows.map(row => [row.userId, row]));
+        jobs.forEach(job => {
+            const userId = String(job.userId ?? '').trim();
+            if (!userId)
+                return;
+            const social = socialByUser.get(userId);
+            const accounts = social?.socialAccounts;
+            const hasConnectedSocial = Boolean(accounts?.facebook || accounts?.instagram || accounts?.threads || accounts?.linkedin ||
+                accounts?.twitter || accounts?.tiktok || accounts?.youtube);
+            if (!hasConnectedSocial)
+                return;
+            const existing = clients.get(userId);
+            const pageName = String(accounts?.facebook?.pageName ?? '').trim();
+            const instagramName = String(accounts?.instagram?.username ?? '').trim();
+            clients.set(userId, {
+                ...existing,
+                userId,
+                label: existing?.label || pageName || instagramName || social?.email || `Connected account ${userId.slice(0, 8)}`,
+                email: existing?.email ?? social?.email ?? null,
+            });
+        });
+    }
+    catch (error) {
+        console.warn('[admin-live-social] dynamic client discovery failed; using configured clients', error instanceof Error ? error.message : String(error));
+    }
+    return Array.from(clients.values());
+};
+const ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS = Number(process.env.ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS ?? 90000);
 const ADMIN_METRICS_FRESH_MS = Number(process.env.ADMIN_METRICS_FRESH_MS ?? 15000);
 const ADMIN_METRICS_STALE_MS = Number(process.env.ADMIN_METRICS_STALE_MS ?? 180000);
 const ADMIN_COMPLIANCE_LIVE_CACHE_MS = Number(process.env.ADMIN_COMPLIANCE_LIVE_CACHE_MS ?? 180000);
@@ -28,6 +67,7 @@ let adminMetricsCache = null;
 let adminMetricsRefresh = null;
 let adminComplianceLiveCache = null;
 let adminComplianceLiveRefresh = null;
+const adminLiveSocialAccountCache = new Map();
 const withTimeout = (promise, ms, label) => Promise.race([
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms)),
@@ -100,7 +140,8 @@ router.get('/admin/live-social', requireFirebase, requireAdmin, async (req, res,
     try {
         const lookbackRaw = typeof req.query.lookbackHours === 'string' ? Number(req.query.lookbackHours) : 720;
         const lookbackHours = Number.isFinite(lookbackRaw) && lookbackRaw > 0 ? lookbackRaw : 720;
-        const rows = await Promise.all(ADMIN_LIVE_SOCIAL_CLIENTS.map(async (client) => {
+        const liveSocialClients = await loadAdminLiveSocialClients();
+        const rows = await Promise.all(liveSocialClients.map(async (client) => {
             try {
                 const stats = await withTimeout(getLiveSocialMetrics(client.userId, {
                     lookbackHours,
@@ -110,7 +151,7 @@ router.get('/admin/live-social', requireFirebase, requireAdmin, async (req, res,
                         email: client.email,
                     },
                 }), ADMIN_LIVE_SOCIAL_CLIENT_TIMEOUT_MS, `live social ${client.label}`);
-                return {
+                const row = {
                     label: client.label,
                     userId: client.userId,
                     scopeId: client.scopeId ?? client.userId,
@@ -118,8 +159,18 @@ router.get('/admin/live-social', requireFirebase, requireAdmin, async (req, res,
                     status: 'ok',
                     stats,
                 };
+                adminLiveSocialAccountCache.set(client.userId, { row, fetchedAt: Date.now() });
+                return row;
             }
             catch (error) {
+                const cached = adminLiveSocialAccountCache.get(client.userId);
+                if (cached?.row) {
+                    return {
+                        ...cached.row,
+                        stale: true,
+                        staleReason: error instanceof Error ? error.message : String(error),
+                    };
+                }
                 return {
                     label: client.label,
                     userId: client.userId,
@@ -142,6 +193,19 @@ router.get('/admin/live-social', requireFirebase, requireAdmin, async (req, res,
         next(error);
     }
 });
+const runReplyPollersOnce = async () => {
+    const settled = await Promise.allSettled([
+        pollFacebookCommentsOnce(),
+        pollInstagramCommentsOnce(),
+        pollThreadsCommentsOnce(),
+        pollInstagramDmsOnce(),
+    ]);
+    return settled.map((result, index) => ({
+        poller: ['facebook_comments', 'instagram_comments', 'threads_replies', 'instagram_dms'][index],
+        status: result.status,
+        error: result.status === 'rejected' ? (result.reason instanceof Error ? result.reason.message : String(result.reason)) : null,
+    }));
+};
 const timestampToIso = (value) => {
     if (!value)
         return null;
@@ -224,6 +288,35 @@ router.post('/admin/compliance/run', requireFirebase, requireAdmin, async (_req,
     try {
         const result = await autopostComplianceService.checkAndRepair('admin_dashboard');
         res.json({ result });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.post('/admin/global-run', requireFirebase, requireAdmin, async (_req, res, next) => {
+    try {
+        const [autopostResult, replyPollers] = await Promise.all([
+            autopostComplianceService.globalRunNow('admin_global_run'),
+            runReplyPollersOnce(),
+        ]);
+        res.json({ ok: true, autopostResult, replyPollers });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.post('/admin/compliance/run-issue', requireFirebase, requireAdmin, async (req, res, next) => {
+    try {
+        const userId = String(req.body?.userId ?? '').trim();
+        const channel = String(req.body?.channel ?? '').trim();
+        if (!userId || !['feed', 'stories', 'reels', 'news'].includes(channel)) {
+            throw createHttpError(400, 'userId and channel are required');
+        }
+        const [autopostResult, replyPollers] = await Promise.all([
+            autopostComplianceService.rerunIssue({ userId, channel }, 'admin_issue_rerun'),
+            runReplyPollersOnce(),
+        ]);
+        res.json({ ok: true, autopostResult, replyPollers });
     }
     catch (error) {
         next(error);

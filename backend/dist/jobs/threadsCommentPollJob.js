@@ -12,6 +12,9 @@ const threadLimit = Math.max(Number(process.env.THREADS_COMMENT_THREAD_LIMIT ?? 
 const replyLimit = Math.max(Number(process.env.THREADS_COMMENT_LIMIT ?? 25), 1);
 const windowHours = Math.max(Number(process.env.THREADS_COMMENT_WINDOW_HOURS ?? 24), 1);
 const CLIENT_POLL_USER_IDS = [
+    'cMPZQccGggbhZe9dbvtxFmBehP02',
+    '80bYIeiuukNFtUvXTUobXmfC7pu1',
+    'LVR7p3WzdFM51ds92Kacf6S40og2',
     '1zvY9nNyXMcfxdPQEyx0bIdK7r53',
     'acmVetCcOiTHeGk5D7eDYieamDF3',
     'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
@@ -135,7 +138,7 @@ const processReply = async (reply, threadId, target) => {
     if (!reserved)
         return;
     try {
-        const response = await generateReply(reserved.text, 'threads', target.userId, 'comment');
+        const response = await generateReply(reserved.text, 'threads', target.userId, 'comment', { accountId: target.accountId });
         await replyToThreadsComment(reserved.replyId, response, {
             accountId: target.accountId,
             accessToken: target.accessToken,

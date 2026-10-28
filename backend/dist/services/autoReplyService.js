@@ -5,21 +5,49 @@ import { firestore } from '../db/firestore.js';
 import { pickFallbackReply } from './fallbackReplyLibrary.js';
 import { resolveBrandIdForClient } from './brandKitService.js';
 import { OPENAI_REPLY_TIMEOUT_MS } from '../utils/openaiTimeout.js';
+import { consumeUsageForUserId } from './billing/billingService.js';
 const GRAPH_VERSION = 'v19.0';
 const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
 const replyPromptCache = new Map();
 const replyProfileCache = new Map();
+const ACCOUNT_REPLY_PROFILES = [
+    {
+        profile: 'auxwellness',
+        accountIds: ['17841420336656466', process.env.AUXWELLNESS_THREADS_PROFILE_ID ?? ''].filter(Boolean),
+        pageIds: ['1371096759416007'],
+        usernames: ['aux_wellness_hub'],
+    },
+    {
+        profile: 'default',
+        accountIds: ['17841448754415534', '28808899498698518', process.env.DOTT_MAIN_THREADS_PROFILE_ID ?? ''].filter(Boolean),
+        pageIds: ['1120716914467835'],
+        usernames: ['dotti_ai', 'dottimedia'],
+    },
+];
 const CLIENT_REPLY_PROFILES = {
+    cmpzqccgggbhze9dbvtxfmbehp02: 'auxwellness',
+    tce1fq1cofgdupoxp23mpumqraz1: 'shecare',
+    '80byieiuuknftuvxtuobxmfc7pu1': 'dotthr',
+    lvr7p3wzdfm51ds92kacf6s40og2: 'dottenergy',
     '1zvy9nnyxmcfxdpqeyx0bidk7r53': 'bwinbetug',
     acmvetccoithegk5d7edyieamdf3: 'carmarketplace',
     d1ingjlknraqh35m0nmgfw1lvd2: 'staysphere',
     vzdh1dnfflvjly8bbgc26wacmmw2: 'gamers44life',
+    x0obafqft0uwzee9ibuyyaeabfo2: 'simplicityhomedecor',
 };
-const openai = new OpenAI({ apiKey: config.openAI.apiKey, timeout: OPENAI_REPLY_TIMEOUT_MS });
-const openAiRepliesEnabled = () => {
+// NVIDIA NIM exposes an OpenAI-compatible chat-completions API, so all social
+// auto-replies can share the provider selected for the main assistant.
+const replyAI = new OpenAI({
+    apiKey: config.assistantAI.apiKey,
+    baseURL: config.assistantAI.baseURL,
+    timeout: OPENAI_REPLY_TIMEOUT_MS,
+});
+const aiRepliesEnabled = () => {
     if (process.env.AUTO_REPLY_OPENAI_ENABLED === 'false' || process.env.OPENAI_AUTO_REPLY_ENABLED === 'false')
         return false;
-    const key = config.openAI.apiKey?.trim() ?? '';
+    if (process.env.AUTO_REPLY_AI_ENABLED === 'false')
+        return false;
+    const key = config.assistantAI.apiKey?.trim() ?? '';
     return Boolean(key) && !/^sk-(test|example|placeholder)/i.test(key);
 };
 const buildGraphUrl = (path) => `https://graph.facebook.com/${GRAPH_VERSION}/${path}`;
@@ -51,7 +79,21 @@ const getAutoReplyPromptOverride = async (userId) => {
         return null;
     }
 };
-const getReplyProfile = async (userId) => {
+const getIdentityReplyProfile = (identity) => {
+    if (!identity)
+        return null;
+    const accountId = identity.accountId?.trim();
+    const pageId = identity.pageId?.trim();
+    const username = identity.username?.trim().toLowerCase().replace(/^@/, '');
+    const match = ACCOUNT_REPLY_PROFILES.find(profile => (accountId && profile.accountIds.includes(accountId)) ||
+        (pageId && profile.pageIds.includes(pageId)) ||
+        (username && profile.usernames.includes(username)));
+    return match?.profile ?? null;
+};
+const getReplyProfile = async (userId, identity) => {
+    const identityProfile = getIdentityReplyProfile(identity);
+    if (identityProfile)
+        return identityProfile;
     if (!userId)
         return null;
     const userProfile = CLIENT_REPLY_PROFILES[userId.trim().toLowerCase()];
@@ -83,7 +125,13 @@ const getReplyProfile = async (userId) => {
                     ? 'staysphere'
                     : /gamers44life/.test(socialKey)
                         ? 'gamers44life'
-                        : '';
+                        : /shecare/.test(socialKey)
+                            ? 'shecare'
+                            : /dott human resource|dotthr|dott hr/.test(socialKey)
+                                ? 'dotthr'
+                                : /dott energy|dottenergy/.test(socialKey)
+                                    ? 'dottenergy'
+                                    : '';
         replyProfileCache.set(userId, { value: profile, fetchedAt: now, loaded: true });
         return profile || null;
     }
@@ -93,8 +141,8 @@ const getReplyProfile = async (userId) => {
         return null;
     }
 };
-export async function generateReply(message, platform, userId, kind = 'message') {
-    const profile = await getReplyProfile(userId);
+export async function generateReply(message, platform, userId, kind = 'message', identity) {
+    const profile = await getReplyProfile(userId, identity);
     if (profile === 'bwinbetug' && kind === 'comment') {
         return 'Thanks for the support. For more football updates or to place bets, follow the link in the bio.';
     }
@@ -102,6 +150,11 @@ export async function generateReply(message, platform, userId, kind = 'message')
         carmarketplace: 'You reply for Carmarketug, a car marketplace. Be brief, helpful, and ask for budget, preferred model, location, or viewing details. Do not mention Dott Media or AI Sales Agent.',
         staysphere: 'You reply for Stay-sphere93, a short-stay and accommodation brand. Be brief, helpful, and ask for dates, guest count, preferred area, budget, or availability. Do not mention Dott Media or AI Sales Agent.',
         gamers44life: 'You reply for Gamers44life, a gaming community page. Be brief, energetic, and ask about the game, platform, rank, setup, or content ideas. Do not mention Dott Media or AI Sales Agent.',
+        simplicityhomedecor: 'You reply for Simplicity Home Decor. Be warm, concise, and sales-focused. Answer questions about throws, cushions, bedsheets, colours, availability, and delivery without inventing prices or stock. Invite every interested customer to WhatsApp +256 774 055 210 (https://wa.me/256774055210). Never mention Dott Media or AI.',
+        shecare: 'You reply for SheCare Doctor, a private women’s health support account. Be warm, discreet, respectful, and brief. Encourage private DM or WhatsApp for confidential support. Do not give medical instructions, do not judge, and never mention Dott Media or AI.',
+        dotthr: 'You reply for Dott Human Resource. Be professional, warm, and practical. Ask about hiring needs, team size, HR structure, onboarding, policy, or staff-management support. Never mention Dott Media or AI.',
+        dottenergy: 'You reply for Dott Energy, a wind turbine and renewable energy store. Ask for location, power needs, preferred turbine size, battery/inverter setup, and whether they need a turbine, generator, or controller. Promote the store when relevant and never mention Dott Media or AI.',
+        auxwellness: 'You reply for AUX Wellness Hub, a wellness and active-lifestyle store. Be warm, concise, and helpful. Answer questions about back support, warm or cool pain relief, knee stabilizers, gym wear, sizing, availability, and ordering without inventing prices, stock, or medical guarantees. Encourage the customer to message for product guidance and never mention Dott Media or AI.',
     };
     const bwinInstruction = kind === 'comment'
         ? 'Reply with exactly: "Thanks for the support. For more football updates or to place bets, follow the link in the bio."'
@@ -114,12 +167,15 @@ export async function generateReply(message, platform, userId, kind = 'message')
     const override = await getAutoReplyPromptOverride(userId);
     const system = override ? `${baseSystem}\nAdditional guidance: ${override}` : baseSystem;
     const fallback = pickFallbackReply({ channel: platform, kind, profile });
-    if (!openAiRepliesEnabled()) {
+    if (!aiRepliesEnabled()) {
         return fallback;
     }
     try {
-        const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
+        if (userId) {
+            await consumeUsageForUserId(userId, 'aiReplies', 1);
+        }
+        const completion = await replyAI.chat.completions.create({
+            model: config.assistantAI.model,
             temperature: 0.4,
             max_tokens: 120,
             messages: [
@@ -130,7 +186,11 @@ export async function generateReply(message, platform, userId, kind = 'message')
         return completion.choices[0]?.message?.content?.trim() || fallback;
     }
     catch (err) {
-        console.error('OpenAI generateReply failed', { error: err.message, platform });
+        console.error('Social AI generateReply failed', {
+            error: err.message,
+            platform,
+            provider: config.assistantAI.provider,
+        });
         // Return a safe, short fallback so webhook flow continues even if the AI is unavailable
         return fallback;
     }
@@ -246,6 +306,20 @@ export async function replyToInstagramMessage(userId, message, options) {
     }
     catch (error) {
         throw formatAxiosError(error, 'IG DM reply');
+    }
+}
+export async function replyToInstagramLoginMessage(userId, message, accessToken) {
+    const token = accessToken?.trim();
+    if (!token)
+        throw new Error('Instagram Login access token missing');
+    try {
+        await axios.post('https://graph.instagram.com/me/messages', {
+            recipient: { id: userId },
+            message: { text: message },
+        }, { params: { access_token: token } });
+    }
+    catch (error) {
+        throw formatAxiosError(error, 'IG Login DM reply');
     }
 }
 export async function replyToFacebookMessage(userId, message, pageToken) {

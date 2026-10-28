@@ -1,10 +1,25 @@
 import { PredictiveOutreachService } from '../services/predictiveOutreachService.js';
 import { firestore } from '../db/firestore.js';
+import { canUseOutboundPipeline } from '../utils/socialAccess.js';
 const outreach = new PredictiveOutreachService();
+const assertOutboundAccess = (req, res) => {
+    const authUser = req.authUser;
+    if (!authUser) {
+        res.status(401).json({ message: 'Unauthorized' });
+        return null;
+    }
+    if (!canUseOutboundPipeline({ email: authUser.email ?? null }, authUser.uid)) {
+        res.status(403).json({ message: 'Outbound pipeline is disabled for all accounts' });
+        return null;
+    }
+    return authUser;
+};
 export class OutreachController {
     constructor() {
         this.search = async (req, res, next) => {
             try {
+                if (!assertOutboundAccess(req, res))
+                    return;
                 const { platform, query, limit } = req.body;
                 if (!platform || !query) {
                     return res.status(400).json({ message: 'platform and query are required' });
@@ -18,11 +33,14 @@ export class OutreachController {
         };
         this.send = async (req, res, next) => {
             try {
+                const authUser = assertOutboundAccess(req, res);
+                if (!authUser)
+                    return;
                 const { platform, profileId, name, headline, goal } = req.body;
                 if (!platform || !profileId || !name) {
                     return res.status(400).json({ message: 'platform, profileId, and name are required' });
                 }
-                const result = await outreach.sendOutreach({ platform, profileId, name, headline, goal });
+                const result = await outreach.sendOutreach({ platform, profileId, name, headline, goal, userId: authUser.uid });
                 res.status(202).json({ outreach: result });
             }
             catch (error) {
@@ -31,6 +49,8 @@ export class OutreachController {
         };
         this.stats = async (req, res, next) => {
             try {
+                if (!assertOutboundAccess(req, res))
+                    return;
                 const [queueSnap, convertedSnap, outreachSnap] = await Promise.all([
                     firestore.collection('prospects').where('status', '==', 'new').get(),
                     firestore.collection('prospects').where('status', '==', 'converted').get(),
@@ -51,10 +71,9 @@ export class OutreachController {
         };
         this.run = async (req, res, next) => {
             try {
-                const authUser = req.authUser;
-                if (!authUser) {
-                    return res.status(401).json({ message: 'Unauthorized' });
-                }
+                const authUser = assertOutboundAccess(req, res);
+                if (!authUser)
+                    return;
                 const token = process.env.OUTBOUND_RUN_TOKEN;
                 const body = req.body;
                 if (token) {
@@ -93,6 +112,8 @@ export class OutreachController {
         };
         this.logs = async (req, res, next) => {
             try {
+                if (!assertOutboundAccess(req, res))
+                    return;
                 const snap = await firestore.collection('outreach').orderBy('sentAt', 'desc').limit(25).get();
                 const logs = snap.docs.map(doc => {
                     const data = doc.data();

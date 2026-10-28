@@ -63,6 +63,33 @@ let renderEnvCache: RenderEnv | null | undefined;
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '');
 
+const formatProviderError = (error: unknown, provider: string) => {
+  if (axios.isAxiosError(error)) {
+    const payload = error.response?.data as
+      | {
+          error_message?: unknown;
+          error_type?: unknown;
+          message?: unknown;
+          error?: { message?: unknown; type?: unknown; code?: unknown } | string;
+          code?: unknown;
+        }
+      | undefined;
+    const nestedError = payload?.error && typeof payload.error === 'object' ? payload.error : undefined;
+    const message =
+      payload?.error_message ??
+      payload?.message ??
+      (typeof payload?.error === 'string' ? payload.error : undefined) ??
+      nestedError?.message;
+    const type = payload?.error_type ?? nestedError?.type;
+    const code = payload?.code ?? nestedError?.code ?? error.response?.status;
+    const detail = [type, message].filter(Boolean).map(String).join(': ');
+    if (detail) return `${provider} API error${code ? ` (${String(code)})` : ''}: ${detail}`;
+    return `${provider} API request failed with status ${error.response?.status ?? 'unknown'}`;
+  }
+
+  return error instanceof Error ? error.message : String(error);
+};
+
 const getBaseUrl = (req: Request) => {
   const envBase = process.env.BASE_URL ?? process.env.RENDER_EXTERNAL_URL;
   if (envBase) return normalizeBaseUrl(envBase);
@@ -1229,13 +1256,14 @@ router.get('/integrations/instagram/callback', async (req, res) => {
 
     res.redirect(303, oauthSuccessRedirect('instagram', state.returnUrl));
   } catch (error) {
-    console.error('[instagram] connection failed', error);
+    const message = formatProviderError(error, 'Instagram');
+    console.error('[instagram] connection failed', { message });
     res
       .status(400)
       .send(
         renderCallbackHtml(
           'Instagram connection failed',
-          (error as Error).message || 'Unable to complete the Instagram connection flow.',
+          message || 'Unable to complete the Instagram connection flow.',
         ),
       );
   }

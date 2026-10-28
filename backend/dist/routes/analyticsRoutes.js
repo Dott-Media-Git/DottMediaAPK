@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import { requireFirebase } from '../middleware/firebaseAuth.js';
 import { firestore } from '../db/firestore.js';
-import { AnalyticsService, getActivityHeatmap, incrementWebTrafficAnalytics, getOutboundStats, getInboundStats, getEngagementStats, getFollowupStats, getWebLeadStats, } from '../services/analyticsService.js';
+import { AnalyticsService, getActivityHeatmap, incrementWebTrafficAnalytics, getOutboundStats, getInboundStats, getEngagementStats, getFollowupStats, getWebLeadStats, recordLiveSocialHeatmapSnapshot, } from '../services/analyticsService.js';
 import { getLiveSocialMetrics } from '../services/liveSocialMetricsService.js';
+import { supabaseFallbackService } from '../services/supabaseFallbackService.js';
+import { resolveAnalyticsScopeKey } from '../services/analyticsScope.js';
+import { canUseOutboundPipeline } from '../utils/socialAccess.js';
 const router = Router();
 const analytics = new AnalyticsService();
 const bwinBetTargetUrl = 'https://bwinbetug.com';
@@ -111,6 +114,9 @@ router.get('/analytics', requireFirebase, async (req, res, next) => {
 router.get('/stats/outbound', requireFirebase, async (req, res, next) => {
     try {
         const authUser = req.authUser;
+        if (!canUseOutboundPipeline({ email: authUser?.email ?? null }, authUser?.uid ?? null)) {
+            return res.status(403).json({ message: 'Outbound pipeline is disabled for all accounts' });
+        }
         const scopeId = typeof req.query.scopeId === 'string' ? req.query.scopeId : undefined;
         const stats = await getOutboundStats({ userId: authUser?.uid, scopeId });
         res.json({ stats });
@@ -256,8 +262,52 @@ router.get('/stats/socialLive', requireFirebase, async (req, res, next) => {
         const lookbackHours = Number.isFinite(lookbackRaw) && lookbackRaw > 0 ? Number(lookbackRaw) : undefined;
         const stats = await getLiveSocialMetrics(authUser.uid, {
             lookbackHours,
-            scope: { userId: authUser.uid, scopeId },
+            scope: { userId: authUser.uid, scopeId, email: authUser.email },
         });
+        // Persist every successful connected-channel pull as the current live
+        // account summary. This is separate from daily heatmap rows, so rolling
+        // totals stay fresh without contaminating individual calendar days.
+        // Rolling totals and today's window are requested in parallel. Only the
+        // canonical rolling result may update liveSocialCurrent in Supabase.
+        const isCanonicalCurrentSnapshot = lookbackHours === undefined || lookbackHours > 26;
+        if (isCanonicalCurrentSnapshot) {
+            const summaryScopes = [
+                { userId: authUser.uid, scopeId, email: authUser.email },
+                { userId: authUser.uid, email: authUser.email },
+            ];
+            const seenScopeKeys = new Set();
+            await supabaseFallbackService.upsertMetricSummaries(summaryScopes
+                .map(scope => ({ scope, scopeKey: resolveAnalyticsScopeKey(scope) }))
+                .filter(({ scopeKey }) => Boolean(scopeKey) && !seenScopeKeys.has(scopeKey) && Boolean(seenScopeKeys.add(scopeKey)))
+                .map(({ scope, scopeKey }) => ({
+                scopeKey,
+                userId: scope.userId,
+                metric: 'liveSocialCurrent',
+                counters: {
+                    views: Number(stats.summary.views ?? 0),
+                    interactions: Number(stats.summary.interactions ?? 0),
+                    engagementRate: Number(stats.summary.engagementRate ?? 0),
+                    conversions: Number(stats.summary.conversions ?? 0),
+                    lookbackHours: Number(stats.lookbackHours ?? lookbackHours ?? 0),
+                    generatedAt: stats.generatedAt,
+                },
+            }))).catch(error => {
+                console.warn('[socialLive] current live summary persistence failed', error);
+            });
+        }
+        // Only a calendar-day-sized request may update today's snapshot. Persisting
+        // rolling 30-day totals here makes the Daily Reviews card show lifetime-like
+        // values and also contaminates today's heatmap row.
+        if (lookbackHours !== undefined && lookbackHours <= 26) {
+            await recordLiveSocialHeatmapSnapshot({ userId: authUser.uid, scopeId, email: authUser.email }, {
+                views: stats.summary.views,
+                interactions: stats.summary.interactions,
+                outbound: 0,
+                conversions: stats.summary.conversions,
+            }).catch(error => {
+                console.warn('[socialLive] daily heatmap snapshot persistence failed', error);
+            });
+        }
         res.set({
             'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
             Pragma: 'no-cache',

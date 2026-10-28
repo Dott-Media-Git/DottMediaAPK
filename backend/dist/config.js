@@ -33,6 +33,10 @@ if (!metaVerifyToken) {
     }
 }
 const openAIKey = process.env.OPENAI_API_KEY ?? process.env.OPENAI_KEY ?? process.env.OPENAI_API_TOKEN ?? '';
+const assistantAIProvider = (process.env.AI_PROVIDER ?? (process.env.NVIDIA_API_KEY ? 'nvidia' : 'openai')).toLowerCase();
+const assistantAIKey = assistantAIProvider === 'nvidia'
+    ? process.env.NVIDIA_API_KEY ?? ''
+    : openAIKey;
 const isLocalRedisHost = (hostname) => hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 const normalizeRedisUrl = (value) => {
     const trimmed = value.trim();
@@ -89,10 +93,10 @@ export const config = {
             accessToken: process.env.THREADS_ACCESS_TOKEN ?? '',
         },
     },
-    linkedin: required({
-        accessToken: process.env.LINKEDIN_ACCESS_TOKEN,
-        organizationId: process.env.LINKEDIN_ORGANIZATION_ID,
-    }),
+    linkedin: {
+        accessToken: process.env.LINKEDIN_ACCESS_TOKEN ?? '',
+        organizationId: process.env.LINKEDIN_ORGANIZATION_ID ?? '',
+    },
     tiktok: {
         accessToken: process.env.TIKTOK_ACCESS_TOKEN ?? '',
         openId: process.env.TIKTOK_OPEN_ID ?? '',
@@ -122,8 +126,18 @@ export const config = {
         dsn: process.env.SENTRY_DSN,
         environment: process.env.SENTRY_ENV ?? 'local',
     },
-    openAI: required({
+    openAI: {
         apiKey: openAIKey,
+    },
+    assistantAI: required({
+        provider: assistantAIProvider,
+        apiKey: assistantAIKey,
+        baseURL: assistantAIProvider === 'nvidia'
+            ? process.env.NVIDIA_BASE_URL ?? 'https://integrate.api.nvidia.com/v1'
+            : process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
+        model: assistantAIProvider === 'nvidia'
+            ? process.env.NVIDIA_AI_MODEL ?? 'meta/llama-3.1-8b-instruct'
+            : process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
     }),
     calendar: {
         timezone: process.env.DEFAULT_TIMEZONE ?? 'UTC',

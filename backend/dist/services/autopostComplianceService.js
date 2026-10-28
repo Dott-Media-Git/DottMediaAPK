@@ -5,6 +5,14 @@ import { sendOperationalAlertEmail } from './emailService.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 const pinnedAccounts = [
     {
+        label: 'Aux Wellness Hub',
+        userId: 'cMPZQccGggbhZe9dbvtxFmBehP02',
+        channels: [
+            { name: 'feed', intervalField: 'intervalHours', nextRunField: 'nextRun', lastRunField: 'lastRunAt', resultField: 'lastResult', fallbackIntervalHours: 4 },
+            { name: 'stories', intervalField: 'storyIntervalHours', nextRunField: 'storyNextRun', lastRunField: 'storyLastRunAt', resultField: 'storyLastResult', fallbackIntervalHours: 3 },
+        ],
+    },
+    {
         label: 'Bwin',
         userId: '1zvY9nNyXMcfxdPQEyx0bIdK7r53',
         channels: [
@@ -56,6 +64,12 @@ const pinnedAccounts = [
 ];
 const autopostCollection = firestore.collection('autopostJobs');
 const stateRef = firestore.collection('system').doc('autopostCompliance');
+const OBSOLETE_AUTOPOST_USER_IDS = new Set(['meta-page-1321705594350297']);
+const AUX_WELLNESS_USER_ID = 'cMPZQccGggbhZe9dbvtxFmBehP02';
+const AUX_WELLNESS_STORY_INTERVAL_HOURS = 3;
+const effectiveIntervalHours = (account, channel, job) => account.userId === AUX_WELLNESS_USER_ID && channel.name === 'stories'
+    ? AUX_WELLNESS_STORY_INTERVAL_HOURS
+    : numberValue(job[channel.intervalField], channel.fallbackIntervalHours);
 const timeoutMs = (name, fallback) => Math.max(Number(process.env[name] ?? fallback), 3000);
 const withTimeout = async (promise, ms, label) => {
     let timer;
@@ -193,7 +207,9 @@ const loadJob = async (userId) => {
 const discoverFirestoreJobs = async () => {
     const limit = Math.max(Number(process.env.AUTOPOST_COMPLIANCE_DISCOVERY_LIMIT ?? 500), 10);
     const snap = await withTimeout(autopostCollection.where('active', '==', true).limit(limit).get(), timeoutMs('AUTOPOST_COMPLIANCE_FIRESTORE_TIMEOUT_MS', 15000), 'firestore_job_discovery');
-    return snap.docs.map(doc => ({
+    return snap.docs
+        .filter(doc => !OBSOLETE_AUTOPOST_USER_IDS.has(doc.id))
+        .map(doc => ({
         userId: doc.id,
         job: doc.data(),
     }));
@@ -203,7 +219,7 @@ const discoverSupabaseJobs = async () => {
     const jobs = await withTimeout(supabaseFallbackService.getActiveAutopostJobs(limit), timeoutMs('AUTOPOST_COMPLIANCE_SUPABASE_TIMEOUT_MS', 15000), 'supabase_job_discovery');
     return jobs
         .map(job => ({ userId: String(job.userId ?? ''), job }))
-        .filter(row => row.userId);
+        .filter(row => row.userId && !OBSOLETE_AUTOPOST_USER_IDS.has(row.userId));
 };
 const discoverAccounts = async () => {
     const discoveredJobs = new Map();
@@ -258,6 +274,8 @@ const discoverAccounts = async () => {
     };
 };
 const updateJob = async (userId, job, patch) => {
+    if (OBSOLETE_AUTOPOST_USER_IDS.has(userId))
+        return;
     const nextJob = { ...job, ...patch, active: job.active !== false };
     try {
         await withTimeout(autopostCollection.doc(userId).set({
@@ -282,8 +300,16 @@ const updateJob = async (userId, job, patch) => {
         });
     }
 };
+const adminRunNowUrl = () => (process.env.AUTOPOST_COMPLIANCE_RUN_NOW_URL ??
+    process.env.DOTT_ADMIN_RUN_NOW_URL ??
+    process.env.PUBLIC_APP_URL ??
+    process.env.APP_URL ??
+    'https://dottmediaapk.web.app').replace(/\/$/, '');
 const formatIssueEmail = (issues) => [
     'Autopost compliance found stalled or failing channels and attempted remediation.',
+    '',
+    `Run now: ${adminRunNowUrl()}/admin?watchdogRun=1`,
+    'Open Admin > Compliance Watchdog and press Global Run or Manual Run beside a flagged issue.',
     '',
     ...issues.map(issue => [
         `${issue.severity.toUpperCase()}: ${issue.account} ${issue.channel}`,
@@ -305,8 +331,59 @@ const triggerDueRunner = (label) => {
         console.error('[autopost-compliance] due runner failed after repair', error);
     });
 };
+const summarizeDueResult = (dueResult) => {
+    const result = dueResult;
+    return {
+        processed: Number(result?.processed ?? result?.processedJobs ?? 0),
+        posted: Number(result?.posted ?? result?.successful ?? result?.success ?? 0),
+        failed: Number(result?.failed ?? result?.failures ?? 0),
+    };
+};
+const forceAccountsDueNow = async (label, predicate) => {
+    const nowTimestamp = admin.firestore.Timestamp.now();
+    const discovery = await discoverAccounts();
+    let updatedAccounts = 0;
+    let updatedChannels = 0;
+    for (const account of discovery.accounts) {
+        const preloadedJob = discovery.jobs.get(account.userId) ?? null;
+        const loaded = preloadedJob ? { job: preloadedJob, errors: [] } : await loadJob(account.userId);
+        const job = loaded.job;
+        if (!job || job.active === false)
+            continue;
+        const channels = account.pinned ? account.channels : genericChannelsForJob(job);
+        const patch = {};
+        channels.forEach(channel => {
+            if (predicate && !predicate(account, channel))
+                return;
+            patch[channel.nextRunField] = nowTimestamp;
+            patch[channel.intervalField] = effectiveIntervalHours(account, channel, job);
+            updatedChannels += 1;
+        });
+        if (Object.keys(patch).length > 0) {
+            await updateJob(account.userId, job, patch);
+            updatedAccounts += 1;
+        }
+    }
+    const dueResult = await autoPostService.runDueJobs();
+    return {
+        ok: true,
+        completed: true,
+        label,
+        completedAt: new Date().toISOString(),
+        updatedAccounts,
+        updatedChannels,
+        summary: summarizeDueResult(dueResult),
+        dueResult,
+    };
+};
 export const autopostComplianceService = {
     accounts: pinnedAccounts,
+    async globalRunNow(label = 'admin_global_run') {
+        return forceAccountsDueNow(label);
+    },
+    async rerunIssue(issue, label = 'admin_issue_rerun') {
+        return forceAccountsDueNow(label, (account, channel) => account.userId === issue.userId && channel.name === issue.channel);
+    },
     async checkAndRepair(label = 'manual') {
         const now = Date.now();
         const nowTimestamp = admin.firestore.Timestamp.fromMillis(now);
@@ -342,7 +419,7 @@ export const autopostComplianceService = {
             const channels = account.pinned ? account.channels : genericChannelsForJob(job);
             const patch = {};
             for (const channel of channels) {
-                const intervalHours = numberValue(job[channel.intervalField], channel.fallbackIntervalHours);
+                const intervalHours = effectiveIntervalHours(account, channel, job);
                 const intervalMs = intervalHours * 60 * 60 * 1000;
                 const nextRunMs = toMillis(job[channel.nextRunField]);
                 const lastRunMs = toMillis(job[channel.lastRunField]);
@@ -394,6 +471,12 @@ export const autopostComplianceService = {
             .map(issue => `${issue.userId}:${issue.channel}:${issue.reason}`)
             .sort()
             .join('|');
+        const autoCorrection = {
+            handled: true,
+            attempted: issues.length,
+            remediated,
+            continuedByScheduler: true,
+        };
         let emailed = false;
         if (issues.length) {
             const cooldownMinutes = Math.max(Number(process.env.AUTOPOST_COMPLIANCE_ALERT_COOLDOWN_MINUTES ?? 60), 5);
@@ -463,6 +546,7 @@ export const autopostComplianceService = {
             discoveryErrors: discovery.discoveryErrors,
             issueCount: issues.length,
             remediated,
+            autoCorrection,
             emailed,
             dueResult,
             issues,

@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { runProspectDiscovery } from '../packages/services/prospectFinder/index.js';
 import { outreachAgent } from '../packages/services/outreachAgent/index.js';
 import { resolveDiscoveryLimit, resolveOutboundDiscoveryTarget } from '../services/outboundTargetingService.js';
+import { canUseOutboundPipeline } from '../utils/socialAccess.js';
 const scheduleExpression = process.env.OUTBOUND_CRON ?? '0 * * * *';
 const manualIndustry = process.env.OUTBOUND_TARGET_INDUSTRY ?? process.env.OUTBOUND_TARGET_INDUSTRIES;
 const manualCountry = process.env.OUTBOUND_TARGET_COUNTRY ?? process.env.OUTBOUND_TARGET_COUNTRIES;
@@ -31,7 +32,13 @@ export async function runProspectJob() {
         const limit = resolveDiscoveryLimit();
         console.info(`[outbound] targeting industry="${target.industry}" country="${target.country}" (expanded=${target.expanded}, source=${target.source})`);
         const prospects = await runProspectDiscovery({ industry: target.industry, country: target.country, limit });
-        const outreach = await outreachAgent.runDailyOutreach(prospects);
+        const primaryUserId = process.env.PRIMARY_SOCIAL_USER_IDS?.split(',')[0]?.trim() || 'cMPZQccGggbhZe9dbvtxFmBehP02';
+        const primaryEmail = process.env.PRIMARY_SOCIAL_EMAILS?.split(',')[0]?.trim() || 'brasioxirin@gmail.com';
+        if (!canUseOutboundPipeline({ email: primaryEmail }, primaryUserId)) {
+            console.info('Outbound prospect job skipped because outbound is restricted to the primary Dott Media account.');
+            return;
+        }
+        const outreach = await outreachAgent.runDailyOutreach(prospects, { userId: primaryUserId });
         console.info(`Outbound prospect job complete. ${prospects.length} prospects discovered, ${outreach.messagesSent} messages sent.`);
     }
     catch (error) {

@@ -1,0 +1,69 @@
+import { Router } from 'express';
+import createHttpError from 'http-errors';
+import { requireFirebase } from '../middleware/firebaseAuth.js';
+import { createCheckoutSession, getBillingOverview, listBillingPlans, resolveBillingScope, consumeUsage, listFinancialAllocations, applyFlutterwavePayment, } from '../services/billing/billingService.js';
+const router = Router();
+const getScope = (req) => {
+    const user = req.authUser;
+    if (!user)
+        throw createHttpError(401, 'Authentication required');
+    return resolveBillingScope(user.uid, req.header('x-org-id'), user.email);
+};
+router.get('/billing/plans', (_req, res) => {
+    res.json({ plans: listBillingPlans() });
+});
+router.get('/billing/overview', requireFirebase, async (req, res, next) => {
+    try {
+        const overview = await getBillingOverview(getScope(req));
+        res.json(overview);
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.post('/billing/checkout', requireFirebase, async (req, res, next) => {
+    try {
+        const { plan, successUrl, cancelUrl, provider, phoneNumber } = req.body ?? {};
+        if (!plan)
+            throw createHttpError(400, 'Missing plan');
+        const fallbackBase = process.env.FRONTEND_URL || process.env.PUBLIC_APP_URL || 'https://dottmediaapk.web.app';
+        const session = await createCheckoutSession(getScope(req), plan, successUrl || `${fallbackBase}/subscription?checkout=success`, cancelUrl || `${fallbackBase}/subscription?checkout=cancel`, { provider, phoneNumber });
+        res.json(session);
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.post('/billing/usage/consume', requireFirebase, async (req, res, next) => {
+    try {
+        const { resource, amount } = req.body ?? {};
+        const allowed = ['aiReplies', 'images', 'basicVideos', 'proVideos', 'scheduledPosts', 'connectedSocials'];
+        if (!allowed.includes(resource))
+            throw createHttpError(400, 'Unsupported usage resource');
+        const result = await consumeUsage(getScope(req), resource, Number(amount ?? 1));
+        res.json(result);
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.get('/billing/financial-ledger', requireFirebase, async (req, res, next) => {
+    try {
+        const allocations = await listFinancialAllocations(getScope(req), Number(req.query.limit ?? 12));
+        res.json({ allocations });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+router.post('/billing/payments/flutterwave/verify', requireFirebase, async (req, res, next) => {
+    try {
+        const { txRef, transactionId } = req.body ?? {};
+        const result = await applyFlutterwavePayment({ txRef, transactionId });
+        res.json({ result });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+export default router;

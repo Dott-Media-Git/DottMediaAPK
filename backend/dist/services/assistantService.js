@@ -6,7 +6,27 @@ import { SocialAnalyticsService } from '../packages/services/socialAnalyticsServ
 import { AssistantStrategyService } from './assistantStrategyService.js';
 import { KnowledgeBaseService } from './knowledgeBaseService.js';
 import { getLiveSocialMetrics } from './liveSocialMetricsService.js';
-const openai = new OpenAI({ apiKey: config.openAI.apiKey });
+import { metaAdsControlService } from './metaAdsControlService.js';
+import { supabaseFallbackService } from './supabaseFallbackService.js';
+import { assistantCampaignService } from './assistantCampaignService.js';
+import { assistantSocialActionService } from './assistantSocialActionService.js';
+import { searchWeb } from './webSearchService.js';
+const assistantAI = new OpenAI({
+    apiKey: config.assistantAI.apiKey,
+    baseURL: config.assistantAI.baseURL,
+    // Provider responses can legitimately take longer than the old 6-second
+    // window, especially when the assistant is preparing account context or
+    // using the web-search tool. Keep retries bounded so transient provider
+    // failures do not surface as a brain-connection error to users.
+    timeout: Number(process.env.ASSISTANT_AI_TIMEOUT_MS ?? 30000),
+    maxRetries: 2,
+});
+const assistantFastRetryAI = new OpenAI({
+    apiKey: config.assistantAI.apiKey,
+    baseURL: config.assistantAI.baseURL,
+    timeout: Number(process.env.ASSISTANT_FAST_RETRY_TIMEOUT_MS ?? 12000),
+    maxRetries: 0,
+});
 const analyticsService = new AnalyticsService();
 const socialAnalyticsService = new SocialAnalyticsService();
 const strategyService = new AssistantStrategyService();
@@ -18,12 +38,48 @@ const extractOpenAIError = (error) => {
     const message = err?.message ?? err?.error?.message ?? err?.response?.data?.error?.message;
     return { status, code, message };
 };
+const buildLocalAssistantFallback = (question, locale, conversationHistory = []) => {
+    const normalized = question.toLowerCase();
+    const latestAssistantMessage = [...conversationHistory]
+        .reverse()
+        .find(message => message.role === 'assistant' && /(?:^|\n)\s*\d+[.)]\s+/.test(message.content));
+    const numberedOptions = latestAssistantMessage
+        ? [...latestAssistantMessage.content.matchAll(/(?:^|\n)\s*(\d+)[.)]\s+([^\n]+)/g)]
+            .map(match => ({ number: Number(match[1]), text: match[2].replace(/[*_`]/g, '').trim() }))
+        : [];
+    const optionReference = question.match(/\boptions?\s+([0-9]+(?:\s*(?:and|,|&)\s*[0-9]+)*)/i);
+    if (numberedOptions.length && optionReference) {
+        const selectedNumbers = [...optionReference[1].matchAll(/\d+/g)].map(match => Number(match[0]));
+        const selected = selectedNumbers
+            .map(number => numberedOptions.find(option => option.number === number))
+            .filter((option) => Boolean(option));
+        if (selected.length) {
+            const choices = selected.map(option => `${option.number}. ${option.text}`).join('\n');
+            return locale === 'en'
+                ? `I’m following the options from my previous message. You selected:\n${choices}\n\nI’ll help you combine these into a practical next step.`
+                : `I’m following the options from my previous message. You selected:\n${choices}`;
+        }
+    }
+    if (/(payment|checkout|pay online|subscription|billing|payment gateway)/i.test(normalized)) {
+        return locale === 'en'
+            ? 'The immediate blocker is checkout. Prioritize one reliable payment path first, then connect it to your plan selection, successful-payment confirmation, receipts, and access activation. For an East African launch, compare a local gateway such as Flutterwave or Pesapal with Stripe, test a real low-value payment in production mode, and only then scale the marketing traffic. I can help you map the payment flow and launch checklist step by step.'
+            : 'The payment flow is the immediate blocker. Start with one reliable gateway, connect successful payment to receipts and access activation, test a real low-value transaction, and then scale marketing. I can help you plan the implementation step by step.';
+    }
+    if (/(raise capital|books? (are|is) negative|cash flow|operating at a loss|make .* money)/i.test(normalized)) {
+        return locale === 'en'
+            ? 'When the books are negative, focus first on cash flow and a clear path to paid conversion. List your monthly fixed costs, current runway, price, gross margin, and the number of paying users needed to break even. Then finish the smallest payment-enabled version, sell it to a narrow audience, and use those early sales and retention numbers to support a capital raise. I can help you turn your figures into a simple break-even and fundraising plan.'
+            : 'Start with cash flow and a clear path to paid conversion. Gather your monthly costs, runway, price, margin, and break-even customer count, then finish the smallest payment-enabled version and use early sales and retention to support fundraising.';
+    }
+    return locale === 'en'
+        ? 'I can still help, but the live AI response is taking longer than expected. Please send the question again, or include the goal and the key details you want me to work with.'
+        : 'The live AI response is taking longer than expected. Please send the question again with the goal and key details.';
+};
 const buildAssistantErrorText = (kind) => {
     if (kind === 'billing') {
-        return 'AI is temporarily offline because OpenAI credits/billing are exhausted. Please top up and try again.';
+        return `AI is temporarily offline because ${config.assistantAI.provider} credits or usage limits are exhausted. Please try again shortly.`;
     }
     if (kind === 'auth') {
-        return 'AI is temporarily offline due to an OpenAI authentication issue. Please check the API key and try again.';
+        return `AI is temporarily offline due to a ${config.assistantAI.provider} authentication issue. Please check the API key and try again.`;
     }
     return 'I encountered a temporary issue connecting to my brain. Please try again shortly.';
 };
@@ -84,6 +140,13 @@ const LOCALE_RESPONSE_LANGUAGE = {
     ca: 'Catalan',
     ne: 'Nepali',
 };
+const buildGreetingText = (locale) => locale === 'fr'
+    ? 'Bonjour ! Je suis Dotti. Comment puis-je vous aider aujourd’hui ?'
+    : locale === 'de'
+        ? 'Hallo! Ich bin Dotti. Wie kann ich dir heute helfen?'
+        : locale === 'es'
+            ? '¡Hola! Soy Dotti. ¿Cómo puedo ayudarte hoy?'
+            : 'Hi! I’m Dotti. How can I help you today?';
 const emptyLiveSocialMetrics = () => ({
     generatedAt: new Date(0).toISOString(),
     lookbackHours: 72,
@@ -327,6 +390,25 @@ export class AssistantService {
     formatWholeNumber(value) {
         return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.max(0, Number(value ?? 0)));
     }
+    buildDashboardPerformance(rows) {
+        const populatedRows = rows.filter(row => Number(row.views ?? 0) > 0 ||
+            Number(row.interactions ?? 0) > 0 ||
+            Number(row.outbound ?? 0) > 0 ||
+            Number(row.conversions ?? 0) > 0 ||
+            Number(row.redirectClicks ?? 0) > 0);
+        const totals = populatedRows.reduce((summary, row) => ({
+            views: summary.views + Number(row.views ?? 0),
+            interactions: summary.interactions + Number(row.interactions ?? 0),
+            outbound: summary.outbound + Number(row.outbound ?? 0),
+            conversions: summary.conversions + Number(row.conversions ?? 0),
+            redirectClicks: summary.redirectClicks + Number(row.redirectClicks ?? 0),
+        }), { views: 0, interactions: 0, outbound: 0, conversions: 0, redirectClicks: 0 });
+        return {
+            availableDays: populatedRows.length,
+            ...totals,
+            engagementRate: totals.views > 0 ? Number(((totals.interactions / totals.views) * 100).toFixed(2)) : 0,
+        };
+    }
     isBettingBrand(snapshot) {
         const haystack = `${snapshot.company ?? ''} ${snapshot.businessGoals ?? ''}`.toLowerCase();
         return haystack.includes('bwin') || haystack.includes('bet');
@@ -334,9 +416,13 @@ export class AssistantService {
     getConversionLabel(snapshot) {
         return this.isBettingBrand(snapshot) ? 'bet button clicks' : 'conversions';
     }
-    async safeResolve(label, action, fallback) {
+    async safeResolve(label, action, fallback, timeoutOverrideMs) {
         try {
-            return await action();
+            const timeoutMs = timeoutOverrideMs ?? Number(process.env.ASSISTANT_CONTEXT_TIMEOUT_MS ?? 1200);
+            return await Promise.race([
+                action(),
+                new Promise((resolve) => setTimeout(() => resolve(fallback), timeoutMs)),
+            ]);
         }
         catch (error) {
             console.warn(`[assistant] failed to load ${label}`, error.message);
@@ -400,7 +486,7 @@ export class AssistantService {
         const topPlatforms = Object.entries(totals.platformCounts)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 3)
-            .map(([platform, count]) => `${platform} ${this.formatWholeNumber(count)}`)
+            .map(([platform, count]) => `${platform} ${this.formatWholeNumber(Number(count))}`)
             .join(', ');
         return `Posting in the last 7 days: ${this.formatWholeNumber(totals.posted)} posted, ${this.formatWholeNumber(totals.failed)} failed, ${this.formatWholeNumber(totals.skipped)} skipped.${topPlatforms ? ` Top channels: ${topPlatforms}.` : ''}`;
     }
@@ -446,34 +532,121 @@ export class AssistantService {
                 ].join(' ');
         }
     }
+    async loadMetricHistory(userId, scopeId) {
+        const metrics = ['dashboardDaily', 'webTraffic', 'outbound', 'engagement'];
+        const entries = await Promise.all(metrics.map(async (metric) => {
+            const [userRows, scopedRows] = await Promise.all([
+                supabaseFallbackService.getMetricDailyRows(metric, { userId }, 30),
+                scopeId
+                    ? supabaseFallbackService.getMetricDailyRows(metric, { userId, scopeId }, 30)
+                    : Promise.resolve([]),
+            ]);
+            const byDate = new Map(userRows.map(row => [row.date, row]));
+            scopedRows.forEach(row => byDate.set(row.date, row));
+            return [metric, [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-30)];
+        }));
+        return Object.fromEntries(entries);
+    }
     async loadAccountSnapshot(context) {
         if (!context.userId) {
             return null;
         }
-        const [profileSnap, userSnap] = await Promise.all([
-            this.safeResolve('profile', () => firestore.collection('profiles').doc(context.userId).get(), null),
-            this.safeResolve('user', () => firestore.collection('users').doc(context.userId).get(), null),
+        const [supabaseProfile, supabaseUser] = await Promise.all([
+            this.safeResolve('Supabase profile', () => supabaseFallbackService.getProfile(context.userId), null, 3500),
+            this.safeResolve('Supabase user', () => supabaseFallbackService.getUser(context.userId), null, 3500),
         ]);
-        const profileData = profileSnap?.data() ?? {};
+        const [profileSnap, userSnap] = await Promise.all([
+            supabaseProfile ? Promise.resolve(null) : this.safeResolve('Firebase profile fallback', () => firestore.collection('profiles').doc(context.userId).get(), null),
+            supabaseUser ? Promise.resolve(null) : this.safeResolve('Firebase user fallback', () => firestore.collection('users').doc(context.userId).get(), null),
+        ]);
+        const profileData = supabaseProfile
+            ? { ...supabaseProfile.data, crmData: supabaseProfile.crmData, user: supabaseProfile.userData, subscriptionStatus: supabaseProfile.subscriptionStatus }
+            : (profileSnap?.data() ?? {});
         const crmData = profileData.crmData ?? {};
-        const userData = userSnap?.data() ?? {};
+        const userData = supabaseUser
+            ? { ...supabaseUser.data, email: supabaseUser.email, name: supabaseUser.name }
+            : (userSnap?.data() ?? {});
         const scopeId = context.orgId?.trim() || `${crmData.orgId ?? ''}`.trim() || `${userData.orgId ?? ''}`.trim() || undefined;
         const analyticsScope = {
             userId: context.userId,
             scopeId,
+            email: context.userEmail,
         };
-        const [analyticsSummary, liveSocial, outbound, inbound, engagement, followups, webLeads, webTraffic, activityHeatmap, socialDaily,] = await Promise.all([
-            this.safeResolve('analytics summary', () => analyticsService.getSummary(context.userId), emptyAnalyticsSummary()),
-            this.safeResolve('live social metrics', () => getLiveSocialMetrics(context.userId, { scope: analyticsScope }), emptyLiveSocialMetrics()),
+        // Read the persisted live-social snapshots directly from Supabase first.
+        // These are the authoritative corrected rows used by the Dashboard and do
+        // not depend on slower Firestore or external social API enrichment.
+        const liveSocialRows = await this.safeResolve('live social daily snapshots', () => supabaseFallbackService.getMetricDailyRows('liveSocialSnapshot', { userId: context.userId }, 30), [], 10000);
+        const persistedLiveSummary = await this.safeResolve('current live social summary', () => supabaseFallbackService.getMetricSummary('liveSocialCurrent', { userId: context.userId }), null, 5000);
+        const activityHeatmap = liveSocialRows.length
+            ? liveSocialRows.map(row => ({
+                date: row.date,
+                views: Number(row.counters?.views ?? 0),
+                interactions: Number(row.counters?.interactions ?? 0),
+                outbound: Number(row.counters?.outbound ?? 0),
+                conversions: Number(row.counters?.conversions ?? 0),
+                redirectClicks: Number(row.counters?.redirectClicks ?? 0),
+            }))
+            : (await this.safeResolve('activity heatmap', () => getActivityHeatmap(analyticsScope, 30), [], 10000)) ?? [];
+        const [analyticsSummary, liveSocial, outbound, inbound, engagement, followups, webLeads, webTraffic, socialDaily, scheduledPosts, socialLogs, storedSocialAccounts, adsAccount, metricHistory,] = await Promise.all([
+            this.safeResolve('analytics summary', () => analyticsService.getSummary(context.userId), emptyAnalyticsSummary(), 3500),
+            this.safeResolve('live social metrics', () => getLiveSocialMetrics(context.userId, { scope: analyticsScope, lookbackHours: 30 * 24 }), emptyLiveSocialMetrics(), 4000),
             this.safeResolve('outbound stats', () => getOutboundStats(analyticsScope), emptyOutboundStats()),
             this.safeResolve('inbound stats', () => getInboundStats(analyticsScope), emptyInboundStats()),
             this.safeResolve('engagement stats', () => getEngagementStats(analyticsScope), emptyEngagementStats()),
             this.safeResolve('follow-up stats', () => getFollowupStats(analyticsScope), emptyFollowupStats()),
             this.safeResolve('web lead stats', () => getWebLeadStats(analyticsScope), emptyWebLeadStats()),
             this.safeResolve('web traffic stats', () => getWebTrafficStats(analyticsScope), emptyWebTrafficStats()),
-            this.safeResolve('activity heatmap', () => getActivityHeatmap(analyticsScope, 14), []),
-            this.safeResolve('social daily', () => socialAnalyticsService.getDailySummary(context.userId, 7), []),
+            this.safeResolve('social daily', () => socialAnalyticsService.getDailySummary(context.userId, 30), []),
+            this.safeResolve('scheduled posting history', () => supabaseFallbackService.getPostsByUser(context.userId, 150), [], 3500),
+            this.safeResolve('social posting logs', () => supabaseFallbackService.getSocialLogsByUser(context.userId, 150), [], 3500),
+            this.safeResolve('connected social accounts', () => supabaseFallbackService.getSocialAccounts(context.userId), null, 3500),
+            this.safeResolve('Meta Ads account status', () => metaAdsControlService.getConnectionStatus(context.userId), {
+                mcpConnected: false,
+                graphConnected: false,
+                accountCount: 0,
+                selectedAdAccountId: null,
+                provider: 'none',
+            }, 3500),
+            this.safeResolve('complete 30-day metric history', () => this.loadMetricHistory(context.userId, scopeId), {}, 3500),
         ]);
+        const persistedViews = Number(persistedLiveSummary?.views ?? 0);
+        const persistedInteractions = Number(persistedLiveSummary?.interactions ?? 0);
+        const resolvedLiveSocial = persistedViews > 0 || persistedInteractions > 0
+            ? {
+                ...liveSocial,
+                lookbackHours: Math.max(Number(persistedLiveSummary?.lookbackHours ?? liveSocial.lookbackHours), 1),
+                summary: {
+                    views: persistedViews,
+                    interactions: persistedInteractions,
+                    engagementRate: Number(persistedLiveSummary?.engagementRate ?? 0),
+                    conversions: Number(persistedLiveSummary?.conversions ?? 0),
+                },
+            }
+            : liveSocial;
+        const heatmapPerformance = this.buildDashboardPerformance(activityHeatmap);
+        const dashboardPerformance = persistedViews > 0 || persistedInteractions > 0
+            ? {
+                ...heatmapPerformance,
+                views: persistedViews,
+                interactions: persistedInteractions,
+                engagementRate: Number(persistedLiveSummary?.engagementRate ?? 0),
+                conversions: Number(persistedLiveSummary?.conversions ?? heatmapPerformance.conversions),
+            }
+            : heatmapPerformance;
+        const socialAccounts = (storedSocialAccounts?.socialAccounts && typeof storedSocialAccounts.socialAccounts === 'object')
+            ? storedSocialAccounts.socialAccounts
+            : {};
+        const storedChannels = Object.entries(socialAccounts)
+            .filter(([, value]) => Boolean(value && (typeof value !== 'object' || value.connected !== false)))
+            .map(([platform]) => platform.toLowerCase());
+        const connectedChannels = Array.from(new Set([
+            ...this.resolveConnectedChannels(userData, context.connectedChannels),
+            ...storedChannels,
+        ]));
+        const postingHistory = [
+            ...scheduledPosts.map(post => ({ source: 'scheduled_posts', ...post })),
+            ...socialLogs.map(log => ({ source: 'social_logs', ...log })),
+        ].slice(0, 250);
         return {
             company: context.company ?? crmData.companyName ?? userData.name,
             orgId: scopeId,
@@ -482,9 +655,9 @@ export class AssistantService {
             businessGoals: context.businessGoals ?? crmData.businessGoals,
             targetAudience: context.targetAudience ?? crmData.targetAudience,
             subscriptionStatus: context.subscriptionStatus ?? profileData.subscriptionStatus,
-            connectedChannels: this.resolveConnectedChannels(userData, context.connectedChannels),
+            connectedChannels,
             analyticsSummary,
-            liveSocial,
+            liveSocial: resolvedLiveSocial,
             outbound,
             inbound,
             engagement,
@@ -493,6 +666,11 @@ export class AssistantService {
             webTraffic,
             activityHeatmap,
             socialDaily,
+            postingHistory,
+            socialAccounts,
+            adsAccount: adsAccount,
+            metricHistory,
+            dashboardPerformance,
         };
     }
     buildAccountContextBlock(snapshot) {
@@ -504,6 +682,7 @@ export class AssistantService {
                 .join(', ')
             : 'none';
         return [
+            `AUTHORITATIVE DASHBOARD PERFORMANCE (Supabase-primary, same aggregation shown in the Dashboard, ${snapshot.dashboardPerformance.availableDays} available days): ${this.formatWholeNumber(snapshot.dashboardPerformance.views)} views, ${this.formatWholeNumber(snapshot.dashboardPerformance.interactions)} interactions, ${snapshot.dashboardPerformance.engagementRate.toFixed(2)}% engagement, ${this.formatWholeNumber(snapshot.dashboardPerformance.outbound)} outbound, ${this.formatWholeNumber(snapshot.dashboardPerformance.conversions)} conversions, ${this.formatWholeNumber(snapshot.dashboardPerformance.redirectClicks)} redirect clicks.`,
             snapshot.company ? `Account company: ${snapshot.company}` : '',
             snapshot.email ? `Primary email: ${snapshot.email}` : '',
             snapshot.phone ? `Primary phone: ${snapshot.phone}` : '',
@@ -511,14 +690,19 @@ export class AssistantService {
             snapshot.targetAudience ? `Target audience: ${snapshot.targetAudience}` : '',
             snapshot.subscriptionStatus ? `Subscription status: ${snapshot.subscriptionStatus}` : '',
             `Connected channels: ${snapshot.connectedChannels.length ? snapshot.connectedChannels.join(', ') : 'none connected'}`,
+            `Connected social account records: ${Object.keys(snapshot.socialAccounts).length ? Object.keys(snapshot.socialAccounts).join(', ') : 'none stored'}.`,
+            `Meta Ads account: ${JSON.stringify(snapshot.adsAccount)}.`,
+            `Dashboard daily metrics (up to 30 days, oldest to newest): ${JSON.stringify(snapshot.analyticsSummary.history.slice(-30))}.`,
+            `Complete account metric history by category (up to 30 days): ${JSON.stringify(snapshot.metricHistory)}.`,
             this.buildDailyReviewSummary(snapshot),
             this.buildWeeklyPerformanceSummary(snapshot),
-            `Live social performance (last ${snapshot.liveSocial.lookbackHours}h): ${this.formatWholeNumber(snapshot.liveSocial.summary.views)} views, ${this.formatWholeNumber(snapshot.liveSocial.summary.interactions)} interactions, engagement rate ${snapshot.liveSocial.summary.engagementRate.toFixed(2)}%, ${this.formatWholeNumber(snapshot.liveSocial.summary.conversions)} ${conversionLabel}.`,
+            `Direct connected-channel snapshot (last ${snapshot.liveSocial.lookbackHours}h; secondary breakdown, do not substitute this for the authoritative Dashboard total): ${this.formatWholeNumber(snapshot.liveSocial.summary.views)} views, ${this.formatWholeNumber(snapshot.liveSocial.summary.interactions)} interactions, engagement rate ${snapshot.liveSocial.summary.engagementRate.toFixed(2)}%, ${this.formatWholeNumber(snapshot.liveSocial.summary.conversions)} ${conversionLabel}.`,
             `Top platform view: ${this.buildPlatformHighlights(snapshot)}`,
             `Outbound engine: ${this.formatWholeNumber(snapshot.outbound.prospectsContacted)} contacted, ${this.formatWholeNumber(snapshot.outbound.replies)} replies, ${this.formatWholeNumber(snapshot.outbound.positiveReplies)} positive replies, ${this.formatWholeNumber(snapshot.outbound.conversions)} conversions, ${this.formatWholeNumber(snapshot.outbound.demoBookings)} demos booked.`,
             `Inbound and engagement: ${this.formatWholeNumber(snapshot.inbound.messages)} inbound messages, ${this.formatWholeNumber(snapshot.inbound.leads)} qualified leads, ${this.formatWholeNumber(snapshot.engagement.comments)} comments, ${this.formatWholeNumber(snapshot.engagement.replies)} replies sent, ${this.formatWholeNumber(snapshot.engagement.conversions)} engagement conversions.`,
             `Follow-ups and web: ${this.formatWholeNumber(snapshot.followups.sent)} follow-ups sent, ${this.formatWholeNumber(snapshot.followups.replies)} replies, ${this.formatWholeNumber(snapshot.webTraffic.visitors)} website visitors, ${this.formatWholeNumber(snapshot.webTraffic.redirectClicks)} web redirect clicks, ${this.formatWholeNumber(snapshot.webLeads.leads)} web leads.`,
             this.buildPostingActivitySummary(snapshot.socialDaily),
+            `Posting history (latest ${Math.min(snapshot.postingHistory.length, 40)} records): ${JSON.stringify(snapshot.postingHistory.slice(0, 40))}.`,
             `Automation/job status: active ${this.formatWholeNumber(snapshot.analyticsSummary.jobBreakdown.active)}, queued ${this.formatWholeNumber(snapshot.analyticsSummary.jobBreakdown.queued)}, failed ${this.formatWholeNumber(snapshot.analyticsSummary.jobBreakdown.failed)}. Recent jobs: ${automationLine}.`,
         ]
             .filter(Boolean)
@@ -788,7 +972,33 @@ export class AssistantService {
     }
     async answer(question, context) {
         const locale = this.resolveLocale(context.locale);
-        const accountSnapshot = await this.loadAccountSnapshot(context);
+        const webSearchRequest = /\b(research|search|look\s*up|find\s+out|trending|trend|latest|current|today|news|recent|this\s+week|what(?:'s| is) happening)\b/i.test(question);
+        const isSimpleGreeting = /^(?:hi|hello|hey|howdy|good\s+(?:morning|afternoon|evening)|how are you(?: doing)?|how's it going|(?:hi|hello|hey)[,!?\s]+how are you)[!.?,\s]*$/i.test(question.trim());
+        if (isSimpleGreeting) {
+            return { type: 'text', text: buildGreetingText(locale) };
+        }
+        const accountSnapshot = webSearchRequest ? null : await this.loadAccountSnapshot(context);
+        const asksForOverallPerformance = /\b(review|check|show|summari[sz]e|analy[sz]e|tell me about)\b[\s\S]{0,60}\b(performance|results|metrics|stats)\b/i.test(question) ||
+            /\b(account|overall|business|marketing)\s+(performance|results|metrics|stats)\b/i.test(question) ||
+            /\bhow(?:'s| is| are)\b[\s\S]{0,50}\b(account|business|performance|performing)\b/i.test(question);
+        const asksForAdsPerformance = /\b(ad spend|ad performance|ads? report(?:ing)?|campaign reporting|impressions|click-through rate|\bctr\b)\b/i.test(question);
+        const adsConnection = accountSnapshot?.adsAccount ?? {};
+        const hasConnectedAdsAccount = Boolean(accountSnapshot?.connectedChannels.some(channel => ['metaads', 'meta_ads', 'ads'].includes(channel.toLowerCase())) ||
+            adsConnection.graphConnected ||
+            adsConnection.mcpConnected ||
+            Number(adsConnection.accountCount ?? 0) > 0 ||
+            adsConnection.selectedAdAccountId);
+        const includeAdsPerformance = (asksForOverallPerformance || asksForAdsPerformance) && hasConnectedAdsAccount;
+        const liveAdsReport = context.userId && includeAdsPerformance
+            ? await this.safeResolve('live Meta Ads performance', () => metaAdsControlService.reportingSummary(context.userId), null, 45000)
+            : null;
+        const liveAdsContext = liveAdsReport
+            ? (() => {
+                const performance = liveAdsReport.performance;
+                const summary = performance.summary;
+                return `Meta Ads (${performance.lookbackDays} days, ${performance.currency}): ${summary.spend.toFixed(2)} spent, ${this.formatWholeNumber(summary.impressions)} impressions, ${this.formatWholeNumber(summary.reach)} reach, ${this.formatWholeNumber(summary.clicks)} clicks, ${this.formatWholeNumber(summary.inlineLinkClicks)} link clicks, ${this.formatWholeNumber(summary.messages)} messages, ${this.formatWholeNumber(summary.leads)} leads, ${summary.ctr.toFixed(2)}% CTR; ${this.formatWholeNumber(summary.active)} active, ${this.formatWholeNumber(summary.paused)} paused, ${this.formatWholeNumber(summary.failed)} needing attention, ${this.formatWholeNumber(summary.other)} other-status ads.`;
+            })()
+            : '';
         if (context.userId && this.shouldSendMonthlyReport(question)) {
             try {
                 const emails = this.extractEmailAddresses(question);
@@ -828,9 +1038,6 @@ export class AssistantService {
                 console.error('Strategy draft failed', error);
             }
         }
-        if (accountSnapshot && this.shouldProvideWeeklySummary(question)) {
-            return { type: 'text', text: this.buildMetricInsight(accountSnapshot) };
-        }
         const tools = [
             {
                 type: 'function',
@@ -853,6 +1060,7 @@ export class AssistantService {
                                     'FollowUps',
                                     'WebLeads',
                                     'AccountIntegrations',
+                                    'AdsManager',
                                     'Controls',
                                     'Support',
                                     'Admin',
@@ -867,18 +1075,81 @@ export class AssistantService {
             {
                 type: 'function',
                 function: {
-                    name: 'get_insights',
-                    description: 'Get specific analytical insights about performance',
+                    name: 'configure_social_campaign',
+                    description: 'Configure, reschedule, pause, or resume the authenticated user’s recurring social campaign. Use only when the user explicitly requests a campaign or posting cadence change.',
                     parameters: {
                         type: 'object',
                         properties: {
-                            metric: {
-                                type: 'string',
-                                enum: ['views', 'interactions', 'outbound', 'conversions', 'account_summary'],
-                                description: 'The metric to analyze',
+                            action: { type: 'string', enum: ['configure', 'pause', 'resume'] },
+                            campaignName: { type: 'string' },
+                            platforms: {
+                                type: 'array',
+                                items: { type: 'string', enum: ['instagram', 'instagram_story', 'instagram_reels', 'facebook', 'facebook_story', 'linkedin', 'threads', 'x', 'tiktok', 'youtube'] },
                             },
+                            postsPerWeek: { type: 'number', minimum: 1, maximum: 35 },
+                            contentBrief: { type: 'string', description: 'What the campaign should communicate, including audience, offer, tone, and CTA when provided.' },
+                            businessType: { type: 'string' },
+                            firstRunAt: { type: 'string', description: 'ISO-8601 first run date/time including timezone. Omit when the user did not specify an exact start time.' },
                         },
-                        required: ['metric'],
+                        required: ['action'],
+                    },
+                },
+            },
+            {
+                type: 'function',
+                function: {
+                    name: 'generate_social_image',
+                    description: 'Generate a new social image when the user explicitly asks Dotti to create or design an image.',
+                    parameters: { type: 'object', properties: { prompt: { type: 'string' }, businessType: { type: 'string' } }, required: ['prompt'] },
+                },
+            },
+            {
+                type: 'function',
+                function: {
+                    name: 'publish_social_post_now',
+                    description: 'Immediately publish content to the authenticated account only when the user explicitly asks to post, publish, or send it now.',
+                    parameters: { type: 'object', properties: {
+                            platforms: { type: 'array', items: { type: 'string', enum: ['facebook', 'instagram', 'linkedin', 'threads', 'x', 'tiktok', 'youtube', 'whatsapp'] } },
+                            caption: { type: 'string' }, hashtags: { type: 'string' }, imageUrl: { type: 'string' }, videoUrl: { type: 'string' },
+                        }, required: ['platforms', 'caption'] },
+                },
+            },
+            {
+                type: 'function',
+                function: {
+                    name: 'configure_account_replies',
+                    description: 'Enable and tailor automatic replies to comments and direct messages for the authenticated account.',
+                    parameters: { type: 'object', properties: { enabled: { type: 'boolean' }, instructions: { type: 'string' } }, required: ['enabled'] },
+                },
+            },
+            {
+                type: 'function',
+                function: {
+                    name: 'meta_ads_report',
+                    description: 'Get live Meta Ads performance, campaign status, spend, clicks, messages, leads, and diagnostics for the authenticated account',
+                    parameters: { type: 'object', properties: {} },
+                },
+            },
+            {
+                type: 'function',
+                function: {
+                    name: 'request_meta_ads_action',
+                    description: 'Create a controlled Meta Ads request. Every write is placed in the Ads Manager approval queue before execution.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            action: { type: 'string', enum: ['create_campaign_draft', 'activate_ad', 'pause_ad', 'update_budget'] },
+                            postId: { type: 'string' },
+                            adId: { type: 'string' },
+                            adSetId: { type: 'string' },
+                            adAccountId: { type: 'string' },
+                            caption: { type: 'string' },
+                            imageUrl: { type: 'string' },
+                            dailyBudgetUsd: { type: 'number' },
+                            durationHours: { type: 'number' },
+                            whatsappNumber: { type: 'string' },
+                        },
+                        required: ['action'],
                     },
                 },
             },
@@ -886,7 +1157,9 @@ export class AssistantService {
         const responseLanguage = LOCALE_RESPONSE_LANGUAGE[locale] ?? 'English';
         let knowledge = [];
         try {
-            knowledge = await knowledgeBase.getRelevantSnippets(question, 3);
+            if (!webSearchRequest) {
+                knowledge = await this.safeResolve('knowledge snippets', () => knowledgeBase.getRelevantSnippets(question, 3), []);
+            }
         }
         catch (error) {
             console.warn('Failed to load knowledge snippets', error.message);
@@ -897,18 +1170,52 @@ export class AssistantService {
                 .join('\n')}`
             : '';
         const accountContextBlock = accountSnapshot ? this.buildAccountContextBlock(accountSnapshot) : '';
+        let webResearchBlock = '';
+        if (webSearchRequest) {
+            try {
+                const webResults = await searchWeb(question);
+                if (webResults.length) {
+                    webResearchBlock = `Live web research:\n${webResults
+                        .map((result, index) => `${index + 1}. ${result.title}\n${result.snippet}\nSource: ${result.url}`)
+                        .join('\n\n')}`;
+                }
+            }
+            catch (error) {
+                console.warn('Live web research unavailable', error instanceof Error ? error.message : error);
+            }
+        }
         const personalityPrompt = this.buildPersonalityPrompt(context);
         const systemPrompt = [
-            'You are Dott Assistant, an OpenAI-powered business assistant inside the Dott Media app.',
-            'Only answer questions about the authenticated user account, its connected channels, automation, performance, posting history, audience, business goals, growth strategy, and navigation inside Dott.',
+            'You are Dotti, an AI-powered business assistant inside the Dott Media app.',
+            'Help with the authenticated user account and business, and also answer general questions across everyday topics.',
             personalityPrompt,
-            'If the user asks for anything unrelated to their account or business, reply briefly that you can only help with their account and business inside Dott.',
+            'For account questions, use the supplied account data and never invent metrics or connected channels. For general questions, answer directly and clearly.',
+            'For current events, research, trends, or time-sensitive facts, ground the answer in the supplied live web research when available. Mention source links when useful and be clear when live research is unavailable.',
             'Base every answer on the account data provided below. Never invent metrics or connected channels.',
+            'For a general account-performance, views, interactions, engagement, or Dashboard question, always report AUTHORITATIVE DASHBOARD PERFORMANCE first. It is the Supabase-primary aggregation used by the visible Dashboard.',
+            'When LIVE META ADS PERFORMANCE is supplied for a general performance review, always include its spend, impressions, reach/click results, messages, leads, CTR, and campaign status after the organic performance. Clearly label organic and paid results separately.',
+            'Never replace the authoritative Dashboard totals with the smaller direct connected-channel snapshot. Only use that snapshot when the user explicitly asks for a recent channel-by-channel or direct Meta/social breakdown, and label its time range and scope.',
+            'If the Dashboard total and the direct connected-channel snapshot differ, state that they are different datasets instead of presenting either one as the other.',
+            'You have account-scoped access to the supplied daily and 30-day dashboard metrics, posting history, connected social accounts, and Meta Ads connection. Use the correct time range requested by the user and state clearly when a particular dataset is empty or unavailable.',
+            'For comparisons, trends, plans, and diagnoses, consider the full 30-day series and posting history instead of relying only on today.',
             'When the user asks for a summary, give a clear performance summary grounded in the live account data.',
             'When the user asks for growth help, diagnose what is happening, explain the bottleneck, suggest a practical strategy, and explain what can be implemented inside Dott.',
+            'Act as an experienced social media growth strategist when the user asks for a plan or strategy. Produce a practical plan tailored to the account, audience, goals, connected channels, and available performance data.',
+            'A strong plan should include: the objective, current diagnosis, audience and positioning, content pillars, channel-specific actions, publishing cadence, engagement actions, a realistic timeline, measurable KPIs, and the next three actions. Adjust the depth to the request instead of forcing this structure into every reply.',
+            'Maintain continuity across the supplied conversation history. Resolve follow-up words such as it, that plan, those posts, the account, and continue from the latest relevant topic without making the user repeat context.',
+            'When the user refers to an option, step, item, or numbered list, inspect the latest supplied assistant message first and map the reference explicitly. If the history contains the list, never claim that the options were not mentioned; briefly restate the selected items and continue.',
+            'Treat older conversation details as background and the newest user instruction as authoritative when they conflict. Clearly separate known account facts from recommendations or assumptions.',
             'If a strategy has already been drafted and the user approves it, implementation can be triggered. Acknowledge that clearly and keep the approval path simple.',
             'You can email a monthly performance report to the user when requested.',
-            'Use the app tools only when the user asks to navigate or asks for a metric-specific account insight.',
+            'Use Meta Ads tools for ad reporting, diagnostics, campaign drafts, activation, pauses, or budget changes. Never claim a write happened until its approval has been completed.',
+            'All Meta Ads write actions go to an approval queue. Tell the user to review the request in Ads Manager.',
+            'When the user explicitly asks to implement, reschedule, pause, or resume a social posting campaign, use the campaign tool and follow their requested platforms, content brief, frequency, and first run time.',
+            'Never change another account. Never claim a campaign change happened unless the campaign tool returns success.',
+            'If an essential campaign detail is missing, ask one concise follow-up question instead of inventing it.',
+            'Inspect attached images and document text directly. Attachment media URLs are valid inputs for creating and publishing content.',
+            'Generate images only when requested. Publish only after an explicit post, publish, or send-now instruction and only to the named connected platforms.',
+            'You can enable and tailor account-scoped replies to comments and direct messages.',
+            'Use the app tools only for explicit app actions or account operations. Use web_search for research, current events, trends, and time-sensitive public information.',
             'Keep answers professional, direct, and useful. Use short paragraphs. Stay concise unless the user asks for a detailed breakdown.',
             `Respond in ${responseLanguage}.`,
             accountSnapshot?.company ? `User Company: ${accountSnapshot.company}` : context.company ? `User Company: ${context.company}` : '',
@@ -927,21 +1234,69 @@ export class AssistantService {
                 ? `Legacy CRM snapshot: Leads=${context.analytics.leads ?? 'n/a'}, Engagement=${context.analytics.engagement ?? 'n/a'}%, Conversions=${context.analytics.conversions ?? 'n/a'}`
                 : '',
             accountContextBlock ? `Live account data:\n${accountContextBlock}` : '',
+            webResearchBlock,
+            liveAdsContext ? `LIVE META ADS PERFORMANCE (connected account): ${liveAdsContext}` : '',
+            context.attachments?.length ? `Attachments:\n${context.attachments.map((item, index) => `${index + 1}. ${item.name} (${item.mimeType})${item.url ? ` URL: ${item.url}` : ''}${item.text ? `\nText: ${item.text.slice(0, 12000)}` : ''}`).join('\n')}` : '',
             knowledgeBlock,
         ]
             .filter(Boolean)
             .join('\n');
+        const explicitAdsReportRequest = /\b(ad spend|ad performance|ads? report(?:ing)?|campaign reporting|impressions|click-through rate|\bctr\b)\b/i.test(question);
+        const explicitAdsActionRequest = /\b(create (?:an? )?ad|campaign draft|pause (?:an? )?ad|activate (?:an? )?ad|change (?:the )?ad budget|update (?:the )?ad budget)\b/i.test(question);
+        const explicitNavigationRequest = /\b(open|go to|navigate|take me to|show me)\b/i.test(question);
+        const explicitImageRequest = /\b(create|generate|design|make)\b[\s\S]{0,50}\b(image|graphic|poster|visual|artwork)\b/i.test(question);
+        const explicitPublishRequest = /\b(post|publish|send)\b[\s\S]{0,50}\b(now|immediately|to|on)\b/i.test(question);
+        const explicitReplyRequest = /\b(reply|replies|respond)\b[\s\S]{0,60}\b(comment|comments|message|messages|dm|dms)\b/i.test(question);
+        const availableTools = tools.filter(tool => {
+            const name = tool.function.name;
+            if (name === 'navigate')
+                return explicitNavigationRequest;
+            if (name === 'meta_ads_report')
+                return explicitAdsReportRequest;
+            if (name === 'request_meta_ads_action')
+                return explicitAdsActionRequest;
+            if (name === 'generate_social_image')
+                return explicitImageRequest;
+            if (name === 'publish_social_post_now')
+                return explicitPublishRequest;
+            if (name === 'configure_account_replies')
+                return explicitReplyRequest;
+            if (name === 'web_search')
+                return false;
+            return false;
+        });
+        const completionStartedAt = Date.now();
         try {
-            const completion = await openai.chat.completions.create({
-                model: 'gpt-4o-mini',
+            const completion = await assistantAI.chat.completions.create({
+                model: config.assistantAI.model,
                 messages: [
                     { role: 'system', content: systemPrompt },
-                    { role: 'user', content: question },
+                    ...(context.conversationHistory ?? []).slice(-60).map(message => ({
+                        role: message.role,
+                        content: message.content.slice(0, 4000),
+                    })),
+                    {
+                        role: 'user',
+                        content: context.attachments?.some(item => item.url && item.mimeType.startsWith('image/'))
+                            ? [
+                                { type: 'text', text: question },
+                                ...context.attachments.filter(item => item.url && item.mimeType.startsWith('image/')).slice(0, 4).map(item => ({
+                                    type: 'image_url',
+                                    image_url: { url: item.url },
+                                })),
+                            ]
+                            : question,
+                    },
                 ],
-                tools,
-                tool_choice: 'auto',
+                ...(availableTools.length ? { tools: availableTools, tool_choice: 'auto' } : {}),
                 temperature: 0.3,
-                max_tokens: 300,
+                max_tokens: 600,
+            });
+            console.info('[assistant] completion succeeded', {
+                provider: config.assistantAI.provider,
+                model: config.assistantAI.model,
+                durationMs: Date.now() - completionStartedAt,
+                questionLength: question.length,
             });
             const message = completion.choices[0].message;
             // If the model wants to call a tool, return a structured response for the frontend to handle
@@ -955,9 +1310,127 @@ export class AssistantService {
                     catch (parseError) {
                         console.error('Failed to parse tool arguments', parseError);
                     }
-                    if (toolCall.function.name === 'get_insights' && accountSnapshot) {
-                        const metric = typeof params?.metric === 'string' ? params.metric : undefined;
-                        return { type: 'text', text: this.buildMetricInsight(accountSnapshot, metric) };
+                    if (toolCall.function.name === 'web_search') {
+                        try {
+                            const query = String(params?.query || question).trim();
+                            const results = await searchWeb(query);
+                            if (!results.length) {
+                                return { type: 'text', text: `I couldn't find reliable public results for “${query}”. Try a more specific search.` };
+                            }
+                            const researchBlock = results
+                                .map((result, index) => `${index + 1}. ${result.title}\n${result.snippet}\nSource: ${result.url}`)
+                                .join('\n\n');
+                            const researchMessages = [
+                                { role: 'system', content: systemPrompt },
+                                ...(context.conversationHistory ?? []).slice(-120).map(message => ({
+                                    role: message.role,
+                                    content: message.content.slice(0, 4000),
+                                })),
+                                { role: 'user', content: question },
+                                { role: 'assistant', content: null, tool_calls: [toolCall] },
+                                { role: 'tool', tool_call_id: toolCall.id, content: researchBlock },
+                            ];
+                            const researched = await assistantAI.chat.completions.create({
+                                model: config.assistantAI.model,
+                                messages: researchMessages,
+                                temperature: 0.3,
+                                max_tokens: 900,
+                            });
+                            const researchedText = researched.choices[0]?.message?.content?.trim() || 'I found some sources, but I could not summarize them yet.';
+                            const sourceList = results.map((result, index) => `${index + 1}. [${result.title}](${result.url})`).join('\n');
+                            return { type: 'text', text: `${researchedText}\n\nSources\n${sourceList}` };
+                        }
+                        catch (error) {
+                            console.warn('Web research failed', error instanceof Error ? error.message : error);
+                            return { type: 'text', text: 'I could not reach live web search right now. I can still answer from my general knowledge, or you can try the research request again.' };
+                        }
+                    }
+                    if (toolCall.function.name === 'configure_social_campaign' && context.userId) {
+                        try {
+                            const campaignParams = (params ?? {});
+                            const result = await assistantCampaignService.configure(context.userId, {
+                                action: campaignParams.action,
+                                campaignName: campaignParams.campaignName,
+                                platforms: campaignParams.platforms,
+                                postsPerWeek: campaignParams.postsPerWeek,
+                                contentBrief: campaignParams.contentBrief,
+                                businessType: campaignParams.businessType,
+                                firstRunAt: campaignParams.firstRunAt,
+                            });
+                            return { type: 'text', text: result.message };
+                        }
+                        catch (error) {
+                            return { type: 'text', text: `I did not change the campaign: ${error instanceof Error ? error.message : String(error)}` };
+                        }
+                    }
+                    if (toolCall.function.name === 'generate_social_image' && context.userId) {
+                        try {
+                            const input = params;
+                            const generated = await assistantSocialActionService.generateImage({
+                                userId: context.userId,
+                                orgId: context.orgId,
+                                prompt: String(input.prompt || question),
+                                businessType: input.businessType || accountSnapshot?.company || context.company,
+                            });
+                            return { type: 'text', text: `I created the image.\n\n![Generated social image](${generated.imageUrl})\n\n[Open full image](${generated.imageUrl})` };
+                        }
+                        catch (error) {
+                            return { type: 'text', text: `I could not create the image: ${error instanceof Error ? error.message : String(error)}` };
+                        }
+                    }
+                    if (toolCall.function.name === 'publish_social_post_now' && context.userId) {
+                        if (!explicitPublishRequest)
+                            return { type: 'text', text: 'Please explicitly tell me to publish now and name the platforms.' };
+                        try {
+                            const input = params;
+                            const attachmentUrl = context.attachments?.find(item => item.url)?.url;
+                            const result = await assistantSocialActionService.publishNow({
+                                userId: context.userId,
+                                platforms: input.platforms || [],
+                                caption: String(input.caption || ''),
+                                hashtags: input.hashtags,
+                                imageUrl: input.imageUrl || attachmentUrl,
+                                videoUrl: input.videoUrl,
+                            });
+                            const scheduledCount = Array.isArray(result.scheduled) ? result.scheduled.length : result.scheduled;
+                            return { type: 'text', text: `I sent the post to the live publisher for ${(input.platforms || []).join(', ')}. ${scheduledCount} platform post${scheduledCount === 1 ? '' : 's'} were created; Posting History shows each live result.` };
+                        }
+                        catch (error) {
+                            return { type: 'text', text: `I could not publish that post: ${error instanceof Error ? error.message : String(error)}` };
+                        }
+                    }
+                    if (toolCall.function.name === 'configure_account_replies' && context.userId) {
+                        try {
+                            const input = params;
+                            await assistantSocialActionService.configureReplies({ userId: context.userId, enabled: input.enabled !== false, instructions: input.instructions });
+                            return { type: 'text', text: input.enabled === false ? 'Automatic comment and message replies are disabled for this account.' : 'Automatic comment and message replies are live for this account and will follow your reply instructions.' };
+                        }
+                        catch (error) {
+                            return { type: 'text', text: `I could not update account replies: ${error instanceof Error ? error.message : String(error)}` };
+                        }
+                    }
+                    if (toolCall.function.name === 'meta_ads_report' && context.userId) {
+                        try {
+                            const report = await metaAdsControlService.reportingSummary(context.userId);
+                            return { type: 'text', text: report.text };
+                        }
+                        catch (error) {
+                            return { type: 'text', text: `I could not load Meta Ads reporting yet: ${error instanceof Error ? error.message : String(error)}. Check the Meta connection in Ads Manager.` };
+                        }
+                    }
+                    if (toolCall.function.name === 'request_meta_ads_action' && context.userId) {
+                        const actionParams = (params ?? {});
+                        const action = actionParams.action;
+                        if (action === 'create_campaign_draft' && !String(actionParams.postId ?? '').trim()) {
+                            return { type: 'text', text: 'I can prepare that paused campaign draft, but I need the Facebook post ID first. You can also paste it in Ads Manager.' };
+                        }
+                        try {
+                            const approval = await metaAdsControlService.requestAction(context.userId, action, actionParams, 'dotti');
+                            return { type: 'text', text: `I created approval request ${approval.id}. Review it in Ads Manager before Meta receives the change.` };
+                        }
+                        catch (error) {
+                            return { type: 'text', text: `I did not submit that Meta Ads change: ${error instanceof Error ? error.message : String(error)}` };
+                        }
                     }
                     return {
                         type: 'action',
@@ -975,18 +1448,22 @@ export class AssistantService {
                     };
                 }
             }
+            const responseText = message.content ||
+                (locale === 'fr'
+                    ? "Je ne suis pas sur de pouvoir aider encore, mais j'apprends."
+                    : locale === 'de'
+                        ? 'Ich bin mir nicht sicher, ob ich dabei helfen kann, aber ich lerne dazu.'
+                        : locale === 'ar'
+                            ? 'لست متاكدا انني استطيع المساعدة بعد، لكنني اتعلم.'
+                            : locale === 'zh'
+                                ? '我还不确定是否能帮到你，但我会继续学习。'
+                                : "I'm not sure how to help with that, but I'm learning!");
+            const includesPaidPerformance = /\b(meta ads?|paid (?:ads?|performance)|ad spend|impressions|\bctr\b)\b/i.test(responseText);
             return {
                 type: 'text',
-                text: message.content ||
-                    (locale === 'fr'
-                        ? "Je ne suis pas sur de pouvoir aider encore, mais j'apprends."
-                        : locale === 'de'
-                            ? 'Ich bin mir nicht sicher, ob ich dabei helfen kann, aber ich lerne dazu.'
-                            : locale === 'ar'
-                                ? 'لست متاكدا انني استطيع المساعدة بعد، لكنني اتعلم.'
-                                : locale === 'zh'
-                                    ? '我还不确定是否能帮到你，但我会继续学习。'
-                                    : "I'm not sure how to help with that, but I'm learning!"),
+                text: liveAdsContext && includeAdsPerformance && !includesPaidPerformance
+                    ? `${responseText}\n\nPaid ads performance\n${liveAdsContext}`
+                    : responseText,
             };
         }
         catch (error) {
@@ -1002,22 +1479,90 @@ export class AssistantService {
                 combined.includes('quota')) {
                 kind = 'billing';
             }
-            console.error('OpenAI Error:', { status, code, message });
+            console.error('OpenAI Error:', {
+                status,
+                code,
+                message,
+                provider: config.assistantAI.provider,
+                model: config.assistantAI.model,
+                durationMs: Date.now() - completionStartedAt,
+                questionLength: question.length,
+            });
+            // Retry transient failures with a compact prompt and no tools. This
+            // avoids turning a slow or oversized request into a dead conversation.
+            if (kind === 'generic' && !availableTools.length) {
+                try {
+                    const compactSystemPrompt = [
+                        'You are Dotti, a helpful business and everyday AI assistant.',
+                        'Answer the user directly in no more than two short paragraphs.',
+                        'Use only the account facts supplied below; if they are absent, say what information is needed instead of inventing it.',
+                        accountContextBlock ? `Account facts:\n${accountContextBlock.slice(0, 12000)}` : '',
+                        `Respond in ${responseLanguage}.`,
+                    ].filter(Boolean).join('\n');
+                    const retryCompletion = await assistantFastRetryAI.chat.completions.create({
+                        model: config.assistantAI.model,
+                        messages: [
+                            { role: 'system', content: compactSystemPrompt },
+                            { role: 'user', content: question.slice(0, 12000) },
+                        ],
+                        temperature: 0.2,
+                        max_tokens: 450,
+                    });
+                    const retryText = retryCompletion.choices?.[0]?.message?.content?.trim();
+                    if (retryText) {
+                        console.warn('[assistant] compact retry recovered completion', {
+                            provider: config.assistantAI.provider,
+                            model: config.assistantAI.model,
+                            durationMs: Date.now() - completionStartedAt,
+                        });
+                        return { type: 'text', text: retryText };
+                    }
+                }
+                catch (retryError) {
+                    const retryInfo = extractOpenAIError(retryError);
+                    console.warn('[assistant] compact retry failed', {
+                        status: retryInfo.status,
+                        code: retryInfo.code,
+                        message: retryInfo.message,
+                    });
+                }
+            }
+            if (webSearchRequest && webResearchBlock) {
+                return {
+                    type: 'text',
+                    text: `Here is what I found from current public sources:\n\n${webResearchBlock}`,
+                };
+            }
+            if (accountContextBlock && asksForOverallPerformance) {
+                const dashboard = accountSnapshot?.dashboardPerformance;
+                const organicFallback = dashboard
+                    ? `Organic performance: ${this.formatWholeNumber(dashboard.views)} views, ${this.formatWholeNumber(dashboard.interactions)} interactions, ${dashboard.engagementRate.toFixed(2)}% engagement, ${this.formatWholeNumber(dashboard.conversions)} conversions.`
+                    : 'Organic performance is temporarily unavailable.';
+                return {
+                    type: 'text',
+                    text: [
+                        'Here is your live account performance:',
+                        organicFallback,
+                        liveAdsContext ? `Paid ads: ${liveAdsContext}` : 'Paid ads performance is unavailable for this request.',
+                    ].join('\n'),
+                };
+            }
+            if (isSimpleGreeting) {
+                return {
+                    type: 'text',
+                    text: locale === 'fr'
+                        ? 'Bonjour ! Je suis Dotti. Comment puis-je vous aider aujourd’hui ?'
+                        : locale === 'de'
+                            ? 'Hallo! Ich bin Dotti. Wie kann ich dir heute helfen?'
+                            : locale === 'es'
+                                ? '¡Hola! Soy Dotti. ¿Cómo puedo ayudarte hoy?'
+                                : 'Hi! I’m Dotti. How can I help you today?',
+                };
+            }
             if (kind !== 'generic') {
                 return { type: 'text', text: buildAssistantErrorText(kind) };
             }
-            return {
-                type: 'text',
-                text: locale === 'fr'
-                    ? "Je rencontre un souci temporaire en me connectant. Merci de reessayer."
-                    : locale === 'de'
-                        ? 'Ich habe vorubergehend Probleme bei der Verbindung. Bitte versuch es gleich noch einmal.'
-                        : locale === 'ar'
-                            ? 'واجهت مشكلة مؤقتة في الاتصال. يرجى المحاولة مرة اخرى.'
-                            : locale === 'zh'
-                                ? '连接时遇到临时问题，请稍后再试。'
-                                : 'I encountered a temporary issue connecting to my brain. Please try again shortly.',
-            };
+            return { type: 'text', text: buildLocalAssistantFallback(question, locale, context.conversationHistory) };
         }
     }
 }

@@ -1,4 +1,6 @@
 import admin from 'firebase-admin';
+import { selectConfiguredMedia } from './configuredMediaSelection.js';
+import { galleryPlatforms } from './galleryAutoPostService.js';
 import axios from 'axios';
 import sharp from 'sharp';
 import * as cheerio from 'cheerio';
@@ -17,6 +19,7 @@ import { publishToThreads } from '../packages/services/socialPlatforms/threadsPu
 import { publishToTwitter } from '../packages/services/socialPlatforms/twitterPublisher.js';
 import { publishToYouTube } from '../packages/services/socialPlatforms/youtubePublisher.js';
 import { publishToTikTok } from '../packages/services/socialPlatforms/tiktokPublisher.js';
+import { publishToWhatsApp, publishToWhatsAppStatus } from '../packages/services/socialPlatforms/whatsappPublisher.js';
 import { getTikTokIntegrationSecrets, getYouTubeIntegrationSecrets } from './socialIntegrationService.js';
 import { canUsePrimarySocialDefaults, isPrimarySocialUserId } from '../utils/socialAccess.js';
 import { getNewsTrendingCandidates } from './newsTrendSources.js';
@@ -29,7 +32,8 @@ import { renderLeagueTableImage, renderPredictionsImage, renderTopScorersImage }
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { resolveFacebookPageId } from './socialAccountResolver.js';
 import { metaAdsService } from './metaAdsService.js';
-import { buildCarmarketVehicleCaption, pickCarmarketVehicle, prepareCarmarketVehicleImage, renderCarmarketCoverImage, } from './beforwardVehicleService.js';
+import { consumeUsageBatch, resolveBillingScope } from './billing/billingService.js';
+import { buildCarmarketVehicleCaption, getCarmarketSourceKey, pickCarmarketVehicle, prepareCarmarketVehicleImage, renderCarmarketCoverImage, } from './beforwardVehicleService.js';
 import { buildStaysphereListingCaption, pickStaysphereListing, prepareStaysphereListingImage, renderStaysphereCoverImage, staysphereListingHistoryKey, } from './staysphereListingService.js';
 import { buildGamersSteamCaption, buildGamersSteamVideoCaption, gamersSteamHistoryKey, pickGamersSteamScreenshots, pickGamersSteamVideo, } from './gamersContentService.js';
 import { buildDottEnergyEducationCaption, buildDottEnergyProductCaption, dottEnergyEducationHistoryKey, dottEnergyProductHistoryKey, pickDottEnergyEducationTopic, pickDottEnergyProduct, renderDottEnergyEducationCard, renderDottEnergyProductImage, } from './dottEnergyProductService.js';
@@ -47,13 +51,18 @@ const TOP_FIVE_LEAGUES = [
 const autopostCollection = firestore.collection('autopostJobs');
 const scheduledPostsCollection = firestore.collection('scheduledPosts');
 const CLIENT_META_FALLBACKS = {
+    cMPZQccGggbhZe9dbvtxFmBehP02: {
+        pageId: '1371096759416007',
+        instagramAccountId: '17841420336656466',
+        instagramUsername: 'aux_wellness_hub',
+    },
     acmVetCcOiTHeGk5D7eDYieamDF3: {
-        pageId: '1033657279841186',
+        pageId: '1191892417341226',
         instagramAccountId: '17841414110816982',
         instagramUsername: 'carmarketplace999',
     },
     D1iNgjLKNRaQhH35M0NmGfw1LVD2: {
-        pageId: '1191303874068642',
+        pageId: '1254924081027995',
         instagramAccountId: '17841448080672466',
         instagramUsername: 'staysphere93',
     },
@@ -62,19 +71,21 @@ const CLIENT_META_FALLBACKS = {
         instagramAccountId: '17841412643148539',
         instagramUsername: 'gamers44life',
     },
-    LVR7p3WzdFM51ds92Kacf6S40og2: {
-        pageId: '1201086759745632',
-        instagramAccountId: '17841433799368009',
-        instagramUsername: 'dottenergy100',
-    },
 };
 const CLIENT_ENV_PREFIXES = {
+    cMPZQccGggbhZe9dbvtxFmBehP02: 'AUXWELLNESS',
     acmVetCcOiTHeGk5D7eDYieamDF3: 'CARMARKETPLACE',
     D1iNgjLKNRaQhH35M0NmGfw1LVD2: 'STAYSPHERE',
     vzdH1DnfFLVjlY8bBgC26WACmmw2: 'GAMERS44LIFE',
     LVR7p3WzdFM51ds92Kacf6S40og2: 'DOTTENERGY',
 };
 const PINNED_CLIENT_RUNTIME_PROMPTS = {
+    cMPZQccGggbhZe9dbvtxFmBehP02: {
+        prompt: 'Create a warm, product-led AUX Wellness Hub post for the exact wellness or sports product shown in the image. Identify the product category from the image when possible (back support, knee stabilizer, ankle support, pain relief cream or balm, gym bag, duffel bag, or gym wear). Mention only benefits supported by the product image, avoid medical guarantees, never mention Dotti or Dott Media, and invite customers to message AUX Wellness Hub for sizing, availability, and ordering.',
+        businessType: 'wellness support and active lifestyle products',
+        fallbackCaption: 'AUX Wellness Hub products for everyday comfort, movement, and active routines. Message us for product guidance, sizing, availability, and ordering. ✨',
+        fallbackHashtags: '#AUXWellnessHub #WellnessUganda #PainReliefSupport #KneeSupport #BackSupport #ActiveLifestyle',
+    },
     acmVetCcOiTHeGk5D7eDYieamDF3: {
         prompt: 'Create a marketplace post for a real car listing suitable for Uganda buyers. Use practical, direct language and avoid generic Dott Media copy.',
         businessType: 'Uganda car marketplace',
@@ -99,6 +110,53 @@ const PINNED_CLIENT_RUNTIME_PROMPTS = {
 const NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS = 3;
 const NICHE_CLIENT_INSTAGRAM_REELS_INTERVAL_HOURS = 4;
 const DOTT_ENERGY_USER_ID = 'LVR7p3WzdFM51ds92Kacf6S40og2';
+const AUX_WELLNESS_USER_ID = 'cMPZQccGggbhZe9dbvtxFmBehP02';
+const AUX_WELLNESS_MEDIA_BASE_URL = 'https://dottmediaapk.onrender.com/public/client-media/auxwellness';
+const AUX_WELLNESS_MEDIA_URLS = Array.from({ length: 32 }, (_, index) => `${AUX_WELLNESS_MEDIA_BASE_URL}/auxwellness-${String(index + 1).padStart(2, '0')}.jpeg`);
+const AUX_WELLNESS_PRODUCT_COPY = {
+    1: { name: 'Copper Fit Back Support', body: 'A practical support option for everyday movement, work, and active routines. Ask us about fit and availability.', hashtags: '#BackSupport #EverydayComfort' },
+    2: { name: 'AUX Double Support Back Care', body: 'Designed for added support through your daily routine. Message us for sizing and product guidance.', hashtags: '#BackSupport #ActiveLifestyle' },
+    3: { name: 'Sombra Warm Pain Relief', body: 'A warm-care option for people who want comfort after busy days or active routines. Ask about the available sizes.', hashtags: '#Sombra #WellnessSupport' },
+    4: { name: 'AUX Sports Duffle Bag', body: 'A roomy companion for training gear, travel essentials, and busy days on the move.', hashtags: '#SportsBag #ActiveLifestyle' },
+    5: { name: 'Mueller Knee Stabilizer', body: 'A supportive knee option for training, movement, and everyday activity. Ask us about fit before ordering.', hashtags: '#KneeSupport #MoveWithConfidence' },
+    6: { name: 'SNEINO Ankle Support', body: 'Lightweight support for active routines and movement. Message us for sizing and availability.', hashtags: '#AnkleSupport #ActiveLifestyle' },
+    7: { name: 'Self-Adjusting Knee Stabilizer', body: 'A practical support option for active days, training, and everyday movement. Ask about the right fit.', hashtags: '#KneeSupport #WellnessUganda' },
+    8: { name: 'Mueller Knee Stabilizer', body: 'Comfortable support for people staying active. Message AUX Wellness Hub for guidance and availability.', hashtags: '#KneeSupport #ActiveDays' },
+    9: { name: 'AUX Everyday Duffel Bag', body: 'Carry your essentials from the gym to the weekend with a simple, practical duffel.', hashtags: '#DuffelBag #ActiveLifestyle' },
+    10: { name: 'AUX Performance Duffel Bag', body: 'Built for organised gym days, short trips, and keeping your essentials together.', hashtags: '#DuffelBag #GymGear' },
+    11: { name: 'AUX Gym Bag', body: 'A practical gym companion with room for the gear you use on active days.', hashtags: '#GymBag #ActiveLifestyle' },
+    12: { name: 'AUX Sport Duffle Bag', body: 'Pack your training essentials and keep moving. Ask us about colours and availability.', hashtags: '#SportsBag #GymGear' },
+    13: { name: 'AUX Performance Duffel Bag', body: 'A clean, spacious option for gym gear, travel, and everyday carry.', hashtags: '#DuffelBag #EverydayCarry' },
+    14: { name: 'AUX Gym Wear Set', body: 'Comfortable activewear for training, movement, and days that keep you moving.', hashtags: '#GymWear #ActiveLifestyle' },
+    15: { name: 'Sombra Move Better Care', body: 'Warm-care products for active routines and everyday comfort. Message us for the options available.', hashtags: '#Sombra #WellnessSupport' },
+    16: { name: 'Sombra Wellness Samples', body: 'Explore Sombra care options and find the product that fits your routine. Ask us about samples and availability.', hashtags: '#Sombra #WellnessUganda' },
+    17: { name: 'Sombra Warm Pain Relief', body: 'A practical warm-care option after busy days, training, or everyday activity.', hashtags: '#Sombra #ActiveRecovery' },
+    18: { name: 'Sombra Warm Pain Relief', body: 'Support your everyday comfort routine with Sombra. Message us for product guidance.', hashtags: '#Sombra #EverydayComfort' },
+    19: { name: 'Sombra Pain Relief Gel', body: 'A convenient gel option for your personal comfort routine. Ask about sizes and availability.', hashtags: '#Sombra #WellnessSupport' },
+    20: { name: 'Sombra Care Range', body: 'Choose from practical Sombra care options for different everyday routines. Message us to find your match.', hashtags: '#Sombra #WellnessUganda' },
+    21: { name: 'Sombra Care Benefits', body: 'Learn how Sombra products can fit into a simple comfort and recovery routine. Ask us for guidance.', hashtags: '#Sombra #ActiveRecovery' },
+    22: { name: 'Sombra Warm Relief Cream', body: 'A simple cream option for an everyday comfort routine. Message AUX Wellness Hub for availability.', hashtags: '#Sombra #EverydayComfort' },
+    23: { name: 'AUX Carry More Sports Bag', body: 'Keep your sports essentials organised in a practical bag made for active days.', hashtags: '#SportsBag #GymGear' },
+    24: { name: 'AUX Sport Duffel Bag', body: 'A dependable carry option for training, travel, and everyday movement.', hashtags: '#DuffelBag #ActiveLifestyle' },
+    25: { name: 'Sombra Care Collection', body: 'Browse the Sombra range and choose the option that suits your comfort routine.', hashtags: '#Sombra #WellnessSupport' },
+    26: { name: 'Sombra Warm Pain Relief Cream', body: 'A convenient cream for people building a simple everyday comfort routine.', hashtags: '#Sombra #EverydayComfort' },
+    27: { name: 'Sombra Care Collection', body: 'Multiple Sombra options, one place to find practical everyday support. Message us for guidance.', hashtags: '#Sombra #WellnessUganda' },
+    28: { name: 'Sombra Pain Relief Gel', body: 'Keep your comfort routine simple with a convenient Sombra gel option.', hashtags: '#Sombra #ActiveRecovery' },
+    29: { name: 'Sombra Warm Relief Cream', body: 'Check the product details and ask us how this Sombra option can fit your routine.', hashtags: '#Sombra #WellnessSupport' },
+    30: { name: 'Sombra Muscle and Joint Care', body: 'A practical care option for active people and everyday routines. Message us for availability.', hashtags: '#Sombra #ActiveLifestyle' },
+    31: { name: 'Sombra Product Details', body: 'See the product information clearly, then message us for guidance before ordering.', hashtags: '#Sombra #WellnessUganda' },
+    32: { name: 'Sombra Care Range', body: 'Find practical comfort options for your routine from AUX Wellness Hub.', hashtags: '#Sombra #WellnessSupport' },
+};
+const buildAuxWellnessProductCaption = (sourceUrl) => {
+    const match = String(sourceUrl ?? '').match(/auxwellness-(\d{1,2})\.(?:jpe?g|png|webp)/i);
+    const copy = match ? AUX_WELLNESS_PRODUCT_COPY[Number(match[1])] : undefined;
+    const product = copy ?? {
+        name: 'AUX Wellness Hub',
+        body: 'Practical wellness, comfort, and active-lifestyle products for everyday routines. Message us for product guidance and availability.',
+        hashtags: '#WellnessUganda #ActiveLifestyle',
+    };
+    return `${product.name} ✨\n\n${product.body}\n\nMessage AUX Wellness Hub for sizing, availability, and ordering. ${product.hashtags} #AUXWellnessHub`;
+};
 const logSafeError = (error) => {
     if (error instanceof Error)
         return error.message;
@@ -112,6 +170,34 @@ const logSafeError = (error) => {
         return candidate.message;
     return String(error ?? 'unknown_error');
 };
+const GALLERY_BILLING_TIMEOUT_MS = 8000;
+const consumeGalleryUsage = async (userId) => {
+    let timeoutId;
+    try {
+        await Promise.race([
+            consumeUsageBatch(resolveBillingScope(userId), [{ resource: 'scheduledPosts', amount: 1 }]),
+            new Promise((_, reject) => {
+                timeoutId = setTimeout(() => reject(new Error('gallery_billing_timeout')), GALLERY_BILLING_TIMEOUT_MS);
+            }),
+        ]);
+    }
+    catch (error) {
+        const message = logSafeError(error).toLowerCase();
+        if (!message.includes('quota') && !message.includes('resource_exhausted') &&
+            !message.includes('deadline') && !message.includes('unavailable') &&
+            !message.includes('gallery_billing_timeout')) {
+            throw error;
+        }
+        console.warn('[gallery-autopost] billing unavailable; continuing with the connected social publish', {
+            userId,
+            error: logSafeError(error),
+        });
+    }
+    finally {
+        if (timeoutId)
+            clearTimeout(timeoutId);
+    }
+};
 const platformPublishers = {
     instagram: publishToInstagram,
     instagram_reels: publishToInstagramReel,
@@ -124,6 +210,8 @@ const platformPublishers = {
     twitter: publishToTwitter,
     youtube: publishToYouTube,
     x: publishToTwitter,
+    whatsapp: publishToWhatsApp,
+    whatsapp_status: publishToWhatsAppStatus,
 };
 export class AutoPostService {
     constructor() {
@@ -205,6 +293,96 @@ export class AutoPostService {
         this.emergencyXLastRunAt = 0;
         this.emergencyXLastKey = null;
     }
+    async galleryCredentials(userId) {
+        let accounts;
+        try {
+            accounts = (await supabaseFallbackService.getSocialAccounts(userId))?.socialAccounts;
+        }
+        catch { /* Use the existing Firebase account store if the primary store is unavailable. */ }
+        if (!accounts) {
+            const user = await firestore.collection('users').doc(userId).get();
+            accounts = user.data()?.socialAccounts;
+        }
+        const connected = { ...accounts };
+        // Optional video integrations must not prevent image-only gallery jobs
+        // from loading. A stale encrypted record or a provider outage should only
+        // make that provider unavailable, not break Facebook/Instagram/Threads.
+        const [youtubeResult, tiktokResult] = await Promise.allSettled([
+            accounts?.youtube ? getYouTubeIntegrationSecrets(userId) : Promise.resolve(null),
+            accounts?.tiktok ? getTikTokIntegrationSecrets(userId) : Promise.resolve(null),
+        ]);
+        const youtube = youtubeResult.status === 'fulfilled' ? youtubeResult.value : null;
+        const tiktok = tiktokResult.status === 'fulfilled' ? tiktokResult.value : null;
+        if (youtubeResult.status === 'rejected') {
+            console.warn('[autopost] YouTube integration lookup failed; continuing without YouTube', logSafeError(youtubeResult.reason));
+        }
+        if (tiktokResult.status === 'rejected') {
+            console.warn('[autopost] TikTok integration lookup failed; continuing without TikTok', logSafeError(tiktokResult.reason));
+        }
+        if (youtube)
+            connected.youtube = { refreshToken: youtube.refreshToken, accessToken: youtube.accessToken,
+                privacyStatus: youtube.privacyStatus, channelId: youtube.channelId ?? undefined };
+        if (tiktok)
+            connected.tiktok = { accessToken: tiktok.accessToken, refreshToken: tiktok.refreshToken,
+                openId: tiktok.openId ?? undefined };
+        // Gallery jobs only use this user's connected accounts, never environment defaults.
+        return connected;
+    }
+    async galleryConnectedPlatforms(userId) {
+        const accounts = await this.galleryCredentials(userId);
+        return galleryPlatforms.filter(platform => this.hasGalleryCredentials(platform, accounts));
+    }
+    hasGalleryCredentials(platform, accounts) {
+        const account = accounts[platform];
+        if (!account)
+            return false;
+        const present = (value) => typeof value === 'string' && value.trim().length > 0;
+        if (platform === 'youtube')
+            return present(account.refreshToken);
+        if (!present(account.accessToken))
+            return false;
+        if (platform === 'facebook')
+            return present(account.pageId);
+        if (platform === 'instagram' || platform === 'threads')
+            return present(account.accountId);
+        if (platform === 'linkedin')
+            return present(account.urn);
+        if (platform === 'twitter')
+            return present(account.accessSecret);
+        return true;
+    }
+    async publishGalleryAsset(userId, platform, asset, caption) {
+        const publishPlatform = platform === 'instagram' && asset.kind === 'video' ? 'instagram_reels' : platform;
+        try {
+            const accounts = await this.galleryCredentials(userId);
+            if (!this.hasGalleryCredentials(platform, accounts))
+                throw new Error('Reconnect this social account to continue.');
+            if (await isBwinAccountClosureActive(userId))
+                throw new Error('Posting is disabled for this account.');
+            const validation = validateBwinSportsContent({ userId, platforms: [publishPlatform], caption,
+                imageUrls: asset.kind === 'image' ? [asset.url] : [], videoUrl: asset.kind === 'video' ? asset.url : undefined });
+            if (!validation.ok)
+                throw new Error(validation.reason || 'This content cannot be posted to the account.');
+            await consumeGalleryUsage(userId);
+            const result = await platformPublishers[publishPlatform]({
+                caption, imageUrls: asset.kind === 'image' ? [asset.url] : [],
+                videoUrl: asset.kind === 'video' ? asset.url : undefined, videoTitle: asset.name || 'Gallery video',
+                credentials: accounts,
+            });
+            // A logging outage must not turn a successful publish into a retry.
+            try {
+                await this.recordHistory(userId, [{ platform: publishPlatform, status: 'posted', caption,
+                        remoteId: result.remoteId ?? null, ...(asset.kind === 'video' ? { videoUrl: asset.url, videoTitle: asset.name } : {}) }], asset.kind === 'image' ? [asset.url] : []);
+            }
+            catch (error) {
+                console.error('[gallery-autopost] history write failed', { userId, error: logSafeError(error) });
+            }
+            return { platform: publishPlatform, status: 'posted', remoteId: result.remoteId ?? null };
+        }
+        catch (error) {
+            return { platform: publishPlatform, status: 'failed', error: logSafeError(error) };
+        }
+    }
     getFallbackImagePool() {
         return this.loadFallbackImagePool();
     }
@@ -253,7 +431,10 @@ export class AutoPostService {
             const envAccounts = this.getPinnedClientEnvAccounts(userId);
             const clientFallback = CLIENT_META_FALLBACKS[userId];
             const prefix = CLIENT_ENV_PREFIXES[userId];
-            const token = (prefix ? (process.env[`${prefix}_META_USER_TOKEN`] ?? '') : '').trim();
+            const token = ((prefix ? (process.env[`${prefix}_META_USER_TOKEN`] ?? '') : '') ||
+                (userId === AUX_WELLNESS_USER_ID
+                    ? (process.env.CLIENT_META_USER_TOKEN ?? process.env.FACEBOOK_PAGE_TOKEN ?? process.env.META_GRAPH_TOKEN ?? '')
+                    : '')).trim();
             if (!clientFallback || !token)
                 return envAccounts;
             try {
@@ -357,6 +538,7 @@ export class AutoPostService {
             storyPlatforms: ['facebook_story', 'instagram_story'],
             prompt: profile.prompt,
             businessType: profile.businessType,
+            fallbackCaption: profile.fallbackCaption,
             fallbackHashtags: profile.fallbackHashtags,
             requireAiImages: false,
             intervalHours: NICHE_CLIENT_SOCIAL_FEED_INTERVAL_HOURS,
@@ -416,7 +598,7 @@ export class AutoPostService {
     async mirrorAutopostJob(userId, job) {
         this.cacheJob(userId, job);
         try {
-            await supabaseFallbackService.upsertAutopostJob(userId, job);
+            await this.withTimeout(supabaseFallbackService.upsertAutopostJob(userId, job), Math.max(Number(process.env.AUTOPOST_MIRROR_TIMEOUT_MS ?? 12000), 3000), 'supabase_autopost_job_mirror');
         }
         catch (error) {
             console.warn('[autopost] supabase job mirror failed', logSafeError(error));
@@ -439,7 +621,7 @@ export class AutoPostService {
             console.warn('[autopost] firestore job fetch failed; checking fallback store', error);
         }
         try {
-            const fallback = await supabaseFallbackService.getAutopostJob(userId);
+            const fallback = await this.withTimeout(supabaseFallbackService.getAutopostJob(userId), Math.max(Number(process.env.AUTOPOST_JOB_LOOKUP_TIMEOUT_MS ?? 12000), 3000), 'supabase_autopost_job_fetch');
             if (fallback) {
                 const job = fallback;
                 this.cacheJob(userId, job);
@@ -479,7 +661,8 @@ export class AutoPostService {
                 job.trendNextRun.toMillis() <= now.toMillis()),
         });
         let { dueStandard, dueReels, dueStories, dueTrends } = buildDueSets();
-        if (!dueStandard.length && !dueReels.length && !dueStories.length && !dueTrends.length) {
+        // Always discover durable jobs: pinned in-memory jobs must not starve other accounts.
+        {
             try {
                 const [standard, reels, stories, trends] = await Promise.all([
                     supabaseFallbackService.getDueAutopostJobs('next_run', new Date(now.toMillis())),
@@ -498,12 +681,23 @@ export class AutoPostService {
             }
             ({ dueStandard, dueReels, dueStories, dueTrends } = buildDueSets());
         }
+        const runSafely = async (userId, run) => {
+            try {
+                return await run();
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                console.warn('[autopost] fallback account failed; continuing remaining schedules', { userId, error: message });
+                return { posted: 0, failed: [{ platform: 'autopost', status: 'failed', error: message }], nextRun: null };
+            }
+        };
         let processed = 0;
         const results = new Map();
-        for (const [userId, job] of dueStandard) {
+        for (const [userId, snapshot] of dueStandard) {
+            const job = this.memoryStore.get(userId) ?? snapshot;
             if (!(await this.claimDueRun(userId, job, 'next_run', now)))
                 continue;
-            const outcome = await this.executeJob(userId, job);
+            const outcome = await runSafely(userId, () => this.executeJob(userId, job));
             processed += 1;
             results.set(userId, {
                 userId,
@@ -512,17 +706,18 @@ export class AutoPostService {
                 nextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
             });
         }
-        for (const [userId, job] of dueReels) {
+        for (const [userId, snapshot] of dueReels) {
+            const job = this.memoryStore.get(userId) ?? snapshot;
             if (!(await this.claimDueRun(userId, job, 'reels_next_run', now)))
                 continue;
-            const outcome = await this.executeJob(userId, job, {
+            const outcome = await runSafely(userId, () => this.executeJob(userId, job, {
                 platforms: ['instagram_reels'],
                 intervalHours: this.getReelsIntervalHours(userId, job.reelsIntervalHours),
                 nextRunField: 'reelsNextRun',
                 lastRunField: 'reelsLastRunAt',
                 resultField: 'reelsLastResult',
                 useGenericVideoFallback: false,
-            });
+            }));
             processed += 1;
             const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
             results.set(userId, {
@@ -532,18 +727,19 @@ export class AutoPostService {
                 reelsNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
             });
         }
-        for (const [userId, job] of dueStories) {
+        for (const [userId, snapshot] of dueStories) {
+            const job = this.memoryStore.get(userId) ?? snapshot;
             if (!(await this.claimDueRun(userId, job, 'story_next_run', now)))
                 continue;
-            const outcome = job.storyTrendEnabled === true
-                ? await this.executeTrendStories(userId, job)
-                : await this.executeJob(userId, job, {
+            const outcome = await runSafely(userId, () => job.storyTrendEnabled === true
+                ? this.executeTrendStories(userId, job)
+                : this.executeJob(userId, job, {
                     platforms: this.getStoryPlatforms(job),
                     intervalHours: this.getStoryIntervalHours(userId, job.storyIntervalHours),
                     nextRunField: 'storyNextRun',
                     lastRunField: 'storyLastRunAt',
                     resultField: 'storyLastResult',
-                });
+                }));
             processed += 1;
             const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
             results.set(userId, {
@@ -553,14 +749,15 @@ export class AutoPostService {
                 storyNextRun: typeof outcome.nextRun === 'string' ? outcome.nextRun : null,
             });
         }
-        for (const [userId, job] of dueTrends) {
+        for (const [userId, snapshot] of dueTrends) {
+            const job = this.memoryStore.get(userId) ?? snapshot;
             const feedAlreadyProcessed = Boolean(results.get(userId)?.nextRun);
             if (this.isBwinScopeUser(userId) && feedAlreadyProcessed) {
                 continue;
             }
             if (!(await this.claimDueRun(userId, job, 'trend_next_run', now)))
                 continue;
-            const outcome = await this.executeTrendPosts(userId, job);
+            const outcome = await runSafely(userId, () => this.executeTrendPosts(userId, job));
             processed += 1;
             const existing = results.get(userId) ?? { userId, posted: 0, failed: 0, nextRun: null };
             results.set(userId, {
@@ -897,6 +1094,7 @@ export class AutoPostService {
         const basePlatforms = payload.platforms?.length
             ? payload.platforms
             : ['instagram', 'instagram_story', 'facebook', 'facebook_story', 'linkedin'];
+        const submittedPlatforms = Array.from(new Set(basePlatforms));
         const withStories = new Set(basePlatforms);
         if (withStories.has('instagram') && !withStories.has('instagram_story')) {
             withStories.add('instagram_story');
@@ -954,9 +1152,97 @@ export class AutoPostService {
             console.warn('[autopost] firestore start config write failed; using fallback mirror', error);
         }
         await this.mirrorAutopostJob(payload.userId, initialJob);
-        return this.runForUser(payload.userId, {
+        const runOptions = {
             ...(payload.generatedContent ? { generatedContent: payload.generatedContent } : {}),
-        });
+        };
+        if (payload.deferRun) {
+            const queuedAt = new Date().toISOString();
+            setImmediate(() => {
+                // Execute the exact submitted snapshot. Loading the shared recurring job
+                // again creates a race where a campaign worker can replace the user's
+                // platforms or media between acknowledgement and publishing.
+                const runSubmittedJob = () => this.publishSubmittedPostNow({
+                    userId: payload.userId,
+                    platforms: submittedPlatforms,
+                    job: initialJob,
+                    generatedContent: payload.generatedContent,
+                });
+                void runSubmittedJob()
+                    .then(result => console.info('[autopost] queued runNow complete', { userId: payload.userId, result }))
+                    .catch(error => console.error('[autopost] queued runNow failed', {
+                    userId: payload.userId,
+                    error: error instanceof Error ? error.message : String(error),
+                }));
+            });
+            return { accepted: true, status: 'queued', queuedAt };
+        }
+        return this.runForUser(payload.userId, runOptions);
+    }
+    async publishSubmittedPostNow(input) {
+        const fallbackCopy = this.buildFallbackCopy(input.job, input.userId);
+        const content = input.generatedContent ?? {
+            images: [],
+            caption_instagram: fallbackCopy.caption,
+            caption_linkedin: fallbackCopy.caption,
+            caption_x: fallbackCopy.caption,
+            hashtags_instagram: fallbackCopy.hashtags,
+            hashtags_generic: fallbackCopy.hashtags,
+        };
+        const credentials = await this.resolveCredentialsForSubmittedPost(input.userId);
+        const results = await Promise.all(input.platforms.map(async (platform) => {
+            if (!this.hasCredentialsForPlatform(platform, credentials)) {
+                return { platform, status: 'failed', error: `missing_${platform}_credentials` };
+            }
+            const videoUrl = platform === 'instagram_reels'
+                ? input.job.reelsVideoUrl ?? input.job.videoUrl
+                : platform === 'youtube'
+                    ? input.job.youtubeVideoUrl ?? input.job.videoUrl
+                    : platform === 'tiktok'
+                        ? input.job.tiktokVideoUrl ?? input.job.videoUrl
+                        : input.job.videoUrl;
+            if (['instagram_reels', 'youtube', 'tiktok'].includes(platform) && !videoUrl) {
+                return { platform, status: 'failed', error: `missing_${platform}_video` };
+            }
+            const caption = this.captionForPlatform(platform, content, fallbackCopy);
+            try {
+                const publisher = platformPublishers[platform] ?? publishToTwitter;
+                const response = await publisher({
+                    caption,
+                    imageUrls: videoUrl ? [] : content.images ?? [],
+                    videoUrl,
+                    videoTitle: input.job.videoTitle,
+                    privacyStatus: platform === 'youtube' ? input.job.youtubePrivacyStatus : undefined,
+                    credentials,
+                });
+                return { platform, status: 'posted', remoteId: response.remoteId ?? null };
+            }
+            catch (error) {
+                return { platform, status: 'failed', error: logSafeError(error) };
+            }
+        }));
+        const historyEntries = results.map(result => ({
+            platform: result.platform,
+            status: result.status,
+            caption: this.captionForPlatform(result.platform, content, fallbackCopy),
+            ...(result.status === 'posted' ? { remoteId: result.remoteId } : { errorMessage: result.error }),
+            videoUrl: result.platform === 'instagram_reels' ? input.job.reelsVideoUrl : input.job.videoUrl,
+            videoTitle: input.job.videoTitle,
+        }));
+        await this.recordHistory(input.userId, historyEntries, content.images ?? []);
+        return {
+            posted: results.filter(result => result.status === 'posted').length,
+            failed: results.filter(result => result.status === 'failed'),
+            results,
+        };
+    }
+    async resolveCredentialsForSubmittedPost(userId) {
+        const fallback = await this.withTimeout(supabaseFallbackService.getSocialAccounts(userId), Math.max(Number(process.env.AUTOPOST_CREDENTIALS_TIMEOUT_MS ?? 12000), 3000), 'supabase_social_accounts_lookup').catch(() => null);
+        const userData = fallback;
+        const allowDefaults = !this.isNicheClientAccount(userId) && canUsePrimarySocialDefaults(userData ?? undefined, userId);
+        return {
+            ...this.defaultSocialAccounts(allowDefaults),
+            ...(userData?.socialAccounts ?? {}),
+        };
     }
     async runDueJobs() {
         const now = admin.firestore.Timestamp.now();
@@ -1257,6 +1543,8 @@ export class AutoPostService {
             return Boolean(credentials.linkedin);
         if (platform === 'twitter' || platform === 'x')
             return Boolean(credentials.twitter);
+        if (platform === 'whatsapp' || platform === 'whatsapp_status')
+            return Boolean(credentials.whatsapp);
         if (platform === 'tiktok')
             return Boolean(credentials.tiktok);
         if (platform === 'youtube')
@@ -2511,12 +2799,13 @@ export class AutoPostService {
             return [];
         }
     }
-    async generateFootballCardImage(prompt, recentSet) {
+    async generateFootballCardImage(userId, prompt, recentSet) {
         try {
             const generated = await contentGenerationService.generateContent({
                 prompt,
                 businessType: 'Football content card',
                 imageCount: 1,
+                userId,
             });
             const images = this.selectFreshImages(generated.images ?? [], recentSet);
             if (images.length)
@@ -2894,7 +3183,7 @@ export class AutoPostService {
                 finalImages = [relatedImageUrl];
             }
             if (!finalImages.length) {
-                finalImages = await this.generateFootballCardImage(`Create a vertical football news story image for "${topic}". Clean editorial sports style, no logos.`, recentSet);
+                finalImages = await this.generateFootballCardImage(userId, `Create a vertical football news story image for "${topic}". Clean editorial sports style, no logos.`, recentSet);
             }
             const credentials = await this.resolveCredentials(userId);
             const results = [];
@@ -2980,7 +3269,7 @@ export class AutoPostService {
             const prompt = `Create a clean, modern news visual related to this AI headline: "${topic}". Context: "${summary || top?.sampleTitles?.[0] || 'AI news update'}". Keep it realistic and editorial, no logos.`;
             let generated = null;
             try {
-                generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news image', imageCount: 1 });
+                generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news image', imageCount: 1, userId });
             }
             catch (error) {
                 console.warn('[autopost] related story image generation failed', error);
@@ -3011,7 +3300,7 @@ export class AutoPostService {
             let generated = null;
             if (!finalImages.length) {
                 try {
-                    generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news update', imageCount: 1 });
+                    generated = await contentGenerationService.generateContent({ prompt, businessType: 'AI news update', imageCount: 1, userId });
                 }
                 catch (error) {
                     console.warn('[autopost] trend story generation failed', error);
@@ -3181,6 +3470,10 @@ export class AutoPostService {
                         }),
                     ].filter(Boolean);
                     const context = contextLines.join('\n').trim();
+                    await consumeUsageBatch(resolveBillingScope(userId), [
+                        { resource: 'aiReplies', amount: 1 },
+                        { resource: 'images', amount: 1 },
+                    ]);
                     const gen = await footballTrendContentService.generate({
                         topic: top.topic,
                         context: context.length >= 10 ? context : `topic: ${top.topic}`,
@@ -3246,6 +3539,7 @@ export class AutoPostService {
                     prompt: `Create a realistic football news image for this trend: "${trendTopic}". Dynamic stadium energy, editorial sports style, no logos.`,
                     businessType: 'Football trend news visual',
                     imageCount: 1,
+                    userId,
                 });
                 const resolvedImages = this.resolveImageUrls(generatedImage.images ?? [], new Set(), false);
                 if (resolvedImages.length) {
@@ -3315,7 +3609,7 @@ export class AutoPostService {
                             imageUrls = [predictionsImageDataUrl];
                         }
                         else {
-                            imageUrls = await this.generateFootballCardImage(`Create a clean football prediction card with readable fixture list and odds style layout. Highlight: "${picks[0]?.fixture || 'Top fixtures'}". No sportsbook logos.`, new Set(this.getRecentImageHistory(job)));
+                            imageUrls = await this.generateFootballCardImage(userId, `Create a clean football prediction card with readable fixture list and odds style layout. Highlight: "${picks[0]?.fixture || 'Top fixtures'}". No sportsbook logos.`, new Set(this.getRecentImageHistory(job)));
                         }
                     }
                 }
@@ -3368,7 +3662,7 @@ export class AutoPostService {
                                 imageUrls = [tableImageDataUrl];
                             }
                             else {
-                                imageUrls = await this.generateFootballCardImage(`Design a modern football league table card for ${snapshot.league}. Show top teams and points with strong readability.`, new Set(this.getRecentImageHistory(job)));
+                                imageUrls = await this.generateFootballCardImage(userId, `Design a modern football league table card for ${snapshot.league}. Show top teams and points with strong readability.`, new Set(this.getRecentImageHistory(job)));
                             }
                         }
                     }
@@ -3415,7 +3709,7 @@ export class AutoPostService {
                             imageUrls = [topScorersImageDataUrl];
                         }
                         else {
-                            imageUrls = await this.generateFootballCardImage(`Design a modern ${snapshot.league} top scorers card with player names, clubs, and goals.`, new Set(this.getRecentImageHistory(job)));
+                            imageUrls = await this.generateFootballCardImage(userId, `Design a modern ${snapshot.league} top scorers card with player names, clubs, and goals.`, new Set(this.getRecentImageHistory(job)));
                         }
                     }
                 }
@@ -3452,13 +3746,13 @@ export class AutoPostService {
                     usedTrendKeys.push(highlightlyVideoSelection.key);
                     const resolvedImage = await this.resolveBestNewsImageUrl(highlightlyVideoSelection.item.imageUrl?.trim(), highlightlyVideoSelection.item.url?.trim());
                     if (!allowThirdPartyHighlightVideoRepublish) {
-                        imageUrls = await this.generateFootballCardImage(`Create a premium football highlight alert card. Headline: "${title}". Secondary line: "Official source: ${source}". Sharp sports editorial design, clean typography, dynamic football energy, no sportsbook logos, no watermarks, no club crests.`, new Set(this.getRecentImageHistory(job)));
+                        imageUrls = await this.generateFootballCardImage(userId, `Create a premium football highlight alert card. Headline: "${title}". Secondary line: "Official source: ${source}". Sharp sports editorial design, clean typography, dynamic football energy, no sportsbook logos, no watermarks, no club crests.`, new Set(this.getRecentImageHistory(job)));
                     }
                     else if (resolvedImage) {
                         imageUrls = [resolvedImage];
                     }
                     else if (!imageUrls.length) {
-                        imageUrls = await this.generateFootballCardImage(`Create a football highlight poster image for "${title}". High-energy action style with clean headline space.`, new Set(this.getRecentImageHistory(job)));
+                        imageUrls = await this.generateFootballCardImage(userId, `Create a football highlight poster image for "${title}". High-energy action style with clean headline space.`, new Set(this.getRecentImageHistory(job)));
                     }
                 }
             }
@@ -3494,13 +3788,13 @@ export class AutoPostService {
                     }
                     const resolvedImage = await this.resolveBestNewsImageUrl(videoSelection.item.imageUrl?.trim(), videoSelection.item.link?.trim());
                     if (!allowThirdPartyHighlightVideoRepublish) {
-                        imageUrls = await this.generateFootballCardImage(`Create a premium football highlight alert card. Headline: "${title}". Secondary line: "Official source: ${source}". Sharp sports editorial design, clean typography, dynamic football energy, no sportsbook logos, no watermarks, no club crests.`, new Set(this.getRecentImageHistory(job)));
+                        imageUrls = await this.generateFootballCardImage(userId, `Create a premium football highlight alert card. Headline: "${title}". Secondary line: "Official source: ${source}". Sharp sports editorial design, clean typography, dynamic football energy, no sportsbook logos, no watermarks, no club crests.`, new Set(this.getRecentImageHistory(job)));
                     }
                     else if (resolvedImage) {
                         imageUrls = [resolvedImage];
                     }
                     else if (!imageUrls.length) {
-                        imageUrls = await this.generateFootballCardImage(`Create a football highlight poster image for "${title}". High-energy action style with clean headline space.`, new Set(this.getRecentImageHistory(job)));
+                        imageUrls = await this.generateFootballCardImage(userId, `Create a football highlight poster image for "${title}". High-energy action style with clean headline space.`, new Set(this.getRecentImageHistory(job)));
                     }
                 }
                 else {
@@ -3550,7 +3844,7 @@ export class AutoPostService {
                         imageUrls = [selectedResult.item.imageUrl.trim()];
                     }
                     else {
-                        imageUrls = await this.generateFootballCardImage(`Create a football scorecard image for this result: "${selectedResult.item.title}". Editorial sports style, clear score emphasis.`, new Set(this.getRecentImageHistory(job)));
+                        imageUrls = await this.generateFootballCardImage(userId, `Create a football scorecard image for this result: "${selectedResult.item.title}". Editorial sports style, clear score emphasis.`, new Set(this.getRecentImageHistory(job)));
                     }
                 }
                 else {
@@ -3596,7 +3890,7 @@ export class AutoPostService {
                     usedTrendKeys.push(...effectiveNewsKeys);
                 }
                 if (!imageUrls.length && trendTopic) {
-                    imageUrls = await this.generateFootballCardImage(`Create a football breaking-news poster image for "${trendTopic}". Clean typography space, dynamic stadium atmosphere.`, new Set(this.getRecentImageHistory(job)));
+                    imageUrls = await this.generateFootballCardImage(userId, `Create a football breaking-news poster image for "${trendTopic}". Clean typography space, dynamic stadium atmosphere.`, new Set(this.getRecentImageHistory(job)));
                 }
             }
         }
@@ -3909,7 +4203,7 @@ export class AutoPostService {
         const lastRunField = options.lastRunField ?? 'lastRunAt';
         const resultField = options.resultField ?? 'lastResult';
         const clientFallbackProfile = this.getClientFallbackProfile(userId);
-        const useGenericVideoFallback = options.useGenericVideoFallback !== false && !clientFallbackProfile;
+        const useGenericVideoFallback = options.useGenericVideoFallback !== false && !clientFallbackProfile && !job.sourceImageUrls?.length;
         if (!platforms.length) {
             const nextRunDate = new Date(Date.now() + effectiveIntervalHours * 60 * 60 * 1000);
             const updatePayload = {
@@ -4011,14 +4305,19 @@ export class AutoPostService {
         ]);
         const enableYouTubeShorts = this.useYouTubeShorts(job);
         const isBwinUser = this.isBwinScopeUser(userId);
-        const basePrompt = job.prompt ??
+        const pinnedClientProfile = PINNED_CLIENT_RUNTIME_PROMPTS[userId];
+        const isAuxWellness = userId === AUX_WELLNESS_USER_ID;
+        const basePrompt = (isAuxWellness ? pinnedClientProfile?.prompt : undefined) ??
+            job.prompt ??
             (isBwinUser
                 ? 'Create a sharp football matchday visual featuring real match energy, players in action, stadium atmosphere, and clean editorial sports composition.'
                 : 'Create a realistic, photo-style scene of the Dott Media AI Sales Bot interacting with people in an executive suite; friendly humanoid robot wearing a tie and glasses, assisting a diverse team, natural expressions, premium interior finishes, cinematic depth, subtle futuristic UI overlays, clean space reserved for a headline.');
         let runPrompt = isBwinUser
             ? this.buildBwinVisualPrompt(basePrompt)
             : this.buildVisualPrompt(this.applyNeonPreference(basePrompt));
-        const businessType = job.businessType ?? (isBwinUser ? 'Sports betting brand' : 'AI CRM + automation agency');
+        const businessType = (isAuxWellness ? pinnedClientProfile?.businessType : undefined) ??
+            job.businessType ??
+            (isBwinUser ? 'Sports betting brand' : 'AI CRM + automation agency');
         const scheduledHistory = await this.getScheduledPostContentHistory(userId);
         const recentImages = this.mergeRecentImages(this.getRecentImageHistory(job), [
             ...scheduledHistory.imageUrls,
@@ -4041,6 +4340,9 @@ export class AutoPostService {
         const requireAiImages = needsImages ? (isBwinUser || clientPhotoProfile ? false : this.requireAiImages(job)) : false;
         const maxImageAttempts = Math.max(Number(process.env.AUTOPOST_IMAGE_ATTEMPTS ?? 3), 1);
         const fallbackCopy = this.buildFallbackCopy(job, userId);
+        const configuredImage = needsImages && !options.generatedContent
+            ? selectConfiguredMedia(job.sourceImageUrls ?? [], job.sourceImageCursor, recentSet)
+            : null;
         let generated = options.generatedContent
             ? {
                 ...options.generatedContent,
@@ -4048,6 +4350,16 @@ export class AutoPostService {
             }
             : null;
         let generationError = null;
+        if (!generated && configuredImage) {
+            generated = {
+                images: [configuredImage.url],
+                caption_instagram: fallbackCopy.caption,
+                caption_linkedin: fallbackCopy.caption,
+                caption_x: fallbackCopy.caption,
+                hashtags_instagram: fallbackCopy.hashtags,
+                hashtags_generic: fallbackCopy.hashtags,
+            };
+        }
         if (!generated && clientPhotoProfile) {
             generated = {
                 images: [],
@@ -4071,7 +4383,7 @@ export class AutoPostService {
         if (!generated) {
             for (let attempt = 0; attempt < maxImageAttempts; attempt += 1) {
                 try {
-                    generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1 });
+                    generated = await contentGenerationService.generateContent({ prompt: runPrompt, businessType, imageCount: 1, userId });
                     generationError = null;
                 }
                 catch (error) {
@@ -4102,9 +4414,11 @@ export class AutoPostService {
         const results = [...missingCredentialFailures];
         const finalGenerated = generated;
         let imageUrls = needsImages
-            ? options.generatedContent
-                ? this.resolveApprovedImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages, userId)
-                : this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages, userId)
+            ? configuredImage
+                ? [configuredImage.url]
+                : options.generatedContent
+                    ? this.resolveApprovedImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages, userId)
+                    : this.resolveImageUrls(finalGenerated.images ?? [], recentSet, requireAiImages, userId)
             : [];
         const recentVideos = this.mergeRecentVideos(this.getRecentVideoHistory(job), scheduledHistory.videoUrls);
         const recentVideoSet = new Set(recentVideos);
@@ -4120,6 +4434,7 @@ export class AutoPostService {
         let usedClientSourceImageUrl = null;
         let carmarketVehicleCaption = null;
         let usedBeforwardStockKey = null;
+        let usedCarmarketSourceKey = null;
         let staysphereListingCaption = null;
         let usedStaysphereListingKey = null;
         let gamersSteamCaption = null;
@@ -4132,19 +4447,25 @@ export class AutoPostService {
             try {
                 const recentStockNos = new Set([...recentImages, ...recentCaptions]
                     .map(value => {
-                    const stockKey = String(value).match(/beforward-stock:([^\s,]+)/i)?.[1]?.toUpperCase();
+                    const stockKey = String(value)
+                        .match(/(?:beforward-stock|carmarket-stock):([^\s,]+)/i)?.[1]
+                        ?.toUpperCase();
                     if (stockKey)
                         return stockKey;
                     return String(value).match(/\b[A-Z]{2}\d{6}\b/i)?.[0]?.toUpperCase();
                 })
                     .filter((value) => Boolean(value)));
-                const vehicle = await pickCarmarketVehicle({ recentStockNos });
+                const recentSourceKeys = [...recentCaptions, ...recentImages]
+                    .map(value => String(value).match(/carmarket-source:([a-z]+)/i)?.[1]?.toLowerCase())
+                    .filter((value) => Boolean(value));
+                const vehicle = await pickCarmarketVehicle({ recentStockNos, recentSourceKeys });
+                usedCarmarketSourceKey = `carmarket-source:${getCarmarketSourceKey(vehicle)}`;
                 const vehicleImages = vehicle.images.slice(0, isStoryRun ? 1 : 10);
                 clientInstagramSourceImageUrls = vehicleImages.slice(0, isStoryRun ? 1 : 5);
                 if (isStoryRun) {
                     imageUrls = clientInstagramSourceImageUrls;
                     carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
-                    usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
+                    usedBeforwardStockKey = vehicle.stockNo ? `carmarket-stock:${vehicle.stockNo}` : null;
                 }
                 else {
                     const coverImageUrl = await renderCarmarketCoverImage(vehicle).catch(error => {
@@ -4172,14 +4493,15 @@ export class AutoPostService {
                     }));
                     imageUrls = [coverImageUrl, ...preparedVehicleImages.filter((url) => Boolean(url))];
                     carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
-                    usedBeforwardStockKey = vehicle.stockNo ? `beforward-stock:${vehicle.stockNo}` : null;
+                    usedBeforwardStockKey = vehicle.stockNo ? `carmarket-stock:${vehicle.stockNo}` : null;
                 }
             }
             catch (error) {
-                console.warn('[autopost] BE FORWARD vehicle lookup failed; using client photo fallback', {
+                console.warn('[autopost] Carmarket vehicle lookup failed; skipping unverified vehicle fallback', {
                     userId,
                     error: error instanceof Error ? error.message : String(error),
                 });
+                throw new Error('No verified 2016+ higher-tier Carmarket listing available');
             }
         }
         if (clientPhotoProfile?.key === 'staysphere' && needsImages) {
@@ -4370,25 +4692,34 @@ export class AutoPostService {
                 nextRun: nextRunDate.toISOString(),
             };
         }
+        const auxWellnessCaptionSource = usedClientSourceImageUrl || configuredImage?.url || imageUrls[0];
+        const auxWellnessCaption = clientPhotoProfile?.key === 'auxwellness'
+            ? buildAuxWellnessProductCaption(auxWellnessCaptionSource)
+            : null;
+        await consumeUsageBatch(resolveBillingScope(userId), [
+            { resource: 'scheduledPosts', amount: Math.max(publishPlatforms.length, 1) },
+        ]);
         for (const platform of publishPlatforms) {
             const publisher = platformPublishers[platform] ?? publishToTwitter;
             const isFeedCaptionPlatform = platform === 'facebook' || platform === 'instagram' || platform === 'threads';
             const isDottEnergyCaptionPlatform = isFeedCaptionPlatform || platform === 'facebook_story' || platform === 'instagram_story';
-            const rawCaption = carmarketVehicleCaption && isFeedCaptionPlatform
-                ? carmarketVehicleCaption
-                : staysphereListingCaption && isFeedCaptionPlatform
-                    ? staysphereListingCaption
-                    : gamersSteamCaption && isFeedCaptionPlatform
-                        ? gamersSteamCaption
-                        : dottEnergyProductCaption && isDottEnergyCaptionPlatform
-                            ? dottEnergyProductCaption
-                            : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
+            const rawCaption = auxWellnessCaption && (isFeedCaptionPlatform || platform === 'facebook_story' || platform === 'instagram_story')
+                ? auxWellnessCaption
+                : carmarketVehicleCaption && (isFeedCaptionPlatform || platform === 'facebook_story' || platform === 'instagram_story')
+                    ? carmarketVehicleCaption
+                    : staysphereListingCaption && isFeedCaptionPlatform
+                        ? staysphereListingCaption
+                        : gamersSteamCaption && isFeedCaptionPlatform
+                            ? gamersSteamCaption
+                            : dottEnergyProductCaption && isDottEnergyCaptionPlatform
+                                ? dottEnergyProductCaption
+                                : this.captionForPlatform(platform, finalGenerated, fallbackCopy);
             const shortsCaption = platform === 'youtube' && enableYouTubeShorts ? this.ensureShortsCaption(rawCaption) : rawCaption;
             const trackedCaption = this.applyBwinBetTracking(shortsCaption, userId, platform);
             const cleanedCaption = this.sanitizeBwinInstagramCaptionLinks(trackedCaption, platform);
             const brandedCaption = this.applyBwinInstagramSportsHashtags(cleanedCaption, platform);
             const threadSafeCaption = this.limitThreadsCaption(platform, brandedCaption);
-            let captionSelection = carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption || dottEnergyProductCaption
+            let captionSelection = configuredImage || job.reelsSourceMode === 'static' || auxWellnessCaption || carmarketVehicleCaption || staysphereListingCaption || gamersSteamCaption || dottEnergyProductCaption
                 ? { caption: threadSafeCaption, signature: this.buildCaptionSignature(platform, threadSafeCaption) }
                 : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
             let caption = this.limitThreadsCaption(platform, captionSelection.caption);
@@ -4549,6 +4880,7 @@ export class AutoPostService {
             ...imageUrls,
             usedClientSourceImageUrl,
             usedBeforwardStockKey,
+            usedCarmarketSourceKey,
             usedStaysphereListingKey,
             usedGamersSteamKey,
             usedDottEnergyProductKey,
@@ -4561,6 +4893,7 @@ export class AutoPostService {
         const nextRecentCaptions = this.mergeRecentCaptions(recentCaptions, [
             ...usedCaptions,
             usedBeforwardStockKey,
+            usedCarmarketSourceKey,
             usedStaysphereListingKey,
             usedGamersSteamKey,
             usedDottEnergyProductKey,
@@ -4577,6 +4910,8 @@ export class AutoPostService {
             recentVideoUrls: nextRecentVideos,
             recentCaptions: nextRecentCaptions,
             ...cursorUpdates,
+            ...(configuredImage && results.some(result => result.status === 'posted')
+                ? { sourceImageCursor: configuredImage.nextCursor } : {}),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
         for (const field of instagramAttemptFields) {
@@ -4607,6 +4942,8 @@ export class AutoPostService {
         await this.recordHistory(userId, historyEntries, imageUrls);
         const nextRecord = {
             ...job,
+            ...(configuredImage && results.some(result => result.status === 'posted')
+                ? { sourceImageCursor: configuredImage.nextCursor } : {}),
             active: job.active !== false,
             recentImageUrls: nextRecentImages,
             recentVideoUrls: nextRecentVideos,
@@ -4712,18 +5049,18 @@ export class AutoPostService {
                 }
                 batch.set(ref, payload);
             });
-            await batch.commit();
-            await Promise.all(entries.map(entry => socialAnalyticsService.incrementDaily({
+            await this.withTimeout(batch.commit(), Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000), 'firestore_history_write');
+            await this.withTimeout(Promise.all(entries.map(entry => socialAnalyticsService.incrementDaily({
                 userId,
                 platform: entry.platform,
                 status: entry.status,
-            })));
+            }))), Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000), 'social_analytics_history_write');
         }
         catch (error) {
             console.warn('[autopost] failed to record history', error);
         }
         try {
-            await supabaseFallbackService.upsertScheduledPosts(fallbackRows);
+            await this.withTimeout(supabaseFallbackService.upsertScheduledPosts(fallbackRows), Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000), 'supabase_history_write');
         }
         catch (error) {
             console.warn('[autopost] failed to mirror history to supabase', logSafeError(error));
@@ -4732,7 +5069,7 @@ export class AutoPostService {
     async resolveCredentials(userId) {
         let userData;
         try {
-            const userDoc = await firestore.collection('users').doc(userId).get();
+            const userDoc = await this.withTimeout(firestore.collection('users').doc(userId).get(), Math.max(Number(process.env.AUTOPOST_CREDENTIALS_TIMEOUT_MS ?? 12000), 3000), 'firestore_user_credentials_lookup');
             userData = userDoc.data();
             if (userData?.socialAccounts) {
                 void supabaseFallbackService.upsertSocialAccounts(userId, {
@@ -4747,7 +5084,7 @@ export class AutoPostService {
                 error: error instanceof Error ? error.message : String(error),
             });
             try {
-                const fallback = await supabaseFallbackService.getSocialAccounts(userId);
+                const fallback = await this.withTimeout(supabaseFallbackService.getSocialAccounts(userId), Math.max(Number(process.env.AUTOPOST_CREDENTIALS_TIMEOUT_MS ?? 12000), 3000), 'supabase_social_accounts_lookup');
                 if (fallback) {
                     userData = fallback;
                 }
@@ -4839,6 +5176,13 @@ export class AutoPostService {
                 clientSecret: config.tiktok.clientSecret || undefined,
             };
         }
+        if (allowDefaults && config.whatsapp.token && config.whatsapp.phoneNumberId) {
+            defaults.whatsapp = {
+                accessToken: config.whatsapp.token,
+                phoneNumberId: config.whatsapp.phoneNumberId,
+                recipientPhoneNumbers: process.env.WHATSAPP_RECIPIENT_PHONE_NUMBERS ?? '',
+            };
+        }
         return defaults;
     }
     captionForPlatform(platform, content, fallbackCopy) {
@@ -4854,6 +5198,8 @@ export class AutoPostService {
             twitter: content.caption_x,
             x: content.caption_x,
             youtube: content.caption_linkedin,
+            whatsapp: content.caption_linkedin,
+            whatsapp_status: content.caption_instagram,
         };
         const chosen = (captions[platform] ?? content.caption_linkedin ?? content.caption_instagram ?? '').trim();
         const fallbackCaption = fallbackCopy.caption.trim();
@@ -4892,8 +5238,14 @@ export class AutoPostService {
     }
     buildFallbackCopy(job, userId) {
         const isBwinUser = userId ? this.isBwinScopeUser(userId) : false;
-        const caption = job.fallbackCaption?.trim() || (isBwinUser ? this.defaultBwinFallbackCaption : this.defaultFallbackCaption);
-        let hashtags = job.fallbackHashtags?.trim() || (isBwinUser ? this.defaultBwinFallbackHashtags : this.defaultFallbackHashtags);
+        const pinnedProfile = userId ? PINNED_CLIENT_RUNTIME_PROMPTS[userId] : undefined;
+        const isAuxWellness = userId === AUX_WELLNESS_USER_ID;
+        const caption = (isAuxWellness ? pinnedProfile?.fallbackCaption?.trim() : undefined) ||
+            job.fallbackCaption?.trim() ||
+            (isBwinUser ? this.defaultBwinFallbackCaption : this.defaultFallbackCaption);
+        let hashtags = (isAuxWellness ? pinnedProfile?.fallbackHashtags?.trim() : undefined) ||
+            job.fallbackHashtags?.trim() ||
+            (isBwinUser ? this.defaultBwinFallbackHashtags : this.defaultFallbackHashtags);
         if (!this.formatHashtags(hashtags)) {
             hashtags = isBwinUser ? this.defaultBwinFallbackHashtags : this.defaultFallbackHashtags;
         }
@@ -5118,11 +5470,11 @@ export class AutoPostService {
             return collectRows(fallbackPosts.map(post => post));
         };
         try {
-            const snapshot = await scheduledPostsCollection
+            const snapshot = await this.withTimeout(scheduledPostsCollection
                 .where('userId', '==', userId)
                 .orderBy('createdAt', 'desc')
                 .limit(maxHistory)
-                .get();
+                .get(), Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000), 'firestore_scheduled_history_lookup');
             return collect(snapshot.docs);
         }
         catch (error) {
@@ -5132,7 +5484,7 @@ export class AutoPostService {
             });
         }
         try {
-            const snapshot = await scheduledPostsCollection.where('userId', '==', userId).limit(maxHistory).get();
+            const snapshot = await this.withTimeout(scheduledPostsCollection.where('userId', '==', userId).limit(maxHistory).get(), Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000), 'firestore_scheduled_history_lookup_unordered');
             return collect(snapshot.docs);
         }
         catch (error) {
@@ -5142,7 +5494,7 @@ export class AutoPostService {
             });
         }
         try {
-            const fallbackHistory = await collectSupabaseHistory();
+            const fallbackHistory = await this.withTimeout(collectSupabaseHistory(), Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000), 'supabase_scheduled_history_lookup');
             if (fallbackHistory.imageUrls.length ||
                 fallbackHistory.videoUrls.length ||
                 fallbackHistory.captions.length ||
@@ -5157,7 +5509,7 @@ export class AutoPostService {
             });
         }
         try {
-            const job = (await supabaseFallbackService.getAutopostJob(userId));
+            const job = (await this.withTimeout(supabaseFallbackService.getAutopostJob(userId), Math.max(Number(process.env.AUTOPOST_HISTORY_TIMEOUT_MS ?? 12000), 3000), 'supabase_autopost_history_lookup'));
             if (job) {
                 return {
                     imageUrls: this.uniqueHistoryValues(Array.isArray(job.recentImageUrls) ? job.recentImageUrls.filter(Boolean) : []),
@@ -5349,6 +5701,20 @@ export class AutoPostService {
     }
     getClientFallbackProfile(userId) {
         const profiles = {
+            cMPZQccGggbhZe9dbvtxFmBehP02: {
+                key: 'auxwellness',
+                brand: 'AUX WELLNESS HUB',
+                accent: '#63d6c6',
+                dark: '#102421',
+                light: '#f3fffd',
+                hooks: ['Move with confidence', 'Everyday support', 'Comfort in motion', 'Support that fits', 'Wellness made practical', 'Active days, supported'],
+                sublines: ['Message for product guidance', 'Ask about fit and availability', 'Support for your active routine', 'Comfort for every day'],
+                queries: ['wellness active lifestyle', 'fitness stretching', 'knee support fitness', 'back support wellness', 'athlete recovery'],
+                curatedImages: {
+                    feed: AUX_WELLNESS_MEDIA_URLS,
+                    story: AUX_WELLNESS_MEDIA_URLS,
+                },
+            },
             acmVetCcOiTHeGk5D7eDYieamDF3: {
                 key: 'carmarketplace',
                 brand: 'CARMARKETUG',
@@ -5575,7 +5941,11 @@ export class AutoPostService {
         }
     }
     pickCuratedClientPhoto(profile, format, recentSet) {
-        const pool = [...(profile.curatedImages[format] ?? []), ...this.generatedClientPhotoPool(profile, format)];
+        // Aux Wellness Hub uses verified JPEG sources only. Generic generated
+        // LoremFlickr URLs are not accepted by Meta's media fetcher.
+        const pool = profile.key === 'auxwellness'
+            ? [...(profile.curatedImages[format] ?? [])]
+            : [...(profile.curatedImages[format] ?? []), ...this.generatedClientPhotoPool(profile, format)];
         const candidates = this.shuffled(pool).filter(url => !recentSet.has(url));
         return candidates[0] ?? null;
     }
@@ -5600,6 +5970,9 @@ export class AutoPostService {
         return urls.slice(0, targetCount);
     }
     async pickClientPhotoImageUrl(profile, format, recentSet) {
+        if (profile.key === 'auxwellness') {
+            return this.pickCuratedClientPhoto(profile, format, recentSet);
+        }
         return ((await this.fetchPexelsClientPhoto(profile, format, recentSet)) ||
             (await this.fetchPixabayClientPhoto(profile, format, recentSet)) ||
             this.pickCuratedClientPhoto(profile, format, recentSet));
@@ -6173,7 +6546,8 @@ export class AutoPostService {
             if (dynamicVideo?.videoUrl) {
                 return { ...dynamicVideo, nextCursor: undefined };
             }
-            return { videoUrl: undefined, nextCursor: undefined };
+            // Most client profiles use their configured reel library. Dynamic reel
+            // discovery is an optional override, not a reason to discard that library.
         }
         const list = platform === 'youtube'
             ? (job.youtubeVideoUrls ?? []).map(url => url.trim()).filter(Boolean)
@@ -6196,6 +6570,10 @@ export class AutoPostService {
                 : Number.isFinite(job.reelsVideoCursor)
                     ? job.reelsVideoCursor
                     : 0;
+        if (platform === 'instagram_reels' && job.reelsSourceMode === 'static') {
+            const selected = selectConfiguredMedia(list.length ? list : single ? [single] : [], cursor, recentVideos);
+            return selected ? { videoUrl: selected.url, nextCursor: selected.nextCursor } : { videoUrl: undefined };
+        }
         const freshList = list.filter(url => !recentVideos.has(url));
         if (!freshList.length && list.length) {
             return { videoUrl: undefined, nextCursor: cursor };

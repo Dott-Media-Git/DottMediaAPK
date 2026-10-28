@@ -4,6 +4,7 @@ import { requireFirebase } from '../middleware/firebaseAuth.js';
 import { footballTrendContentService } from '../services/footballTrendContentService.js';
 import { getTrendingCandidates } from '../services/footballTrendSources.js';
 import { socialSchedulingService } from '../packages/services/socialSchedulingService.js';
+import { consumeUsageBatch, resolveBillingScope } from '../services/billing/billingService.js';
 const router = Router();
 const scanSchema = z.object({
     maxCandidates: z.number().int().min(1).max(20).optional(),
@@ -123,7 +124,14 @@ router.post('/football/trends/scan', requireFirebase, async (req, res, next) => 
 });
 router.post('/football/trends/generate', requireFirebase, async (req, res, next) => {
     try {
+        const authUser = req.authUser;
+        if (!authUser)
+            return res.status(401).json({ message: 'Unauthorized' });
         const payload = generateSchema.parse(req.body ?? {});
+        await consumeUsageBatch(resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email), [
+            { resource: 'aiReplies', amount: 1 },
+            ...(payload.includePosterImage ? [{ resource: 'images', amount: payload.imageCount ?? 1 }] : []),
+        ]);
         const result = await footballTrendContentService.generate(payload);
         res.json(result);
     }
@@ -137,6 +145,9 @@ router.post('/football/trends/schedule', requireFirebase, async (req, res, next)
         if (!authUser)
             return res.status(401).json({ message: 'Unauthorized' });
         const payload = scheduleSchema.parse(req.body ?? {});
+        await consumeUsageBatch(resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email), [
+            { resource: 'scheduledPosts', amount: Math.max(payload.platforms.length * payload.timesPerDay, 1) },
+        ]);
         const result = await socialSchedulingService.schedulePosts({
             userId: authUser.uid,
             platforms: payload.platforms,
@@ -150,6 +161,7 @@ router.post('/football/trends/schedule', requireFirebase, async (req, res, next)
             hashtags: payload.hashtags,
             scheduledFor: payload.scheduledFor,
             timesPerDay: payload.timesPerDay,
+            billingUsageConsumed: true,
         });
         res.json(result);
     }

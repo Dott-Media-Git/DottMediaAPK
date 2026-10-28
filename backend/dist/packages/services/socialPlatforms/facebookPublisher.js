@@ -1,5 +1,12 @@
 import axios from 'axios';
-const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v18.0';
+import { appendCommentToDmCaptionCta } from '../../../services/commentToDmService.js';
+const http = axios.create({
+    timeout: Math.max(Number(process.env.SOCIAL_PUBLISH_HTTP_TIMEOUT_MS ?? 20000), 5000),
+});
+// v18 falls back to the deprecated publish_actions behavior for Page media.
+// Keep Facebook publishing aligned with the current Page publishing API while
+// still allowing an explicit META_GRAPH_VERSION override in production.
+const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const FACEBOOK_ALBUM_MAX_IMAGES = Math.min(Math.max(Number(process.env.FACEBOOK_ALBUM_MAX_IMAGES ?? 1), 1), 10);
 const isPayloadSizeError = (error) => {
     const message = String(error?.response?.data?.error?.message || error?.message || '').toLowerCase();
@@ -10,7 +17,7 @@ const isPayloadSizeError = (error) => {
 };
 const resolveFacebookAnalyticsId = async (objectId, accessToken) => {
     try {
-        const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${objectId}`, {
+        const response = await http.get(`https://graph.facebook.com/${GRAPH_VERSION}/${objectId}`, {
             params: {
                 fields: 'page_story_id,post_id',
                 access_token: accessToken,
@@ -29,24 +36,25 @@ export async function publishToFacebook(input) {
         throw new Error('Missing Facebook credentials');
     }
     const { accessToken, pageId } = credentials.facebook;
+    const caption = appendCommentToDmCaptionCta(input.caption, { pageId });
     const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${pageId}`;
-    const publishSinglePhoto = () => axios.post(`${baseUrl}/photos`, {
+    const publishSinglePhoto = () => http.post(`${baseUrl}/photos`, {
         url: input.imageUrls[0],
-        message: input.caption,
+        message: caption,
         access_token: accessToken,
     });
     try {
         let response;
         if (input.videoUrl) {
-            response = await axios.post(`${baseUrl}/videos`, {
+            response = await http.post(`${baseUrl}/videos`, {
                 file_url: input.videoUrl,
-                description: input.caption,
+                description: caption,
                 access_token: accessToken,
             });
         }
         else if (input.imageUrls && input.imageUrls.length > 1 && FACEBOOK_ALBUM_MAX_IMAGES > 1) {
             try {
-                const photoUploads = await Promise.all(input.imageUrls.slice(0, FACEBOOK_ALBUM_MAX_IMAGES).map(url => axios.post(`${baseUrl}/photos`, {
+                const photoUploads = await Promise.all(input.imageUrls.slice(0, FACEBOOK_ALBUM_MAX_IMAGES).map(url => http.post(`${baseUrl}/photos`, {
                     url,
                     published: false,
                     access_token: accessToken,
@@ -58,8 +66,8 @@ export async function publishToFacebook(input) {
                 if (!attached_media.length) {
                     throw new Error('No Facebook photo IDs returned for multi-photo post');
                 }
-                response = await axios.post(`${baseUrl}/feed`, {
-                    message: input.caption,
+                response = await http.post(`${baseUrl}/feed`, {
+                    message: caption,
                     attached_media,
                     access_token: accessToken,
                 });
@@ -77,8 +85,8 @@ export async function publishToFacebook(input) {
         }
         else {
             // Post text only
-            response = await axios.post(`${baseUrl}/feed`, {
-                message: input.caption,
+            response = await http.post(`${baseUrl}/feed`, {
+                message: caption,
                 access_token: accessToken,
             });
         }
@@ -108,7 +116,7 @@ export async function publishToFacebookStory(input) {
     }
     try {
         if (!input.videoUrl) {
-            const photoResponse = await axios.post(`${baseUrl}/photos`, {
+            const photoResponse = await http.post(`${baseUrl}/photos`, {
                 url: mediaUrl,
                 published: false,
                 access_token: accessToken,
@@ -117,7 +125,7 @@ export async function publishToFacebookStory(input) {
             if (!photoId) {
                 throw new Error('No photo ID returned from Facebook Story upload');
             }
-            const storyResponse = await axios.post(`${baseUrl}/photo_stories`, {
+            const storyResponse = await http.post(`${baseUrl}/photo_stories`, {
                 photo_id: photoId,
                 access_token: accessToken,
             });
@@ -130,7 +138,7 @@ export async function publishToFacebookStory(input) {
             access_token: accessToken,
             file_url: mediaUrl,
         };
-        const response = await axios.post(`${baseUrl}/stories`, payload);
+        const response = await http.post(`${baseUrl}/stories`, payload);
         if (response.data && response.data.id) {
             return { remoteId: response.data.id };
         }

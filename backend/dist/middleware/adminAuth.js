@@ -19,6 +19,9 @@ export async function requireAdmin(req, _res, next) {
     if (email && adminEmails.has(email)) {
         return next();
     }
+    if (authUser.admin === true || authUser.isAdmin === true) {
+        return next();
+    }
     try {
         const userDoc = await firestore.collection('users').doc(authUser.uid).get();
         const isAdmin = Boolean(userDoc.data()?.isAdmin);

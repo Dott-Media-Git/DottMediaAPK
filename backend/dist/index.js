@@ -30,6 +30,8 @@ import contentRoutes from './routes/contentRoutes.js';
 import footballTrendRoutes from './routes/footballTrendRoutes.js';
 import trendRoutes from './routes/trendRoutes.js';
 import socialRoutes from './routes/socialRoutes.js';
+import { createGalleryAutoPostRouter } from './routes/galleryAutoPostRoutes.js';
+import { galleryAutoPostService } from './services/galleryAutoPostRuntime.js';
 import metaWebhookRoutes from './routes/metaWebhookRoutes.js';
 import metaIntegrationRoutes from './routes/metaIntegrationRoutes.js';
 import metaAdsRoutes from './routes/metaAdsRoutes.js';
@@ -47,7 +49,7 @@ import mediaRoutes from './routes/mediaRoutes.js';
 import { NotificationDispatcher } from './packages/services/notificationDispatcher.js';
 import stripeRoutes from './routes/stripeRoutes.js';
 import flutterwaveRoutes from './routes/flutterwaveRoutes.js';
-import { requireFirebase } from './middleware/firebaseAuth.js';
+import { requireFirebase, requireFirebaseStrict } from './middleware/firebaseAuth.js';
 import { autoPostService } from './services/autoPostService.js';
 import { autopostComplianceService } from './services/autopostComplianceService.js';
 import { ensureGeneratedMediaRoot } from './services/generatedMediaService.js';
@@ -67,6 +69,7 @@ const initializeAutomation = async () => {
             import('./jobs/autopostComplianceJob.js'),
             import('./jobs/weeklyReportJob.js'),
             import('./jobs/socialQueueJob.js'),
+            import('./jobs/galleryAutoPostJob.js'),
             import('./jobs/instagramCommentPollJob.js'),
             import('./jobs/instagramDmPollJob.js'),
             import('./jobs/facebookCommentPollJob.js'),
@@ -204,6 +207,7 @@ if (footballTrendsEnabled) {
 else {
     console.info('[football-trends] Routes disabled (set FOOTBALL_TRENDS_ENABLED=true).');
 }
+app.use('/api/gallery/autopost', createGalleryAutoPostRouter(galleryAutoPostService, userId => autoPostService.galleryConnectedPlatforms(userId), requireFirebaseStrict));
 app.use('/api', socialRoutes);
 app.use('/api', metaAdsRoutes);
 app.use('/api', billingRoutes);
@@ -224,7 +228,7 @@ app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
         const authUser = req.authUser;
         if (!authUser)
             return res.status(401).json({ message: 'Unauthorized' });
-        const { platforms, prompt, businessType, videoUrl, videoUrls, videoTitle, youtubePrivacyStatus, youtubeVideoUrl, youtubeVideoUrls, youtubeShorts, tiktokVideoUrl, tiktokVideoUrls, instagramReelsVideoUrl, instagramReelsVideoUrls, reelsIntervalHours, } = req.body ?? {};
+        const { platforms, prompt, businessType, videoUrl, videoUrls, videoTitle, youtubePrivacyStatus, youtubeVideoUrl, youtubeVideoUrls, youtubeShorts, tiktokVideoUrl, tiktokVideoUrls, instagramReelsVideoUrl, instagramReelsVideoUrls, reelsIntervalHours, generatedContent, } = req.body ?? {};
         const result = await autoPostService.start({
             userId: authUser.uid,
             platforms,
@@ -242,8 +246,10 @@ app.post('/api/autopost/runNow', requireFirebase, async (req, res, next) => {
             instagramReelsVideoUrl,
             instagramReelsVideoUrls,
             reelsIntervalHours,
+            generatedContent,
+            deferRun: true,
         });
-        res.json({ ok: true, ...result });
+        res.status(202).json({ ok: true, ...result });
     }
     catch (error) {
         next(error);
@@ -268,6 +274,28 @@ app.post('/api/autopost/runDue', async (req, res, next) => {
         }
         const result = await autoPostService.runDueJobs();
         res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+// Manual/server-side trigger for due gallery auto-post jobs. The GitHub social
+// queue runner calls this endpoint so gallery schedules continue when Render
+// has scaled the web process down between runs.
+app.post('/api/gallery-autopost/runDue', async (req, res, next) => {
+    try {
+        // This endpoint only claims jobs whose durable nextRunAt is already due;
+        // it cannot create, edit, or force a post ahead of its schedule. Keeping
+        // the wake endpoint token-free lets the external GitHub scheduler wake a
+        // sleeping Render instance even when the general autopost token is set.
+        if (req.body?.background === true || req.body?.background === 'true') {
+            void galleryAutoPostService.runDueJobs()
+                .then(() => console.info('[gallery-autopost] runDue background complete'))
+                .catch(error => console.error('[gallery-autopost] runDue background failed', error));
+            return res.status(202).json({ ok: true, accepted: true });
+        }
+        await galleryAutoPostService.runDueJobs();
+        res.json({ ok: true });
     }
     catch (error) {
         next(error);
@@ -356,11 +384,21 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
             return res.status(401).json({ message: 'Invalid token' });
         }
         const allAccounts = [
-            { label: 'Bwin', uid: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', bwin: true },
-            { label: 'Carmarketug', uid: 'acmVetCcOiTHeGk5D7eDYieamDF3', reels: true },
-            { label: 'Staysphere', uid: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2', reels: true },
-            { label: 'Gamers44life', uid: 'vzdH1DnfFLVjlY8bBgC26WACmmw2', reels: true },
-            { label: 'DottEnergy', uid: 'LVR7p3WzdFM51ds92Kacf6S40og2', reels: false },
+            { label: 'Aux Wellness Hub', uid: 'cMPZQccGggbhZe9dbvtxFmBehP02', platforms: ['facebook', 'instagram', 'threads'], reels: false },
+            { label: 'Bwin', uid: '1zvY9nNyXMcfxdPQEyx0bIdK7r53', bwin: true, platforms: ['facebook', 'instagram', 'threads'] },
+            { label: 'DottHR', uid: '80bYIeiuukNFtUvXTUobXmfC7pu1', platforms: ['facebook', 'instagram', 'threads'], reels: false },
+            { label: 'Carmarketug', uid: 'acmVetCcOiTHeGk5D7eDYieamDF3', platforms: ['facebook', 'instagram', 'threads'], reels: true },
+            { label: 'Simplicity Home Decor', uid: 'X0ObAFQft0UWZee9IbUyYaeaBfO2', platforms: ['facebook', 'instagram'], reels: true },
+            { label: 'Staysphere', uid: 'D1iNgjLKNRaQhH35M0NmGfw1LVD2', platforms: ['facebook', 'instagram'], reels: true },
+            { label: 'Gamers44life', uid: 'vzdH1DnfFLVjlY8bBgC26WACmmw2', platforms: ['facebook', 'instagram', 'threads'], reels: true },
+            { label: 'DottEnergy', uid: 'LVR7p3WzdFM51ds92Kacf6S40og2', platforms: ['facebook', 'instagram', 'threads'], reels: false },
+            {
+                label: 'Simplicity',
+                uid: 'X0ObAFQft0UWZee9IbUyYaeaBfO2',
+                platforms: ['facebook', 'instagram'],
+                reels: true,
+                reelsPlatforms: ['instagram_reels', 'facebook'],
+            },
         ];
         const requestedAccounts = Array.isArray(req.body?.accounts)
             ? new Set(req.body.accounts
@@ -370,6 +408,7 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
         const accounts = requestedAccounts
             ? allAccounts.filter(account => requestedAccounts.has(account.label.toLowerCase()) || requestedAccounts.has(account.uid))
             : allAccounts;
+        const storiesOnly = req.body?.storiesOnly === true || req.body?.storiesOnly === 'true';
         const service = autoPostService;
         const summarize = (outcome) => ({
             posted: outcome?.posted ?? 0,
@@ -385,7 +424,9 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
         const runFreshSet = async () => {
             const results = [];
             for (const account of accounts) {
-                const job = await service.loadAutopostJob(account.uid);
+                const job = account.uid === 'cMPZQccGggbhZe9dbvtxFmBehP02'
+                    ? (service.buildPinnedClientRuntimeJob(account.uid) ?? await service.loadAutopostJob(account.uid))
+                    : await service.loadAutopostJob(account.uid);
                 if (!job) {
                     results.push({ account: account.label, error: 'autopost_job_missing' });
                     continue;
@@ -396,20 +437,25 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
                         ...job,
                         trendContentType: 'news',
                         trendContentTypes: ['news'],
-                        trendPlatforms: ['facebook', 'instagram'],
+                        trendPlatforms: account.platforms,
                         storyPlatforms: ['facebook_story', 'instagram_story'],
                     };
                     result.feed = summarize(await service.executeTrendPosts(account.uid, newsJob));
                     result.stories = summarize(await service.executeTrendStories(account.uid, newsJob));
                 }
                 else {
-                    result.feed = summarize(await service.executeJob(account.uid, job, {
-                        platforms: ['facebook', 'instagram'],
-                        intervalHours: job.intervalHours ?? 1,
-                        nextRunField: 'nextRun',
-                        lastRunField: 'lastRunAt',
-                        resultField: 'lastResult',
-                    }));
+                    if (!storiesOnly) {
+                        result.feed = summarize(await service.executeJob(account.uid, job, {
+                            platforms: account.platforms,
+                            intervalHours: job.intervalHours ?? 1,
+                            nextRunField: 'nextRun',
+                            lastRunField: 'lastRunAt',
+                            resultField: 'lastResult',
+                        }));
+                    }
+                    else {
+                        result.feed = { skipped: true };
+                    }
                     const afterFeedJob = (await service.loadAutopostJob(account.uid)) ?? job;
                     result.stories = summarize(await service.executeJob(account.uid, afterFeedJob, {
                         platforms: Array.isArray(afterFeedJob.storyPlatforms) && afterFeedJob.storyPlatforms.length
@@ -423,7 +469,9 @@ app.post('/api/autopost/runFreshSocialSet', async (req, res, next) => {
                     if (account.reels) {
                         const afterStoriesJob = (await service.loadAutopostJob(account.uid)) ?? afterFeedJob;
                         result.reels = summarize(await service.executeJob(account.uid, afterStoriesJob, {
-                            platforms: ['instagram_reels'],
+                            platforms: Array.isArray(account.reelsPlatforms) && account.reelsPlatforms.length
+                                ? account.reelsPlatforms
+                                : ['instagram_reels'],
                             intervalHours: afterStoriesJob.reelsIntervalHours ?? 2,
                             nextRunField: 'reelsNextRun',
                             lastRunField: 'reelsLastRunAt',

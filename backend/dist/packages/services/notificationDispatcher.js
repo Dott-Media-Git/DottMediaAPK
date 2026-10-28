@@ -5,6 +5,7 @@ import { firestore } from '../../db/firestore.js';
 import { sendLinkedInMessage } from './outreachAgent/senders/linkedinSender.js';
 import { sendInstagramMessage } from './outreachAgent/senders/instagramSender.js';
 import { sendWhatsAppMessage } from './outreachAgent/senders/whatsappSender.js';
+import { getFacebookPageToken, resolveFacebookPageAccount } from '../../services/facebookAccountRegistry.js';
 const notificationsCollection = firestore.collection('notifications');
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 export class NotificationDispatcher {
@@ -82,14 +83,15 @@ export class NotificationDispatcher {
         const metadata = message.payload.metadata;
         if (message.channel === 'facebook') {
             const commentId = typeof metadata?.commentId === 'string' ? metadata.commentId : undefined;
+            const userId = typeof metadata?.userId === 'string' ? metadata.userId : undefined;
             if (commentId) {
-                await replyToFacebookComment(commentId, text);
+                await replyToFacebookComment(commentId, text, userId);
                 return;
             }
             if (!message.recipient) {
                 throw new Error('Missing recipient for Facebook dispatch');
             }
-            await sendFacebookMessage(message.recipient, text);
+            await sendFacebookMessage(message.recipient, text, userId);
             return;
         }
         if (!message.recipient) {
@@ -100,7 +102,8 @@ export class NotificationDispatcher {
             return;
         }
         if (message.channel === 'instagram') {
-            await sendInstagramMessage(message.recipient, text);
+            const userId = typeof metadata?.userId === 'string' ? metadata.userId : undefined;
+            await sendInstagramMessage(message.recipient, text, { userId });
             return;
         }
         if (message.channel === 'whatsapp') {
@@ -114,17 +117,23 @@ export class NotificationDispatcher {
         console.info(`Unsupported channel ${message.channel}, marking as sent without dispatch`);
     }
 }
-async function replyToFacebookComment(commentId, text) {
-    if (!config.channels.facebook.pageToken) {
+async function resolveFacebookToken(userId) {
+    const account = resolveFacebookPageAccount({ userId });
+    return (account ? getFacebookPageToken(account) : '') || config.channels.facebook.pageToken;
+}
+async function replyToFacebookComment(commentId, text, userId) {
+    const pageToken = await resolveFacebookToken(userId);
+    if (!pageToken) {
         throw new Error('Facebook page token missing; cannot reply to comment');
     }
     const url = `https://graph.facebook.com/${GRAPH_VERSION}/${commentId}/comments`;
     await axios.post(url, null, {
-        params: { message: text, access_token: config.channels.facebook.pageToken },
+        params: { message: text, access_token: pageToken },
     });
 }
-async function sendFacebookMessage(recipientId, text) {
-    if (!config.channels.facebook.pageToken) {
+async function sendFacebookMessage(recipientId, text, userId) {
+    const pageToken = await resolveFacebookToken(userId);
+    if (!pageToken) {
         console.info('[facebook] skipping send; channel disabled');
         return;
     }
@@ -132,5 +141,5 @@ async function sendFacebookMessage(recipientId, text) {
         recipient: { id: recipientId },
         messaging_type: 'RESPONSE',
         message: { text },
-    }, { params: { access_token: config.channels.facebook.pageToken } });
+    }, { params: { access_token: pageToken } });
 }
