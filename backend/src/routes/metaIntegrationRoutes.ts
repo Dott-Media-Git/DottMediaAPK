@@ -661,9 +661,11 @@ const assertRequiredInstagramScopes = (
   }
 };
 
-const fetchInstagramMe = async (accessToken: string, instagramUserId?: string) => {
-  const subject = instagramUserId ? encodeURIComponent(instagramUserId) : 'me';
-  const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/${INSTAGRAM_GRAPH_VERSION}/${subject}`, {
+const fetchInstagramMe = async (accessToken: string) => {
+  // Instagram Login tokens are scoped to the account that authorized the app.
+  // The user_id returned by the token exchange is not a generally addressable
+  // Graph object on graph.instagram.com, so resolve the profile through /me.
+  const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/${INSTAGRAM_GRAPH_VERSION}/me`, {
     params: {
       fields: 'user_id,username,account_type,media_count',
       access_token: accessToken,
@@ -1220,7 +1222,7 @@ router.get('/integrations/instagram/callback', async (req, res) => {
 
     const accessToken = longLivedToken.accessToken;
     stage = 'loading the Instagram profile';
-    const profile = await fetchInstagramMe(accessToken, shortLivedToken.userId);
+    const profile = await fetchInstagramMe(accessToken);
     const accountId = profile.id ?? profile.user_id ?? shortLivedToken.userId;
     if (!accountId) {
       throw new Error('Unable to resolve Instagram professional account');
