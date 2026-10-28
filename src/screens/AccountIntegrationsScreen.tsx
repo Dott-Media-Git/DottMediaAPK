@@ -12,6 +12,7 @@ import { getIdToken, isFirebaseEnabled, realtimeDb } from '@services/firebase';
 import { env } from '@services/env';
 import {
   fetchMetaConnectUrl,
+  fetchInstagramConnectUrl,
   fetchLinkedInConnectUrl,
   fetchSocialStatus,
   fetchThreadsConnectUrl,
@@ -551,6 +552,20 @@ export const AccountIntegrationsScreen: React.FC = () => {
     }
   };
 
+  const handleInstagramConnect = async () => {
+    setSavingPlatform('instagram');
+    try {
+      if (await submitWebOAuth('/integrations/instagram/start', 'instagram')) return;
+      const oauthWindow = reserveOAuthWindow();
+      const response = await fetchInstagramConnectUrl(nativeOAuthReturnUrl('instagram'));
+      await openOAuthUrl(response?.url, 'Instagram', 'instagram', oauthWindow);
+    } catch (error: any) {
+      Alert.alert(t('Error'), error.message ?? t('Unable to open the Instagram connect URL.'));
+    } finally {
+      setSavingPlatform(null);
+    }
+  };
+
   const handleThreadsConnect = async () => {
     setSavingPlatform('threads');
     try {
@@ -879,7 +894,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
       return;
     }
     if (platform === 'instagram') {
-      void handleMetaConnect(platform);
+      void handleInstagramConnect();
       return;
     }
     if (platform === 'threads') {
@@ -1102,15 +1117,17 @@ export const AccountIntegrationsScreen: React.FC = () => {
                   ) : platform === 'facebook' || platform === 'instagram' ? (
                     <>
                       <View style={styles.oauthPanel}>
-                        <Text style={styles.oauthTitle}>{t('Connect through Meta')}</Text>
+                        <Text style={styles.oauthTitle}>
+                          {platform === 'facebook' ? t('Connect through Meta') : t('Connect through Instagram')}
+                        </Text>
                         <Text style={styles.oauthText}>
                           {platform === 'facebook'
                             ? t('Sign in with Meta to choose a Facebook Page and grant Dott Media posting access.')
-                            : t('Sign in with Meta to connect the Instagram Business account linked to your Facebook Page.')}
+                            : t('Sign in directly with Instagram to grant Dott Media access to your professional Instagram account.')}
                         </Text>
                         <DMButton
                           title={isSaving ? t('Opening...') : getConnectTitle(platform)}
-                          onPress={() => void handleMetaConnect(platform)}
+                          onPress={() => void (platform === 'facebook' ? handleMetaConnect(platform) : handleInstagramConnect())}
                           disabled={isSaving}
                         />
                       </View>

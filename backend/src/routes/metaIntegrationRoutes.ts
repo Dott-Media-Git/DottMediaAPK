@@ -909,6 +909,16 @@ router.get('/integrations/instagram/connect', requireFirebase, async (req, res, 
   }
 });
 
+router.post('/integrations/instagram/start', requireFirebaseForm, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
+    res.redirect(303, buildInstagramOAuthUrl(req, authUser.uid, req.header('x-org-id'), authUser.email, req.body?.returnUrl));
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get('/integrations/instagram/connect-url', requireFirebase, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
@@ -1193,15 +1203,22 @@ router.get('/integrations/instagram/callback', async (req, res) => {
     };
 
     if (!wasInstagramConnected) {
-      await consumeUsage(
-        resolveBillingScope(
-          state.userId,
-          typeof state.orgId === 'string' ? state.orgId : undefined,
-          typeof state.email === 'string' ? state.email : userData.email ?? undefined,
-        ),
-        'connectedSocials',
-        1,
-      );
+      try {
+        await consumeUsage(
+          resolveBillingScope(
+            state.userId,
+            typeof state.orgId === 'string' ? state.orgId : undefined,
+            typeof state.email === 'string' ? state.email : userData.email ?? undefined,
+          ),
+          'connectedSocials',
+          1,
+        );
+      } catch (error) {
+        if (!isFirestoreResourceExhausted(error)) throw error;
+        console.warn('[instagram] usage metering skipped because Firestore quota is exhausted; connection will continue', {
+          userId: state.userId,
+        });
+      }
     }
 
     await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
