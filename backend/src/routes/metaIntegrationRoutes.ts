@@ -166,24 +166,20 @@ const getInstagramAppConfig = (req: Request) => {
   const renderEnv = resolveRenderEnv();
   const appId =
     process.env.INSTAGRAM_APP_ID ??
-    process.env.META_APP_ID ??
-    process.env.FACEBOOK_APP_ID ??
+    process.env.INSTAGRAM_CLIENT_ID ??
     renderEnv.INSTAGRAM_APP_ID ??
-    renderEnv.META_APP_ID ??
-    renderEnv.FACEBOOK_APP_ID ??
+    renderEnv.INSTAGRAM_CLIENT_ID ??
     '';
   const appSecret =
     process.env.INSTAGRAM_APP_SECRET ??
-    process.env.META_APP_SECRET ??
-    process.env.FACEBOOK_APP_SECRET ??
+    process.env.INSTAGRAM_CLIENT_SECRET ??
     renderEnv.INSTAGRAM_APP_SECRET ??
-    renderEnv.META_APP_SECRET ??
-    renderEnv.FACEBOOK_APP_SECRET ??
+    renderEnv.INSTAGRAM_CLIENT_SECRET ??
     '';
   const redirectUri = process.env.INSTAGRAM_REDIRECT_URI ?? renderEnv.INSTAGRAM_REDIRECT_URI ?? `${getBaseUrl(req)}${INSTAGRAM_CALLBACK_PATH}`;
 
   if (!appId || !appSecret) {
-    throw createHttpError(400, 'Missing INSTAGRAM_APP_ID or INSTAGRAM_APP_SECRET');
+    throw createHttpError(400, 'Direct Instagram Login is not configured. Add INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET to the backend environment.');
   }
 
   return { appId, appSecret, redirectUri };

@@ -43,6 +43,12 @@ services:
         value: "true"
       - key: BASE_URL
         value: "https://dottmediaapk.onrender.com"
+      - key: INSTAGRAM_APP_ID
+        sync: false
+      - key: INSTAGRAM_APP_SECRET
+        sync: false
+      - key: INSTAGRAM_REDIRECT_URI
+        value: "https://dottmediaapk.onrender.com/integrations/instagram/callback"
       - key: AUTOPOST_FALLBACK_DIR
         value: "./public/fallback-images"
       - key: AUTOPOST_FALLBACK_VIDEO_DIR
