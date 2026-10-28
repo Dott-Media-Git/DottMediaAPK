@@ -136,14 +136,22 @@ const getThreadsAppConfig = (req: Request) => {
   const appId =
     process.env.THREADS_APP_ID ??
     process.env.META_APP_ID ??
+    process.env.FACEBOOK_APP_ID ??
+    process.env.INSTAGRAM_APP_ID ??
     renderEnv.THREADS_APP_ID ??
     renderEnv.META_APP_ID ??
+    renderEnv.FACEBOOK_APP_ID ??
+    renderEnv.INSTAGRAM_APP_ID ??
     '';
   const appSecret =
     process.env.THREADS_APP_SECRET ??
     process.env.META_APP_SECRET ??
+    process.env.FACEBOOK_APP_SECRET ??
+    process.env.INSTAGRAM_APP_SECRET ??
     renderEnv.THREADS_APP_SECRET ??
     renderEnv.META_APP_SECRET ??
+    renderEnv.FACEBOOK_APP_SECRET ??
+    renderEnv.INSTAGRAM_APP_SECRET ??
     '';
   const redirectUri = process.env.THREADS_REDIRECT_URI ?? renderEnv.THREADS_REDIRECT_URI ?? `${getBaseUrl(req)}${THREADS_CALLBACK_PATH}`;
 
