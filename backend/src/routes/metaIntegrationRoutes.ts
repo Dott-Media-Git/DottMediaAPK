@@ -620,12 +620,13 @@ const exchangeInstagramCodeForToken = async (req: Request, code: string) => {
 
 const exchangeInstagramLongLivedToken = async (req: Request, shortLivedToken: string) => {
   const { appSecret } = getInstagramAppConfig(req);
-  const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/access_token`, {
-    params: {
-      grant_type: 'ig_exchange_token',
-      client_secret: appSecret,
-      access_token: shortLivedToken,
-    },
+  const body = new URLSearchParams({
+    grant_type: 'ig_exchange_token',
+    client_secret: appSecret,
+    access_token: shortLivedToken,
+  });
+  const response = await axios.post(`${INSTAGRAM_GRAPH_BASE_URL}/access_token`, body.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
 
   return {
