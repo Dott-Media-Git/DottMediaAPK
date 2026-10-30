@@ -14,7 +14,13 @@ export function mountTikTokSandboxContext(router:Router){
    const enter=async()=>{
     const uid=callback?state?.userId:(req as AuthedRequest).authUser?.uid;
     if(!uid||callback&&state?.platform!=='tiktok')return next(createHttpError(401,'Invalid sandbox session'));
-    const settings=(await firestore.collection('tiktokSandboxConfig').doc('dotti-review').get()).data();
+    let settings;
+    try {settings=(await firestore.collection('tiktokSandboxConfig').doc('dotti-review').get()).data();}
+    catch(error){
+     const code=String((error as {code?:unknown})?.code||'unknown');
+     console.error('[tiktok-sandbox] Configuration read failed',{code});
+     return next(createHttpError(503,'Sandbox storage is temporarily unavailable (database code '+code+').'));
+    }
     if(!settings?.enabled||!Array.isArray(settings.allowedUserIds)||!settings.allowedUserIds.includes(uid))return next(createHttpError(403,'Sandbox access is restricted to the review account'));
     if(!settings.clientKey||!settings.clientSecret||!settings.redirectUri)return next(createHttpError(503,'Sandbox configuration is incomplete'));
     runTikTokContext({environment:'sandbox',client:{clientKey:settings.clientKey,clientSecret:settings.clientSecret,redirectUri:settings.redirectUri},targetUsername:settings.targetUsername},()=>next());
