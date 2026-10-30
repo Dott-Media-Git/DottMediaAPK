@@ -1,10 +1,14 @@
+import {mountTikTokSandboxContext} from './tiktokSandboxContext';
+import {queryTikTokCreator} from '../services/tiktokReviewedPublisher';
+import {mountTikTokReviewRoutes} from './tiktokReviewRoutes';
+import {tikTokEnvironment, tikTokConnectionKey, tikTokClient, tikTokSandboxUsername} from '../services/tiktokReviewConfig';
 import { Router, Request } from 'express';
 import { z } from 'zod';
 import axios from 'axios';
 import createHttpError from 'http-errors';
 import admin from 'firebase-admin';
 import { config } from '../config';
-import { requireFirebase, requireFirebaseForm, AuthedRequest } from '../middleware/firebaseAuth';
+import { requireFirebaseStrict, AuthedRequest } from '../middleware/firebaseAuth';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
 import {
   disconnectTikTok,
@@ -15,9 +19,10 @@ import {
 import { firestore } from '../db/firestore';
 import { consumeUsage, resolveBillingScope } from '../services/billing/billingService';
 import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect';
-import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const router = Router();
+mountTikTokSandboxContext(router);
+router.get('/integrations/tiktok/review-version', (_req,res)=>res.json({version:'2026-10-30',requiresCreatorReview:true,sandboxAccess:'restricted'}));
 
 const CALLBACK_PATH = '/integrations/tiktok/callback';
 
@@ -36,49 +41,7 @@ const getBaseUrl = (req: Request) => {
 const computeRedirectUri = (req: Request) => `${getBaseUrl(req)}${CALLBACK_PATH}`;
 const computeConnectUrl = (req: Request) => `${getBaseUrl(req)}/integrations/tiktok/connect`;
 
-const ensureTikTokAutopostPlatform = async (userId: string) => {
-  const fallbackJob = await supabaseFallbackService.getAutopostJob(userId).catch(() => null);
-  if (fallbackJob) {
-    const platforms = Array.from(
-      new Set([
-        ...(Array.isArray(fallbackJob.platforms) ? fallbackJob.platforms.map(value => String(value)) : []),
-        'tiktok',
-      ]),
-    );
-    const currentNextRun = Date.parse(String(fallbackJob.nextRun ?? ''));
-    await supabaseFallbackService.upsertAutopostJob(userId, {
-      ...fallbackJob,
-      active: true,
-      platforms,
-      nextRun:
-        Number.isFinite(currentNextRun) && currentNextRun > Date.now()
-          ? fallbackJob.nextRun
-          : new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-    });
-  }
-  await firestore
-    .collection('autopostJobs')
-    .doc(userId)
-    .set(
-      {
-        active: true,
-        platforms: admin.firestore.FieldValue.arrayUnion('tiktok'),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    )
-    .catch(error => {
-      console.warn('[tiktok] Firestore autopost merge failed; Supabase schedule remains active', {
-        userId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-};
-
-const getScopes = () => {
-  const raw = process.env.TIKTOK_SCOPES?.trim();
-  return raw ? raw.split(',').map(scope => scope.trim()).filter(Boolean) : ['user.info.basic', 'video.upload', 'video.publish'];
-};
+const getScopes = () => ['user.info.basic', 'video.publish'];
 
 const splitScopes = (value: unknown) =>
   String(value ?? '')
@@ -96,9 +59,9 @@ const assertRequiredScopes = (required: string[], value: unknown) => {
 };
 
 const ensureTikTokClientConfig = (req: Request) => {
-  const clientKey = config.tiktok.clientKey;
-  const clientSecret = config.tiktok.clientSecret;
-  const redirectUri = config.tiktok.redirectUri || computeRedirectUri(req);
+  const clientKey = tikTokClient().clientKey;
+  const clientSecret = tikTokClient().clientSecret;
+  const redirectUri = tikTokClient().redirectUri || computeRedirectUri(req);
   if (!clientKey || !clientSecret) {
     throw createHttpError(400, 'Missing TIKTOK_CLIENT_KEY or TIKTOK_CLIENT_SECRET');
   }
@@ -107,11 +70,14 @@ const ensureTikTokClientConfig = (req: Request) => {
 
 const buildOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null, returnUrl?: unknown) => {
   const { clientKey, redirectUri, scopes } = ensureTikTokClientConfig(req);
+  let safeReturn = sanitizeOAuthReturnUrl(returnUrl);
+  if(tikTokEnvironment()==='sandbox'){const back=new URL(oauthSuccessRedirect('tiktok',safeReturn));back.searchParams.set('tiktokSandbox','1');safeReturn=back.toString();}
   const state = createSignedState(userId, {
     platform: 'tiktok',
+    environment: tikTokEnvironment(),
     orgId: orgId || undefined,
     email: email || undefined,
-    returnUrl: sanitizeOAuthReturnUrl(returnUrl),
+    returnUrl: safeReturn,
   });
   const oauthUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
   oauthUrl.searchParams.set('client_key', clientKey);
@@ -141,22 +107,23 @@ const requireOrgAdminIfPresent = async (req: Request, _res: unknown, next: (err?
   }
 };
 
-const adminGate = [requireFirebase, requireOrgAdminIfPresent];
-const userGate = [requireFirebase];
+const adminGate = [requireFirebaseStrict, requireOrgAdminIfPresent];
+const userGate = [requireFirebaseStrict];
 
 router.get('/integrations/tiktok/config', ...userGate, async (req, res, next) => {
   try {
     const computedRedirectUri = computeRedirectUri(req);
-    const configuredRedirectUri = config.tiktok.redirectUri || '';
+    const configuredRedirectUri = tikTokClient().redirectUri || '';
     const redirectUri = configuredRedirectUri || computedRedirectUri;
     res.json({
-      clientKeyConfigured: Boolean(config.tiktok.clientKey),
-      clientSecretConfigured: Boolean(config.tiktok.clientSecret),
+      clientKeyConfigured: Boolean(tikTokClient().clientKey),
+      clientSecretConfigured: Boolean(tikTokClient().clientSecret),
       redirectUri,
       computedRedirectUri,
       configuredRedirectUri: configuredRedirectUri || null,
       callbackPath: CALLBACK_PATH,
       scopes: getScopes(),
+      environment: tikTokEnvironment(),
       connectUrl: computeConnectUrl(req),
     });
   } catch (error) {
@@ -168,7 +135,7 @@ router.get('/integrations/tiktok/status', ...userGate, async (req, res, next) =>
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    const status = await getTikTokIntegration(userId);
+    const status = await getTikTokIntegration(tikTokConnectionKey(userId));
     res.json({ status });
   } catch (error) {
     next(error);
@@ -187,7 +154,10 @@ router.get('/integrations/tiktok/connect', ...userGate, async (req, res, next) =
   }
 });
 
-router.post('/integrations/tiktok/start', requireFirebaseForm, async (req, res, next) => {
+router.post('/integrations/tiktok/start', (req, res, next) => {
+  if (typeof req.body?.idToken === 'string') req.headers.authorization = 'Bearer ' + req.body.idToken;
+  return requireFirebaseStrict(req, res, next);
+}, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
@@ -224,7 +194,7 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
     res.status(400).send(renderCallbackHtml('TikTok connection failed', `${detail}.${supportId}`));
     return;
   }
-  if (!state) {
+  if (!state || state.platform !== 'tiktok' || state.environment !== tikTokEnvironment()) {
     res
       .status(400)
       .send(renderCallbackHtml('TikTok connection failed', 'The secure OAuth session expired. Return to Dott Media and tap Connect TikTok again.'));
@@ -251,7 +221,7 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
   } catch (error) {
-    console.error('[tiktok] token exchange failed', error);
+    console.error('[tiktok] token exchange failed', {status: axios.isAxiosError(error)?error.response?.status:undefined});
     res.status(400).send(renderCallbackHtml('TikTok connection failed', 'Unable to exchange authorization code.'));
     return;
   }
@@ -277,8 +247,12 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
   }
 
   try {
-    const existing = await getTikTokIntegration(state.userId).catch(() => null);
-    if (!existing?.connected) {
+    if(tikTokEnvironment()==='sandbox'){
+      const creator=await queryTikTokCreator(accessToken);
+      if(tikTokSandboxUsername()&&creator.creator_username?.toLowerCase()!==tikTokSandboxUsername()!.toLowerCase())throw createHttpError(403,'Use the configured TikTok sandbox target account');
+    }
+    const existing = await getTikTokIntegration(tikTokConnectionKey(state.userId)).catch(() => null);
+    if (!existing?.connected && tikTokEnvironment() === 'production') {
       const userSnap = await firestore.collection('users').doc(state.userId).get().catch(() => null);
       const userData = userSnap?.exists ? userSnap.data() : {};
       await consumeUsage(
@@ -291,7 +265,7 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
         1,
       );
     }
-    await upsertTikTokIntegration(state.userId, {
+    await upsertTikTokIntegration(tikTokConnectionKey(state.userId), {
       accessToken,
       refreshToken,
       accessTokenExpiresAt: expiresIn ? Date.now() + expiresIn * 1000 : null,
@@ -300,7 +274,7 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
       scope,
       revealToken: true,
     });
-    await ensureTikTokAutopostPlatform(state.userId);
+
   } catch (error) {
     console.error('[tiktok] failed to store integration', error);
     res.status(500).send(renderCallbackHtml('TikTok connection failed', 'Unable to store access token.'));
@@ -324,7 +298,8 @@ router.post('/integrations/tiktok/token', ...userGate, async (req, res, next) =>
       .parse(req.body ?? {});
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    await upsertTikTokIntegration(userId, {
+    if(tikTokEnvironment()==='sandbox'){const creator=await queryTikTokCreator(payload.accessToken);if(creator.creator_username?.toLowerCase()!==tikTokSandboxUsername()?.toLowerCase())throw createHttpError(403,'Use the configured TikTok sandbox target account');}
+    await upsertTikTokIntegration(tikTokConnectionKey(userId), {
       accessToken: payload.accessToken,
       refreshToken: payload.refreshToken,
       accessTokenExpiresAt: payload.expiresIn ? Date.now() + payload.expiresIn * 1000 : null,
@@ -333,7 +308,7 @@ router.post('/integrations/tiktok/token', ...userGate, async (req, res, next) =>
       scope: payload.scope,
       revealToken: true,
     });
-    await ensureTikTokAutopostPlatform(userId);
+
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -344,7 +319,7 @@ router.post('/integrations/tiktok/reveal', ...userGate, async (req, res, next) =
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    const result = await revealTikTokRefreshToken(userId);
+    const result = await revealTikTokRefreshToken(tikTokConnectionKey(userId));
     res.json(result);
   } catch (error) {
     next(error);
@@ -355,7 +330,7 @@ router.post('/integrations/tiktok/disconnect', ...userGate, async (req, res, nex
   try {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    await disconnectTikTok(userId);
+    await disconnectTikTok(tikTokConnectionKey(userId));
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -404,4 +379,5 @@ function escapeHtml(value: string) {
   });
 }
 
+mountTikTokReviewRoutes(router);
 export default router;

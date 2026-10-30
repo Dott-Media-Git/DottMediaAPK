@@ -4,7 +4,7 @@ import { NavigationContainer, DefaultTheme, Theme } from '@react-navigation/nati
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createDrawerNavigator, DrawerContentScrollView, DrawerItem, useDrawerStatus } from '@react-navigation/drawer';
 import { Ionicons } from '@expo/vector-icons';
-import { Platform, TouchableOpacity, View, Text, StyleSheet, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { Modal, Platform, TouchableOpacity, View, Text, StyleSheet, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import { useI18n } from '@context/I18nContext';

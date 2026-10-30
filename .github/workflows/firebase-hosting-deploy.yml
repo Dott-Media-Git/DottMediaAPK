@@ -42,11 +42,24 @@ jobs:
         run: npm ci --legacy-peer-deps --ignore-scripts --no-audit --no-fund
 
       - name: Build web bundle
+        env:
+          EXPO_PUBLIC_API_URL: "https://dottmediaapk.onrender.com"
+          EXPO_PUBLIC_HELP_DOCS_URL: "https://dottmediaapk.web.app/help"
+          EXPO_OFFLINE: "false"
+          EXPO_PUBLIC_DEBUG_TOOLS: "false"
+          EXPO_PUBLIC_FIREBASE_API_KEY: "${{ secrets.EXPO_PUBLIC_FIREBASE_API_KEY }}"
+          EXPO_PUBLIC_FIREBASE_PROJECT_ID: "dottmediaapk"
+          EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN: "dottmediaapk.firebaseapp.com"
+          EXPO_PUBLIC_FIREBASE_APP_ID: "1:1052840214259:web:7f4555e8bad2e33a0a0186"
+          EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET: "dottmediaapk.firebasestorage.app"
+          EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "1052840214259"
         run: npm run build:web
 
       - name: Deploy Firebase Hosting
         env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
         run: |
-          test -n "$FIREBASE_TOKEN"
-          npx --yes firebase-tools@14.26.0 deploy --only hosting --token "$FIREBASE_TOKEN" --non-interactive
+          test -n "$FIREBASE_SERVICE_ACCOUNT_JSON"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/dotti-hosting-service-account.json"
+          node -e 'require("fs").writeFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS,process.env.FIREBASE_SERVICE_ACCOUNT_JSON,{mode:0o600})'
+          npx --yes firebase-tools@14.26.0 deploy --only hosting --project dottmediaapk --non-interactive

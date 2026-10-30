@@ -4,6 +4,7 @@ import * as ExpoLinking from 'expo-linking';
 import { Alert, AppState, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { doc, getDoc } from 'firebase/firestore';
+import TikTokPostComposer from '@components/TikTokPostComposer';
 import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
 
@@ -43,6 +44,7 @@ import {
   type YouTubeStatus
 } from '@services/youtubeIntegration';
 import {
+  withTikTokEnvironment,
   fetchTikTokConfig,
   fetchTikTokStatus,
   fetchTikTokConnectUrl,
@@ -147,6 +149,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
   const [privacyStatus, setPrivacyStatus] = useState<'private' | 'public' | 'unlisted'>('unlisted');
   const [revealToken, setRevealToken] = useState<string | null>(null);
   const [showRevealModal, setShowRevealModal] = useState(false);
+  const [showTikTokComposer,setShowTikTokComposer]=useState(false);
   const [tiktokConfig, setTikTokConfig] = useState<TikTokConfig | null>(null);
   const [tiktokStatus, setTikTokStatus] = useState<TikTokStatus | null>(null);
   const [tiktokLoading, setTikTokLoading] = useState(false);
@@ -476,7 +479,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
 
   const handleTikTokConnect = async () => {
     try {
-      if (await submitWebOAuth('/integrations/tiktok/start', 'tiktok')) return;
+      if (await submitWebOAuth(withTikTokEnvironment('/integrations/tiktok/start'), 'tiktok')) return;
       const oauthWindow = reserveOAuthWindow();
       const response = await fetchTikTokConnectUrl(orgId, nativeOAuthReturnUrl('tiktok'));
       await openOAuthUrl(response?.url as string | undefined, 'TikTok', 'tiktok', oauthWindow);
@@ -1017,6 +1020,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
                 )}
               </View>
 
+              {platform==='tiktok'&&connected&&<View style={styles.integrationBody}><DMButton title={t('Review & post a video')} onPress={()=>setShowTikTokComposer(true)}/></View>}
               {!connected && isExpanded ? (
                 <View style={styles.integrationBody}>
                   {missing.length && !isOAuthFirstPlatform(platform) ? (
@@ -1330,6 +1334,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
         </>
       ) : null}
 
+      <TikTokPostComposer visible={showTikTokComposer} onClose={()=>setShowTikTokComposer(false)} orgId={orgId}/>
       {expandedPlatform === 'tiktok' && !tiktokConnected ? (
         <>
           <View style={styles.card}>

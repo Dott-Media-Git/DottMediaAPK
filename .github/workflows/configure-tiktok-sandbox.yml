@@ -1,0 +1,26 @@
+name: Configure Dotti TikTok sandbox review
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx tsx --test src/tests/tiktokReview.test.ts src/tests/tiktokReviewAuth.test.ts
+      - name: Configure the sandbox only
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          DOTTI_TIKTOK_SANDBOX_CONFIG: ${{ secrets.DOTTI_TIKTOK_SANDBOX_CONFIG }}
+        run: node scripts/configureTikTokSandboxReview.mjs
