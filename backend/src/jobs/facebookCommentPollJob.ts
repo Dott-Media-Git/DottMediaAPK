@@ -9,7 +9,7 @@ import {
   buildCommentToDmPublicReply,
   isCommentToDmTrigger,
 } from '../services/commentToDmService';
-import { supabaseFallbackService } from '../services/supabaseFallbackService';
+import { getPollSocialAccounts } from '../services/pollSocialAccountResolver';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const enabled = process.env.FB_COMMENT_POLL_ENABLED !== 'false';
@@ -193,27 +193,10 @@ const loadClientTargets = async (): Promise<PollTarget[]> => {
 
   await Promise.all(
     userIds.map(async userId => {
-      try {
-        const snap = await firestore.collection('users').doc(userId).get();
-        const facebook = (snap.data() as { socialAccounts?: { facebook?: { pageId?: string; accessToken?: string } } } | undefined)
-          ?.socialAccounts?.facebook;
-        if (facebook?.pageId && facebook.accessToken) {
-          targets.push({ userId, pageId: facebook.pageId, accessToken: facebook.accessToken });
-          return;
-        }
-      } catch (error) {
-        console.warn('[fb-comment-poll] Firestore target lookup failed', userId, (error as Error).message);
-      }
-
-      try {
-        const fallback = await supabaseFallbackService.getSocialAccounts(userId);
-        const facebook = (fallback?.socialAccounts as { facebook?: { pageId?: string; accessToken?: string } } | undefined)
-          ?.facebook;
-        if (facebook?.pageId && facebook.accessToken) {
-          targets.push({ userId, pageId: facebook.pageId, accessToken: facebook.accessToken });
-        }
-      } catch (error) {
-        console.warn('[fb-comment-poll] Supabase target lookup failed', userId, (error as Error).message);
+      const stored = await getPollSocialAccounts(userId);
+      const facebook = (stored?.socialAccounts?.facebook as { pageId?: string; accessToken?: string } | undefined);
+      if (facebook?.pageId && facebook.accessToken) {
+        targets.push({ userId, pageId: facebook.pageId, accessToken: facebook.accessToken });
       }
     }),
   );

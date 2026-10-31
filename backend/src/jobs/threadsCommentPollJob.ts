@@ -3,7 +3,7 @@ import axios from 'axios';
 import admin from 'firebase-admin';
 import { firestore } from '../db/firestore';
 import { generateReply, replyToThreadsComment } from '../services/autoReplyService';
-import { supabaseFallbackService } from '../services/supabaseFallbackService';
+import { getPollSocialAccounts } from '../services/pollSocialAccountResolver';
 
 const GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
@@ -180,37 +180,15 @@ const loadClientTargets = async (): Promise<PollTarget[]> => {
 
   await Promise.all(
     userIds.map(async userId => {
-      try {
-        const snap = await firestore.collection('users').doc(userId).get();
-        const threads = (snap.data() as { socialAccounts?: { threads?: { accountId?: string; accessToken?: string; username?: string } } } | undefined)
-          ?.socialAccounts?.threads;
-        if (threads?.accountId && threads.accessToken) {
-          targets.push({
-            userId,
-            accountId: threads.accountId,
-            accessToken: threads.accessToken,
-            username: threads.username,
-          });
-          return;
-        }
-      } catch (error) {
-        console.warn('[threads-comment-poll] Firestore target lookup failed', userId, (error as Error).message);
-      }
-
-      try {
-        const fallback = await supabaseFallbackService.getSocialAccounts(userId);
-        const threads = (fallback?.socialAccounts as { threads?: { accountId?: string; accessToken?: string; username?: string } } | undefined)
-          ?.threads;
-        if (threads?.accountId && threads.accessToken) {
-          targets.push({
-            userId,
-            accountId: threads.accountId,
-            accessToken: threads.accessToken,
-            username: threads.username,
-          });
-        }
-      } catch (error) {
-        console.warn('[threads-comment-poll] Supabase target lookup failed', userId, (error as Error).message);
+      const stored = await getPollSocialAccounts(userId);
+      const threads = (stored?.socialAccounts?.threads as { accountId?: string; accessToken?: string; username?: string } | undefined);
+      if (threads?.accountId && threads.accessToken) {
+        targets.push({
+          userId,
+          accountId: threads.accountId,
+          accessToken: threads.accessToken,
+          username: threads.username,
+        });
       }
     }),
   );

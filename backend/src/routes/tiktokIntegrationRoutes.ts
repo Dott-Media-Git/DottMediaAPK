@@ -58,6 +58,30 @@ const assertRequiredScopes = (required: string[], value: unknown) => {
   }
 };
 
+const safeErrorCode = (error: unknown) => {
+  const value = error as { code?: unknown; name?: unknown };
+  const code = value?.code ?? value?.name;
+  return code === undefined || code === null ? 'unknown' : String(code).slice(0, 80);
+};
+
+const classifyTikTokStorageError = (error: unknown) => {
+  const code = safeErrorCode(error).toUpperCase();
+  const message = String((error as { message?: unknown })?.message ?? '');
+  if (code === '8' || /RESOURCE_EXHAUSTED|QUOTA\s+EXCEEDED/i.test(message)) {
+    return {
+      status: 503,
+      message: 'TikTok connection storage is temporarily unavailable because the database quota is exhausted. Please retry after the quota resets.',
+    };
+  }
+  if (code === '7' || /PERMISSION_DENIED|PERMISSION\s+DENIED/i.test(message)) {
+    return {
+      status: 503,
+      message: 'TikTok connection storage is not authorized. Please contact support.',
+    };
+  }
+  return { status: 500, message: 'Unable to securely store the TikTok connection.' };
+};
+
 const ensureTikTokClientConfig = (req: Request) => {
   const clientKey = tikTokClient().clientKey;
   const clientSecret = tikTokClient().clientSecret;
@@ -246,12 +270,24 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
     return;
   }
 
-  try {
-    if(tikTokEnvironment()==='sandbox'){
-      const creator=await queryTikTokCreator(accessToken);
-      if(tikTokSandboxUsername()&&creator.creator_username?.toLowerCase()!==tikTokSandboxUsername()!.toLowerCase())throw createHttpError(403,'Use the configured TikTok sandbox target account');
+  if (tikTokEnvironment() === 'sandbox') {
+    try {
+      const creator = await queryTikTokCreator(accessToken);
+      if (tikTokSandboxUsername() && creator.creator_username?.toLowerCase() !== tikTokSandboxUsername()!.toLowerCase()) {
+        res.status(403).send(renderCallbackHtml('TikTok connection failed', 'Use the configured TikTok sandbox target account and retry.'));
+        return;
+      }
+    } catch (error) {
+      console.error('[tiktok] sandbox creator verification failed', { code: safeErrorCode(error) });
+      res.status(502).send(renderCallbackHtml('TikTok connection failed', 'Unable to verify the TikTok sandbox account. Please retry.'));
+      return;
     }
-    const existing = await getTikTokIntegration(tikTokConnectionKey(state.userId)).catch(() => null);
+  }
+
+  try {
+    const existing = tikTokEnvironment() === 'production'
+      ? await getTikTokIntegration(tikTokConnectionKey(state.userId))
+      : null;
     if (!existing?.connected && tikTokEnvironment() === 'production') {
       const userSnap = await firestore.collection('users').doc(state.userId).get().catch(() => null);
       const userData = userSnap?.exists ? userSnap.data() : {};
@@ -276,8 +312,9 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('[tiktok] failed to store integration', error);
-    res.status(500).send(renderCallbackHtml('TikTok connection failed', 'Unable to store access token.'));
+    const classified = classifyTikTokStorageError(error);
+    console.error('[tiktok] failed to store integration', { code: safeErrorCode(error) });
+    res.status(classified.status).send(renderCallbackHtml('TikTok connection failed', classified.message));
     return;
   }
 

@@ -214,17 +214,11 @@ const docIdForTikTok = (userId: string) => docIdForProvider(userId, 'tiktok');
 
 export async function upsertTikTokIntegration(userId: string, payload: TikTokIntegrationInput) {
   const ref = integrationsCollection.doc(docIdForTikTok(userId));
-  const now = admin.firestore.FieldValue.serverTimestamp();
-  const snap = await ref.get();
   const update: Record<string, unknown> = {
     userId,
     provider: 'tiktok',
-    updatedAt: now,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
-
-  if (!snap.exists) {
-    update.createdAt = now;
-  }
 
   update.accessTokenEncrypted = toEncrypted(payload.accessToken);
   if (payload.refreshToken) {

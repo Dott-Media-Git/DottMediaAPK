@@ -9,7 +9,7 @@ import {
   buildCommentToDmPublicReply,
   isCommentToDmTrigger,
 } from '../services/commentToDmService';
-import { supabaseFallbackService } from '../services/supabaseFallbackService';
+import { getPollSocialAccounts } from '../services/pollSocialAccountResolver';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const enabled = process.env.IG_COMMENT_POLL_ENABLED !== 'false';
@@ -203,28 +203,11 @@ const loadClientTargets = async (): Promise<PollTarget[]> => {
 
   await Promise.all(
     userIds.map(async userId => {
-      try {
-        const snap = await firestore.collection('users').doc(userId).get();
-        const instagram = (snap.data() as { socialAccounts?: { instagram?: { accountId?: string; accessToken?: string } } } | undefined)
-          ?.socialAccounts?.instagram;
-        if (instagram?.accountId && instagram.accessToken) {
-          targets.push({ userId, igBusinessId: instagram.accountId, accessToken: instagram.accessToken });
-          return;
-        }
-      } catch (error) {
-        console.warn('[ig-comment-poll] Firestore target lookup failed', userId, (error as Error).message);
-      }
-
-      try {
-        const fallback = await supabaseFallbackService.getSocialAccounts(userId);
-        const instagram = (fallback?.socialAccounts as { instagram?: { accountId?: string; accessToken?: string } } | undefined)
-          ?.instagram;
-        if (instagram?.accountId && instagram.accessToken) {
-          targets.push({ userId, igBusinessId: instagram.accountId, accessToken: instagram.accessToken });
-          return;
-        }
-      } catch (error) {
-        console.warn('[ig-comment-poll] Supabase target lookup failed', userId, (error as Error).message);
+      const stored = await getPollSocialAccounts(userId);
+      const instagram = (stored?.socialAccounts?.instagram as { accountId?: string; accessToken?: string } | undefined);
+      if (instagram?.accountId && instagram.accessToken) {
+        targets.push({ userId, igBusinessId: instagram.accountId, accessToken: instagram.accessToken });
+        return;
       }
 
       const known = KNOWN_IG_TARGETS[userId];
