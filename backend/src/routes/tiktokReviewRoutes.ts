@@ -115,6 +115,9 @@ function reviewedPublishMessage(error: unknown) {
   if (error.stage === 'video_init' && error.providerCode === 'privacy_level_option_mismatch') {
     return 'TikTok rejected the selected privacy level. Refresh the creator settings and choose one of the options TikTok currently provides.';
   }
+  if (error.stage === 'video_init' && error.httpStatus === 403) {
+    return 'TikTok blocked video initialization (HTTP 403). Check that the connected account is private when the app is unaudited, and check TikTok daily limits or posting restrictions.';
+  }
   if (error.httpStatus === 401 || error.providerCode === 'scope_not_authorized' || error.providerCode === 'access_token_invalid') {
     return 'TikTok rejected the connection credentials. Reconnect TikTok and grant video posting access before retrying.';
   }
