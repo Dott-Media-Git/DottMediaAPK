@@ -270,7 +270,10 @@ export const AccountIntegrationsScreen: React.FC = () => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !state.user?.uid) return;
     const url = new URL(window.location.href);
     const connected = url.searchParams.get('connected') as PlatformKey | null;
-    const oauthPlatforms: PlatformKey[] = ['facebook', 'instagram', 'threads', 'linkedin'];
+    // OAuth callbacks for TikTok and YouTube also return to this page with a
+    // connected query parameter. Handle them here so the page refreshes their
+    // dedicated status stores instead of silently dropping the callback.
+    const oauthPlatforms: PlatformKey[] = ['facebook', 'instagram', 'threads', 'linkedin', 'tiktok', 'youtube'];
     if (!connected || !oauthPlatforms.includes(connected)) return;
 
     setExpandedPlatform(connected);
