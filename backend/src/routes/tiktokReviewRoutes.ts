@@ -103,8 +103,21 @@ function reviewedPublishMessage(error: unknown) {
   if (error.stage === 'video_init' && error.providerCode === 'spam_risk_user_banned_from_posting') {
     return 'TikTok has temporarily restricted posting for this account. Check the account in TikTok before retrying.';
   }
+  if (error.stage === 'video_init' && error.providerCode === 'spam_risk_too_many_posts') {
+    return 'TikTok has reached the daily post limit for this account. Wait for the limit to reset before retrying.';
+  }
+  if (error.stage === 'video_init' && error.providerCode === 'reached_active_user_cap') {
+    return 'TikTok has reached the active-user limit for this app. The app owner must raise the limit or complete TikTok review before retrying.';
+  }
+  if (error.stage === 'video_init' && error.providerCode === 'unaudited_client_can_only_post_to_private_accounts') {
+    return 'TikTok blocked this post because the app is not audited for public-account posting. Make the connected TikTok account private for testing, or complete TikTok app review.';
+  }
+  if (error.stage === 'video_init' && error.providerCode === 'privacy_level_option_mismatch') {
+    return 'TikTok rejected the selected privacy level. Refresh the creator settings and choose one of the options TikTok currently provides.';
+  }
   if (error.httpStatus === 401 || error.providerCode === 'scope_not_authorized' || error.providerCode === 'access_token_invalid') {
     return 'TikTok rejected the connection credentials. Reconnect TikTok and grant video posting access before retrying.';
   }
-  return `TikTok rejected the ${error.stage.replace('_', ' ')} request${error.httpStatus ? ` (HTTP ${error.httpStatus})` : ''}. Check TikTok before retrying.`;
+  const code = error.providerCode ? `; code ${error.providerCode}` : '';
+  return `TikTok rejected the ${error.stage.replace('_', ' ')} request${error.httpStatus ? ` (HTTP ${error.httpStatus}${code})` : code}. Check TikTok before retrying.`;
 }

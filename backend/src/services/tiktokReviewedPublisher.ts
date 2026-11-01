@@ -23,9 +23,12 @@ export type TikTokReview = {
   explicitConsent: boolean; reviewedOpenId: string; aiGenerated: boolean;
 };
 const safeProviderDetails = (value: unknown) => {
-  const body = value as {error?: {code?: unknown; message?: unknown}} | undefined;
-  const code = typeof body?.error?.code === 'string' ? body.error.code.slice(0, 120) : '';
-  const message = typeof body?.error?.message === 'string' ? body.error.message.replace(/[\r\n]+/g, ' ').slice(0, 240) : '';
+  const body = value as {error?: {code?: unknown; message?: unknown} | string; code?: unknown; message?: unknown} | undefined;
+  const nested = typeof body?.error === 'object' && body.error ? body.error : undefined;
+  const codeValue = typeof nested?.code === 'string' ? nested.code : typeof body?.code === 'string' ? body.code : '';
+  const messageValue = typeof nested?.message === 'string' ? nested.message : typeof body?.message === 'string' ? body.message : '';
+  const code = codeValue.slice(0, 120);
+  const message = messageValue.replace(/[\r\n]+/g, ' ').slice(0, 240);
   return {code, message};
 };
 
