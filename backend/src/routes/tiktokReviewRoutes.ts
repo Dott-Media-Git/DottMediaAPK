@@ -7,10 +7,15 @@ import {requireFirebaseStrict, type AuthedRequest} from '../middleware/firebaseA
 import {getTikTokIntegrationSecrets} from '../services/socialIntegrationService';
 import {supabaseFallbackService} from '../services/supabaseFallbackService';
 import {tikTokConnectionKey, tikTokEnvironment} from '../services/tiktokReviewConfig';
-import {publishReviewedTikTok, queryTikTokCreator, queryTikTokPostStatus} from '../services/tiktokReviewedPublisher';
+import {publishReviewedTikTok, queryTikTokCreator, queryTikTokPostStatus, TikTokProviderError} from '../services/tiktokReviewedPublisher';
 
 const upload = multer({storage: multer.memoryStorage(), limits: {files: 1, fields: 3, fileSize: 80 * 1024 * 1024, fieldSize: 16000}});
 const boolean = z.boolean();
+const safeErrorCode = (error: unknown) => {
+  const value = error as {code?: unknown; name?: unknown};
+  const code = value?.code ?? value?.name;
+  return code === undefined || code === null ? 'unknown' : String(code).slice(0, 80);
+};
 const reviewSchema = z.object({privacyLevel: z.string().min(1), allowComment: boolean, allowDuet: boolean,
   allowStitch: boolean, commercial: boolean, ownBrand: boolean, brandedContent: boolean,
   musicConsent: z.literal(true), explicitConsent: z.literal(true), reviewedOpenId: z.string().min(1), aiGenerated: boolean});
@@ -53,7 +58,16 @@ export function mountTikTokReviewRoutes(router: Router) {
     } catch (e) {
       // Never retry a potentially accepted upload automatically.
       if (jobId && created) {
-        const message=e instanceof Error?e.message:'Submission could not be confirmed. Check TikTok before retrying.';
+        const message = reviewedPublishMessage(e);
+        if (e instanceof TikTokProviderError) {
+          console.warn('[tiktok] reviewed publish requires check', {
+            stage: e.stage,
+            status: e.httpStatus,
+            providerCode: e.providerCode,
+          });
+        } else {
+          console.warn('[tiktok] reviewed publish requires check', {code: safeErrorCode(e)});
+        }
         await supabaseFallbackService.updateTikTokReviewedPost(jobId, {status:'REQUIRES_CHECK',message}).catch(()=>undefined);
         res.status(202).json({jobId,status:'REQUIRES_CHECK',message});return;
       }
@@ -74,4 +88,23 @@ export function mountTikTokReviewRoutes(router: Router) {
       res.setHeader('Cache-Control', 'no-store'); res.json(result);
     } catch (e) {next(e);}
   });
+}
+
+function reviewedPublishMessage(error: unknown) {
+  if (!(error instanceof TikTokProviderError)) {
+    return 'TikTok did not confirm this submission. Check TikTok before retrying.';
+  }
+  if (error.stage === 'video_upload' && error.httpStatus === 403) {
+    return 'TikTok rejected the video upload (HTTP 403). The upload destination may have expired; check TikTok before retrying this video.';
+  }
+  if (error.stage === 'video_init' && error.providerCode === 'spam_risk_too_many_pending_share') {
+    return 'TikTok has reached its pending-share limit for this account. Wait for an earlier share to finish before submitting another video.';
+  }
+  if (error.stage === 'video_init' && error.providerCode === 'spam_risk_user_banned_from_posting') {
+    return 'TikTok has temporarily restricted posting for this account. Check the account in TikTok before retrying.';
+  }
+  if (error.httpStatus === 401 || error.providerCode === 'scope_not_authorized' || error.providerCode === 'access_token_invalid') {
+    return 'TikTok rejected the connection credentials. Reconnect TikTok and grant video posting access before retrying.';
+  }
+  return `TikTok rejected the ${error.stage.replace('_', ' ')} request${error.httpStatus ? ` (HTTP ${error.httpStatus})` : ''}. Check TikTok before retrying.`;
 }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import axios from 'axios';
-import {mp4Duration, reviewedPostInfo, publishReviewedTikTok, type TikTokCreator, type TikTokReview} from '../services/tiktokReviewedPublisher';
+import {mp4Duration, reviewedPostInfo, publishReviewedTikTok, TikTokProviderError, type TikTokCreator, type TikTokReview} from '../services/tiktokReviewedPublisher';
 import {publishToTikTok} from '../packages/services/socialPlatforms/tiktokPublisher';
 
 const creator: TikTokCreator = {creator_nickname:'Test creator', privacy_level_options:['SELF_ONLY','PUBLIC_TO_EVERYONE'], max_video_post_duration_sec:60, stitch_disabled:true};
@@ -57,4 +57,14 @@ test('a posting ban returned by TikTok stops the operation before upload',async(
   try {axios.post=(async()=>{attempts++;return {data:{error:{code:'spam_risk_too_many_posts',message:'Try again later'}}};}) as any;
     await assert.rejects(()=>publishReviewedTikTok('test-token','test-account',movie(),'',review),/Try again later/);assert.equal(attempts,1);
   }finally{axios.post=post;}
+});
+test('provider failures retain a safe stage and status without exposing credentials',async()=>{
+  const post=axios.post;
+  try {
+    axios.post=(async()=>{const e:any=new Error('Request failed with status code 403');e.isAxiosError=true;e.response={status:403,data:{error:{code:'spam_risk_too_many_pending_share',message:'Too many pending shares'}}};throw e;}) as any;
+    await assert.rejects(
+      ()=>publishReviewedTikTok('secret-token-that-must-not-appear','test-account',movie(),'',review),
+      (error: unknown)=>error instanceof TikTokProviderError && error.stage==='creator_info' && error.httpStatus===403 && error.providerCode==='spam_risk_too_many_pending_share' && !error.message.includes('secret-token'),
+    );
+  } finally {axios.post=post;}
 });

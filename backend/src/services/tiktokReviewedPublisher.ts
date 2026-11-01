@@ -1,4 +1,17 @@
 import axios from 'axios';
+export type TikTokPublishStage = 'creator_info' | 'video_init' | 'video_upload' | 'status_fetch';
+export class TikTokProviderError extends Error {
+  readonly stage: TikTokPublishStage;
+  readonly httpStatus?: number;
+  readonly providerCode?: string;
+  constructor(message: string, stage: TikTokPublishStage, httpStatus?: number, providerCode?: string) {
+    super(message);
+    this.name = 'TikTokProviderError';
+    this.stage = stage;
+    this.httpStatus = httpStatus;
+    this.providerCode = providerCode;
+  }
+}
 export type TikTokCreator = {
   creator_avatar_url?: string; creator_username?: string; creator_nickname?: string;
   privacy_level_options: string[]; comment_disabled?: boolean; duet_disabled?: boolean;
@@ -9,15 +22,34 @@ export type TikTokReview = {
   commercial: boolean; ownBrand: boolean; brandedContent: boolean; musicConsent: boolean;
   explicitConsent: boolean; reviewedOpenId: string; aiGenerated: boolean;
 };
-async function api<T>(token: string, path: string, body: unknown): Promise<T> {
-  const r = await axios.post('https://open.tiktokapis.com' + path, body, {
-    headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'}, timeout: 30000,
-  });
-  if (r.data?.error?.code && r.data.error.code !== 'ok') throw new Error(`TikTok: ${r.data.error.message || r.data.error.code}`);
-  if (!r.data?.data) throw new Error('TikTok returned an incomplete response');
-  return r.data.data;
+const safeProviderDetails = (value: unknown) => {
+  const body = value as {error?: {code?: unknown; message?: unknown}} | undefined;
+  const code = typeof body?.error?.code === 'string' ? body.error.code.slice(0, 120) : '';
+  const message = typeof body?.error?.message === 'string' ? body.error.message.replace(/[\r\n]+/g, ' ').slice(0, 240) : '';
+  return {code, message};
+};
+
+async function api<T>(token: string, path: string, body: unknown, stage: TikTokPublishStage): Promise<T> {
+  try {
+    const r = await axios.post('https://open.tiktokapis.com' + path, body, {
+      headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'}, timeout: 30000,
+    });
+    const details = safeProviderDetails(r.data);
+    if (details.code && details.code !== 'ok') {
+      throw new TikTokProviderError(`TikTok ${stage.replace('_', ' ')} rejected the request${details.message ? `: ${details.message}` : ''}`, stage, r.status, details.code);
+    }
+    if (!r.data?.data) throw new TikTokProviderError('TikTok returned an incomplete response', stage, r.status);
+    return r.data.data;
+  } catch (error) {
+    if (error instanceof TikTokProviderError) throw error;
+    const response = axios.isAxiosError(error) ? error.response : undefined;
+    const details = safeProviderDetails(response?.data);
+    const status = response?.status;
+    const suffix = details.message ? `: ${details.message}` : '';
+    throw new TikTokProviderError(`TikTok ${stage.replace('_', ' ')} request failed${status ? ` (HTTP ${status})` : ''}${suffix}`, stage, status, details.code || undefined);
+  }
 }
-export const queryTikTokCreator = (token: string) => api<TikTokCreator>(token, '/v2/post/publish/creator_info/query/', {});
+export const queryTikTokCreator = (token: string) => api<TikTokCreator>(token, '/v2/post/publish/creator_info/query/', {}, 'creator_info');
 
 // Parse movie duration on the server; form metadata is not trusted.
 export function mp4Duration(b: Buffer): number {
@@ -70,19 +102,27 @@ export async function publishReviewedTikTok(token: string, openId: string, video
   const chunks = video.length <= 64 * 1024 * 1024 ? 1 : Math.floor(video.length / chunk);
   const init = await api<{publish_id: string; upload_url: string}>(token, '/v2/post/publish/video/init/', {
     post_info: postInfo, source_info: {source: 'FILE_UPLOAD', video_size: video.length, chunk_size: chunk, total_chunk_count: chunks},
-  });
+  }, 'video_init');
   if (!init.publish_id || !init.upload_url) throw new Error('TikTok did not return an upload destination');
   const u = new URL(init.upload_url);
   if (u.protocol !== 'https:' || !/(^|\.)tiktokapis\.com$/.test(u.hostname)) throw new Error('TikTok returned an unexpected upload destination');
   for (let i = 0, start = 0; i < chunks; i++) {
     const end = i === chunks - 1 ? video.length : start + chunk;
-    await axios.put(init.upload_url, video.subarray(start, end), {headers: {
-      'Content-Type': 'video/mp4', 'Content-Length': String(end - start), 'Content-Range': `bytes ${start}-${end - 1}/${video.length}`,
-    }, timeout: 120000, maxBodyLength: 80 * 1024 * 1024});
+    try {
+      await axios.put(init.upload_url, video.subarray(start, end), {headers: {
+        'Content-Type': 'video/mp4', 'Content-Length': String(end - start), 'Content-Range': `bytes ${start}-${end - 1}/${video.length}`,
+      }, timeout: 120000, maxBodyLength: 80 * 1024 * 1024});
+    } catch (error) {
+      const response = axios.isAxiosError(error) ? error.response : undefined;
+      const details = safeProviderDetails(response?.data);
+      const status = response?.status;
+      const suffix = details.message ? `: ${details.message}` : '';
+      throw new TikTokProviderError(`TikTok video upload failed${status ? ` (HTTP ${status})` : ''}${suffix}`, 'video_upload', status, details.code || undefined);
+    }
     start = end;
   }
   return {publishId: init.publish_id};
 }
 export const queryTikTokPostStatus = (token: string, publishId: string) => api<{
   status: string; fail_reason?: string; publicly_available_post_id?: string[];
-}>(token, '/v2/post/publish/status/fetch/', {publish_id: publishId});
+}>(token, '/v2/post/publish/status/fetch/', {publish_id: publishId}, 'status_fetch');
