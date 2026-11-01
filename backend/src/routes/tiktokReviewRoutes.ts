@@ -5,8 +5,7 @@ import {z} from 'zod';
 import createHttpError from 'http-errors';
 import {requireFirebaseStrict, type AuthedRequest} from '../middleware/firebaseAuth';
 import {getTikTokIntegrationSecrets} from '../services/socialIntegrationService';
-import {consumeUsageForUserId} from '../services/billing/billingService';
-import {firestore} from '../db/firestore';
+import {supabaseFallbackService} from '../services/supabaseFallbackService';
 import {tikTokConnectionKey, tikTokEnvironment} from '../services/tiktokReviewConfig';
 import {publishReviewedTikTok, queryTikTokCreator, queryTikTokPostStatus} from '../services/tiktokReviewedPublisher';
 
@@ -32,7 +31,7 @@ export function mountTikTokReviewRoutes(router: Router) {
     } catch (e) {next(e);}
   });
   router.post('/integrations/tiktok/publish-reviewed', requireFirebaseStrict, upload.single('video'), async (req, res, next) => {
-    let job: FirebaseFirestore.DocumentReference | undefined;
+    let jobId: string | undefined;
     let created=false;
     try {
       const uid = (req as AuthedRequest).authUser!.uid;
@@ -43,25 +42,20 @@ export function mountTikTokReviewRoutes(router: Router) {
       const c = await connection(uid);
       if (review.reviewedOpenId !== c.openId) throw createHttpError(409, 'The TikTok account changed. Refresh and review again.');
       const id = createHash('sha256').update(`${tikTokEnvironment()}:${uid}:${requestId}`).digest('hex');
-      job = firestore.collection('tiktokReviewedPosts').doc(id);
-      const previous = await firestore.runTransaction(async tx => {
-        const old = await tx.get(job!);
-        if (old.exists) return old.data();
-        tx.create(job!, {userId: uid, openId: c.openId, environment: tikTokEnvironment(), status: 'STARTING', createdAt: Date.now()});
-        return null;
-      });
+      const previous = await supabaseFallbackService.getTikTokReviewedPost(uid, id);
       if (previous) {res.json({jobId: id, status: previous.status, message: 'This submission already exists. Check its status before retrying.'}); return;}
+      await supabaseFallbackService.createTikTokReviewedPost({id, userId: uid, openId: c.openId, environment: tikTokEnvironment(), status: 'STARTING', createdAt: Date.now()});
+      jobId = id;
       created=true;
-      if (tikTokEnvironment() === 'production') await consumeUsageForUserId(uid, 'scheduledPosts', 1);
       const result = await publishReviewedTikTok(c.accessToken, c.openId, req.file.buffer, caption, review);
-      await job.update({publishId: result.publishId, status: 'PROCESSING_UPLOAD', updatedAt: Date.now()});
+      await supabaseFallbackService.updateTikTokReviewedPost(id, {publishId: result.publishId, status: 'PROCESSING_UPLOAD'});
       res.json({jobId: id, status: 'PROCESSING_UPLOAD', message: 'TikTok received your upload. Processing can take a few minutes.'});
     } catch (e) {
       // Never retry a potentially accepted upload automatically.
-      if (job && created) {
+      if (jobId && created) {
         const message=e instanceof Error?e.message:'Submission could not be confirmed. Check TikTok before retrying.';
-        await job.update({status:'REQUIRES_CHECK',message,updatedAt:Date.now()}).catch(()=>undefined);
-        res.status(202).json({jobId:job.id,status:'REQUIRES_CHECK',message});return;
+        await supabaseFallbackService.updateTikTokReviewedPost(jobId, {status:'REQUIRES_CHECK',message}).catch(()=>undefined);
+        res.status(202).json({jobId,status:'REQUIRES_CHECK',message});return;
       }
       next(e);
     }
@@ -70,13 +64,13 @@ export function mountTikTokReviewRoutes(router: Router) {
     try {
       if (!/^[a-f0-9]{64}$/.test(String(req.params.id))) throw createHttpError(404, 'Post not found');
       const uid = (req as AuthedRequest).authUser!.uid;
-      const ref = firestore.collection('tiktokReviewedPosts').doc(String(req.params.id)), job = (await ref.get()).data();
+      const job = await supabaseFallbackService.getTikTokReviewedPost(uid, String(req.params.id));
       if (!job || job.userId !== uid || job.environment !== tikTokEnvironment()) throw createHttpError(404, 'Post not found');
       if (!job.publishId) {res.json({status: job.status, message: job.message || 'Submission has not been confirmed. Check TikTok before creating another post.'}); return;}
       const c = await connection(uid);
       if (c.openId !== job.openId) throw createHttpError(409, 'Reconnect the original TikTok account to check this post');
       const result = await queryTikTokPostStatus(c.accessToken, job.publishId);
-      await ref.update({status: result.status, updatedAt: Date.now()});
+      await supabaseFallbackService.updateTikTokReviewedPost(String(req.params.id), {status: result.status});
       res.setHeader('Cache-Control', 'no-store'); res.json(result);
     } catch (e) {next(e);}
   });

@@ -1158,6 +1158,76 @@ class SupabaseFallbackService {
     });
   }
 
+  async getTikTokReviewedPost(userId: string, id: string) {
+    if (!this.isConfigured() || !userId || !id) return null;
+    const row = await this.getSingleRow<any>('dott_scheduled_posts', {
+      id: `eq.${id}`,
+      user_id: `eq.${userId}`,
+      source: 'eq.tiktok_review',
+    });
+    if (!row) return null;
+    const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
+    return {
+      id: row.id as string,
+      userId: row.user_id as string,
+      openId: typeof payload.openId === 'string' ? payload.openId : '',
+      environment: typeof payload.environment === 'string' ? payload.environment : 'production',
+      status: row.status as string,
+      publishId: row.remote_id ?? null,
+      message: row.error_message ?? null,
+    };
+  }
+
+  async createTikTokReviewedPost(job: {
+    id: string;
+    userId: string;
+    openId: string;
+    environment: string;
+    status: string;
+    createdAt?: number;
+  }) {
+    if (!this.isConfigured() || !job.userId || !job.id) {
+      throw new Error('supabase_tiktok_review_storage_not_configured');
+    }
+    await this.request('POST', 'dott_scheduled_posts', {
+      params: { on_conflict: 'id' },
+      prefer: 'resolution=ignore-duplicates,return=minimal',
+      body: [{
+        id: job.id,
+        user_id: job.userId,
+        platform: 'tiktok',
+        status: job.status,
+        target_date: null,
+        caption: '',
+        hashtags: '',
+        image_urls: [],
+        video_url: null,
+        video_title: null,
+        scheduled_for: null,
+        created_at: job.createdAt ? new Date(job.createdAt).toISOString() : NOW(),
+        updated_at: NOW(),
+        posted_at: null,
+        remote_id: null,
+        error_message: null,
+        source: 'tiktok_review',
+        payload: { openId: job.openId, environment: job.environment },
+      }],
+    });
+  }
+
+  async updateTikTokReviewedPost(id: string, patch: { status?: string; publishId?: string | null; message?: string | null }) {
+    if (!this.isConfigured() || !id) return;
+    const body: Record<string, unknown> = { updated_at: NOW() };
+    if (patch.status !== undefined) body.status = patch.status;
+    if (patch.publishId !== undefined) body.remote_id = patch.publishId;
+    if (patch.message !== undefined) body.error_message = patch.message;
+    await this.request('PATCH', 'dott_scheduled_posts', {
+      params: { id: `eq.${id}`, source: 'eq.tiktok_review' },
+      prefer: 'return=minimal',
+      body,
+    });
+  }
+
   async deleteUserData(userId: string) {
     const tables = [
       'dott_social_logs',
