@@ -233,6 +233,11 @@ const mergeNumericTree = (base: unknown, patch: unknown): unknown => {
 const sortDescByDate = <T extends { date?: string }>(rows: T[]) =>
   [...rows].sort((a, b) => `${b.date ?? ''}`.localeCompare(`${a.date ?? ''}`));
 
+// TikTok OAuth secrets are encrypted by vaultCrypto before they reach this
+// store. Keep the record under a reserved key so it cannot be confused with
+// the platform account objects returned to the UI.
+const TIKTOK_INTEGRATION_KEY = '__dotti_tiktok_integration_v1';
+
 class SupabaseFallbackService {
   private unavailableWarned = false;
   private circuitOpenUntil = 0;
@@ -1085,7 +1090,7 @@ class SupabaseFallbackService {
     });
   }
 
-  async getSocialAccounts(userId: string) {
+  async getSocialAccounts(userId: string, options: { includePrivate?: boolean } = {}) {
     if (!this.isConfigured() || !userId) return null;
     let row: any = null;
     try {
@@ -1093,7 +1098,7 @@ class SupabaseFallbackService {
     } catch (error) {
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (status !== 404 && this.hasDatabaseFallback()) {
-        return this.getSocialAccountsFromDatabase(userId);
+        return this.getSocialAccountsFromDatabase(userId, options);
       }
       if (status !== 404) throw error;
       console.warn('[supabase-fallback] dott_social_accounts missing; reading social accounts from autopost data', {
@@ -1104,12 +1109,53 @@ class SupabaseFallbackService {
       const autopostRow = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${userId}` });
       const data = autopostRow?.data && typeof autopostRow.data === 'object' ? autopostRow.data : {};
       const socialAccounts = data.socialAccounts && typeof data.socialAccounts === 'object' ? data.socialAccounts : null;
-      return socialAccounts ? { email: data.email ?? null, socialAccounts } : null;
+      if (!socialAccounts) return null;
+      if (options.includePrivate) return { email: data.email ?? null, socialAccounts };
+      const visibleAccounts = { ...(socialAccounts as Record<string, unknown>) };
+      delete visibleAccounts[TIKTOK_INTEGRATION_KEY];
+      return { email: data.email ?? null, socialAccounts: visibleAccounts };
     }
+    const accounts = row.accounts && typeof row.accounts === 'object' ? row.accounts : {};
+    if (options.includePrivate) {
+      return { email: row.email ?? null, socialAccounts: accounts };
+    }
+    const visibleAccounts = { ...(accounts as Record<string, unknown>) };
+    delete visibleAccounts[TIKTOK_INTEGRATION_KEY];
     return {
       email: row.email ?? null,
-      socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
+      socialAccounts: visibleAccounts,
     };
+  }
+
+  async upsertTikTokIntegration(userId: string, record: Record<string, unknown>) {
+    if (!this.isConfigured() || !userId) {
+      throw new Error('supabase_tiktok_storage_not_configured');
+    }
+    await this.upsertSocialAccounts(userId, {
+      socialAccounts: { [TIKTOK_INTEGRATION_KEY]: record },
+    });
+  }
+
+  async getTikTokIntegration(userId: string): Promise<Record<string, unknown> | null> {
+    if (!this.isConfigured() || !userId) return null;
+    const stored = await this.getSocialAccounts(userId, { includePrivate: true });
+    const record = stored?.socialAccounts?.[TIKTOK_INTEGRATION_KEY];
+    return record && typeof record === 'object' && !Array.isArray(record)
+      ? (record as Record<string, unknown>)
+      : null;
+  }
+
+  async deleteTikTokIntegration(userId: string) {
+    if (!this.isConfigured() || !userId) return;
+    const stored = await this.getSocialAccounts(userId);
+    if (!stored) return;
+    const socialAccounts = { ...(stored.socialAccounts ?? {}) };
+    delete socialAccounts[TIKTOK_INTEGRATION_KEY];
+    await this.upsertSocialAccounts(userId, {
+      email: stored.email ?? null,
+      socialAccounts,
+      replace: true,
+    });
   }
 
   async deleteUserData(userId: string) {
@@ -1251,21 +1297,24 @@ class SupabaseFallbackService {
     }
   }
 
-  private async getSocialAccountsFromDatabase(userId: string) {
+  private async getSocialAccountsFromDatabase(userId: string, options: { includePrivate?: boolean } = {}) {
     const rows = await this.databaseQuery<any>(
       'select email, accounts from public.dott_social_accounts where user_id = $1 limit 1',
       [userId],
     );
     const row = rows[0];
     if (row) {
+      const accounts = row.accounts && typeof row.accounts === 'object' ? row.accounts : {};
+      if (!options.includePrivate) delete (accounts as Record<string, unknown>)[TIKTOK_INTEGRATION_KEY];
       return {
         email: row.email ?? null,
-        socialAccounts: row.accounts && typeof row.accounts === 'object' ? row.accounts : {},
+        socialAccounts: accounts,
       };
     }
     const fallback = await this.databaseQuery<any>('select data from public.dott_autopost_jobs where user_id = $1 limit 1', [userId]);
     const data = fallback[0]?.data && typeof fallback[0].data === 'object' ? fallback[0].data : {};
     const socialAccounts = data.socialAccounts && typeof data.socialAccounts === 'object' ? data.socialAccounts : null;
+    if (socialAccounts && !options.includePrivate) delete (socialAccounts as Record<string, unknown>)[TIKTOK_INTEGRATION_KEY];
     return socialAccounts ? { email: data.email ?? null, socialAccounts } : null;
   }
 

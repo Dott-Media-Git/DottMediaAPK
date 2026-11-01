@@ -1,6 +1,7 @@
 import admin from 'firebase-admin';
 import { firestore } from '../db/firestore';
 import { decryptValueRaw, encryptValueRaw, getEncryptionKey } from './vaultCrypto';
+import { supabaseFallbackService } from './supabaseFallbackService';
 
 type EncryptedField = {
   iv: string;
@@ -212,12 +213,59 @@ export async function updateYouTubeIntegrationDefaults(
 
 const docIdForTikTok = (userId: string) => docIdForProvider(userId, 'tiktok');
 
+const readLegacyTikTokIntegration = async (userId: string): Promise<TikTokIntegrationRecord | null> => {
+  try {
+    const snap = await integrationsCollection.doc(docIdForTikTok(userId)).get();
+    return snap.exists ? (snap.data() as TikTokIntegrationRecord) : null;
+  } catch (error) {
+    const code = String((error as { code?: unknown })?.code ?? 'unknown');
+    console.warn('[tiktok] legacy Firebase lookup skipped', { code: code.slice(0, 80) });
+    return null;
+  }
+};
+
+const toDateString = (value: unknown) => {
+  if (typeof value === 'string') return value;
+  if (value && typeof (value as { toDate?: () => Date }).toDate === 'function') {
+    return (value as { toDate: () => Date }).toDate().toISOString();
+  }
+  return null;
+};
+
+const isEncryptedField = (value: unknown): value is EncryptedField => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<EncryptedField>;
+  return typeof candidate.iv === 'string' && typeof candidate.authTag === 'string' && typeof candidate.ciphertext === 'string';
+};
+
+const parseTikTokRecord = (userId: string, value: unknown): TikTokIntegrationRecord | null => {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<TikTokIntegrationRecord>;
+  if (!isEncryptedField(candidate.accessTokenEncrypted)) return null;
+  return {
+    userId,
+    provider: 'tiktok',
+    accessTokenEncrypted: candidate.accessTokenEncrypted,
+    refreshTokenEncrypted: isEncryptedField(candidate.refreshTokenEncrypted) ? candidate.refreshTokenEncrypted : undefined,
+    accessTokenExpiresAt: typeof candidate.accessTokenExpiresAt === 'number' ? candidate.accessTokenExpiresAt : null,
+    refreshTokenExpiresAt: typeof candidate.refreshTokenExpiresAt === 'number' ? candidate.refreshTokenExpiresAt : null,
+    openId: typeof candidate.openId === 'string' ? candidate.openId : null,
+    scope: typeof candidate.scope === 'string' ? candidate.scope : null,
+    refreshTokenRevealPending: candidate.refreshTokenRevealPending === true,
+    updatedAt: candidate.updatedAt as TikTokIntegrationRecord['updatedAt'],
+  };
+};
+
+const loadTikTokRecord = async (userId: string) => {
+  const stored = await supabaseFallbackService.getTikTokIntegration(userId);
+  return parseTikTokRecord(userId, stored) ?? (await readLegacyTikTokIntegration(userId));
+};
+
 export async function upsertTikTokIntegration(userId: string, payload: TikTokIntegrationInput) {
-  const ref = integrationsCollection.doc(docIdForTikTok(userId));
   const update: Record<string, unknown> = {
     userId,
     provider: 'tiktok',
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: new Date().toISOString(),
   };
 
   update.accessTokenEncrypted = toEncrypted(payload.accessToken);
@@ -240,30 +288,31 @@ export async function upsertTikTokIntegration(userId: string, payload: TikTokInt
     update.refreshTokenRevealPending = false;
   }
 
-  await ref.set(update, { merge: true });
-  return { id: ref.id };
+  await supabaseFallbackService.upsertTikTokIntegration(userId, update);
+  return { id: docIdForTikTok(userId), store: 'supabase' as const };
 }
 
 export async function updateTikTokAccessToken(
   userId: string,
   data: { accessToken: string; accessTokenExpiresAt?: number | null },
 ) {
-  const ref = integrationsCollection.doc(docIdForTikTok(userId));
   const update: Record<string, unknown> = {
     accessTokenEncrypted: toEncrypted(data.accessToken),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: new Date().toISOString(),
   };
   if (typeof data.accessTokenExpiresAt === 'number') {
     update.accessTokenExpiresAt = data.accessTokenExpiresAt;
   }
-  await ref.set(update, { merge: true });
+  const existing = await loadTikTokRecord(userId);
+  await supabaseFallbackService.upsertTikTokIntegration(userId, {
+    ...(existing ?? { userId, provider: 'tiktok' }),
+    ...update,
+  });
 }
 
 export async function getTikTokIntegration(userId: string) {
-  const ref = integrationsCollection.doc(docIdForTikTok(userId));
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  const data = snap.data() as TikTokIntegrationRecord;
+  const data = await loadTikTokRecord(userId);
+  if (!data) return null;
   return {
     userId,
     provider: 'tiktok' as const,
@@ -271,15 +320,13 @@ export async function getTikTokIntegration(userId: string) {
     scope: data.scope ?? null,
     connected: Boolean(data.accessTokenEncrypted),
     refreshTokenRevealPending: Boolean(data.refreshTokenRevealPending),
-    updatedAt: data.updatedAt?.toDate?.().toISOString?.() ?? null,
+    updatedAt: toDateString(data.updatedAt),
   };
 }
 
 export async function getTikTokIntegrationSecrets(userId: string) {
-  const ref = integrationsCollection.doc(docIdForTikTok(userId));
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  const data = snap.data() as TikTokIntegrationRecord;
+  const data = await loadTikTokRecord(userId);
+  if (!data) return null;
   if (!data.accessTokenEncrypted) return null;
   return {
     userId,
@@ -293,26 +340,21 @@ export async function getTikTokIntegrationSecrets(userId: string) {
 }
 
 export async function revealTikTokRefreshToken(userId: string) {
-  const ref = integrationsCollection.doc(docIdForTikTok(userId));
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  const data = snap.data() as TikTokIntegrationRecord;
+  const data = await loadTikTokRecord(userId);
+  if (!data) return null;
   if (!data.refreshTokenEncrypted || !data.refreshTokenRevealPending) {
     return { revealed: false };
   }
   const refreshToken = fromEncrypted(data.refreshTokenEncrypted);
-  await ref.set(
-    {
-      refreshTokenRevealPending: false,
-      refreshTokenRevealedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
+  await supabaseFallbackService.upsertTikTokIntegration(userId, {
+    ...data,
+    refreshTokenRevealPending: false,
+    refreshTokenRevealedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
   return { revealed: true, refreshToken };
 }
 
 export async function disconnectTikTok(userId: string) {
-  const ref = integrationsCollection.doc(docIdForTikTok(userId));
-  await ref.delete();
+  await supabaseFallbackService.deleteTikTokIntegration(userId);
 }
