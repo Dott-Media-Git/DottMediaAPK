@@ -6,7 +6,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import admin from 'firebase-admin';
 import { z } from 'zod';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
-import { socialSchedulingService } from '../packages/services/socialSchedulingService';
+import { socialSchedulingService, TIKTOK_SCHEDULE_MESSAGE } from '../packages/services/socialSchedulingService';
 import { consumeUsage, isFirestoreResourceExhausted, resolveBillingScope } from '../services/billing/billingService';
 import { socialPostingService } from '../packages/services/socialPostingService';
 import { socialAnalyticsService } from '../packages/services/socialAnalyticsService';
@@ -1016,6 +1016,9 @@ router.post('/posts/schedule', requireFirebase, async (req, res, next) => {
     if (!authUser || authUser.uid !== payload.userId) {
       return res.status(403).json({ message: 'Cannot schedule for another user' });
     }
+    if (payload.platforms.includes('tiktok')) {
+      return res.status(400).json({ code: 'tiktok_review_required', message: TIKTOK_SCHEDULE_MESSAGE });
+    }
     await consumeUsage(
       resolveBillingScope(authUser.uid, req.header('x-org-id'), authUser.email),
       'scheduledPosts',
@@ -1039,6 +1042,9 @@ router.post('/posts/publish-now', requireFirebase, async (req, res, next) => {
     });
     if (authUser.uid !== payload.userId) {
       return res.status(403).json({ message: 'Cannot publish for another user' });
+    }
+    if (payload.platforms.includes('tiktok')) {
+      return res.status(400).json({ code: 'tiktok_review_required', message: TIKTOK_SCHEDULE_MESSAGE });
     }
 
     // Durably create the queue records before acknowledging the request. This

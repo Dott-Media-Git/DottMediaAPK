@@ -16,6 +16,9 @@ const withFirestoreDeadline = <T>(promise: Promise<T>, label: string, timeoutMs 
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs)),
   ]);
 
+export const TIKTOK_SCHEDULE_MESSAGE =
+  'TikTok posts require creator review before publishing. Open Account Integrations > TikTok > Review & post this video.';
+
 export type SchedulePayload = {
   userId: string;
   platforms: Array<
@@ -48,6 +51,9 @@ export type SchedulePayload = {
 export class SocialSchedulingService {
   async schedulePosts(payload: SchedulePayload) {
     if (!payload.platforms.length) throw new Error('At least one platform is required');
+    if (payload.platforms.includes('tiktok')) {
+      throw new Error(TIKTOK_SCHEDULE_MESSAGE);
+    }
     const closureState = await getBwinAccountClosureState(payload.userId);
     if (closureState?.enabled) {
       const shutdownAt = new Date(closureState.shutdownAt);

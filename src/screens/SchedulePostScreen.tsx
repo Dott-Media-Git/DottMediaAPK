@@ -402,6 +402,10 @@ export const SchedulePostScreen: React.FC = () => {
 
   const validateSchedule = () => {
     if (!state.user) return false;
+    if (hasTikTok) {
+      showNotice(t('TikTok requires creator review before publishing. Open Account Integrations > TikTok > Review & post this video.'));
+      return false;
+    }
     if (needsImages && !images.length) {
       if (imageOnlyPlatforms.length === 0 && hasOptionalVideoPlatforms) {
         showNotice(t('Add a video URL first, or drag and drop a video below.'));
@@ -668,6 +672,14 @@ export const SchedulePostScreen: React.FC = () => {
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.card}>
           <PlatformSelector options={PLATFORM_OPTIONS} selected={selectedPlatforms} onToggle={togglePlatform} translate={t} />
+          {hasTikTok ? (
+            <View style={styles.tiktokScheduleNotice}>
+              <Text style={styles.tiktokScheduleNoticeTitle}>{t('TikTok review required')}</Text>
+              <Text style={styles.tiktokScheduleNoticeText}>
+                {t('TikTok videos cannot be sent by the background scheduler. Open Account Integrations > TikTok > Review & post this video, then confirm the privacy and consent settings there.')}
+              </Text>
+            </View>
+          ) : null}
 
           <Text style={styles.label}>{t('Preferred Schedule')}</Text>
           <Text style={styles.helper}>{t('Choose the exact date and time you want this post to go out.')}</Text>
@@ -1206,6 +1218,23 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: '700',
     textAlign: 'center',
+  },
+  tiktokScheduleNotice: {
+    borderWidth: 1,
+    borderColor: '#E3A008',
+    backgroundColor: 'rgba(227,160,8,0.12)',
+    borderRadius: 14,
+    padding: 13,
+    marginBottom: 14,
+  },
+  tiktokScheduleNoticeTitle: {
+    color: '#FFD166',
+    fontWeight: '900',
+    marginBottom: 4,
+  },
+  tiktokScheduleNoticeText: {
+    color: colors.text,
+    lineHeight: 19,
   },
   label: { color: colors.text, fontWeight: '700', marginTop: 12, marginBottom: 6 },
   row: { flexDirection: 'row', flexWrap: 'wrap' },
