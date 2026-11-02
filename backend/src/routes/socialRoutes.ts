@@ -28,7 +28,11 @@ const THREADS_GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://gr
 const LINKEDIN_API_BASE = process.env.LINKEDIN_API_BASE ?? 'https://api.linkedin.com/v2';
 const HISTORY_LIVE_FETCH_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_LIVE_FETCH_TIMEOUT_MS ?? 6000), 1000);
 const HISTORY_DAILY_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_DAILY_TIMEOUT_MS ?? 1000), 500);
-const HISTORY_STORED_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_STORED_TIMEOUT_MS ?? 1000), 500);
+// Stored history is backed by Supabase in production. A one-second deadline
+// caused normal cold starts/network latency to be returned as an empty history,
+// which made the client replace a valid cached list with zero posts. Keep a
+// bounded timeout, but give the primary store enough time to answer reliably.
+const HISTORY_STORED_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_STORED_TIMEOUT_MS ?? 5000), 1000);
 const HISTORY_SOCIAL_LOG_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_SOCIAL_LOG_TIMEOUT_MS ?? 1500), 500);
 const HISTORY_USER_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.HISTORY_USER_LOOKUP_TIMEOUT_MS ?? 1000), 500);
 const SOCIAL_STATUS_LOOKUP_TIMEOUT_MS = Math.max(Number(process.env.SOCIAL_STATUS_LOOKUP_TIMEOUT_MS ?? 1500), 500);
