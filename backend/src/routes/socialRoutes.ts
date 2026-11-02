@@ -1214,12 +1214,37 @@ router.get('/social/history', requireFirebase, async (req, res, next) => {
       HISTORY_USER_LOOKUP_TIMEOUT_MS,
       null,
     );
-    const history = await withFallbackTimeout(
-      'stored posting history',
-      socialPostingService.getHistory(userId),
-      HISTORY_STORED_TIMEOUT_MS,
-      { posts: [], todayPosts: [], summary: { perPlatform: {}, byStatus: {} }, daily: [] },
+    // A few legacy accounts have a separate historyUserId, while newer
+    // creator-review records (including TikTok) are stored under authUser.uid.
+    // Read every authorized identity and merge them before building the
+    // response; choosing only one identity can silently hide valid posts.
+    const historyUserIds = Array.from(
+      new Set(
+        [requestedUserId, historyUserId, knownProfile?.id, bwinProfile?.id, authUser.uid]
+          .filter(Boolean)
+          .map(value => String(value)),
+      ),
     );
+    const emptyHistory = { posts: [], todayPosts: [], summary: { perPlatform: {}, byStatus: {} }, daily: [] };
+    const historyResults = await Promise.all(
+      historyUserIds.map(candidateUserId =>
+        withFallbackTimeout(
+          'stored posting history',
+          socialPostingService.getHistory(candidateUserId),
+          HISTORY_STORED_TIMEOUT_MS,
+          emptyHistory,
+        ),
+      ),
+    );
+    const storedHistoryPosts = historyResults.flatMap(result => [
+      ...(result.posts ?? []),
+      ...(result.todayPosts ?? []),
+    ]);
+    const history = {
+      ...(historyResults[0] ?? emptyHistory),
+      posts: mergeHistoryPosts(storedHistoryPosts, []),
+      todayPosts: [],
+    };
     const storedProfile = storedSocialAccounts
       ? {
           id: userId,
