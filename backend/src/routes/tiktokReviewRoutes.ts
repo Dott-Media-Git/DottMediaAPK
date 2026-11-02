@@ -84,7 +84,16 @@ export function mountTikTokReviewRoutes(router: Router) {
       const c = await connection(uid);
       if (c.openId !== job.openId) throw createHttpError(409, 'Reconnect the original TikTok account to check this post');
       const result = await queryTikTokPostStatus(c.accessToken, job.publishId);
-      await supabaseFallbackService.updateTikTokReviewedPost(String(req.params.id), {status: result.status});
+      if (result.status === 'PUBLISH_COMPLETE') {
+        const completedAt = new Date();
+        await supabaseFallbackService.updateTikTokReviewedPost(String(req.params.id), {
+          status: 'posted',
+          postedAt: completedAt,
+          targetDate: completedAt.toISOString().slice(0, 10),
+        });
+      } else {
+        await supabaseFallbackService.updateTikTokReviewedPost(String(req.params.id), {status: result.status});
+      }
       res.setHeader('Cache-Control', 'no-store'); res.json(result);
     } catch (e) {next(e);}
   });

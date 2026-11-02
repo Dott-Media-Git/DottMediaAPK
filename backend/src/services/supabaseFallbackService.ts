@@ -1215,12 +1215,20 @@ class SupabaseFallbackService {
     });
   }
 
-  async updateTikTokReviewedPost(id: string, patch: { status?: string; publishId?: string | null; message?: string | null }) {
+  async updateTikTokReviewedPost(id: string, patch: {
+    status?: string;
+    publishId?: string | null;
+    message?: string | null;
+    postedAt?: Date | string | null;
+    targetDate?: string | null;
+  }) {
     if (!this.isConfigured() || !id) return;
     const body: Record<string, unknown> = { updated_at: NOW() };
     if (patch.status !== undefined) body.status = patch.status;
     if (patch.publishId !== undefined) body.remote_id = patch.publishId;
     if (patch.message !== undefined) body.error_message = patch.message;
+    if (patch.postedAt !== undefined) body.posted_at = toIsoString(patch.postedAt);
+    if (patch.targetDate !== undefined) body.target_date = patch.targetDate;
     await this.request('PATCH', 'dott_scheduled_posts', {
       params: { id: `eq.${id}`, source: 'eq.tiktok_review' },
       prefer: 'return=minimal',

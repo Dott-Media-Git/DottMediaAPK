@@ -306,6 +306,27 @@ export class SocialPostingService {
     return 0;
   }
 
+  private normalizeTikTokReviewHistoryPost(post: Record<string, unknown>) {
+    if (String(post.platform ?? '').toLowerCase() !== 'tiktok' || post.source !== 'tiktok_review' || post.status !== 'PUBLISH_COMPLETE') {
+      return post;
+    }
+    const completedAt = post.postedAt ?? post.updatedAt ?? post.createdAt ?? new Date();
+    const seconds = this.toSeconds(completedAt) || Math.floor(Date.now() / 1000);
+    const targetDate = typeof post.targetDate === 'string' && post.targetDate
+      ? post.targetDate
+      : new Date(seconds * 1000).toISOString().slice(0, 10);
+    const normalized = {...post, status: 'posted', postedAt: completedAt, targetDate};
+    // Older reviewed TikTok jobs were stored with TikTok's terminal status,
+    // which kept them out of the shared posting history. Persist the normalized
+    // form when history is read so the correction survives future refreshes.
+    void supabaseFallbackService.updateTikTokReviewedPost(String(post.id ?? ''), {
+      status: 'posted',
+      postedAt: completedAt as any,
+      targetDate,
+    }).catch(error => console.warn('[social-history] TikTok history normalization failed', error));
+    return normalized;
+  }
+
   private isLimitExempt(post: ScheduledPost) {
     return post.source === 'matchday_table';
   }
@@ -700,7 +721,10 @@ export class SocialPostingService {
     let supabaseHistoryAvailable = true;
     try {
       const primaryPosts = await supabaseFallbackService.getPostsByUser(userId, fallbackLimit);
-      primaryPosts.forEach((post: any) => mergedById.set(post.id as string, post as Record<string, unknown>));
+      primaryPosts.forEach((post: any) => {
+        const normalized = this.normalizeTikTokReviewHistoryPost(post as Record<string, unknown>);
+        mergedById.set(post.id as string, normalized);
+      });
     } catch (error) {
       supabaseHistoryAvailable = false;
       console.warn('[social-history] Supabase primary history fetch failed; using Firebase fallback', error);
@@ -721,7 +745,7 @@ export class SocialPostingService {
           .get();
       }
       snap.docs.forEach(doc => {
-        mergedById.set(doc.id, { id: doc.id, ...(doc.data() as Record<string, unknown>) });
+        mergedById.set(doc.id, this.normalizeTikTokReviewHistoryPost({ id: doc.id, ...(doc.data() as Record<string, unknown>) }));
       });
     } catch (error) {
       console.warn('[social-history] Firebase fallback history fetch failed', error);
@@ -783,6 +807,13 @@ export class SocialPostingService {
     } catch (error) {
       console.warn('[social-history] supabase today posts fetch failed', error);
     }
+    // Include reviewed TikTok posts that reached PUBLISH_COMPLETE before the
+    // history status normalization was introduced.
+    posts.forEach(post => {
+      if (post.status === 'posted' && post.platform === 'tiktok' && post.source === 'tiktok_review' && post.targetDate === todayDate) {
+        todayPostsById.set(String(post.id ?? ''), post);
+      }
+    });
     const todayPosts = Array.from(todayPostsById.values()).sort((a, b) => {
       const aScore = this.toSeconds((a as any).postedAt) || this.toSeconds((a as any).createdAt) || this.toSeconds((a as any).scheduledFor);
       const bScore = this.toSeconds((b as any).postedAt) || this.toSeconds((b as any).createdAt) || this.toSeconds((b as any).scheduledFor);
