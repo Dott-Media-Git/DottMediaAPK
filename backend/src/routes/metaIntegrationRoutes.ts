@@ -644,20 +644,40 @@ const exchangeInstagramCodeForToken = async (req: Request, code: string) => {
 
 const exchangeInstagramLongLivedToken = async (req: Request, shortLivedToken: string) => {
   const { appSecret } = getInstagramAppConfig(req);
-  // Instagram Login's long-lived-token exchange is a GET. The authorization
-  // code exchange above is the POST; this second request uses query params.
-  const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/access_token`, {
-    params: {
-      grant_type: 'ig_exchange_token',
-      client_secret: appSecret,
-      access_token: shortLivedToken,
-    },
-  });
+  // Instagram Login's long-lived-token exchange is a GET. Some Meta API
+  // versions reject the unversioned endpoint with the misleading
+  // "Unsupported request - method type: get" response, so try the versioned
+  // endpoint first and retain the unversioned endpoint as a compatibility
+  // fallback. The app secret and token remain server-side in both requests.
+  const endpoints = Array.from(new Set([
+    `${INSTAGRAM_GRAPH_BASE_URL}/${INSTAGRAM_GRAPH_VERSION}/access_token`,
+    `${INSTAGRAM_GRAPH_BASE_URL}/access_token`,
+  ]));
+  let lastError: unknown;
 
-  return {
-    accessToken: (response.data?.access_token as string | undefined) ?? shortLivedToken,
-    grantedScopes: extractScopesFromPayload(response.data as Record<string, unknown> | undefined),
-  };
+  for (const endpoint of endpoints) {
+    try {
+      const response = await axios.get(endpoint, {
+        params: {
+          grant_type: 'ig_exchange_token',
+          client_secret: appSecret,
+          access_token: shortLivedToken,
+        },
+      });
+
+      return {
+        accessToken: (response.data?.access_token as string | undefined) ?? shortLivedToken,
+        grantedScopes: extractScopesFromPayload(response.data as Record<string, unknown> | undefined),
+      };
+    } catch (error) {
+      lastError = error;
+      const message = formatProviderError(error, 'Instagram').toLowerCase();
+      const canTryCompatibilityEndpoint = message.includes('unsupported request') && message.includes('method type: get');
+      if (!canTryCompatibilityEndpoint) throw error;
+    }
+  }
+
+  throw lastError ?? new Error('Instagram long-lived token exchange failed');
 };
 
 const assertRequiredInstagramScopes = (
