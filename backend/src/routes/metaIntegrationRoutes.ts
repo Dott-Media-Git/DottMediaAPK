@@ -995,7 +995,9 @@ router.get('/integrations/instagram/connect', requireFirebase, async (req, res, 
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.redirect(buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl));
+    // The Meta app is configured for Unified Login. Use the Meta callback so
+    // Instagram is resolved from the user's connected professional Page.
+    res.redirect(buildOAuthUrl(req, userId, 'instagram', req.header('x-org-id'), authUser?.email, req.query.returnUrl));
   } catch (error) {
     next(error);
   }
@@ -1005,7 +1007,7 @@ router.post('/integrations/instagram/start', requireFirebaseForm, async (req, re
   try {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
-    res.redirect(303, buildInstagramOAuthUrl(req, authUser.uid, req.header('x-org-id'), authUser.email, req.body?.returnUrl));
+    res.redirect(303, buildOAuthUrl(req, authUser.uid, 'instagram', req.header('x-org-id'), authUser.email, req.body?.returnUrl));
   } catch (error) {
     next(error);
   }
@@ -1016,7 +1018,11 @@ router.get('/integrations/instagram/connect-url', requireFirebase, async (req, r
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    res.json({ url: buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl) });
+    res.json({
+      url: buildOAuthUrl(req, userId, 'instagram', req.header('x-org-id'), authUser?.email, req.query.returnUrl),
+      platform: 'instagram',
+      authMode: 'meta_unified_login',
+    });
   } catch (error) {
     next(error);
   }
