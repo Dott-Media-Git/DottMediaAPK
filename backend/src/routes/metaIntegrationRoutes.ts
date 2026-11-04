@@ -650,13 +650,15 @@ const exchangeInstagramLongLivedToken = async (req: Request, shortLivedToken: st
   // endpoint first and retain the unversioned endpoint as a compatibility
   // fallback. The app secret and token remain server-side in both requests.
   const versions = Array.from(new Set(['v26.0', INSTAGRAM_GRAPH_VERSION]));
-  const endpoints = Array.from(new Map([
-    ...versions.map(version => [
-      `${INSTAGRAM_GRAPH_BASE_URL}/${version}/access_token`,
-      { graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL, graphVersion: version },
-    ] as const)),
-    [`${INSTAGRAM_GRAPH_BASE_URL}/access_token`, { graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL, graphVersion: INSTAGRAM_GRAPH_VERSION }],
-  ]));
+  const endpointEntries: Array<[string, { graphBaseUrl: string; graphVersion: string }]> = versions.map(version => [
+    `${INSTAGRAM_GRAPH_BASE_URL}/${version}/access_token`,
+    { graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL, graphVersion: version },
+  ]);
+  endpointEntries.push([
+    `${INSTAGRAM_GRAPH_BASE_URL}/access_token`,
+    { graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL, graphVersion: INSTAGRAM_GRAPH_VERSION },
+  ]);
+  const endpoints = Array.from(new Map(endpointEntries));
   let lastError: unknown;
 
   for (const [endpoint, endpointConfig] of endpoints) {
