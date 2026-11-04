@@ -19,7 +19,20 @@ const INSTAGRAM_CALLBACK_PATH = '/integrations/instagram/callback';
 const THREADS_CALLBACK_PATH = '/integrations/threads/callback';
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const INSTAGRAM_GRAPH_VERSION = process.env.INSTAGRAM_GRAPH_VERSION ?? GRAPH_VERSION;
-const INSTAGRAM_GRAPH_BASE_URL = process.env.INSTAGRAM_GRAPH_BASE_URL ?? 'https://graph.instagram.com';
+const INSTAGRAM_GRAPH_BASE_URL = (() => {
+  const fallback = 'https://graph.instagram.com';
+  const configured = process.env.INSTAGRAM_GRAPH_BASE_URL?.trim();
+  if (!configured) return fallback;
+  try {
+    const parsed = new URL(configured);
+    // The direct Instagram Login flow must use graph.instagram.com. A
+    // graph.facebook.com value belongs to the separate Facebook Login flow
+    // and makes /access_token reject both GET and POST requests.
+    return parsed.hostname === 'graph.instagram.com' ? parsed.origin : fallback;
+  } catch {
+    return fallback;
+  }
+})();
 const THREADS_GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const THREADS_GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
 
@@ -631,15 +644,14 @@ const exchangeInstagramCodeForToken = async (req: Request, code: string) => {
 
 const exchangeInstagramLongLivedToken = async (req: Request, shortLivedToken: string) => {
   const { appSecret } = getInstagramAppConfig(req);
-  // Instagram Login expects the long-lived-token exchange as a form POST.
-  // A GET here is rejected with IGApiException: Unsupported request - method type: get.
-  const body = new URLSearchParams({
-    grant_type: 'ig_exchange_token',
-    client_secret: appSecret,
-    access_token: shortLivedToken,
-  });
-  const response = await axios.post(`${INSTAGRAM_GRAPH_BASE_URL}/access_token`, body.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  // Instagram Login's long-lived-token exchange is a GET. The authorization
+  // code exchange above is the POST; this second request uses query params.
+  const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/access_token`, {
+    params: {
+      grant_type: 'ig_exchange_token',
+      client_secret: appSecret,
+      access_token: shortLivedToken,
+    },
   });
 
   return {
