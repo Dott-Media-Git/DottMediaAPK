@@ -708,9 +708,12 @@ const fetchInstagramMe = async (accessToken: string, graphBaseUrl = INSTAGRAM_GR
   // Instagram Login tokens are scoped to the account that authorized the app.
   // The user_id returned by the token exchange is not a generally addressable
   // Graph object on graph.instagram.com, so resolve the profile through /me.
+  const fields = graphBaseUrl === 'https://graph.facebook.com'
+    ? 'id,username,account_type,media_count'
+    : 'user_id,username,account_type,media_count';
   const response = await axios.get(`${graphBaseUrl}/${INSTAGRAM_GRAPH_VERSION}/me`, {
     params: {
-      fields: 'user_id,username,account_type,media_count',
+      fields,
       access_token: accessToken,
     },
   });
