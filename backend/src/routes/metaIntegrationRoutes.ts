@@ -649,13 +649,17 @@ const exchangeInstagramLongLivedToken = async (req: Request, shortLivedToken: st
   // "Unsupported request - method type: get" response, so try the versioned
   // endpoint first and retain the unversioned endpoint as a compatibility
   // fallback. The app secret and token remain server-side in both requests.
-  const endpoints = Array.from(new Set([
-    `${INSTAGRAM_GRAPH_BASE_URL}/${INSTAGRAM_GRAPH_VERSION}/access_token`,
-    `${INSTAGRAM_GRAPH_BASE_URL}/access_token`,
+  const endpoints = Array.from(new Map([
+    [`${INSTAGRAM_GRAPH_BASE_URL}/${INSTAGRAM_GRAPH_VERSION}/access_token`, INSTAGRAM_GRAPH_BASE_URL],
+    [`${INSTAGRAM_GRAPH_BASE_URL}/access_token`, INSTAGRAM_GRAPH_BASE_URL],
+    // Meta's Unified Login setup can issue an Instagram token through the
+    // Facebook Graph host. Keep this compatibility path server-side and only
+    // reach it when the direct Instagram host rejects the request.
+    [`https://graph.facebook.com/${INSTAGRAM_GRAPH_VERSION}/access_token`, 'https://graph.facebook.com'],
   ]));
   let lastError: unknown;
 
-  for (const endpoint of endpoints) {
+  for (const [endpoint, graphBaseUrl] of endpoints) {
     try {
       const response = await axios.get(endpoint, {
         params: {
@@ -668,11 +672,15 @@ const exchangeInstagramLongLivedToken = async (req: Request, shortLivedToken: st
       return {
         accessToken: (response.data?.access_token as string | undefined) ?? shortLivedToken,
         grantedScopes: extractScopesFromPayload(response.data as Record<string, unknown> | undefined),
+        graphBaseUrl,
       };
     } catch (error) {
       lastError = error;
       const message = formatProviderError(error, 'Instagram').toLowerCase();
-      const canTryCompatibilityEndpoint = message.includes('unsupported request') && message.includes('method type: get');
+      const canTryCompatibilityEndpoint =
+        (message.includes('unsupported request') && message.includes('method type: get')) ||
+        message.includes('invalid oauth access token') ||
+        message.includes('cannot parse access token');
       if (!canTryCompatibilityEndpoint) throw error;
     }
   }
@@ -696,11 +704,11 @@ const assertRequiredInstagramScopes = (
   }
 };
 
-const fetchInstagramMe = async (accessToken: string) => {
+const fetchInstagramMe = async (accessToken: string, graphBaseUrl = INSTAGRAM_GRAPH_BASE_URL) => {
   // Instagram Login tokens are scoped to the account that authorized the app.
   // The user_id returned by the token exchange is not a generally addressable
   // Graph object on graph.instagram.com, so resolve the profile through /me.
-  const response = await axios.get(`${INSTAGRAM_GRAPH_BASE_URL}/${INSTAGRAM_GRAPH_VERSION}/me`, {
+  const response = await axios.get(`${graphBaseUrl}/${INSTAGRAM_GRAPH_VERSION}/me`, {
     params: {
       fields: 'user_id,username,account_type,media_count',
       access_token: accessToken,
@@ -1257,7 +1265,7 @@ router.get('/integrations/instagram/callback', async (req, res) => {
 
     const accessToken = longLivedToken.accessToken;
     stage = 'loading the Instagram profile';
-    const profile = await fetchInstagramMe(accessToken);
+    const profile = await fetchInstagramMe(accessToken, longLivedToken.graphBaseUrl);
     const accountId = profile.id ?? profile.user_id ?? shortLivedToken.userId;
     if (!accountId) {
       throw new Error('Unable to resolve Instagram professional account');
@@ -1269,7 +1277,7 @@ router.get('/integrations/instagram/callback', async (req, res) => {
 
     currentAccounts.instagram = {
       provider: 'instagram_login',
-      graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL,
+      graphBaseUrl: longLivedToken.graphBaseUrl ?? INSTAGRAM_GRAPH_BASE_URL,
       accessToken,
       accountId: String(accountId),
       userId: profile.user_id ?? shortLivedToken.userId,
