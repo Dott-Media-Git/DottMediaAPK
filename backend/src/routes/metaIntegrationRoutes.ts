@@ -650,37 +650,40 @@ const exchangeInstagramLongLivedToken = async (req: Request, shortLivedToken: st
   // endpoint first and retain the unversioned endpoint as a compatibility
   // fallback. The app secret and token remain server-side in both requests.
   const versions = Array.from(new Set(['v26.0', INSTAGRAM_GRAPH_VERSION]));
-  const endpointEntries: Array<[string, { graphBaseUrl: string; graphVersion: string }]> = versions.map(version => [
-    `${INSTAGRAM_GRAPH_BASE_URL}/${version}/access_token`,
-    { graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL, graphVersion: version },
-  ]);
-  endpointEntries.push([
-    `${INSTAGRAM_GRAPH_BASE_URL}/access_token`,
-    { graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL, graphVersion: INSTAGRAM_GRAPH_VERSION },
-  ]);
-  const endpoints = Array.from(new Map(endpointEntries));
+  const endpoints = [
+    ...versions.flatMap(version => [
+      { method: 'get' as const, endpoint: `${INSTAGRAM_GRAPH_BASE_URL}/${version}/access_token`, graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL, graphVersion: version },
+      { method: 'post' as const, endpoint: `${INSTAGRAM_GRAPH_BASE_URL}/${version}/access_token`, graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL, graphVersion: version },
+    ]),
+    { method: 'get' as const, endpoint: `${INSTAGRAM_GRAPH_BASE_URL}/access_token`, graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL, graphVersion: INSTAGRAM_GRAPH_VERSION },
+    { method: 'post' as const, endpoint: `${INSTAGRAM_GRAPH_BASE_URL}/access_token`, graphBaseUrl: INSTAGRAM_GRAPH_BASE_URL, graphVersion: INSTAGRAM_GRAPH_VERSION },
+  ];
   let lastError: unknown;
 
-  for (const [endpoint, endpointConfig] of endpoints) {
+  for (const endpointConfig of endpoints) {
     try {
-      const response = await axios.get(endpoint, {
-        params: {
-          grant_type: 'ig_exchange_token',
-          client_secret: appSecret,
-          access_token: shortLivedToken,
-        },
-      });
+      const params = {
+        grant_type: 'ig_exchange_token',
+        client_secret: appSecret,
+        access_token: shortLivedToken,
+      };
+      const response = endpointConfig.method === 'post'
+        ? await axios.post(endpointConfig.endpoint, new URLSearchParams(params).toString(), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          })
+        : await axios.get(endpointConfig.endpoint, { params });
 
       return {
         accessToken: (response.data?.access_token as string | undefined) ?? shortLivedToken,
         grantedScopes: extractScopesFromPayload(response.data as Record<string, unknown> | undefined),
-        ...endpointConfig,
+        graphBaseUrl: endpointConfig.graphBaseUrl,
+        graphVersion: endpointConfig.graphVersion,
       };
     } catch (error) {
       lastError = error;
       const message = formatProviderError(error, 'Instagram').toLowerCase();
       const canTryCompatibilityEndpoint =
-        (message.includes('unsupported request') && message.includes('method type: get')) ||
+        (message.includes('unsupported request') && (message.includes('method type: get') || message.includes('method type: post'))) ||
         message.includes('invalid oauth access token') ||
         message.includes('cannot parse access token');
       if (!canTryCompatibilityEndpoint) throw error;
