@@ -99,6 +99,7 @@ export interface SocialAccounts {
     username?: string;
     provider?: 'facebook_login' | 'instagram_login' | string;
     graphBaseUrl?: string;
+    graphVersion?: string;
     userId?: string;
     accountType?: string;
     mediaCount?: number;

@@ -76,12 +76,16 @@ function normalizeGraphBaseUrl(value?: string) {
   return (value || '').replace(/\/+$/, '');
 }
 
+function getInstagramGraphVersion(credentials: NonNullable<SocialAccounts['instagram']>) {
+  return credentials.graphVersion || GRAPH_VERSION;
+}
+
 function getInstagramGraphBaseUrl(credentials: NonNullable<SocialAccounts['instagram']>) {
   const graphOrigin =
     credentials.provider === 'instagram_login'
       ? normalizeGraphBaseUrl(credentials.graphBaseUrl) || INSTAGRAM_GRAPH_BASE_URL
       : FACEBOOK_GRAPH_BASE_URL;
-  return `${normalizeGraphBaseUrl(graphOrigin)}/${GRAPH_VERSION}/${credentials.accountId}`;
+  return `${normalizeGraphBaseUrl(graphOrigin)}/${getInstagramGraphVersion(credentials)}/${credentials.accountId}`;
 }
 
 function getInstagramMediaStatusUrl(credentials: NonNullable<SocialAccounts['instagram']>, creationId: string) {
@@ -89,7 +93,7 @@ function getInstagramMediaStatusUrl(credentials: NonNullable<SocialAccounts['ins
     credentials.provider === 'instagram_login'
       ? normalizeGraphBaseUrl(credentials.graphBaseUrl) || INSTAGRAM_GRAPH_BASE_URL
       : FACEBOOK_GRAPH_BASE_URL;
-  return `${normalizeGraphBaseUrl(graphOrigin)}/${GRAPH_VERSION}/${creationId}`;
+  return `${normalizeGraphBaseUrl(graphOrigin)}/${getInstagramGraphVersion(credentials)}/${creationId}`;
 }
 
 export async function publishToInstagram(input: PublishInput): Promise<{ remoteId?: string }> {
