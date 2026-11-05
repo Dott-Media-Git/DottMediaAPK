@@ -217,19 +217,23 @@ const getThreadsAppConfig = (req: Request) => {
 
 const getInstagramAppConfig = (req: Request) => {
   const renderEnv = resolveRenderEnv();
-  const appId =
-    process.env.INSTAGRAM_APP_ID ??
-    process.env.INSTAGRAM_CLIENT_ID ??
-    renderEnv.INSTAGRAM_APP_ID ??
-    renderEnv.INSTAGRAM_CLIENT_ID ??
-    '';
-  const appSecret =
-    process.env.INSTAGRAM_APP_SECRET ??
-    process.env.INSTAGRAM_CLIENT_SECRET ??
-    renderEnv.INSTAGRAM_APP_SECRET ??
-    renderEnv.INSTAGRAM_CLIENT_SECRET ??
-    '';
-  const redirectUri = process.env.INSTAGRAM_REDIRECT_URI ?? renderEnv.INSTAGRAM_REDIRECT_URI ?? `${getBaseUrl(req)}${INSTAGRAM_CALLBACK_PATH}`;
+  const appId = firstConfigured(
+    process.env.INSTAGRAM_APP_ID,
+    process.env.INSTAGRAM_CLIENT_ID,
+    renderEnv.INSTAGRAM_APP_ID,
+    renderEnv.INSTAGRAM_CLIENT_ID,
+  );
+  const appSecret = firstConfigured(
+    process.env.INSTAGRAM_APP_SECRET,
+    process.env.INSTAGRAM_CLIENT_SECRET,
+    renderEnv.INSTAGRAM_APP_SECRET,
+    renderEnv.INSTAGRAM_CLIENT_SECRET,
+  );
+  const redirectUri = firstConfigured(
+    process.env.INSTAGRAM_REDIRECT_URI,
+    renderEnv.INSTAGRAM_REDIRECT_URI,
+    `${getBaseUrl(req)}${INSTAGRAM_CALLBACK_PATH}`,
+  );
 
   if (!appId || !appSecret) {
     throw createHttpError(400, 'Direct Instagram Login is not configured. Add INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET to the backend environment.');
@@ -467,7 +471,15 @@ const buildInstagramOAuthUrl = (req: Request, userId: string, orgId?: string | n
     email: email || undefined,
     returnUrl: sanitizeOAuthReturnUrl(returnUrl),
   });
-  const url = new URL(process.env.INSTAGRAM_AUTHORIZE_URL ?? 'https://www.instagram.com/oauth/authorize');
+  let url: URL;
+  try {
+    url = new URL(firstConfigured(process.env.INSTAGRAM_AUTHORIZE_URL, 'https://www.instagram.com/oauth/authorize'));
+  } catch {
+    url = new URL('https://www.instagram.com/oauth/authorize');
+  }
+  if (!['instagram.com', 'www.instagram.com'].includes(url.hostname)) {
+    url = new URL('https://www.instagram.com/oauth/authorize');
+  }
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
@@ -1022,9 +1034,9 @@ router.get('/integrations/instagram/connect', requireFirebase, async (req, res, 
     const authUser = (req as AuthedRequest).authUser;
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
-    // The Meta app is configured for Unified Login. Use the Meta callback so
-    // Instagram is resolved from the user's connected professional Page.
-    res.redirect(buildOAuthUrl(req, userId, 'instagram', req.header('x-org-id'), authUser?.email, req.query.returnUrl));
+    // Use Instagram Login directly. The account must be an Instagram tester
+    // while the app is in development mode; no Facebook Page is required.
+    res.redirect(buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl));
   } catch (error) {
     next(error);
   }
@@ -1034,7 +1046,7 @@ router.post('/integrations/instagram/start', requireFirebaseForm, async (req, re
   try {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser?.uid) throw createHttpError(401, 'Unauthorized');
-    res.redirect(303, buildOAuthUrl(req, authUser.uid, 'instagram', req.header('x-org-id'), authUser.email, req.body?.returnUrl));
+    res.redirect(303, buildInstagramOAuthUrl(req, authUser.uid, req.header('x-org-id'), authUser.email, req.body?.returnUrl));
   } catch (error) {
     next(error);
   }
@@ -1046,9 +1058,9 @@ router.get('/integrations/instagram/connect-url', requireFirebase, async (req, r
     const userId = authUser?.uid;
     if (!userId) throw createHttpError(401, 'Unauthorized');
     res.json({
-      url: buildOAuthUrl(req, userId, 'instagram', req.header('x-org-id'), authUser?.email, req.query.returnUrl),
+      url: buildInstagramOAuthUrl(req, userId, req.header('x-org-id'), authUser?.email, req.query.returnUrl),
       platform: 'instagram',
-      authMode: 'meta_unified_login',
+      authMode: 'instagram_login',
     });
   } catch (error) {
     next(error);
