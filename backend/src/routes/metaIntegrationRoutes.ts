@@ -76,6 +76,15 @@ let renderEnvCache: RenderEnv | null | undefined;
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '');
 
+const firstConfigured = (...values: unknown[]) => {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const normalized = value.trim();
+    if (normalized) return normalized;
+  }
+  return '';
+};
+
 const formatProviderError = (error: unknown, provider: string) => {
   if (axios.isAxiosError(error)) {
     const payload = error.response?.data as
@@ -173,27 +182,31 @@ const getWhatsAppEmbeddedSignupConfig = (req: Request) => {
 
 const getThreadsAppConfig = (req: Request) => {
   const renderEnv = resolveRenderEnv();
-  const appId =
-    process.env.THREADS_APP_ID ??
-    process.env.META_APP_ID ??
-    process.env.FACEBOOK_APP_ID ??
-    process.env.INSTAGRAM_APP_ID ??
-    renderEnv.THREADS_APP_ID ??
-    renderEnv.META_APP_ID ??
-    renderEnv.FACEBOOK_APP_ID ??
-    renderEnv.INSTAGRAM_APP_ID ??
-    '';
-  const appSecret =
-    process.env.THREADS_APP_SECRET ??
-    process.env.META_APP_SECRET ??
-    process.env.FACEBOOK_APP_SECRET ??
-    process.env.INSTAGRAM_APP_SECRET ??
-    renderEnv.THREADS_APP_SECRET ??
-    renderEnv.META_APP_SECRET ??
-    renderEnv.FACEBOOK_APP_SECRET ??
-    renderEnv.INSTAGRAM_APP_SECRET ??
-    '';
-  const redirectUri = process.env.THREADS_REDIRECT_URI ?? renderEnv.THREADS_REDIRECT_URI ?? `${getBaseUrl(req)}${THREADS_CALLBACK_PATH}`;
+  const appId = firstConfigured(
+    process.env.THREADS_APP_ID,
+    process.env.META_APP_ID,
+    process.env.FACEBOOK_APP_ID,
+    process.env.INSTAGRAM_APP_ID,
+    renderEnv.THREADS_APP_ID,
+    renderEnv.META_APP_ID,
+    renderEnv.FACEBOOK_APP_ID,
+    renderEnv.INSTAGRAM_APP_ID,
+  );
+  const appSecret = firstConfigured(
+    process.env.THREADS_APP_SECRET,
+    process.env.META_APP_SECRET,
+    process.env.FACEBOOK_APP_SECRET,
+    process.env.INSTAGRAM_APP_SECRET,
+    renderEnv.THREADS_APP_SECRET,
+    renderEnv.META_APP_SECRET,
+    renderEnv.FACEBOOK_APP_SECRET,
+    renderEnv.INSTAGRAM_APP_SECRET,
+  );
+  const redirectUri = firstConfigured(
+    process.env.THREADS_REDIRECT_URI,
+    renderEnv.THREADS_REDIRECT_URI,
+    `${getBaseUrl(req)}${THREADS_CALLBACK_PATH}`,
+  );
 
   if (!appId || !appSecret) {
     throw createHttpError(400, 'Missing THREADS_APP_ID or THREADS_APP_SECRET');
@@ -370,7 +383,21 @@ const buildThreadsOAuthUrl = (req: Request, userId: string, orgId?: string | nul
     email: email || undefined,
     returnUrl: sanitizeOAuthReturnUrl(returnUrl),
   });
-  const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://www.threads.net/oauth/authorize');
+  const configuredAuthorizeUrl = firstConfigured(
+    process.env.THREADS_AUTHORIZE_URL,
+    'https://www.threads.net/oauth/authorize',
+  );
+  let url: URL;
+  try {
+    url = new URL(configuredAuthorizeUrl);
+  } catch {
+    // Do not let a stale/blank Render variable turn the connect button into a
+    // generic 500. The official Threads endpoint is a safe default.
+    url = new URL('https://www.threads.net/oauth/authorize');
+  }
+  if (!['threads.net', 'www.threads.net'].includes(url.hostname)) {
+    url = new URL('https://www.threads.net/oauth/authorize');
+  }
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
