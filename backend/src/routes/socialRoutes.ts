@@ -446,6 +446,15 @@ const buildTodayHistory = (posts: any[]) => {
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/+$/, '');
 
+const firstConfigured = (...values: unknown[]) => {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const normalized = value.trim();
+    if (normalized) return normalized;
+  }
+  return '';
+};
+
 const resolveRenderEnv = (): RenderEnv => {
   if (renderEnvCache !== undefined) {
     return renderEnvCache ?? {};
@@ -483,33 +492,34 @@ const getBaseUrl = (req: Request) => {
 
 const getThreadsAppConfig = (req: Request) => {
   const renderEnv = resolveRenderEnv();
-  const appId =
-    process.env.THREADS_APP_ID ??
-    process.env.INSTAGRAM_APP_ID ??
-    process.env.META_APP_ID ??
-    process.env.FACEBOOK_APP_ID ??
-    renderEnv.THREADS_APP_ID ??
-    renderEnv.INSTAGRAM_APP_ID ??
-    renderEnv.META_APP_ID ??
-    renderEnv.FACEBOOK_APP_ID ??
-    '';
-  const appSecret =
-    process.env.THREADS_APP_SECRET ??
-    process.env.INSTAGRAM_APP_SECRET ??
-    process.env.META_APP_SECRET ??
-    process.env.FACEBOOK_APP_SECRET ??
-    renderEnv.THREADS_APP_SECRET ??
-    renderEnv.INSTAGRAM_APP_SECRET ??
-    renderEnv.META_APP_SECRET ??
-    renderEnv.FACEBOOK_APP_SECRET ??
-    '';
-  const redirectUri =
-    process.env.THREADS_REDIRECT_URI ??
-    renderEnv.THREADS_REDIRECT_URI ??
-    `${getBaseUrl(req)}/api/social/threads/callback`;
+  const appId = firstConfigured(
+    process.env.THREADS_APP_ID,
+    process.env.INSTAGRAM_APP_ID,
+    process.env.META_APP_ID,
+    process.env.FACEBOOK_APP_ID,
+    renderEnv.THREADS_APP_ID,
+    renderEnv.INSTAGRAM_APP_ID,
+    renderEnv.META_APP_ID,
+    renderEnv.FACEBOOK_APP_ID,
+  );
+  const appSecret = firstConfigured(
+    process.env.THREADS_APP_SECRET,
+    process.env.INSTAGRAM_APP_SECRET,
+    process.env.META_APP_SECRET,
+    process.env.FACEBOOK_APP_SECRET,
+    renderEnv.THREADS_APP_SECRET,
+    renderEnv.INSTAGRAM_APP_SECRET,
+    renderEnv.META_APP_SECRET,
+    renderEnv.FACEBOOK_APP_SECRET,
+  );
+  const redirectUri = firstConfigured(
+    process.env.THREADS_REDIRECT_URI,
+    renderEnv.THREADS_REDIRECT_URI,
+    `${getBaseUrl(req)}/api/social/threads/callback`,
+  );
 
   if (!appId || !appSecret) {
-    throw new Error('Missing Threads app credentials');
+    throw createHttpError(400, 'Missing Threads app credentials');
   }
 
   return { appId, appSecret, redirectUri };
@@ -530,7 +540,15 @@ const getThreadsScopes = () => {
 
 const buildThreadsConnectUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
   const { appId, redirectUri } = getThreadsAppConfig(req);
-  const url = new URL(process.env.THREADS_AUTHORIZE_URL ?? 'https://threads.net/oauth/authorize');
+  let url: URL;
+  try {
+    url = new URL(firstConfigured(process.env.THREADS_AUTHORIZE_URL, 'https://www.threads.net/oauth/authorize'));
+  } catch {
+    url = new URL('https://www.threads.net/oauth/authorize');
+  }
+  if (!['threads.net', 'www.threads.net'].includes(url.hostname)) {
+    url = new URL('https://www.threads.net/oauth/authorize');
+  }
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
