@@ -418,13 +418,21 @@ const platformPublishers: Record<
 
 export class AutoPostService {
   private async galleryCredentials(userId: string): Promise<SocialAccounts> {
-    let accounts: SocialAccounts | undefined;
+    let accounts: SocialAccounts = {};
     try {
-      accounts = (await supabaseFallbackService.getSocialAccounts(userId))?.socialAccounts as SocialAccounts | undefined;
-    } catch { /* Use the existing Firebase account store if the primary store is unavailable. */ }
-    if (!accounts) {
+      const fallbackAccounts = (await supabaseFallbackService.getSocialAccounts(userId))?.socialAccounts as SocialAccounts | undefined;
+      if (fallbackAccounts) accounts = { ...fallbackAccounts };
+    } catch { /* Continue with the Firebase account store if the fallback is unavailable. */ }
+    try {
       const user = await firestore.collection('users').doc(userId).get();
-      accounts = user.data()?.socialAccounts as SocialAccounts | undefined;
+      const firestoreAccounts = user.data()?.socialAccounts as SocialAccounts | undefined;
+      // OAuth callbacks write both stores. Merge them here so a transient
+      // fallback-store lag cannot hide a freshly connected account from the
+      // gallery Auto-post destination list.
+      if (firestoreAccounts) accounts = { ...accounts, ...firestoreAccounts };
+    } catch {
+      // A Firestore quota or network issue should not hide accounts already
+      // available in the fallback store.
     }
     const connected = { ...accounts };
     // Optional video integrations must not prevent image-only gallery jobs
