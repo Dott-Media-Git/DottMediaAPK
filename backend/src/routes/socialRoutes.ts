@@ -515,7 +515,10 @@ const getThreadsAppConfig = (req: Request) => {
   const redirectUri = firstConfigured(
     process.env.THREADS_REDIRECT_URI,
     renderEnv.THREADS_REDIRECT_URI,
-    `${getBaseUrl(req)}/api/social/threads/callback`,
+    // Keep older Android builds on the same callback registered for the
+    // current Threads OAuth flow. Using the legacy /api path causes Meta to
+    // reject the token exchange with a generic 400 redirect_uri error.
+    `${getBaseUrl(req)}/integrations/threads/callback`,
   );
 
   if (!appId || !appSecret) {
