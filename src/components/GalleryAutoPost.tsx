@@ -39,6 +39,7 @@ export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAss
       setPlatforms(response.platforms);
       setLoaded(true);
       setError('');
+      return response;
     } catch (cause) {
       if (mounted.current && !mutating.current && requestVersion === version.current) setError(errorText(cause));
     }
@@ -57,6 +58,13 @@ export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAss
     setError('');
     setNotice('');
     setVisible(true);
+    // Re-read connections when the dialog opens. A user may have connected
+    // Instagram in another screen while this gallery stayed mounted, so the
+    // 30-second background refresh should not be the first chance to show it.
+    void refresh().then(response => {
+      if (!response || !mounted.current) return;
+      setChosen(response.job?.platforms.filter(platform => response.platforms.includes(platform)) ?? response.platforms);
+    });
   };
   const start = async () => {
     if (mutating.current || !validInterval || !chosen.length || !photosSupported) return;
