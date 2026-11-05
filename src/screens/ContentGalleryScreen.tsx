@@ -254,7 +254,7 @@ const styles = StyleSheet.create({
   hero: { padding: 22, borderRadius: 22, backgroundColor: colors.backgroundAlt, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
   heroIcon: { width: 56, height: 56, borderRadius: 18, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
   heroCopy: { flex: 1, minWidth: 220 },
-  uploadButton: { minWidth: 238, paddingHorizontal: 18 },
+  uploadButton: { minWidth: 238, paddingHorizontal: 18, borderRadius: 999 },
   title: { color: colors.text, fontSize: 27, fontWeight: '900' },
   subtitle: { color: colors.subtext, fontSize: 15, marginTop: 5, lineHeight: 22 },
   message: { backgroundColor: 'rgba(140,88,255,0.14)', borderColor: colors.accent, borderWidth: 1, borderRadius: 12, padding: 12 },
