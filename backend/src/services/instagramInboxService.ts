@@ -7,6 +7,20 @@ import { resolveKnownLiveSocialProfile } from './liveSocialMetricsService';
 
 type StoredMessage = admin.firestore.DocumentData;
 
+const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>(resolve => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
 const toIso = (value: unknown): string | null => {
   if (!value) return null;
   if (value instanceof Date) return value.toISOString();
@@ -43,7 +57,8 @@ export const serializeInstagramMessage = (id: string, data: StoredMessage) => ({
 
 export async function getInstagramAutoResponseEnabled(userId: string) {
   try {
-    const snap = await firestore.collection('assistant_settings').doc(userId).get();
+    const snap = await withTimeout(firestore.collection('assistant_settings').doc(userId).get(), 5000, null);
+    if (!snap) return true;
     const data = snap.data() ?? {};
     if (typeof data.instagramAutoReplyEnabled === 'boolean') return data.instagramAutoReplyEnabled;
     if (typeof data.autoReplyEnabled === 'boolean') return data.autoReplyEnabled;
@@ -74,14 +89,15 @@ export async function getStoredInstagramAccount(userId: string, email?: string |
     account = { ...(knownInstagram as Record<string, unknown>) };
   }
   try {
-    const snap = await firestore.collection('users').doc(userId).get();
+    const snap = await withTimeout(firestore.collection('users').doc(userId).get(), 5000, null);
+    if (!snap) throw new Error('Firestore account lookup timed out');
     const firestoreAccount = snap.data()?.socialAccounts?.instagram;
     if (firestoreAccount && typeof firestoreAccount === 'object') account = { ...(firestoreAccount as Record<string, unknown>) };
   } catch (error) {
     console.warn('[instagram-inbox] Firestore account lookup failed; checking fallback store', (error as Error).message);
   }
   try {
-    const fallback = await supabaseFallbackService.getSocialAccounts(userId, { includePrivate: true });
+    const fallback = await withTimeout(supabaseFallbackService.getSocialAccounts(userId, { includePrivate: true }), 5000, null);
     const fallbackAccount = fallback?.socialAccounts?.instagram;
     if (fallbackAccount && typeof fallbackAccount === 'object') {
       account = { ...account, ...(fallbackAccount as Record<string, unknown>) };
@@ -94,7 +110,7 @@ export async function getStoredInstagramAccount(userId: string, email?: string |
   // Resolve that record without returning any credential to the client.
   if (!account.accessToken && email) {
     try {
-      const fallbackByIdentity = await supabaseFallbackService.getSocialAccountsByIdentifiers([userId], [email]);
+      const fallbackByIdentity = await withTimeout(supabaseFallbackService.getSocialAccountsByIdentifiers([userId], [email]), 5000, null);
       const fallbackInstagram = fallbackByIdentity?.socialAccounts?.instagram;
       if (fallbackInstagram && typeof fallbackInstagram === 'object') {
         account = { ...account, ...(fallbackInstagram as Record<string, unknown>) };
@@ -103,7 +119,8 @@ export async function getStoredInstagramAccount(userId: string, email?: string |
       console.warn('[instagram-inbox] identity account lookup failed', (error as Error).message);
     }
     try {
-      const emailSnapshot = await firestore.collection('users').where('email', '==', email).limit(1).get();
+      const emailSnapshot = await withTimeout(firestore.collection('users').where('email', '==', email).limit(1).get(), 5000, null);
+      if (!emailSnapshot) throw new Error('Firestore email account lookup timed out');
       const emailAccount = emailSnapshot.docs[0]?.data()?.socialAccounts?.instagram;
       if (emailAccount && typeof emailAccount === 'object') {
         account = { ...account, ...(emailAccount as Record<string, unknown>) };

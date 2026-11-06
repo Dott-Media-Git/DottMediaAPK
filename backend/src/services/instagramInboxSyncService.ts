@@ -44,6 +44,20 @@ const safeError = (error: unknown) => {
     .slice(0, 300);
 };
 
+const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>(resolve => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
 const storageIdFor = (accountId: string, messageId: string) =>
   `instagram_dm_${accountId}_${messageId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
 
@@ -64,7 +78,7 @@ const fetchConversations = async (account: InstagramSyncAccount): Promise<Instag
         limit: 50,
         access_token: account.accessToken,
       },
-      timeout: 30000,
+      timeout: 10000,
     });
     return Array.isArray(response.data?.data) ? response.data.data : [];
   } catch (error) {
@@ -99,7 +113,7 @@ export async function syncInstagramInboxForUser(userId: string, email?: string |
   }
 
   const conversations = await fetchConversations(account);
-  const existingRows = await supabaseFallbackService.listInboundMessages('instagram', 500).catch(() => []);
+  const existingRows = await withTimeout(supabaseFallbackService.listInboundMessages('instagram', 500).catch(() => []), 5000, []);
   const existingIds = new Set(existingRows.map(row => String(row.id ?? '')));
   const autoResponseEnabled = await getInstagramAutoResponseEnabled(userId);
   let synced = 0;

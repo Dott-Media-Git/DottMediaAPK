@@ -14,6 +14,20 @@ import { syncInstagramInboxForUser } from '../services/instagramInboxSyncService
 
 const router = Router();
 
+const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>(resolve => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
 const requireUserId = (req: AuthedRequest) => {
   const userId = req.authUser?.uid?.trim();
   if (!userId) throw new Error('Unauthorized');
@@ -41,14 +55,15 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
     const userId = requireUserId(req as AuthedRequest);
     let firestoreMessages: Array<{ id: string; data: Record<string, any> }> = [];
     try {
-      const snapshot = await firestore.collection('messages').where('ownerId', '==', userId).limit(200).get();
+      const snapshot = await withTimeout(firestore.collection('messages').where('ownerId', '==', userId).limit(200).get(), 5000, null);
+      if (!snapshot) throw new Error('Firestore inbox lookup timed out');
       firestoreMessages = snapshot.docs.map(doc => ({ id: doc.id, data: doc.data() }));
     } catch (error) {
       console.warn('[instagram-inbox] Firestore message lookup failed; using Supabase inbox', (error as Error).message);
     }
     let supabaseMessages: Array<{ id: string; data: Record<string, unknown> }> = [];
     try {
-      const rows = await supabaseFallbackService.listInboundMessages('instagram', 200);
+      const rows = await withTimeout(supabaseFallbackService.listInboundMessages('instagram', 200), 5000, []);
       supabaseMessages = rows
         .filter(row => {
           const payload = row.payload && typeof row.payload === 'object' ? row.payload as Record<string, unknown> : {};
