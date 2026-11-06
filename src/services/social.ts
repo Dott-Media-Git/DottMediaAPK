@@ -332,6 +332,36 @@ export const fetchSocialStatus = async (): Promise<{ status: SocialConnectionSta
   return authedFetch('/api/social/status');
 };
 
+export type InstagramInboxMessage = {
+  id: string;
+  platform: 'instagram' | string;
+  type: 'dm' | string;
+  senderId: string;
+  senderUsername: string | null;
+  text: string;
+  replyStatus: 'pending' | 'sent' | 'failed' | 'disabled' | 'manual_sent' | string;
+  replyText: string | null;
+  replyError: string | null;
+  createdAt: string | null;
+  replyAt: string | null;
+  updatedAt: string | null;
+};
+
+export type InstagramInboxResponse = {
+  messages: InstagramInboxMessage[];
+  autoResponseEnabled: boolean;
+  connection: { connected: boolean; username: string | null };
+};
+
+export const fetchInstagramInbox = async (): Promise<InstagramInboxResponse> =>
+  authedFetch('/api/instagram/messages', { cache: 'no-store' });
+
+export const updateInstagramAutoResponse = async (enabled: boolean): Promise<{ enabled: boolean }> =>
+  authedFetch('/api/instagram/auto-response', { method: 'PUT', body: JSON.stringify({ enabled }) });
+
+export const replyToInstagramInboxMessage = async (messageId: string, text: string): Promise<{ message: InstagramInboxMessage }> =>
+  authedFetch('/api/instagram/messages/reply', { method: 'POST', body: JSON.stringify({ messageId, text }) });
+
 export const fetchMetaConnectUrl = async (platform?: 'facebook' | 'instagram' | 'ads', returnUrl?: string): Promise<{ url?: string }> => {
   const params = new URLSearchParams();
   if (platform) params.set('platform', platform);

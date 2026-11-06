@@ -10,6 +10,7 @@ import {
   likeInstagramComment,
   likeFacebookComment,
 } from '../services/autoReplyService.js';
+import { getInstagramAutoResponseEnabled } from '../services/instagramInboxService';
 import { incrementEngagementAnalytics, incrementInboundAnalytics } from '../services/analyticsService.js';
 import {
   getBwinAccountClosureMessage,
@@ -413,7 +414,7 @@ const reserveInbound = async (event: {
 
 const updateReplyStatus = async (
   ref: admin.firestore.DocumentReference<admin.firestore.DocumentData> | null,
-  status: 'sent' | 'failed',
+  status: 'sent' | 'failed' | 'disabled',
   error?: string,
 ) => {
   if (!ref) return;
@@ -520,8 +521,8 @@ router.post('/meta/webhook', async (req, res) => {
         if (change.field === 'messages' && body.object === 'instagram') {
           const messages = Array.isArray(change.value?.messages) ? change.value.messages : [];
           for (const msg of messages) {
-            const senderId = msg?.from as string | undefined;
-            const text = msg?.text?.body as string | undefined;
+            const senderId = typeof msg?.from === 'string' ? msg.from : msg?.from?.id as string | undefined;
+            const text = typeof msg?.text === 'string' ? msg.text : msg?.text?.body as string | undefined;
             logEvent('IG message (changes)', { senderId, text });
             if (!senderId || !text) continue;
             const igAccountId = instagramContext?.accountId ?? igBusinessId;
@@ -536,6 +537,10 @@ router.post('/meta/webhook', async (req, res) => {
               scopeId: analyticsScopeId,
               raw: msg,
             });
+            if (!(await getInstagramAutoResponseEnabled(instagramContext?.userId ?? ''))) {
+              await updateReplyStatus(inboundRef, 'disabled');
+              continue;
+            }
             const instagramClosureState = await getBwinAccountClosureState(instagramContext?.userId);
             if (instagramClosureState?.enabled && (await isBwinAccountClosureActive(instagramContext?.userId))) {
               await updateReplyStatus(inboundRef, 'failed', getBwinAccountClosureMessage(instagramClosureState));

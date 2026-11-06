@@ -9,6 +9,7 @@ import {
   InstagramLoginAccount,
 } from '../services/instagramAccountRegistry';
 import { recordOptOutIfRequested, recordOutreachOptIn } from '../services/outreachConsentService';
+import { getInstagramAutoResponseEnabled } from '../services/instagramInboxService';
 
 const enabled = process.env.IG_DM_POLL_ENABLED !== 'false';
 const scheduleExpression = process.env.IG_DM_POLL_CRON ?? '*/1 * * * *';
@@ -56,7 +57,7 @@ const fetchConversations = async (accessToken: string): Promise<IgConversation[]
 
 const upsertReplyStatus = async (
   docRef: admin.firestore.DocumentReference<admin.firestore.DocumentData>,
-  status: 'sent' | 'failed',
+  status: 'sent' | 'failed' | 'disabled',
   error?: string,
 ) => {
   const update: Record<string, unknown> = {
@@ -141,6 +142,10 @@ export const pollInstagramDmsOnce = async () => {
         for (const message of messages.reverse()) {
           const reserved = await reserveMessage(target, message);
           if (!reserved) continue;
+          if (!(await getInstagramAutoResponseEnabled(target.userId))) {
+            await upsertReplyStatus(reserved.docRef, 'disabled');
+            continue;
+          }
           try {
             const reply = await generateReply(reserved.text, 'instagram', target.userId, 'message', { username: target.username });
             await replyToInstagramLoginMessage(reserved.senderId, reply, accessToken);
