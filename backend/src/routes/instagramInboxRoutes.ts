@@ -105,7 +105,10 @@ router.post('/instagram/messages/sync', requireFirebase, async (req, res, next) 
     const result = await syncInstagramInboxForUser(userId, (req as AuthedRequest).authUser?.email);
     res.json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Instagram inbox sync failed.';
+    const rawMessage = error instanceof Error ? error.message : 'Instagram inbox sync failed.';
+    const message = /HTTP 403|permission for this action|does not have permission/i.test(rawMessage)
+      ? 'Instagram denied inbox access because this connection was not granted the messaging permission. Disconnect Instagram, reconnect it, and approve Instagram messaging access. If the account is not an app tester, the permission must be approved for production first.'
+      : rawMessage;
     // Provider failures are actionable for the user, but never include tokens
     // or the raw OAuth response in the API response.
     const status = /not available|reconnect Instagram/i.test(message) ? 409 : 502;

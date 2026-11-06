@@ -456,11 +456,14 @@ const renderThreadsHandoffHtml = (authorizationUrl: string) => {
 const getInstagramLoginScopes = () => {
   const renderEnv = resolveRenderEnv();
   const raw = process.env.INSTAGRAM_LOGIN_SCOPES ?? renderEnv.INSTAGRAM_LOGIN_SCOPES ?? '';
-  if (raw.trim()) {
-    return splitScopes(raw);
-  }
-
-  return ['instagram_business_basic', 'instagram_business_content_publish'];
+  // Messaging is an explicit capability of the Instagram Login token. Keep it
+  // in the requested set even when an older Render override only listed the
+  // basic/content-publish scopes; existing tokens must be re-authorized once
+  // for Meta to attach the new permission.
+  return uniqueScopes(
+    raw.trim() ? splitScopes(raw) : [],
+    ['instagram_business_basic', 'instagram_business_content_publish', 'instagram_business_manage_messages'],
+  );
 };
 
 const buildInstagramOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null, returnUrl?: unknown) => {
