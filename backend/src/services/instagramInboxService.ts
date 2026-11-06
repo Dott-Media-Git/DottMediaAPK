@@ -66,9 +66,9 @@ export async function setInstagramAutoResponseEnabled(userId: string, enabled: b
   return enabled;
 }
 
-export async function getStoredInstagramAccount(userId: string) {
+export async function getStoredInstagramAccount(userId: string, email?: string | null) {
   let account: Record<string, unknown> = {};
-  const knownProfile = resolveKnownLiveSocialProfile(userId);
+  const knownProfile = resolveKnownLiveSocialProfile(userId) || resolveKnownLiveSocialProfile(email);
   const knownInstagram = knownProfile?.socialAccounts?.instagram;
   if (knownInstagram && typeof knownInstagram === 'object') {
     account = { ...(knownInstagram as Record<string, unknown>) };

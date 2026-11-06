@@ -18,8 +18,8 @@ const requireUserId = (req: AuthedRequest) => {
   return userId;
 };
 
-const getInstagramConnection = async (userId: string) => {
-  const account = await getStoredInstagramAccount(userId);
+const getInstagramConnection = async (userId: string, email?: string | null) => {
+  const account = await getStoredInstagramAccount(userId, email);
   return {
     connected: Boolean(account.accountId && account.accessToken),
     username: account.username ? String(account.username) : null,
@@ -40,7 +40,7 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
     const [snapshot, autoResponseEnabled, connection] = await Promise.all([
       firestore.collection('messages').where('ownerId', '==', userId).limit(200).get(),
       getInstagramAutoResponseEnabled(userId),
-      getInstagramConnection(userId),
+      getInstagramConnection(userId, (req as AuthedRequest).authUser?.email),
     ]);
     const messages = snapshot.docs
       .map(doc => ({ id: doc.id, data: doc.data() }))
