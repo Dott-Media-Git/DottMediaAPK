@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Linking, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { DMCard } from '@components/DMCard';
 import { DMButton } from '@components/DMButton';
@@ -10,6 +10,9 @@ import { useI18n } from '@context/I18nContext';
 import {
   fetchTrendingNews,
   fetchTrendSources,
+  fetchInstagramTrendConfig,
+  saveInstagramTrendConfig,
+  scanInstagramTrends,
   saveTrendSources,
   type TrendCandidate,
   type TrendSourceInput,
@@ -27,6 +30,11 @@ export const TrendingNewsScreen: React.FC = () => {
   const [sourceLabel, setSourceLabel] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [savingSources, setSavingSources] = useState(false);
+  const [instagramHashtags, setInstagramHashtags] = useState('');
+  const [instagramCandidates, setInstagramCandidates] = useState<TrendCandidate[]>([]);
+  const [instagramAccount, setInstagramAccount] = useState<{ id: string; username?: string } | undefined>();
+  const [instagramLoading, setInstagramLoading] = useState(false);
+  const [instagramSaving, setInstagramSaving] = useState(false);
   const [cacheReady, setCacheReady] = useState(false);
   const [hasCachedSnapshot, setHasCachedSnapshot] = useState(false);
   const cacheKey = useMemo(
@@ -40,9 +48,10 @@ export const TrendingNewsScreen: React.FC = () => {
       setRefreshing(true);
     }
     try {
-      const [trendData, sourceData] = await Promise.all([
+      const [trendData, sourceData, instagramConfig] = await Promise.all([
         fetchTrendingNews(state.user.uid),
         fetchTrendSources(state.user.uid),
+        fetchInstagramTrendConfig(state.user.uid).catch(() => ({ enabled: false, hashtags: [] })),
       ]);
       const resolvedSources = sourceData.sources ?? [];
       const resolvedConnectedSources = Array.from(
@@ -60,6 +69,7 @@ export const TrendingNewsScreen: React.FC = () => {
       setScope(trendData.scope ?? 'global');
       setSources(resolvedSources);
       setConnectedSources(resolvedConnectedSources);
+      setInstagramHashtags((instagramConfig.hashtags ?? []).map(value => `#${value}`).join(', '));
       setHasCachedSnapshot(true);
     } catch (error: any) {
       if (!hasCachedSnapshot) {
@@ -147,6 +157,38 @@ export const TrendingNewsScreen: React.FC = () => {
     }
   };
 
+  const parseInstagramHashtags = () =>
+    instagramHashtags
+      .split(/[\s,]+/)
+      .map(value => value.replace(/^#+/, '').trim().toLowerCase())
+      .filter(Boolean)
+      .slice(0, 5);
+
+  const handleInstagramTrendSearch = async () => {
+    if (!state.user) return;
+    const hashtags = parseInstagramHashtags();
+    if (!hashtags.length) {
+      Alert.alert(t('Add a hashtag'), t('Enter at least one hashtag, such as #smallbusiness.'));
+      return;
+    }
+    setInstagramLoading(true);
+    setInstagramSaving(true);
+    try {
+      await saveInstagramTrendConfig(state.user.uid, { enabled: true, hashtags });
+      const result = await scanInstagramTrends(state.user.uid, hashtags);
+      setInstagramCandidates(result.candidates ?? []);
+      setInstagramAccount(result.account);
+      if (!result.candidates?.length) {
+        Alert.alert(t('No public posts found'), t('Try another public hashtag.'));
+      }
+    } catch (error: any) {
+      Alert.alert(t('Instagram trends unavailable'), error.message ?? t('Reconnect Facebook and try again.'));
+    } finally {
+      setInstagramLoading(false);
+      setInstagramSaving(false);
+    }
+  };
+
   const scopeLabel = useMemo(() => {
     if (scope === 'football') {
       return t('Football focus enabled for this account.');
@@ -194,6 +236,52 @@ export const TrendingNewsScreen: React.FC = () => {
             </View>
           ))
         )}
+      </DMCard>
+
+      <DMCard
+        title={t('Instagram public trends')}
+        subtitle={t('Discover public hashtag conversations to guide your next campaign.')}
+      >
+        <Text style={styles.helperText}>
+          {t('Connect Facebook with an Instagram Professional Account, then search up to five public hashtags.')}
+        </Text>
+        <DMTextInput
+          label={t('Hashtags')}
+          value={instagramHashtags}
+          onChangeText={setInstagramHashtags}
+          placeholder={t('#smallbusiness, #marketing')}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <DMButton
+          title={instagramSaving ? t('Searching...') : t('Search Instagram trends')}
+          onPress={handleInstagramTrendSearch}
+          loading={instagramLoading}
+          style={styles.button}
+        />
+        {instagramAccount?.username ? (
+          <Text style={styles.connectedInstagramText}>
+            {t('Using Instagram Professional Account')}: @{instagramAccount.username}
+          </Text>
+        ) : null}
+        {instagramCandidates.map((candidate, index) => (
+          <View key={`${candidate.topic}-${index}`} style={styles.instagramTrendItem}>
+            <Text style={styles.trendTitle}>{candidate.topic}</Text>
+            {candidate.items?.slice(0, 3).map((item, itemIndex) => (
+              <TouchableOpacity
+                key={`${item.link ?? item.title}-${itemIndex}`}
+                disabled={!item.link}
+                onPress={() => item.link && Linking.openURL(item.link)}
+                style={styles.instagramPostRow}
+              >
+                <Text style={styles.instagramPostTitle} numberOfLines={2}>
+                  {item.title}
+                </Text>
+                {item.summary ? <Text style={styles.instagramPostSummary}>{item.summary}</Text> : null}
+              </TouchableOpacity>
+            ))}
+          </View>
+        ))}
       </DMCard>
 
       <DMCard
@@ -260,6 +348,38 @@ const styles = StyleSheet.create({
   emptyText: {
     color: colors.subtext,
     fontSize: 13,
+  },
+  helperText: {
+    color: colors.subtext,
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  connectedInstagramText: {
+    color: colors.success,
+    fontSize: 12,
+    marginTop: 10,
+  },
+  instagramTrendItem: {
+    paddingTop: 14,
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  instagramPostRow: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  instagramPostTitle: {
+    color: colors.text,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  instagramPostSummary: {
+    color: colors.accentMuted,
+    fontSize: 11,
+    marginTop: 4,
   },
   connectedSourcesWrap: {
     marginBottom: 12,

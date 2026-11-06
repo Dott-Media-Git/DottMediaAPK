@@ -5,6 +5,11 @@ import { getNewsTrendingCandidates } from '../services/newsTrendSources';
 import { getTrendingCandidates as getFootballTrendingCandidates } from '../services/footballTrendSources';
 import { getUserTrendConfig, getUserTrendSources, saveUserTrendSources } from '../services/userTrendSourceService';
 import { resolveBrandIdForClient } from '../services/brandKitService';
+import {
+  getInstagramPublicTrendConfig,
+  saveInstagramPublicTrendConfig,
+  scanInstagramPublicTrends,
+} from '../services/instagramPublicTrendService';
 
 const router = Router();
 
@@ -32,6 +37,15 @@ const sourcesSchema = z.object({
   sources: z.array(sourceSchema).max(20),
 });
 
+const instagramTrendConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  hashtags: z.union([z.array(z.string()), z.string()]).optional(),
+});
+
+const instagramTrendScanSchema = z.object({
+  hashtags: z.union([z.array(z.string()), z.string()]).optional(),
+});
+
 const resolveScope = (email?: string | null) => {
   const normalized = email?.toLowerCase() ?? '';
   const brandId = normalized ? resolveBrandIdForClient(normalized) : null;
@@ -57,6 +71,47 @@ router.post('/trends/sources', requireFirebase, async (req, res, next) => {
     const sources = await saveUserTrendSources(authUser.uid, payload.sources);
     res.json({ sources });
   } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/trends/instagram/config', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    res.json(await getInstagramPublicTrendConfig(authUser.uid));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/trends/instagram/config', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const payload = instagramTrendConfigSchema.parse(req.body ?? {});
+    const config = await saveInstagramPublicTrendConfig(authUser.uid, payload);
+    res.json(config);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/trends/instagram/scan', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const payload = instagramTrendScanSchema.parse(req.body ?? {});
+    const result = await scanInstagramPublicTrends(authUser.uid, payload.hashtags);
+    res.json(result);
+  } catch (error) {
+    const code = (error as { code?: string })?.code;
+    if (code === 'INSTAGRAM_PUBLIC_TRENDS_NOT_CONNECTED') {
+      return res.status(409).json({ message: (error as Error).message, code });
+    }
+    if (code === 'INSTAGRAM_PUBLIC_TRENDS_API_ERROR') {
+      return res.status(502).json({ message: (error as Error).message, code });
+    }
     next(error);
   }
 });
