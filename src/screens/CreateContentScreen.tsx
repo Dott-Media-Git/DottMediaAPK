@@ -342,13 +342,19 @@ export const CreateContentScreen: React.FC = () => {
         response?.posted ??
         0,
       );
-      if (acceptedCount <= 0) throw new Error(t('Nothing was posted. Please review the selected media and platforms.'));
+      if (acceptedCount <= 0) {
+        Alert.alert(t('Post failed'), t('Nothing was posted. Please review the selected media and platforms.'));
+        return;
+      }
       const postedCount = Number(response?.posted ?? response?.processed ?? 0);
       if (postedCount <= 0) {
         setPreviewVisible(false);
-        showNotice(response?.failed
-          ? t('Publishing finished with no successful channels. Check Posting History for the platform error.')
-          : t('Publishing started. Your post is processing in the background; follow its progress in Posting History.'));
+        Alert.alert(
+          response?.failed ? t('Post failed') : t('Publishing'),
+          response?.failed
+            ? t('Publishing finished with no successful channels. Check Posting History for the platform error.')
+            : t('Publishing started. Your post is processing in the background; follow its progress in Posting History.'),
+        );
         return;
       }
       setPreviewVisible(false);

@@ -521,16 +521,17 @@ export const SchedulePostScreen: React.FC = () => {
         0,
       );
       if (acceptedCount <= 0) {
-        showNotice(result?.reason === 'limit_reached'
+        const message = result?.reason === 'limit_reached'
           ? t('Nothing was posted. You have reached today\'s posting limit for this account.')
-          : t('Nothing was posted. Please review the selected media and platforms.'));
+          : t('Nothing was posted. Please review the selected media and platforms.');
+        Alert.alert(t('Post failed'), message);
         return;
       }
       const postedCount = Number(result?.posted ?? result?.processed ?? 0);
       if (postedCount <= 0) {
         setPreviewVisible(false);
         resetForm();
-        showNotice(t('Publishing started. Your post is processing in the background; follow its progress in Posting History.'));
+        Alert.alert(t('Publishing'), t('Publishing started. Your post is processing in the background; follow its progress in Posting History.'));
         return;
       }
       setPreviewVisible(false);
