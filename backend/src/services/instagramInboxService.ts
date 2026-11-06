@@ -3,6 +3,7 @@ import { firestore } from '../db/firestore';
 import { replyToInstagramLoginMessage, replyToInstagramMessage } from './autoReplyService';
 import { getInstagramLoginToken, resolveInstagramLoginAccount } from './instagramAccountRegistry';
 import { supabaseFallbackService } from './supabaseFallbackService';
+import { resolveKnownLiveSocialProfile } from './liveSocialMetricsService';
 
 type StoredMessage = admin.firestore.DocumentData;
 
@@ -67,6 +68,11 @@ export async function setInstagramAutoResponseEnabled(userId: string, enabled: b
 
 export async function getStoredInstagramAccount(userId: string) {
   let account: Record<string, unknown> = {};
+  const knownProfile = resolveKnownLiveSocialProfile(userId);
+  const knownInstagram = knownProfile?.socialAccounts?.instagram;
+  if (knownInstagram && typeof knownInstagram === 'object') {
+    account = { ...(knownInstagram as Record<string, unknown>) };
+  }
   try {
     const snap = await firestore.collection('users').doc(userId).get();
     const firestoreAccount = snap.data()?.socialAccounts?.instagram;
