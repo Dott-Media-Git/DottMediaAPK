@@ -231,7 +231,7 @@ export const CreateContentScreen: React.FC = () => {
       return false;
     }
     if (!selectedPlatforms.length) {
-      Alert.alert(t('Platforms'), t('Select at least one platform.'));
+      showNotice(t('Select at least one platform.'));
       return false;
     }
     return true;
@@ -343,18 +343,15 @@ export const CreateContentScreen: React.FC = () => {
         0,
       );
       if (acceptedCount <= 0) {
-        Alert.alert(t('Post failed'), t('Nothing was posted. Please review the selected media and platforms.'));
+        showNotice(t('Nothing was posted. Please review the selected media and platforms.'));
         return;
       }
       const postedCount = Number(response?.posted ?? response?.processed ?? 0);
       if (postedCount <= 0) {
         setPreviewVisible(false);
-        Alert.alert(
-          response?.failed ? t('Post failed') : t('Publishing'),
-          response?.failed
-            ? t('Publishing finished with no successful channels. Check Posting History for the platform error.')
-            : t('Publishing started. Your post is processing in the background; follow its progress in Posting History.'),
-        );
+        showNotice(response?.failed
+          ? t('Publishing finished with no successful channels. Check Posting History for the platform error.')
+          : t('Publishing started. Your post is processing in the background; follow its progress in Posting History.'));
         return;
       }
       setPreviewVisible(false);
@@ -362,7 +359,7 @@ export const CreateContentScreen: React.FC = () => {
         ? t('Posted to {{count}} platform(s). {{failed}} platform(s) failed; check Posting History.', { count: postedCount, failed: response.failed })
         : t('Posted. Your content is live on {{count}} selected platform(s).', { count: postedCount }));
     } catch (error: any) {
-      Alert.alert(t('Post failed'), error.message ?? t('Unable to post right now.'));
+      showNotice(error.message ?? t('Unable to post right now.'));
     } finally {
       setPostingNow(false);
     }

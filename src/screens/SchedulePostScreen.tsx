@@ -524,14 +524,14 @@ export const SchedulePostScreen: React.FC = () => {
         const message = result?.reason === 'limit_reached'
           ? t('Nothing was posted. You have reached today\'s posting limit for this account.')
           : t('Nothing was posted. Please review the selected media and platforms.');
-        Alert.alert(t('Post failed'), message);
+        showNotice(message);
         return;
       }
       const postedCount = Number(result?.posted ?? result?.processed ?? 0);
       if (postedCount <= 0) {
         setPreviewVisible(false);
         resetForm();
-        Alert.alert(t('Publishing'), t('Publishing started. Your post is processing in the background; follow its progress in Posting History.'));
+        showNotice(t('Publishing started. Your post is processing in the background; follow its progress in Posting History.'));
         return;
       }
       setPreviewVisible(false);
@@ -540,7 +540,7 @@ export const SchedulePostScreen: React.FC = () => {
         ? t('Posted to {{count}} platform(s). {{failed}} platform(s) failed; check Posting History.', { count: postedCount, failed: result.failed })
         : t('Posted. Your image is live on {{count}} selected platform(s).', { count: postedCount }));
     } catch (error: any) {
-      Alert.alert(t('Post failed'), error?.message ?? t('Unable to post right now.'));
+      showNotice(error?.message ?? t('Unable to post right now.'));
     } finally {
       setPostingNow(false);
     }
