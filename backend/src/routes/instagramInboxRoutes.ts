@@ -4,6 +4,7 @@ import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { firestore } from '../db/firestore';
 import {
   getInstagramAutoResponseEnabled,
+  getStoredInstagramAccount,
   sendStoredInstagramReply,
   serializeInstagramMessage,
   setInstagramAutoResponseEnabled,
@@ -18,11 +19,10 @@ const requireUserId = (req: AuthedRequest) => {
 };
 
 const getInstagramConnection = async (userId: string) => {
-  const snap = await firestore.collection('users').doc(userId).get();
-  const account = snap.data()?.socialAccounts?.instagram;
+  const account = await getStoredInstagramAccount(userId);
   return {
-    connected: Boolean(account && typeof account === 'object' && (account as any).accountId && (account as any).accessToken),
-    username: account && typeof account === 'object' && (account as any).username ? String((account as any).username) : null,
+    connected: Boolean(account.accountId && account.accessToken),
+    username: account.username ? String(account.username) : null,
   };
 };
 

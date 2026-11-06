@@ -2,6 +2,7 @@ import admin from 'firebase-admin';
 import { firestore } from '../db/firestore';
 import { replyToInstagramLoginMessage, replyToInstagramMessage } from './autoReplyService';
 import { getInstagramLoginToken, resolveInstagramLoginAccount } from './instagramAccountRegistry';
+import { supabaseFallbackService } from './supabaseFallbackService';
 
 type StoredMessage = admin.firestore.DocumentData;
 
@@ -64,10 +65,25 @@ export async function setInstagramAutoResponseEnabled(userId: string, enabled: b
   return enabled;
 }
 
-async function getStoredInstagramAccount(userId: string) {
-  const snap = await firestore.collection('users').doc(userId).get();
-  const account = snap.data()?.socialAccounts?.instagram;
-  return account && typeof account === 'object' ? account as Record<string, unknown> : {};
+export async function getStoredInstagramAccount(userId: string) {
+  let account: Record<string, unknown> = {};
+  try {
+    const snap = await firestore.collection('users').doc(userId).get();
+    const firestoreAccount = snap.data()?.socialAccounts?.instagram;
+    if (firestoreAccount && typeof firestoreAccount === 'object') account = { ...(firestoreAccount as Record<string, unknown>) };
+  } catch (error) {
+    console.warn('[instagram-inbox] Firestore account lookup failed; checking fallback store', (error as Error).message);
+  }
+  try {
+    const fallback = await supabaseFallbackService.getSocialAccounts(userId, { includePrivate: true });
+    const fallbackAccount = fallback?.socialAccounts?.instagram;
+    if (fallbackAccount && typeof fallbackAccount === 'object') {
+      account = { ...account, ...(fallbackAccount as Record<string, unknown>) };
+    }
+  } catch (error) {
+    console.warn('[instagram-inbox] fallback account lookup failed', (error as Error).message);
+  }
+  return account;
 }
 
 export async function sendStoredInstagramReply(input: {
