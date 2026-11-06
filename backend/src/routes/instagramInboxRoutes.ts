@@ -89,13 +89,25 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
         return timestampMs(b.data.createdAt) - timestampMs(a.data.createdAt);
       })
       .map(({ id, data }) => serializeInstagramMessage(id, data));
-    const [autoResponseEnabled, connection] = await Promise.all([
-      getInstagramAutoResponseEnabled(userId),
-      getInstagramConnection(userId, (req as AuthedRequest).authUser?.email),
-    ]);
+    let autoResponseEnabled = true;
+    try {
+      autoResponseEnabled = await getInstagramAutoResponseEnabled(userId);
+    } catch (error) {
+      console.warn('[instagram-inbox] settings lookup failed; using safe default', (error as Error).message);
+    }
+    let connection = { connected: false, username: null as string | null };
+    try {
+      connection = await getInstagramConnection(userId, (req as AuthedRequest).authUser?.email);
+    } catch (error) {
+      console.warn('[instagram-inbox] connection lookup failed; returning inbox response without credentials', (error as Error).message);
+    }
     res.json({ messages, autoResponseEnabled, connection });
   } catch (error) {
-    next(error);
+    // A storage provider outage must not blank the inbox or turn a valid
+    // connection into a generic 500 response. Return a usable empty state;
+    // the sync endpoint reports provider-specific failures separately.
+    console.error('[instagram-inbox] response assembly failed', (error as Error).message);
+    res.json({ messages: [], autoResponseEnabled: true, connection: { connected: false, username: null } });
   }
 });
 
