@@ -89,6 +89,29 @@ export async function getStoredInstagramAccount(userId: string, email?: string |
   } catch (error) {
     console.warn('[instagram-inbox] fallback account lookup failed', (error as Error).message);
   }
+  // OAuth callbacks and older accounts can be keyed by a previous Firebase
+  // UID while the signed-in user is identified by the same verified email.
+  // Resolve that record without returning any credential to the client.
+  if (!account.accessToken && email) {
+    try {
+      const fallbackByIdentity = await supabaseFallbackService.getSocialAccountsByIdentifiers([userId], [email]);
+      const fallbackInstagram = fallbackByIdentity?.socialAccounts?.instagram;
+      if (fallbackInstagram && typeof fallbackInstagram === 'object') {
+        account = { ...account, ...(fallbackInstagram as Record<string, unknown>) };
+      }
+    } catch (error) {
+      console.warn('[instagram-inbox] identity account lookup failed', (error as Error).message);
+    }
+    try {
+      const emailSnapshot = await firestore.collection('users').where('email', '==', email).limit(1).get();
+      const emailAccount = emailSnapshot.docs[0]?.data()?.socialAccounts?.instagram;
+      if (emailAccount && typeof emailAccount === 'object') {
+        account = { ...account, ...(emailAccount as Record<string, unknown>) };
+      }
+    } catch (error) {
+      console.warn('[instagram-inbox] email account lookup failed', (error as Error).message);
+    }
+  }
   return account;
 }
 
