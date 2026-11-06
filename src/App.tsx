@@ -13,6 +13,7 @@ import { AppNavigator } from '@navigation/AppNavigator';
 import { colors } from '@constants/colors';
 import { FloatingAssistant } from '@components/FloatingAssistant';
 import { warmPrimaryScreenCaches } from '@services/appWarmCache';
+import { env } from '@services/env';
 
 // React Navigation 6's web drawer still calls the Reanimated 3 gesture hook,
 // which was removed in Reanimated 4. Web disables drawer swipe gestures and
@@ -35,6 +36,7 @@ if (Platform.OS === 'android') {
 
 const WARM_CACHE_COOLDOWN_MS = 1000 * 60 * 3;
 const WEB_SCROLLBAR_STYLE_ID = 'dotti-web-scrollbars';
+const API_WARMUP_URL = env.apiUrl ? `${env.apiUrl.replace(/\/$/, '')}/version` : '';
 
 const installWebScrollbarStyles = (mode: 'dark' | 'light') => {
   if (Platform.OS !== 'web' || typeof document === 'undefined') return;
@@ -103,6 +105,13 @@ const RootView: React.FC = () => {
   const warmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (!API_WARMUP_URL || typeof fetch !== 'function') return;
+    // Render's free instance can sleep when idle. Wake it as the app opens so
+    // the first authenticated action does not pay the cold-start delay.
+    void fetch(API_WARMUP_URL, { cache: 'no-store' }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     installWebScrollbarStyles(mode);
   }, [mode]);
 
@@ -142,6 +151,7 @@ const RootView: React.FC = () => {
     if (!state.user?.uid) return;
     const subscription = AppState.addEventListener('change', nextState => {
       if (nextState === 'active') {
+        if (API_WARMUP_URL) void fetch(API_WARMUP_URL, { cache: 'no-store' }).catch(() => undefined);
         warmSnapshots(false);
       }
     });
