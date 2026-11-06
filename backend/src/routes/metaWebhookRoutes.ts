@@ -29,6 +29,7 @@ import {
   buildCommentToDmPublicReply,
   isCommentToDmTrigger,
 } from '../services/commentToDmService.js';
+import { supabaseFallbackService } from '../services/supabaseFallbackService.js';
 
 const router = Router();
 const verifyToken = process.env.META_VERIFY_TOKEN ?? process.env.VERIFY_TOKEN;
@@ -324,12 +325,29 @@ const saveInbound = async (event: {
       ownerId: event.ownerId,
       text: event.text,
     }).catch(error => console.warn('Failed to record outreach opt-out', (error as Error).message));
-    const docRef = await firestore.collection('messages').add({
-      ...event,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      replyStatus: 'pending',
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    let docRef: admin.firestore.DocumentReference<admin.firestore.DocumentData> | null = null;
+    try {
+      docRef = await firestore.collection('messages').add({
+        ...event,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        replyStatus: 'pending',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (error) {
+      console.warn('Failed to persist inbound message in Firestore; using Supabase inbox', (error as Error).message);
+    }
+    const rawId = event.raw && typeof event.raw === 'object' ? String((event.raw as any).id ?? '') : '';
+    const storageId = rawId || event.commentId || `${event.platform}_${event.type}_${event.senderId ?? 'unknown'}_${Date.now()}`;
+    await supabaseFallbackService.addInboundMessage({
+      id: storageId,
+      channel: event.platform,
+      senderId: String(event.senderId ?? 'unknown'),
+      message: event.text ?? null,
+      messageType: event.type,
+      status: 'pending',
+      receivedAt: new Date().toISOString(),
+      payload: { ownerId: event.ownerId, scopeId: event.scopeId, raw: event.raw },
+    }).catch(error => console.warn('Failed to persist inbound message in Supabase', (error as Error).message));
     const analyticsScope = event.scopeId ? { scopeId: event.scopeId } : undefined;
     try {
       if (event.type === 'dm') {

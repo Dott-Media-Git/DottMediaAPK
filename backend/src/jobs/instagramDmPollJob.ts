@@ -10,6 +10,7 @@ import {
 } from '../services/instagramAccountRegistry';
 import { recordOptOutIfRequested, recordOutreachOptIn } from '../services/outreachConsentService';
 import { getInstagramAutoResponseEnabled } from '../services/instagramInboxService';
+import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const enabled = process.env.IG_DM_POLL_ENABLED !== 'false';
 const scheduleExpression = process.env.IG_DM_POLL_CRON ?? '*/1 * * * *';
@@ -56,9 +57,10 @@ const fetchConversations = async (accessToken: string): Promise<IgConversation[]
 };
 
 const upsertReplyStatus = async (
-  docRef: admin.firestore.DocumentReference<admin.firestore.DocumentData>,
+  docRef: admin.firestore.DocumentReference<admin.firestore.DocumentData> | null,
   status: 'sent' | 'failed' | 'disabled',
   error?: string,
+  storageId?: string,
 ) => {
   const update: Record<string, unknown> = {
     replyStatus: status,
@@ -66,7 +68,14 @@ const upsertReplyStatus = async (
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
   if (error) update.replyError = error;
-  await docRef.set(update, { merge: true });
+  if (docRef) {
+    await docRef.set(update, { merge: true });
+    return;
+  }
+  await supabaseFallbackService.updateInboundMessage(storageId ?? '', {
+    status,
+    error: error ?? null,
+  });
 };
 
 const reserveMessage = async (
@@ -99,7 +108,8 @@ const reserveMessage = async (
     text,
   }).catch(error => console.warn('[ig-dm-poll] opt-out record failed', (error as Error).message));
 
-  const docRef = firestore.collection('messages').doc(`instagram_dm_${target.key}_${messageId}`);
+  const storageId = `instagram_dm_${target.key}_${messageId}`;
+  const docRef = firestore.collection('messages').doc(storageId);
   const payload = {
     platform: 'instagram',
     type: 'dm',
@@ -119,10 +129,26 @@ const reserveMessage = async (
     await docRef.create(payload);
   } catch (error) {
     if (isAlreadyExistsError(error)) return null;
-    console.warn('[ig-dm-poll] Firestore reservation failed; skipping reply to avoid duplicates', (error as Error).message);
-    return null;
+    try {
+      await supabaseFallbackService.addInboundMessage({
+        id: storageId,
+        channel: 'instagram',
+        senderId,
+        message: text,
+        messageType: 'dm',
+        profileName: senderUsername || null,
+        status: 'pending',
+        receivedAt: message.created_time ?? new Date().toISOString(),
+        payload: { ownerId: target.userId, targetKey: target.key, accountId: target.username, source: 'instagram-login-poller' },
+      });
+      console.warn('[ig-dm-poll] Firestore unavailable; stored inbound DM in Supabase', (error as Error).message);
+      return { docRef: null, storageId, senderId, text };
+    } catch (fallbackError) {
+      console.warn('[ig-dm-poll] inbound storage failed; skipping reply to avoid duplicates', (fallbackError as Error).message);
+      return null;
+    }
   }
-  return { docRef, senderId, text };
+  return { docRef, storageId, senderId, text };
 };
 
 export const pollInstagramDmsOnce = async () => {
@@ -143,15 +169,15 @@ export const pollInstagramDmsOnce = async () => {
           const reserved = await reserveMessage(target, message);
           if (!reserved) continue;
           if (!(await getInstagramAutoResponseEnabled(target.userId))) {
-            await upsertReplyStatus(reserved.docRef, 'disabled');
+            await upsertReplyStatus(reserved.docRef, 'disabled', undefined, reserved.storageId);
             continue;
           }
           try {
             const reply = await generateReply(reserved.text, 'instagram', target.userId, 'message', { username: target.username });
             await replyToInstagramLoginMessage(reserved.senderId, reply, accessToken);
-            await upsertReplyStatus(reserved.docRef, 'sent');
+            await upsertReplyStatus(reserved.docRef, 'sent', undefined, reserved.storageId);
           } catch (error) {
-            await upsertReplyStatus(reserved.docRef, 'failed', (error as Error).message).catch(() => undefined);
+            await upsertReplyStatus(reserved.docRef, 'failed', (error as Error).message, reserved.storageId).catch(() => undefined);
             console.warn(`[ig-dm-poll] ${target.key} reply failed`, (error as Error).message);
           }
         }

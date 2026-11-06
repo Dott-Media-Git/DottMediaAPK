@@ -656,6 +656,36 @@ class SupabaseFallbackService {
     }
   }
 
+  async listInboundMessages(channel = 'instagram', limit = 200) {
+    if (!this.isConfigured()) return [] as Array<Record<string, unknown>>;
+    const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
+    try {
+      const rows = await this.request<any[]>('GET', 'dott_inbound_messages', {
+        params: {
+          channel: `eq.${channel}`,
+          order: 'received_at.desc',
+          limit: safeLimit,
+        },
+      });
+      return Array.isArray(rows) ? rows : [];
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      return this.databaseQuery<Record<string, unknown>>(
+        'select * from public.dott_inbound_messages where channel = $1 order by received_at desc limit $2',
+        [channel, safeLimit],
+      );
+    }
+  }
+
+  async updateInboundMessage(id: string, patch: { status?: string; reply?: string | null; error?: string | null }) {
+    if (!this.isConfigured() || !id) return;
+    await this.request('PATCH', 'dott_inbound_messages', {
+      params: { id: `eq.${id}` },
+      prefer: 'return=minimal',
+      body: { ...patch, updated_at: NOW() },
+    });
+  }
+
   async incrementSocialDaily(payload: SocialDailyIncrement) {
     if (!this.isConfigured()) return;
     const id = `${payload.userId}_${payload.date}`;

@@ -9,6 +9,7 @@ import {
   serializeInstagramMessage,
   setInstagramAutoResponseEnabled,
 } from '../services/instagramInboxService';
+import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const router = Router();
 
@@ -37,18 +38,54 @@ const timestampMs = (value: unknown) => {
 router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
   try {
     const userId = requireUserId(req as AuthedRequest);
-    const [snapshot, autoResponseEnabled, connection] = await Promise.all([
-      firestore.collection('messages').where('ownerId', '==', userId).limit(200).get(),
-      getInstagramAutoResponseEnabled(userId),
-      getInstagramConnection(userId, (req as AuthedRequest).authUser?.email),
-    ]);
-    const messages = snapshot.docs
+    let firestoreMessages: Array<{ id: string; data: Record<string, any> }> = [];
+    try {
+      const snapshot = await firestore.collection('messages').where('ownerId', '==', userId).limit(200).get();
+      firestoreMessages = snapshot.docs.map(doc => ({ id: doc.id, data: doc.data() }));
+    } catch (error) {
+      console.warn('[instagram-inbox] Firestore message lookup failed; using Supabase inbox', (error as Error).message);
+    }
+    let supabaseMessages: Array<{ id: string; data: Record<string, unknown> }> = [];
+    try {
+      const rows = await supabaseFallbackService.listInboundMessages('instagram', 200);
+      supabaseMessages = rows
+        .filter(row => {
+          const payload = row.payload && typeof row.payload === 'object' ? row.payload as Record<string, unknown> : {};
+          return String(payload.ownerId ?? payload.userId ?? '') === userId;
+        })
+        .map(row => ({
+          id: String(row.id ?? ''),
+          data: {
+            platform: 'instagram',
+            type: 'dm',
+            senderId: row.sender_id,
+            senderUsername: row.profile_name,
+            text: row.message,
+            replyStatus: row.status === 'replied' ? 'sent' : row.status,
+            replyText: row.reply,
+            replyError: row.error,
+            createdAt: row.received_at,
+            updatedAt: row.updated_at,
+            replyAt: row.updated_at,
+          },
+        }))
+        .filter(row => row.id);
+    } catch (error) {
+      console.warn('[instagram-inbox] Supabase message lookup failed', (error as Error).message);
+    }
+    const merged = new Map<string, { id: string; data: Record<string, any> }>();
+    [...firestoreMessages, ...supabaseMessages].forEach(row => merged.set(row.id, row));
+    const messages = [...merged.values()]
       .map(doc => ({ id: doc.id, data: doc.data() }))
       .filter(({ data }) => data.platform === 'instagram' && data.type === 'dm')
       .sort((a, b) => {
         return timestampMs(b.data.createdAt) - timestampMs(a.data.createdAt);
       })
       .map(({ id, data }) => serializeInstagramMessage(id, data));
+    const [autoResponseEnabled, connection] = await Promise.all([
+      getInstagramAutoResponseEnabled(userId),
+      getInstagramConnection(userId, (req as AuthedRequest).authUser?.email),
+    ]);
     res.json({ messages, autoResponseEnabled, connection });
   } catch (error) {
     next(error);
