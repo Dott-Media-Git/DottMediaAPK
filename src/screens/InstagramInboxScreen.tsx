@@ -16,6 +16,7 @@ import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import {
   fetchInstagramInbox,
+  syncInstagramInbox,
   replyToInstagramInboxMessage,
   updateInstagramAutoResponse,
   type InstagramInboxMessage,
@@ -52,8 +53,16 @@ export const InstagramInboxScreen: React.FC = () => {
     if (showRefresh) setRefreshing(true);
     else setLoading(true);
     try {
+      let syncNotice: string | null = null;
+      try {
+        await syncInstagramInbox();
+      } catch (error: any) {
+        // The inbox remains readable if Meta is temporarily unavailable; show
+        // the safe sync reason while still loading any messages already stored.
+        syncNotice = error?.message ?? 'Instagram inbox sync is temporarily unavailable.';
+      }
       setData(await fetchInstagramInbox());
-      setNotice(null);
+      setNotice(syncNotice);
     } catch (error: any) {
       setNotice(error?.message ?? 'Unable to load Instagram messages.');
     } finally {

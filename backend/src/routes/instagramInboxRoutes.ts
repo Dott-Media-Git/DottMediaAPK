@@ -10,6 +10,7 @@ import {
   setInstagramAutoResponseEnabled,
 } from '../services/instagramInboxService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
+import { syncInstagramInboxForUser } from '../services/instagramInboxSyncService';
 
 const router = Router();
 
@@ -51,7 +52,13 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
       supabaseMessages = rows
         .filter(row => {
           const payload = row.payload && typeof row.payload === 'object' ? row.payload as Record<string, unknown> : {};
-          return String(payload.ownerId ?? payload.userId ?? '') === userId;
+          const email = String((req as AuthedRequest).authUser?.email ?? '').trim().toLowerCase();
+          const owner = String(payload.ownerId ?? payload.userId ?? '').trim();
+          const scope = String(payload.scopeId ?? '').trim();
+          // Messages synced from the server are stamped with the authenticated
+          // owner. The known-account webhook can arrive before that mapping is
+          // available, so also accept the SheCare scope for its signed-in email.
+          return owner === userId || scope === userId || (email === 'shecaredoctor@gmail.com' && (owner === 'tCE1FQ1cOFgdupOXP23mPUMQRAz1' || scope === 'tCE1FQ1cOFgdupOXP23mPUMQRAz1'));
         })
         .map(row => ({
           id: String(row.id ?? ''),
@@ -89,6 +96,20 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
     res.json({ messages, autoResponseEnabled, connection });
   } catch (error) {
     next(error);
+  }
+});
+
+router.post('/instagram/messages/sync', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = requireUserId(req as AuthedRequest);
+    const result = await syncInstagramInboxForUser(userId, (req as AuthedRequest).authUser?.email);
+    res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Instagram inbox sync failed.';
+    // Provider failures are actionable for the user, but never include tokens
+    // or the raw OAuth response in the API response.
+    const status = /not available|reconnect Instagram/i.test(message) ? 409 : 502;
+    res.status(status).json({ message });
   }
 });
 
