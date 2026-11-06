@@ -178,7 +178,17 @@ export const schedulePost = async (payload: any) => {
 
 export const publishPostNow = async (payload: any) => {
   const body = JSON.stringify(payload);
-  const queued = await authedFetch('/api/posts/publish-now', { method: 'POST', body }, 10000) as SchedulePostResponse & { queued?: number; requestId?: string };
+  let queued: SchedulePostResponse & { queued?: number; requestId?: string };
+  try {
+    // Queue persistence includes the billing usage transaction and can exceed
+    // the normal API timeout during a Render cold start or datastore wake-up.
+    queued = await authedFetch('/api/posts/publish-now', { method: 'POST', body }, 60000) as SchedulePostResponse & { queued?: number; requestId?: string };
+  } catch (error: any) {
+    if (/took too long to respond/i.test(String(error?.message ?? ''))) {
+      throw new Error('The server is still saving this post. Check Posting History before trying again so the post is not duplicated.');
+    }
+    throw error;
+  }
   const postIds = Array.isArray(queued.postIds) ? queued.postIds : [];
   const initialPending = Number(queued.queued ?? postIds.length ?? 0);
   if (!queued.requestId || !postIds.length || initialPending <= 0) {
