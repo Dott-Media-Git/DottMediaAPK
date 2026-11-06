@@ -179,13 +179,46 @@ export const schedulePost = async (payload: any) => {
 export const publishPostNow = async (payload: any) => {
   const body = JSON.stringify(payload);
   const queued = await authedFetch('/api/posts/publish-now', { method: 'POST', body }, 10000) as SchedulePostResponse & { queued?: number; requestId?: string };
-  // Remote platforms may continue processing media without keeping the user
-  // trapped behind a spinner after the server has accepted the post.
-  return {
-    ...queued,
-    pending: Number(queued.queued ?? queued.postIds?.length ?? 0),
-    accepted: true,
-  };
+  const postIds = Array.isArray(queued.postIds) ? queued.postIds : [];
+  const initialPending = Number(queued.queued ?? postIds.length ?? 0);
+  if (!queued.requestId || !postIds.length || initialPending <= 0) {
+    return { ...queued, pending: initialPending, accepted: true };
+  }
+
+  // The publish endpoint acknowledges after durable queueing (202). Poll the
+  // status endpoint briefly so fast image posts can report their real result,
+  // while slower providers can continue safely in the server queue.
+  let latest: any = { ...queued, pending: initialPending, complete: false };
+  const deadline = Date.now() + 45_000;
+  const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  while (Date.now() < deadline) {
+    await wait(1000);
+    try {
+      latest = await authedFetch(
+        `/api/posts/publish-status?requestId=${encodeURIComponent(queued.requestId)}`,
+        { cache: 'no-store' },
+        15000,
+      );
+    } catch (error: any) {
+      // If the in-memory request record was lost during a restart, the durable
+      // post IDs remain queryable and still provide an accurate status.
+      if (/not found/i.test(String(error?.message ?? ''))) {
+        try {
+          latest = await authedFetch(
+            `/api/posts/publish-status?ids=${encodeURIComponent(postIds.join(','))}`,
+            { cache: 'no-store' },
+            15000,
+          );
+        } catch {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+    if (latest.complete || Number(latest.pending ?? 0) <= 0) break;
+  }
+  return { ...queued, ...latest, pending: Number(latest.pending ?? initialPending), accepted: true };
 };
 
 export type UploadedMediaFile = {

@@ -360,7 +360,7 @@ export class SocialPostingService {
     const pendingById = new Map<string, ScheduledPost>();
     let supabaseQueueAvailable = true;
     try {
-      const primaryPosts = await supabaseFallbackService.getPendingScheduledPosts(new Date(now.toMillis()), limit);
+      const primaryPosts = await supabaseFallbackService.getPendingScheduledPosts(new Date(now.toMillis()), limit, onlyUserId);
       primaryPosts.forEach((post: any) => {
         pendingById.set(post.id as string, {
           id: post.id as string,

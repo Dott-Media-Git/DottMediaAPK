@@ -486,13 +486,14 @@ class SupabaseFallbackService {
     });
   }
 
-  async getPendingScheduledPosts(before: Date, limit = 25) {
+  async getPendingScheduledPosts(before: Date, limit = 25, userId?: string) {
     if (!this.isConfigured()) return [];
     const rows = await this.request<any[]>('GET', 'dott_scheduled_posts', {
       params: {
         select: '*',
         status: 'eq.pending',
         scheduled_for: `lte.${before.toISOString()}`,
+        ...(userId ? { user_id: `eq.${userId}` } : {}),
         order: 'scheduled_for.asc',
         limit,
       },
