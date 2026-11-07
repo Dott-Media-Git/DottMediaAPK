@@ -10,6 +10,7 @@ import {
 } from '../services/instagramAccountRegistry';
 import { recordOptOutIfRequested, recordOutreachOptIn } from '../services/outreachConsentService';
 import { getInstagramAutoResponseEnabled } from '../services/instagramInboxService';
+import { syncInstagramInboxForUser } from '../services/instagramInboxSyncService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const enabled = process.env.IG_DM_POLL_ENABLED !== 'false';
@@ -18,6 +19,10 @@ const conversationLimit = Math.max(Number(process.env.IG_DM_CONVERSATION_LIMIT ?
 const messageLimit = Math.max(Number(process.env.IG_DM_MESSAGE_LIMIT ?? 10), 1);
 const startAtMs = Date.parse(process.env.IG_DM_POLL_START_AT ?? new Date().toISOString());
 const processedInMemory = new Set<string>();
+let storedAccountsCache: { expiresAt: number; accounts: Array<{ userId: string; email?: string | null }> } = {
+  expiresAt: 0,
+  accounts: [],
+};
 
 type IgConversation = {
   id: string;
@@ -54,6 +59,47 @@ const fetchConversations = async (accessToken: string): Promise<IgConversation[]
     timeout: 30000,
   });
   return Array.isArray(response.data?.data) ? response.data.data : [];
+};
+
+const isInstagramLoginAccount = (account: unknown) => {
+  if (!account || typeof account !== 'object') return false;
+  const value = account as Record<string, unknown>;
+  const provider = String(value.provider ?? '').toLowerCase().replace(/[-\s]/g, '_');
+  const graphBaseUrl = String(value.graphBaseUrl ?? '').toLowerCase();
+  return provider === 'instagram_login' || provider === 'instagramlogin' || graphBaseUrl.includes('graph.instagram.com');
+};
+
+const getStoredInstagramLoginUsers = async () => {
+  if (storedAccountsCache.expiresAt > Date.now()) return storedAccountsCache.accounts;
+
+  const accounts = new Map<string, { userId: string; email?: string | null }>();
+  try {
+    const rows = await supabaseFallbackService.getAllSocialAccounts(1000);
+    for (const row of rows) {
+      const instagram = row.socialAccounts?.instagram;
+      if (!row.userId || !instagram || !isInstagramLoginAccount(instagram) || !String((instagram as any).accessToken ?? '').trim()) continue;
+      accounts.set(row.userId, { userId: row.userId, email: row.email ?? null });
+    }
+  } catch (error) {
+    console.warn('[ig-dm-poll] stored Instagram account lookup failed', (error as Error).message);
+  }
+
+  // Supabase is the primary fallback store, but a newly connected account may
+  // be visible in Firestore before the fallback row is written.
+  try {
+    const snapshot = await firestore.collection('users').select('email', 'socialAccounts').limit(1000).get();
+    for (const doc of snapshot.docs) {
+      const data = doc.data() as { email?: string; socialAccounts?: Record<string, any> };
+      const instagram = data.socialAccounts?.instagram;
+      if (!isInstagramLoginAccount(instagram) || !String(instagram?.accessToken ?? '').trim()) continue;
+      accounts.set(doc.id, { userId: doc.id, email: data.email ?? null });
+    }
+  } catch (error) {
+    console.warn('[ig-dm-poll] Firestore Instagram account lookup failed', (error as Error).message);
+  }
+
+  storedAccountsCache = { expiresAt: Date.now() + 60_000, accounts: [...accounts.values()] };
+  return storedAccountsCache.accounts;
 };
 
 const upsertReplyStatus = async (
@@ -152,11 +198,25 @@ const reserveMessage = async (
 };
 
 export const pollInstagramDmsOnce = async () => {
+  const storedAccounts = await getStoredInstagramLoginUsers();
+  const storedUserIds = new Set(storedAccounts.map(account => account.userId));
+
+  // OAuth-connected Instagram Login accounts are persisted per user. Poll
+  // those credentials directly so auto-response continues while the user is
+  // offline; the same sync path is used by the Inbox screen.
+  for (const account of storedAccounts) {
+    try {
+      await syncInstagramInboxForUser(account.userId, account.email);
+    } catch (error) {
+      console.warn(`[ig-dm-poll] stored account ${account.userId} poll failed`, (error as Error).message);
+    }
+  }
+
   const targets = getInstagramLoginAccounts().map((target) => ({ target, accessToken: getInstagramLoginToken(target) })).filter(
     ({ accessToken }) => Boolean(accessToken),
-  );
+  ).filter(({ target }) => !storedUserIds.has(target.userId));
   if (targets.length === 0) {
-    console.warn('[ig-dm-poll] no Instagram Login tokens configured; polling skipped');
+    if (storedAccounts.length === 0) console.warn('[ig-dm-poll] no Instagram Login accounts configured; polling skipped');
     return;
   }
 
@@ -197,7 +257,7 @@ export function scheduleInstagramDmPollJob() {
   cron.schedule(scheduleExpression, async () => {
     await pollInstagramDmsOnce();
   });
-  console.info(`[ig-dm-poll] job scheduled (${scheduleExpression}) for ${getInstagramLoginAccounts().length} accounts.`);
+  console.info(`[ig-dm-poll] job scheduled (${scheduleExpression}) for ${getInstagramLoginAccounts().length} configured accounts plus persisted OAuth accounts.`);
 
   if (process.env.IG_DM_POLL_ON_STARTUP === 'true') {
     void pollInstagramDmsOnce();
