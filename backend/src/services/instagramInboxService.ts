@@ -4,6 +4,8 @@ import { replyToInstagramLoginMessage, replyToInstagramMessage } from './autoRep
 import { getInstagramLoginToken, resolveInstagramLoginAccount } from './instagramAccountRegistry';
 import { supabaseFallbackService } from './supabaseFallbackService';
 import { resolveKnownLiveSocialProfile } from './liveSocialMetricsService';
+import { config } from '../config';
+import { canUsePrimarySocialDefaults } from '../utils/socialAccess';
 
 type StoredMessage = admin.firestore.DocumentData;
 
@@ -163,6 +165,25 @@ export async function getStoredInstagramAccount(userId: string, email?: string |
     } catch (error) {
       console.warn('[instagram-inbox] email account lookup failed', (error as Error).message);
     }
+  }
+
+  // Social Integrations also supports the primary Dotti account's server-side
+  // defaults. Use the same guarded fallback here so the inbox connection state
+  // matches that page and the sync job can use the same credential.
+  if (
+    (!account.accessToken || !account.accountId) &&
+    canUsePrimarySocialDefaults({ email }, userId) &&
+    config.channels.instagram.accessToken &&
+    config.channels.instagram.businessId
+  ) {
+    account = mergeInstagramAccount(account, {
+      provider: 'meta_page',
+      graphBaseUrl: 'https://graph.facebook.com',
+      graphVersion: process.env.META_GRAPH_VERSION ?? 'v23.0',
+      accessToken: config.channels.instagram.accessToken,
+      accountId: config.channels.instagram.businessId,
+      pageId: config.channels.facebook.pageId || undefined,
+    });
   }
   return account;
 }
