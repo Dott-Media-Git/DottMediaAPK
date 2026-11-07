@@ -72,7 +72,16 @@ const fetchConversations = async (account: InstagramSyncAccount): Promise<Instag
   const version = String(account.graphVersion ?? process.env.META_GRAPH_VERSION ?? 'v23.0').replace(/^\//, '');
   const conversationOwnerId = account.pageId || account.accountId;
   const endpoints = login
-    ? [`${base}/me/conversations`]
+    ? [
+        `${base}/me/conversations`,
+        // Some Instagram Login records also retain the linked Page ID. Meta
+        // can return an empty /me edge for those records while the Page
+        // conversations edge contains the Instagram inbox, so try both before
+        // treating an empty response as authoritative.
+        ...(account.pageId
+          ? [`https://graph.facebook.com/${version}/${encodeURIComponent(account.pageId)}/conversations`]
+          : []),
+      ]
     : [
         `${base}/${version}/${encodeURIComponent(conversationOwnerId)}/conversations`,
         ...(account.pageId && account.accountId !== account.pageId
@@ -80,6 +89,7 @@ const fetchConversations = async (account: InstagramSyncAccount): Promise<Instag
           : []),
       ];
   let lastError: unknown = null;
+  let receivedEmptyResponse = false;
   for (const endpoint of endpoints) {
     try {
       const response = await axios.get(endpoint, {
@@ -91,11 +101,14 @@ const fetchConversations = async (account: InstagramSyncAccount): Promise<Instag
         },
         timeout: 10000,
       });
-      return Array.isArray(response.data?.data) ? response.data.data : [];
+      const conversations = Array.isArray(response.data?.data) ? response.data.data : [];
+      if (conversations.length) return conversations;
+      receivedEmptyResponse = true;
     } catch (error) {
       lastError = error;
     }
   }
+  if (receivedEmptyResponse) return [];
   throw new Error(`Instagram inbox sync failed (${errStatus(lastError)}): ${safeError(lastError)}`);
 };
 
