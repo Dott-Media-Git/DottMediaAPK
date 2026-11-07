@@ -306,6 +306,7 @@ const saveInbound = async (event: {
   senderId?: string;
   text?: string;
   commentId?: string;
+  accountId?: string;
   ownerId?: string;
   scopeId?: string;
   raw?: unknown;
@@ -346,7 +347,7 @@ const saveInbound = async (event: {
       messageType: event.type,
       status: 'pending',
       receivedAt: new Date().toISOString(),
-      payload: { ownerId: event.ownerId, scopeId: event.scopeId, raw: event.raw },
+      payload: { ownerId: event.ownerId, scopeId: event.scopeId, accountId: event.accountId, raw: event.raw },
     }).catch(error => console.warn('Failed to persist inbound message in Supabase', (error as Error).message));
     const analyticsScope = event.scopeId ? { scopeId: event.scopeId } : undefined;
     try {
@@ -527,6 +528,7 @@ router.post('/meta/webhook', async (req, res) => {
               await replyToInstagramMessage(fromId, dmFollowUp, {
                 accessToken: instagramContext?.accessToken,
                 igBusinessId: igAccountId ?? undefined,
+                pageId: instagramContext?.pageId,
               }).catch(err => console.warn('IG DM follow-up failed', err));
             }
           } catch (err) {
@@ -553,6 +555,7 @@ router.post('/meta/webhook', async (req, res) => {
               text,
               ownerId: instagramContext?.userId,
               scopeId: analyticsScopeId,
+              accountId: instagramContext?.accountId,
               raw: msg,
             });
             if (!(await getInstagramAutoResponseEnabled(instagramContext?.userId ?? ''))) {
@@ -572,6 +575,7 @@ router.post('/meta/webhook', async (req, res) => {
               await replyToInstagramMessage(senderId, reply, {
                 accessToken: instagramContext?.accessToken,
                 igBusinessId: igAccountId ?? undefined,
+                pageId: instagramContext?.pageId,
               });
               await updateReplyStatus(inboundRef, 'sent');
             } catch (err) {
@@ -681,6 +685,7 @@ router.post('/meta/webhook', async (req, res) => {
             text: message,
             ownerId: context?.userId,
             scopeId: analyticsScopeId,
+            accountId: body.object === 'instagram' ? context?.accountId : undefined,
             raw: event,
           });
           const closureState = await getBwinAccountClosureState(context?.userId);
@@ -698,6 +703,7 @@ router.post('/meta/webhook', async (req, res) => {
               await replyToInstagramMessage(senderId, reply, {
                 accessToken: context?.accessToken,
                 igBusinessId: (context?.accountId ?? igBusinessId) ?? undefined,
+                pageId: context?.pageId,
               });
             } else {
               await replyToFacebookMessage(senderId, reply, context?.accessToken);

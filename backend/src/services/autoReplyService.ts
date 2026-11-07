@@ -328,11 +328,12 @@ export async function likeFacebookComment(commentId: string, pageToken?: string)
 export async function replyToInstagramMessage(
   userId: string,
   message: string,
-  options?: { accessToken?: string; igBusinessId?: string }
+  options?: { accessToken?: string; igBusinessId?: string; pageId?: string }
 ) {
   const igBusinessId = options?.igBusinessId ?? process.env.INSTAGRAM_BUSINESS_ID;
   if (!igBusinessId) throw new Error('INSTAGRAM_BUSINESS_ID missing');
-  const url = `https://graph.facebook.com/v19.0/${igBusinessId}/messages`;
+  const targetId = options?.pageId ?? igBusinessId;
+  const url = `https://graph.facebook.com/v19.0/${targetId}/messages`;
   const token = options?.accessToken ?? process.env.INSTAGRAM_ACCESS_TOKEN;
   if (!token) throw new Error('INSTAGRAM_ACCESS_TOKEN missing');
   try {

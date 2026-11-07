@@ -23,6 +23,7 @@ type InstagramConversation = {
 type InstagramSyncAccount = {
   accessToken: string;
   accountId: string;
+  pageId?: string;
   username?: string;
   provider?: string;
   graphBaseUrl?: string;
@@ -68,14 +69,16 @@ const fetchConversations = async (account: InstagramSyncAccount): Promise<Instag
   const login = isInstagramLogin(account);
   const base = String(account.graphBaseUrl ?? (login ? 'https://graph.instagram.com' : 'https://graph.facebook.com')).replace(/\/$/, '');
   const version = String(account.graphVersion ?? process.env.META_GRAPH_VERSION ?? 'v23.0').replace(/^\//, '');
+  const conversationOwnerId = account.pageId || account.accountId;
   const endpoint = login
     ? `${base}/me/conversations`
-    : `${base}/${version}/${encodeURIComponent(account.accountId)}/conversations`;
+    : `${base}/${version}/${encodeURIComponent(conversationOwnerId)}/conversations`;
   try {
     const response = await axios.get(endpoint, {
       params: {
         fields: 'id,updated_time,participants,messages.limit(50){id,created_time,from,message}',
         limit: 50,
+        ...(login || !account.pageId ? {} : { platform: 'instagram' }),
         access_token: account.accessToken,
       },
       timeout: 10000,
@@ -103,6 +106,7 @@ export async function syncInstagramInboxForUser(userId: string, email?: string |
   const account: InstagramSyncAccount = {
     accessToken: String(rawAccount.accessToken ?? '').trim(),
     accountId: String(rawAccount.accountId ?? '').trim(),
+    pageId: rawAccount.pageId ? String(rawAccount.pageId) : undefined,
     username: rawAccount.username ? String(rawAccount.username) : undefined,
     provider: rawAccount.provider ? String(rawAccount.provider) : undefined,
     graphBaseUrl: rawAccount.graphBaseUrl ? String(rawAccount.graphBaseUrl) : undefined,
@@ -180,7 +184,7 @@ export async function syncInstagramInboxForUser(userId: string, email?: string |
         if (isInstagramLogin(account)) {
           await replyToInstagramLoginMessage(senderId, reply, account.accessToken);
         } else {
-          await replyToInstagramMessage(senderId, reply, { accessToken: account.accessToken, igBusinessId: account.accountId });
+          await replyToInstagramMessage(senderId, reply, { accessToken: account.accessToken, igBusinessId: account.accountId, pageId: account.pageId });
         }
         if (firestoreRef) await firestoreRef.set({ replyStatus: 'sent', replyText: reply, replyAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         await supabaseFallbackService.updateInboundMessage(storageId, { status: 'sent', reply }).catch(() => undefined);

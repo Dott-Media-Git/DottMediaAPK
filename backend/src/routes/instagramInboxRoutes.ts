@@ -34,14 +34,6 @@ const requireUserId = (req: AuthedRequest) => {
   return userId;
 };
 
-const getInstagramConnection = async (userId: string, email?: string | null) => {
-  const account = await getStoredInstagramAccount(userId, email);
-  return {
-    connected: Boolean(account.accountId && account.accessToken),
-    username: account.username ? String(account.username) : null,
-  };
-};
-
 const timestampMs = (value: unknown) => {
   if (value && typeof (value as { toMillis?: () => number }).toMillis === 'function') {
     return (value as { toMillis: () => number }).toMillis();
@@ -53,6 +45,18 @@ const timestampMs = (value: unknown) => {
 router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
   try {
     const userId = requireUserId(req as AuthedRequest);
+    const authEmail = (req as AuthedRequest).authUser?.email;
+    let storedInstagramAccount: Record<string, unknown> = {};
+    try {
+      storedInstagramAccount = await getStoredInstagramAccount(userId, authEmail);
+    } catch (error) {
+      console.warn('[instagram-inbox] initial connection lookup failed', (error as Error).message);
+    }
+    const connectedAccountId = String(storedInstagramAccount.accountId ?? '').trim();
+    const connection = {
+      connected: Boolean(connectedAccountId && storedInstagramAccount.accessToken),
+      username: storedInstagramAccount.username ? String(storedInstagramAccount.username) : null,
+    };
     let firestoreMessages: Array<{ id: string; data: Record<string, any> }> = [];
     try {
       const snapshot = await withTimeout(firestore.collection('messages').where('ownerId', '==', userId).limit(200).get(), 5000, null);
@@ -70,10 +74,11 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
           const email = String((req as AuthedRequest).authUser?.email ?? '').trim().toLowerCase();
           const owner = String(payload.ownerId ?? payload.userId ?? '').trim();
           const scope = String(payload.scopeId ?? '').trim();
+          const accountId = String(payload.accountId ?? '').trim();
           // Messages synced from the server are stamped with the authenticated
           // owner. The known-account webhook can arrive before that mapping is
           // available, so also accept the SheCare scope for its signed-in email.
-          return owner === userId || scope === userId || (email === 'shecaredoctor@gmail.com' && (owner === 'tCE1FQ1cOFgdupOXP23mPUMQRAz1' || scope === 'tCE1FQ1cOFgdupOXP23mPUMQRAz1'));
+          return owner === userId || scope === userId || (connectedAccountId && accountId === connectedAccountId) || (email === 'shecaredoctor@gmail.com' && (owner === 'tCE1FQ1cOFgdupOXP23mPUMQRAz1' || scope === 'tCE1FQ1cOFgdupOXP23mPUMQRAz1'));
         })
         .map(row => ({
           id: String(row.id ?? ''),
@@ -109,12 +114,6 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
       autoResponseEnabled = await getInstagramAutoResponseEnabled(userId);
     } catch (error) {
       console.warn('[instagram-inbox] settings lookup failed; using safe default', (error as Error).message);
-    }
-    let connection = { connected: false, username: null as string | null };
-    try {
-      connection = await getInstagramConnection(userId, (req as AuthedRequest).authUser?.email);
-    } catch (error) {
-      console.warn('[instagram-inbox] connection lookup failed; returning inbox response without credentials', (error as Error).message);
     }
     res.json({ messages, autoResponseEnabled, connection });
   } catch (error) {

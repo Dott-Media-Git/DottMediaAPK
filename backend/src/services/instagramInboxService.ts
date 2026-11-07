@@ -7,6 +7,21 @@ import { resolveKnownLiveSocialProfile } from './liveSocialMetricsService';
 
 type StoredMessage = admin.firestore.DocumentData;
 
+const normalizeInstagramAccount = (socialAccounts: Record<string, any> | undefined) => {
+  const instagram = socialAccounts?.instagram;
+  if (!instagram || typeof instagram !== 'object') return null;
+  const facebook = socialAccounts?.facebook;
+  const provider = String(instagram.provider ?? '').toLowerCase();
+  const graphBaseUrl = String(instagram.graphBaseUrl ?? '').toLowerCase();
+  const isInstagramLogin = provider === 'instagram_login' || graphBaseUrl.includes('graph.instagram.com');
+  // Legacy Meta connections stored the user token on Instagram. Use the
+  // linked Page token for Instagram Messaging API conversation access.
+  if (!isInstagramLogin && facebook?.accessToken && facebook?.pageId) {
+    return { ...(instagram as Record<string, unknown>), accessToken: facebook.accessToken, pageId: facebook.pageId };
+  }
+  return instagram as Record<string, unknown>;
+};
+
 const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -84,21 +99,21 @@ export async function setInstagramAutoResponseEnabled(userId: string, enabled: b
 export async function getStoredInstagramAccount(userId: string, email?: string | null) {
   let account: Record<string, unknown> = {};
   const knownProfile = resolveKnownLiveSocialProfile(userId) || resolveKnownLiveSocialProfile(email);
-  const knownInstagram = knownProfile?.socialAccounts?.instagram;
+  const knownInstagram = normalizeInstagramAccount(knownProfile?.socialAccounts as Record<string, any> | undefined);
   if (knownInstagram && typeof knownInstagram === 'object') {
     account = { ...(knownInstagram as Record<string, unknown>) };
   }
   try {
     const snap = await withTimeout(firestore.collection('users').doc(userId).get(), 5000, null);
     if (!snap) throw new Error('Firestore account lookup timed out');
-    const firestoreAccount = snap.data()?.socialAccounts?.instagram;
+    const firestoreAccount = normalizeInstagramAccount(snap.data()?.socialAccounts as Record<string, any> | undefined);
     if (firestoreAccount && typeof firestoreAccount === 'object') account = { ...(firestoreAccount as Record<string, unknown>) };
   } catch (error) {
     console.warn('[instagram-inbox] Firestore account lookup failed; checking fallback store', (error as Error).message);
   }
   try {
     const fallback = await withTimeout(supabaseFallbackService.getSocialAccounts(userId, { includePrivate: true }), 5000, null);
-    const fallbackAccount = fallback?.socialAccounts?.instagram;
+    const fallbackAccount = normalizeInstagramAccount(fallback?.socialAccounts as Record<string, any> | undefined);
     if (fallbackAccount && typeof fallbackAccount === 'object') {
       account = { ...account, ...(fallbackAccount as Record<string, unknown>) };
     }
@@ -111,7 +126,7 @@ export async function getStoredInstagramAccount(userId: string, email?: string |
   if (!account.accessToken && email) {
     try {
       const fallbackByIdentity = await withTimeout(supabaseFallbackService.getSocialAccountsByIdentifiers([userId], [email]), 5000, null);
-      const fallbackInstagram = fallbackByIdentity?.socialAccounts?.instagram;
+      const fallbackInstagram = normalizeInstagramAccount(fallbackByIdentity?.socialAccounts as Record<string, any> | undefined);
       if (fallbackInstagram && typeof fallbackInstagram === 'object') {
         account = { ...account, ...(fallbackInstagram as Record<string, unknown>) };
       }
@@ -121,7 +136,7 @@ export async function getStoredInstagramAccount(userId: string, email?: string |
     try {
       const emailSnapshot = await withTimeout(firestore.collection('users').where('email', '==', email).limit(1).get(), 5000, null);
       if (!emailSnapshot) throw new Error('Firestore email account lookup timed out');
-      const emailAccount = emailSnapshot.docs[0]?.data()?.socialAccounts?.instagram;
+      const emailAccount = normalizeInstagramAccount(emailSnapshot.docs[0]?.data()?.socialAccounts as Record<string, any> | undefined);
       if (emailAccount && typeof emailAccount === 'object') {
         account = { ...account, ...(emailAccount as Record<string, unknown>) };
       }
@@ -153,8 +168,9 @@ export async function sendStoredInstagramReply(input: {
   const account = await getStoredInstagramAccount(input.userId);
   const accessToken = String(account.accessToken ?? '').trim();
   const accountId = String(account.accountId ?? input.message.accountId ?? '').trim();
+  const pageId = String(account.pageId ?? input.message.pageId ?? '').trim();
   if (!accessToken || !accountId) {
     throw new Error('Instagram is not connected for this account. Reconnect Instagram and try again.');
   }
-  await replyToInstagramMessage(senderId, input.text, { accessToken, igBusinessId: accountId });
+  await replyToInstagramMessage(senderId, input.text, { accessToken, igBusinessId: accountId, pageId: pageId || undefined });
 }

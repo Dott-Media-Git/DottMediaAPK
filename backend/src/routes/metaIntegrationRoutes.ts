@@ -1222,8 +1222,12 @@ router.get('/integrations/meta/callback', async (req, res) => {
 
     if ((requestedPlatform === 'instagram' || requestedPlatform === 'all') && instagramAccount?.id) {
       currentAccounts.instagram = {
-        accessToken: userAccessToken,
+        // Messenger API for Instagram uses the linked Page access token for
+        // conversation reads/replies. Keep the Page ID alongside the IG ID so
+        // inbox sync can address the correct Graph edge.
+        accessToken: selectedPage.access_token,
         accountId: instagramAccount.id,
+        pageId: selectedPage.id,
         username: instagramAccount.username ?? currentAccounts.instagram?.username,
       };
       connectedPlatforms.push('instagram');
