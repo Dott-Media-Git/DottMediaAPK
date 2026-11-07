@@ -386,14 +386,26 @@ export const FloatingAssistant: React.FC = () => {
   return (
     <>
       {open ? (
-        <View style={styles.overlay}>
+        <View
+          style={[
+            styles.overlay,
+            Platform.OS === 'web' && styles.webOverlay,
+            fullScreen && Platform.OS === 'web' && styles.webExpandedOverlay,
+          ]}
+        >
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={[styles.avoider, fullScreen && styles.fullScreenAvoider]}
+            style={[
+              styles.avoider,
+              Platform.OS === 'web' && styles.webCompactAvoider,
+              fullScreen && styles.fullScreenAvoider,
+              fullScreen && Platform.OS === 'web' && styles.webExpandedAvoider,
+            ]}
           >
             <View
               style={[
                 styles.panel,
+                Platform.OS === 'web' && styles.webCompactPanel,
                 fullScreen && styles.fullScreenPanel,
                 {
                   paddingTop: fullScreen ? 16 + insets.top : 16,
@@ -796,8 +808,25 @@ const styles = StyleSheet.create({
     backgroundColor: colors.overlay,
     justifyContent: 'flex-end'
   },
+  webOverlay: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  webExpandedOverlay: {
+    padding: 0,
+  },
   avoider: {
     width: '100%'
+  },
+  webCompactAvoider: {
+    maxWidth: 640,
+    maxHeight: 720,
+  },
+  webExpandedAvoider: {
+    maxWidth: '100%',
+    maxHeight: '100%',
+    height: '100%',
   },
   fullScreenAvoider: {
     flex: 1,
@@ -810,6 +839,9 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     borderWidth: 1,
     borderColor: colors.border
+  },
+  webCompactPanel: {
+    borderRadius: 28,
   },
   fullScreenPanel: {
     flex: 1,
