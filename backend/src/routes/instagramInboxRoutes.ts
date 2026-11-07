@@ -102,13 +102,29 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
     }
     const merged = new Map<string, { id: string; data: Record<string, any> }>();
     [...firestoreMessages, ...supabaseMessages].forEach(row => merged.set(row.id, row));
-    const messages = [...merged.values()]
+    let messages = [...merged.values()]
       .map(doc => ({ id: doc.id, data: doc.data() }))
       .filter(({ data }) => data.platform === 'instagram' && data.type === 'dm')
       .sort((a, b) => {
         return timestampMs(b.data.createdAt) - timestampMs(a.data.createdAt);
       })
       .map(({ id, data }) => serializeInstagramMessage(id, data));
+
+    // If persistence is temporarily unavailable, keep the inbox useful by
+    // reading Meta directly for this request. This path never sends replies;
+    // the normal POST /sync path remains responsible for auto-response work.
+    if (!messages.length && connectedAccountId && storedInstagramAccount.accessToken) {
+      try {
+        const liveSync = await withTimeout(
+          syncInstagramInboxForUser(userId, authEmail, { sendReplies: false }),
+          15000,
+          null,
+        );
+        if (liveSync?.messages?.length) messages = liveSync.messages as ReturnType<typeof serializeInstagramMessage>[];
+      } catch (error) {
+        console.warn('[instagram-inbox] live fallback lookup failed', (error as Error).message);
+      }
+    }
     let autoResponseEnabled = true;
     try {
       autoResponseEnabled = await getInstagramAutoResponseEnabled(userId);

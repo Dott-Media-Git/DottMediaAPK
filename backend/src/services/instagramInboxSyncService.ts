@@ -135,7 +135,11 @@ const isMessageFromAccount = (message: NonNullable<InstagramConversation['messag
   return senderId === account.accountId || (Boolean(accountUsername) && senderUsername === accountUsername);
 };
 
-export async function syncInstagramInboxForUser(userId: string, email?: string | null) {
+export async function syncInstagramInboxForUser(
+  userId: string,
+  email?: string | null,
+  options: { sendReplies?: boolean } = {},
+) {
   const rawAccount = await getStoredInstagramAccount(userId, email);
   const account: InstagramSyncAccount = {
     accessToken: String(rawAccount.accessToken ?? '').trim(),
@@ -154,7 +158,8 @@ export async function syncInstagramInboxForUser(userId: string, email?: string |
   const conversations = await fetchConversations(account);
   const existingRows = await withTimeout(supabaseFallbackService.listInboundMessages('instagram', 500).catch(() => []), 5000, []);
   const existingIds = new Set(existingRows.map(row => String(row.id ?? '')));
-  const autoResponseEnabled = await getInstagramAutoResponseEnabled(userId);
+  const shouldSendReplies = options.sendReplies !== false;
+  const autoResponseEnabled = shouldSendReplies ? await getInstagramAutoResponseEnabled(userId) : false;
   let synced = 0;
   let replied = 0;
   const syncedMessages: Array<Record<string, unknown>> = [];
@@ -221,6 +226,10 @@ export async function syncInstagramInboxForUser(userId: string, email?: string |
 
       if (!firestoreRef && !fallbackStored) {
         console.warn('[instagram-inbox] message was not persisted; returning it in the sync response', { storageId });
+      }
+
+      if (!shouldSendReplies) {
+        continue;
       }
 
       if (!autoResponseEnabled) {
