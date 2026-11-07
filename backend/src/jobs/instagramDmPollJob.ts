@@ -199,7 +199,7 @@ const reserveMessage = async (
 
 export const pollInstagramDmsOnce = async () => {
   const storedAccounts = await getStoredInstagramLoginUsers();
-  const storedUserIds = new Set(storedAccounts.map(account => account.userId));
+  const handledUserIds = new Set<string>();
 
   // OAuth-connected Instagram Login accounts are persisted per user. Poll
   // those credentials directly so auto-response continues while the user is
@@ -207,14 +207,30 @@ export const pollInstagramDmsOnce = async () => {
   for (const account of storedAccounts) {
     try {
       await syncInstagramInboxForUser(account.userId, account.email);
+      handledUserIds.add(account.userId);
     } catch (error) {
       console.warn(`[ig-dm-poll] stored account ${account.userId} poll failed`, (error as Error).message);
     }
   }
 
+  // Some known client accounts are provisioned with a server-side Meta token
+  // rather than a user OAuth row. Try the shared sync path for those accounts
+  // first so Page-token Instagram messaging works as well. If no credential is
+  // available, the dedicated Login-token poll below remains the fallback.
+  for (const target of getInstagramLoginAccounts()) {
+    if (handledUserIds.has(target.userId)) continue;
+    try {
+      await syncInstagramInboxForUser(target.userId);
+      handledUserIds.add(target.userId);
+    } catch {
+      // The target may only have a graph.instagram.com Login token; leave it
+      // for the dedicated poller below.
+    }
+  }
+
   const targets = getInstagramLoginAccounts().map((target) => ({ target, accessToken: getInstagramLoginToken(target) })).filter(
     ({ accessToken }) => Boolean(accessToken),
-  ).filter(({ target }) => !storedUserIds.has(target.userId));
+  ).filter(({ target }) => !handledUserIds.has(target.userId));
   if (targets.length === 0) {
     if (storedAccounts.length === 0) console.warn('[ig-dm-poll] no Instagram Login accounts configured; polling skipped');
     return;

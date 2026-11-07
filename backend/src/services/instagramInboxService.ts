@@ -76,7 +76,6 @@ export async function getInstagramAutoResponseEnabled(userId: string) {
     if (!snap) return true;
     const data = snap.data() ?? {};
     if (typeof data.instagramAutoReplyEnabled === 'boolean') return data.instagramAutoReplyEnabled;
-    if (typeof data.autoReplyEnabled === 'boolean') return data.autoReplyEnabled;
   } catch (error) {
     // Keep the background poller fail-safe: a temporary settings read failure
     // should not prevent inbound messages from receiving the normal fallback.
