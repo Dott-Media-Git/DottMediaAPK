@@ -22,6 +22,25 @@ const normalizeInstagramAccount = (socialAccounts: Record<string, any> | undefin
   return instagram as Record<string, unknown>;
 };
 
+// Connection records can be written by different flows (OAuth, the fallback
+// store, and the social-status resolver). Some of those records intentionally
+// omit private credentials. Merge them instead of replacing the whole account
+// so a valid server-side token from the trusted profile is not discarded by a
+// metadata-only record.
+const mergeInstagramAccount = (
+  current: Record<string, unknown>,
+  incoming: Record<string, unknown> | null | undefined,
+) => {
+  if (!incoming || typeof incoming !== 'object') return current;
+  const merged = { ...current };
+  Object.entries(incoming).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    if (typeof value === 'string' && !value.trim()) return;
+    merged[key] = value;
+  });
+  return merged;
+};
+
 const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -106,7 +125,9 @@ export async function getStoredInstagramAccount(userId: string, email?: string |
     const snap = await withTimeout(firestore.collection('users').doc(userId).get(), 5000, null);
     if (!snap) throw new Error('Firestore account lookup timed out');
     const firestoreAccount = normalizeInstagramAccount(snap.data()?.socialAccounts as Record<string, any> | undefined);
-    if (firestoreAccount && typeof firestoreAccount === 'object') account = { ...(firestoreAccount as Record<string, unknown>) };
+    if (firestoreAccount && typeof firestoreAccount === 'object') {
+      account = mergeInstagramAccount(account, firestoreAccount as Record<string, unknown>);
+    }
   } catch (error) {
     console.warn('[instagram-inbox] Firestore account lookup failed; checking fallback store', (error as Error).message);
   }
@@ -114,7 +135,7 @@ export async function getStoredInstagramAccount(userId: string, email?: string |
     const fallback = await withTimeout(supabaseFallbackService.getSocialAccounts(userId, { includePrivate: true }), 5000, null);
     const fallbackAccount = normalizeInstagramAccount(fallback?.socialAccounts as Record<string, any> | undefined);
     if (fallbackAccount && typeof fallbackAccount === 'object') {
-      account = { ...account, ...(fallbackAccount as Record<string, unknown>) };
+      account = mergeInstagramAccount(account, fallbackAccount as Record<string, unknown>);
     }
   } catch (error) {
     console.warn('[instagram-inbox] fallback account lookup failed', (error as Error).message);
@@ -127,7 +148,7 @@ export async function getStoredInstagramAccount(userId: string, email?: string |
       const fallbackByIdentity = await withTimeout(supabaseFallbackService.getSocialAccountsByIdentifiers([userId], [email]), 5000, null);
       const fallbackInstagram = normalizeInstagramAccount(fallbackByIdentity?.socialAccounts as Record<string, any> | undefined);
       if (fallbackInstagram && typeof fallbackInstagram === 'object') {
-        account = { ...account, ...(fallbackInstagram as Record<string, unknown>) };
+        account = mergeInstagramAccount(account, fallbackInstagram as Record<string, unknown>);
       }
     } catch (error) {
       console.warn('[instagram-inbox] identity account lookup failed', (error as Error).message);
@@ -137,7 +158,7 @@ export async function getStoredInstagramAccount(userId: string, email?: string |
       if (!emailSnapshot) throw new Error('Firestore email account lookup timed out');
       const emailAccount = normalizeInstagramAccount(emailSnapshot.docs[0]?.data()?.socialAccounts as Record<string, any> | undefined);
       if (emailAccount && typeof emailAccount === 'object') {
-        account = { ...account, ...(emailAccount as Record<string, unknown>) };
+        account = mergeInstagramAccount(account, emailAccount as Record<string, unknown>);
       }
     } catch (error) {
       console.warn('[instagram-inbox] email account lookup failed', (error as Error).message);
