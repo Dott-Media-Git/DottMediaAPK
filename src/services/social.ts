@@ -356,7 +356,12 @@ export type InstagramInboxResponse = {
 export const fetchInstagramInbox = async (): Promise<InstagramInboxResponse> =>
   authedFetch('/api/instagram/messages', { cache: 'no-store' });
 
-export const syncInstagramInbox = async (): Promise<{ synced: number; replied: number; conversations: number }> =>
+export const syncInstagramInbox = async (): Promise<{
+  synced: number;
+  replied: number;
+  conversations: number;
+  messages?: InstagramInboxMessage[];
+}> =>
   authedFetch('/api/instagram/messages/sync', { method: 'POST', cache: 'no-store' });
 
 export const updateInstagramAutoResponse = async (enabled: boolean): Promise<{ enabled: boolean }> =>

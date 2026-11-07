@@ -5,6 +5,7 @@ import { generateReply, replyToInstagramLoginMessage, replyToInstagramMessage } 
 import {
   getInstagramAutoResponseEnabled,
   getStoredInstagramAccount,
+  serializeInstagramMessage,
 } from './instagramInboxService';
 import { supabaseFallbackService } from './supabaseFallbackService';
 
@@ -156,6 +157,7 @@ export async function syncInstagramInboxForUser(userId: string, email?: string |
   const autoResponseEnabled = await getInstagramAutoResponseEnabled(userId);
   let synced = 0;
   let replied = 0;
+  const syncedMessages: Array<Record<string, unknown>> = [];
   const seen = new Set<string>();
 
   for (const conversation of conversations) {
@@ -193,19 +195,33 @@ export async function syncInstagramInboxForUser(userId: string, email?: string |
         firestoreRef = null;
       }
 
-      await supabaseFallbackService.addInboundMessage({
-        id: storageId,
-        channel: 'instagram',
-        senderId,
-        message: text,
-        messageType: 'dm',
-        profileName: message.from?.username ?? message.from?.name ?? null,
-        status: 'pending',
-        receivedAt: createdAt,
-        payload: { ownerId: userId, accountId: account.accountId, source: 'instagram-inbox-sync' },
-      });
+      let fallbackStored = false;
+      try {
+        await supabaseFallbackService.addInboundMessage({
+          id: storageId,
+          channel: 'instagram',
+          senderId,
+          message: text,
+          messageType: 'dm',
+          profileName: message.from?.username ?? message.from?.name ?? null,
+          status: 'pending',
+          receivedAt: createdAt,
+          payload: { ownerId: userId, accountId: account.accountId, source: 'instagram-inbox-sync' },
+        });
+        fallbackStored = true;
+      } catch (error) {
+        // A storage outage must not discard a DM that Meta has already
+        // delivered. The sanitized sync response below keeps it visible for
+        // the current refresh while the background poller retries persistence.
+        console.warn('[instagram-inbox] fallback message save failed', (error as Error).message);
+      }
       existingIds.add(storageId);
       synced += 1;
+      syncedMessages.push(serializeInstagramMessage(storageId, payload));
+
+      if (!firestoreRef && !fallbackStored) {
+        console.warn('[instagram-inbox] message was not persisted; returning it in the sync response', { storageId });
+      }
 
       if (!autoResponseEnabled) {
         if (firestoreRef) await firestoreRef.set({ replyStatus: 'disabled', replyAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -231,6 +247,6 @@ export async function syncInstagramInboxForUser(userId: string, email?: string |
     }
   }
 
-  return { synced, replied, conversations: conversations.length };
+  return { synced, replied, conversations: conversations.length, messages: syncedMessages };
 }
 

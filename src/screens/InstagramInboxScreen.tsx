@@ -57,21 +57,25 @@ export const InstagramInboxScreen: React.FC = () => {
     else setLoading(true);
     try {
       let syncNotice: string | null = null;
+      let syncResult: Awaited<ReturnType<typeof syncInstagramInbox>> | null = null;
       try {
-        await syncInstagramInbox();
+        syncResult = await syncInstagramInbox();
       } catch (error: any) {
         // The inbox remains readable if Meta is temporarily unavailable; show
         // the safe sync reason while still loading any messages already stored.
         syncNotice = error?.message ?? 'Instagram inbox sync is temporarily unavailable.';
       }
       const inbox = await fetchInstagramInbox();
+      if (!inbox.messages.length && syncResult?.messages?.length) {
+        inbox.messages = syncResult.messages;
+      }
       // Social Integrations and the inbox share the same authenticated
       // connection status. If an older inbox record is missing private fields,
       // preserve the truthful connected state reported by the status endpoint.
       if (!inbox.connection.connected) {
         try {
           const socialStatus = await fetchSocialStatus();
-          if (socialStatus.status?.instagram) {
+          if (socialStatus.status?.instagram || Boolean(syncResult?.conversations)) {
             inbox.connection = { ...inbox.connection, connected: true };
           }
         } catch {
