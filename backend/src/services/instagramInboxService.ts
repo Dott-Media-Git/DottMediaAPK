@@ -21,6 +21,13 @@ const normalizeInstagramAccount = (socialAccounts: Record<string, any> | undefin
   if (!isInstagramLogin && facebook?.accessToken && facebook?.pageId) {
     return { ...(instagram as Record<string, unknown>), accessToken: facebook.accessToken, pageId: facebook.pageId };
   }
+  if (facebook?.accessToken && facebook?.pageId) {
+    return {
+      ...(instagram as Record<string, unknown>),
+      pageId: (instagram as Record<string, unknown>).pageId ?? facebook.pageId,
+      pageAccessToken: facebook.accessToken,
+    };
+  }
   return instagram as Record<string, unknown>;
 };
 

@@ -22,6 +22,7 @@ type InstagramConversation = {
 
 type InstagramSyncAccount = {
   accessToken: string;
+  pageAccessToken?: string;
   accountId: string;
   pageId?: string;
   username?: string;
@@ -71,33 +72,42 @@ const fetchConversations = async (account: InstagramSyncAccount): Promise<Instag
   const base = String(account.graphBaseUrl ?? (login ? 'https://graph.instagram.com' : 'https://graph.facebook.com')).replace(/\/$/, '');
   const version = String(account.graphVersion ?? process.env.META_GRAPH_VERSION ?? 'v23.0').replace(/^\//, '');
   const conversationOwnerId = account.pageId || account.accountId;
-  const endpoints = login
+  const endpoints: Array<{ url: string; accessToken: string }> = login
     ? [
-        `${base}/me/conversations`,
+        { url: `${base}/me/conversations`, accessToken: account.accessToken },
         // Some Instagram Login records also retain the linked Page ID. Meta
         // can return an empty /me edge for those records while the Page
         // conversations edge contains the Instagram inbox, so try both before
         // treating an empty response as authoritative.
         ...(account.pageId
-          ? [`https://graph.facebook.com/${version}/${encodeURIComponent(account.pageId)}/conversations`]
+          ? [{
+              url: `https://graph.facebook.com/${version}/${encodeURIComponent(account.pageId)}/conversations`,
+              accessToken: account.pageAccessToken ?? account.accessToken,
+            }]
           : []),
       ]
     : [
-        `${base}/${version}/${encodeURIComponent(conversationOwnerId)}/conversations`,
+        {
+          url: `${base}/${version}/${encodeURIComponent(conversationOwnerId)}/conversations`,
+          accessToken: account.accessToken,
+        },
         ...(account.pageId && account.accountId !== account.pageId
-          ? [`${base}/${version}/${encodeURIComponent(account.accountId)}/conversations`]
+          ? [{
+              url: `${base}/${version}/${encodeURIComponent(account.accountId)}/conversations`,
+              accessToken: account.accessToken,
+            }]
           : []),
       ];
   let lastError: unknown = null;
   let receivedEmptyResponse = false;
   for (const endpoint of endpoints) {
     try {
-      const response = await axios.get(endpoint, {
+      const response = await axios.get(endpoint.url, {
         params: {
           fields: 'id,updated_time,participants,messages.limit(50){id,created_time,from,message}',
           limit: 50,
           ...(!login ? { platform: 'instagram' } : {}),
-          access_token: account.accessToken,
+          access_token: endpoint.accessToken,
         },
         timeout: 10000,
       });
@@ -128,6 +138,7 @@ export async function syncInstagramInboxForUser(userId: string, email?: string |
   const rawAccount = await getStoredInstagramAccount(userId, email);
   const account: InstagramSyncAccount = {
     accessToken: String(rawAccount.accessToken ?? '').trim(),
+    pageAccessToken: rawAccount.pageAccessToken ? String(rawAccount.pageAccessToken).trim() : undefined,
     accountId: String(rawAccount.accountId ?? '').trim(),
     pageId: rawAccount.pageId ? String(rawAccount.pageId) : undefined,
     username: rawAccount.username ? String(rawAccount.username) : undefined,
