@@ -113,7 +113,7 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
     // If persistence is temporarily unavailable, keep the inbox useful by
     // reading Meta directly for this request. This path never sends replies;
     // the normal POST /sync path remains responsible for auto-response work.
-    if (!messages.length && connectedAccountId && storedInstagramAccount.accessToken) {
+    if (!messages.length) {
       try {
         const liveSync = await withTimeout(
           syncInstagramInboxForUser(userId, authEmail, { sendReplies: false }),
