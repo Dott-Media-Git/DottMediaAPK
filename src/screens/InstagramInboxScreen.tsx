@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -47,9 +47,11 @@ export const InstagramInboxScreen: React.FC = () => {
   const [replyingId, setReplyingId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<string | null>(null);
+  const syncInFlightRef = useRef(false);
 
   const load = useCallback(async (showRefresh = false) => {
-    if (!state.user) return;
+    if (!state.user || syncInFlightRef.current) return;
+    syncInFlightRef.current = true;
     if (showRefresh) setRefreshing(true);
     else setLoading(true);
     try {
@@ -68,12 +70,21 @@ export const InstagramInboxScreen: React.FC = () => {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      syncInFlightRef.current = false;
     }
   }, [state.user]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!state.user) return;
+    const interval = setInterval(() => {
+      void load(true);
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [load, state.user]);
 
   const messages = useMemo(() => data?.messages ?? [], [data?.messages]);
 

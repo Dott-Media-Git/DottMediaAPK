@@ -63,30 +63,40 @@ const storageIdFor = (accountId: string, messageId: string) =>
   `instagram_dm_${accountId}_${messageId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
 
 const isInstagramLogin = (account: InstagramSyncAccount) =>
-  account.provider === 'instagram_login' || String(account.graphBaseUrl ?? '').includes('graph.instagram.com');
+  ['instagram_login', 'instagramlogin'].includes(String(account.provider ?? '').toLowerCase().replace(/[-\s]/g, '_')) ||
+  String(account.graphBaseUrl ?? '').toLowerCase().includes('graph.instagram.com');
 
 const fetchConversations = async (account: InstagramSyncAccount): Promise<InstagramConversation[]> => {
   const login = isInstagramLogin(account);
   const base = String(account.graphBaseUrl ?? (login ? 'https://graph.instagram.com' : 'https://graph.facebook.com')).replace(/\/$/, '');
   const version = String(account.graphVersion ?? process.env.META_GRAPH_VERSION ?? 'v23.0').replace(/^\//, '');
   const conversationOwnerId = account.pageId || account.accountId;
-  const endpoint = login
-    ? `${base}/me/conversations`
-    : `${base}/${version}/${encodeURIComponent(conversationOwnerId)}/conversations`;
-  try {
-    const response = await axios.get(endpoint, {
-      params: {
-        fields: 'id,updated_time,participants,messages.limit(50){id,created_time,from,message}',
-        limit: 50,
-        ...(login || !account.pageId ? {} : { platform: 'instagram' }),
-        access_token: account.accessToken,
-      },
-      timeout: 10000,
-    });
-    return Array.isArray(response.data?.data) ? response.data.data : [];
-  } catch (error) {
-    throw new Error(`Instagram inbox sync failed (${errStatus(error)}): ${safeError(error)}`);
+  const endpoints = login
+    ? [`${base}/me/conversations`]
+    : [
+        `${base}/${version}/${encodeURIComponent(conversationOwnerId)}/conversations`,
+        ...(account.pageId && account.accountId !== account.pageId
+          ? [`${base}/${version}/${encodeURIComponent(account.accountId)}/conversations`]
+          : []),
+      ];
+  let lastError: unknown = null;
+  for (const endpoint of endpoints) {
+    try {
+      const response = await axios.get(endpoint, {
+        params: {
+          fields: 'id,updated_time,participants,messages.limit(50){id,created_time,from,message}',
+          limit: 50,
+          ...(!login ? { platform: 'instagram' } : {}),
+          access_token: account.accessToken,
+        },
+        timeout: 10000,
+      });
+      return Array.isArray(response.data?.data) ? response.data.data : [];
+    } catch (error) {
+      lastError = error;
+    }
   }
+  throw new Error(`Instagram inbox sync failed (${errStatus(lastError)}): ${safeError(lastError)}`);
 };
 
 const errStatus = (error: unknown) => {
