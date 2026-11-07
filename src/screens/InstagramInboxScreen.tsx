@@ -16,6 +16,7 @@ import { colors } from '@constants/colors';
 import { useAuth } from '@context/AuthContext';
 import {
   fetchInstagramInbox,
+  fetchSocialStatus,
   syncInstagramInbox,
   replyToInstagramInboxMessage,
   updateInstagramAutoResponse,
@@ -63,7 +64,21 @@ export const InstagramInboxScreen: React.FC = () => {
         // the safe sync reason while still loading any messages already stored.
         syncNotice = error?.message ?? 'Instagram inbox sync is temporarily unavailable.';
       }
-      setData(await fetchInstagramInbox());
+      const inbox = await fetchInstagramInbox();
+      // Social Integrations and the inbox share the same authenticated
+      // connection status. If an older inbox record is missing private fields,
+      // preserve the truthful connected state reported by the status endpoint.
+      if (!inbox.connection.connected) {
+        try {
+          const socialStatus = await fetchSocialStatus();
+          if (socialStatus.status?.instagram) {
+            inbox.connection = { ...inbox.connection, connected: true };
+          }
+        } catch {
+          // Keep the inbox response if the secondary status check is down.
+        }
+      }
+      setData(inbox);
       setNotice(syncNotice);
     } catch (error: any) {
       setNotice(error?.message ?? 'Unable to load Instagram messages.');
@@ -144,7 +159,7 @@ export const InstagramInboxScreen: React.FC = () => {
           <View style={[styles.connectionDot, data?.connection.connected && styles.connectionDotOn]} />
           <View style={styles.connectionCopy}>
             <Text style={styles.connectionTitle}>{data?.connection.connected ? 'Instagram connected' : 'Instagram not connected'}</Text>
-            <Text style={styles.muted}>{data?.connection.username ? `@${data.connection.username}` : 'Connect an Instagram account in Social Integrations.'}</Text>
+            <Text style={styles.muted}>{data?.connection.username ? `@${data.connection.username}` : data?.connection.connected ? 'Connected Instagram account' : 'Connect an Instagram account in Social Integrations.'}</Text>
           </View>
           <Ionicons name={data?.connection.connected ? 'checkmark-circle' : 'alert-circle-outline'} size={22} color={data?.connection.connected ? colors.success : colors.warning} />
         </View>
