@@ -1096,7 +1096,7 @@ const fetchInstagramAccountMetric = async (
     // Meta can reject an entire request when one metric in a comma-separated
     // list is unavailable for the account. Fetch the groups independently so
     // an unavailable engagement metric cannot erase valid view data.
-    for (const metric of ['views,impressions,reach', 'accounts_engaged', 'total_interactions']) {
+    for (const metric of ['views', 'impressions', 'reach', 'accounts_engaged', 'total_interactions']) {
       try {
         const response = await axios.get(`${baseUrl}/${version}/${accountId}/insights`, {
           params: {
