@@ -44,7 +44,14 @@ type LoggedSocialPost = {
 
 type UserSocialAccounts = {
   facebook?: { accessToken?: string; userAccessToken?: string; pageId?: string; pageName?: string };
-  instagram?: { accessToken?: string; accountId?: string; username?: string };
+  instagram?: {
+    accessToken?: string;
+    accountId?: string;
+    username?: string;
+    provider?: string;
+    graphBaseUrl?: string;
+    graphVersion?: string;
+  };
   threads?: { accessToken?: string; accountId?: string };
   linkedin?: { accessToken?: string; urn?: string; name?: string };
   twitter?: {
@@ -457,6 +464,16 @@ const resolveFacebookPageAccessToken = async (
   }
 
   return accessToken;
+};
+
+const instagramGraphConfig = (instagramAccount: NonNullable<UserSocialAccounts['instagram']>) => {
+  const explicitBase = String(instagramAccount.graphBaseUrl ?? '').trim().replace(/\/$/, '');
+  const provider = String(instagramAccount.provider ?? '').toLowerCase().replace(/[-\s]/g, '_');
+  const accessToken = String(instagramAccount.accessToken ?? '').trim();
+  const login = provider === 'instagram_login' || explicitBase.includes('graph.instagram.com') || /^IG[A-Za-z0-9]/.test(accessToken);
+  const baseUrl = explicitBase || (login ? 'https://graph.instagram.com' : 'https://graph.facebook.com');
+  const version = String(instagramAccount.graphVersion ?? GRAPH_VERSION).replace(/^\//, '');
+  return { baseUrl, version };
 };
 
 const asPostedRow = (platform: string, remoteId: string, postedAtMs: number): ScheduledPost => ({
@@ -1065,13 +1082,14 @@ const fetchInstagramAccountMetric = async (
   const accountId = instagramAccount.accountId?.trim();
   const accessToken = instagramAccount.accessToken?.trim();
   if (!accountId || !accessToken) return { views: 0, interactions: 0 };
+  const { baseUrl, version } = instagramGraphConfig(instagramAccount);
 
   const until = Math.floor(Date.now() / 1000);
   const since = Math.max(Math.floor(cutoffMs / 1000), until - (30 * 24 * 60 * 60 - 1));
   try {
-    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${accountId}/insights`, {
+    const response = await axios.get(`${baseUrl}/${version}/${accountId}/insights`, {
       params: {
-        metric: 'views,reach,total_interactions',
+        metric: 'views,reach,accounts_engaged,total_interactions',
         period: 'day',
         metric_type: 'total_value',
         since,
@@ -1089,7 +1107,7 @@ const fetchInstagramAccountMetric = async (
     };
     const result = {
       views: metricTotal('views') || metricTotal('reach'),
-      interactions: metricTotal('total_interactions'),
+      interactions: metricTotal('total_interactions') || metricTotal('accounts_engaged'),
     };
     if (result.views > 0 || result.interactions > 0) return result;
   } catch (error) {
@@ -1097,9 +1115,9 @@ const fetchInstagramAccountMetric = async (
   }
 
   try {
-    const response = await axios.get(`https://graph.facebook.com/v24.0/${accountId}/insights`, {
+    const response = await axios.get(`${baseUrl}/v24.0/${accountId}/insights`, {
       params: {
-        metric: 'views,reach,total_interactions',
+        metric: 'views,reach,accounts_engaged,total_interactions',
         period: 'day',
         metric_type: 'total_value',
         since,
@@ -1112,7 +1130,7 @@ const fetchInstagramAccountMetric = async (
     const metricTotal = (metric: string) => toNumber(rows.find((entry: any) => entry?.name === metric)?.total_value?.value);
     return {
       views: metricTotal('views') || metricTotal('reach'),
-      interactions: metricTotal('total_interactions'),
+      interactions: metricTotal('total_interactions') || metricTotal('accounts_engaged'),
     };
   } catch (fallbackError) {
     console.warn('[socialLive] direct Instagram account insights fetch failed', {
@@ -1122,10 +1140,15 @@ const fetchInstagramAccountMetric = async (
   return { views: 0, interactions: 0 };
 };
 
-const fetchInstagramMetric = async (mediaId: string, accessToken: string) => {
-  return withPostMetricCache(`instagram:${mediaId}`, async () => {
+const fetchInstagramMetric = async (
+  mediaId: string,
+  accessToken: string,
+  instagramAccount?: NonNullable<UserSocialAccounts['instagram']>,
+) => {
+  const { baseUrl, version } = instagramGraphConfig(instagramAccount ?? { accessToken });
+  return withPostMetricCache(`instagram:${baseUrl}:${mediaId}`, async () => {
     try {
-      const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`, {
+      const basic = await axios.get(`${baseUrl}/${version}/${mediaId}`, {
         params: {
           fields: 'id,like_count,comments_count,media_type,media_product_type',
           access_token: accessToken,
@@ -1146,7 +1169,7 @@ const fetchInstagramMetric = async (mediaId: string, accessToken: string) => {
       ];
       for (const metric of insightMetricGroups) {
         try {
-          const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/insights`, {
+          const insights = await axios.get(`${baseUrl}/${version}/${mediaId}/insights`, {
             params: {
               metric,
               access_token: accessToken,
@@ -1255,8 +1278,9 @@ const fetchRecentInstagramMedia = async (
   const accountId = instagramAccount.accountId?.trim();
   const accessToken = instagramAccount.accessToken?.trim();
   if (!accountId || !accessToken) return [];
+  const { baseUrl, version } = instagramGraphConfig(instagramAccount);
   try {
-    const response = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${accountId}/media`, {
+    const response = await axios.get(`${baseUrl}/${version}/${accountId}/media`, {
       params: {
         fields: 'id,timestamp,media_product_type',
         limit: MAX_POSTS_PER_PLATFORM,
@@ -1609,8 +1633,13 @@ export async function getLiveSocialMetrics(
           accessToken: shecareMetaToken,
           pageId: SHECARE_FACEBOOK_PAGE_ID,
         };
+        const connectedInstagram = accounts.instagram ?? {};
         accounts.instagram = {
-          accessToken: shecareMetaToken,
+          ...connectedInstagram,
+          // Prefer the connected account token so its provider/Graph host metadata
+          // is retained. The environment token is only the fallback for the
+          // legacy SheCare profile that has no stored Instagram connection.
+          accessToken: connectedInstagram.accessToken?.trim() || shecareMetaToken,
           accountId: SHECARE_INSTAGRAM_ACCOUNT_ID,
         };
       }
@@ -1739,7 +1768,7 @@ export async function getLiveSocialMetrics(
     if (accounts.instagram?.accessToken && accounts.instagram?.accountId) {
       const [rows, accountMetric] = await Promise.all([
         instagramIds.length > 0
-          ? Promise.all(instagramIds.map(id => fetchInstagramMetric(id, accounts.instagram?.accessToken ?? '')))
+          ? Promise.all(instagramIds.map(id => fetchInstagramMetric(id, accounts.instagram?.accessToken ?? '', accounts.instagram)))
           : Promise.resolve([]),
         fetchInstagramAccountMetric(accounts.instagram, cutoffMs),
       ]);
