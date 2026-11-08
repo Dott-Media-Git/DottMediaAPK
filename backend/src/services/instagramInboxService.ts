@@ -105,20 +105,44 @@ export const serializeInstagramMessage = (id: string, data: StoredMessage) => ({
 });
 
 export async function getInstagramAutoResponseEnabled(userId: string) {
+  return getInstagramAutoResponseEnabledForAccount(userId);
+}
+
+const normalizeSettingKeys = (keys: string | string[] | undefined) => {
+  const values = Array.isArray(keys) ? keys : keys ? [keys] : [];
+  return [...new Set(values.map(value => String(value ?? '').trim()).filter(Boolean))]
+    .map(value => value.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 120))
+    .filter(Boolean);
+};
+
+export async function getInstagramAutoResponseEnabledForAccount(userId: string, accountKeys?: string | string[]) {
   try {
     const snap = await withTimeout(firestore.collection('assistant_settings').doc(userId).get(), 5000, null);
-    if (!snap) return true;
-    const data = snap.data() ?? {};
-    if (typeof data.instagramAutoReplyEnabled === 'boolean') return data.instagramAutoReplyEnabled;
+    if (snap) {
+      const data = snap.data() ?? {};
+      if (typeof data.instagramAutoReplyEnabled === 'boolean') return data.instagramAutoReplyEnabled;
+    }
   } catch (error) {
     // Keep the background poller fail-safe: a temporary settings read failure
     // should not prevent inbound messages from receiving the normal fallback.
     console.warn('[instagram-inbox] auto-response setting read failed', (error as Error).message);
   }
+  const keys = normalizeSettingKeys(accountKeys);
+  for (const key of keys) {
+    try {
+      const accountSnap = await withTimeout(firestore.collection('assistant_settings_instagram_accounts').doc(key).get(), 5000, null);
+      if (accountSnap) {
+        const accountData = accountSnap.data() ?? {};
+        if (typeof accountData.instagramAutoReplyEnabled === 'boolean') return accountData.instagramAutoReplyEnabled;
+      }
+    } catch (error) {
+      console.warn('[instagram-inbox] account auto-response setting read failed', (error as Error).message);
+    }
+  }
   return true;
 }
 
-export async function setInstagramAutoResponseEnabled(userId: string, enabled: boolean) {
+export async function setInstagramAutoResponseEnabled(userId: string, enabled: boolean, accountKeys?: string | string[]) {
   await firestore.collection('assistant_settings').doc(userId).set(
     {
       instagramAutoReplyEnabled: enabled,
@@ -126,6 +150,22 @@ export async function setInstagramAutoResponseEnabled(userId: string, enabled: b
     },
     { merge: true },
   );
+  for (const key of normalizeSettingKeys(accountKeys)) {
+    try {
+      await firestore.collection('assistant_settings_instagram_accounts').doc(key).set(
+        {
+          instagramAutoReplyEnabled: enabled,
+          ownerUserId: userId,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (error) {
+      // The user-scoped setting above remains authoritative if this optional
+      // account alias cannot be written during a provider incident.
+      console.warn('[instagram-inbox] account auto-response setting write failed', (error as Error).message);
+    }
+  }
   return enabled;
 }
 

@@ -10,7 +10,7 @@ import {
   likeInstagramComment,
   likeFacebookComment,
 } from '../services/autoReplyService.js';
-import { getInstagramAutoResponseEnabled } from '../services/instagramInboxService';
+import { getInstagramAutoResponseEnabledForAccount } from '../services/instagramInboxService';
 import { incrementEngagementAnalytics, incrementInboundAnalytics } from '../services/analyticsService.js';
 import {
   getBwinAccountClosureMessage,
@@ -558,7 +558,7 @@ router.post('/meta/webhook', async (req, res) => {
               accountId: instagramContext?.accountId,
               raw: msg,
             });
-            if (!(await getInstagramAutoResponseEnabled(instagramContext?.userId ?? ''))) {
+            if (!(await getInstagramAutoResponseEnabledForAccount(instagramContext?.userId ?? '', instagramContext?.accountId))) {
               await updateReplyStatus(inboundRef, 'disabled');
               continue;
             }
@@ -572,6 +572,10 @@ router.post('/meta/webhook', async (req, res) => {
                 accountId: instagramContext?.accountId,
                 pageId: instagramContext?.pageId,
               });
+              if (!(await getInstagramAutoResponseEnabledForAccount(instagramContext?.userId ?? '', instagramContext?.accountId))) {
+                await updateReplyStatus(inboundRef, 'disabled');
+                continue;
+              }
               await replyToInstagramMessage(senderId, reply, {
                 accessToken: instagramContext?.accessToken,
                 igBusinessId: igAccountId ?? undefined,

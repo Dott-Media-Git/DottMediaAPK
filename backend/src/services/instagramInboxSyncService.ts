@@ -3,7 +3,7 @@ import admin from 'firebase-admin';
 import { firestore } from '../db/firestore';
 import { generateReply, replyToInstagramLoginMessage, replyToInstagramMessage } from './autoReplyService';
 import {
-  getInstagramAutoResponseEnabled,
+  getInstagramAutoResponseEnabledForAccount,
   getStoredInstagramAccount,
   serializeInstagramMessage,
 } from './instagramInboxService';
@@ -159,7 +159,9 @@ export async function syncInstagramInboxForUser(
   const existingRows = await withTimeout(supabaseFallbackService.listInboundMessages('instagram', 500).catch(() => []), 5000, []);
   const existingIds = new Set(existingRows.map(row => String(row.id ?? '')));
   const shouldSendReplies = options.sendReplies !== false;
-  const autoResponseEnabled = shouldSendReplies ? await getInstagramAutoResponseEnabled(userId) : false;
+  const autoResponseEnabled = shouldSendReplies
+    ? await getInstagramAutoResponseEnabledForAccount(userId, [account.accountId, account.username ?? ''])
+    : false;
   let synced = 0;
   let replied = 0;
   const syncedMessages: Array<Record<string, unknown>> = [];
@@ -240,6 +242,11 @@ export async function syncInstagramInboxForUser(
 
       try {
         const reply = await generateReply(text, 'instagram', userId, 'message', { accountId: account.accountId, username: account.username });
+        if (!(await getInstagramAutoResponseEnabledForAccount(userId, [account.accountId, account.username ?? '']))) {
+          if (firestoreRef) await firestoreRef.set({ replyStatus: 'disabled', replyAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          await supabaseFallbackService.updateInboundMessage(storageId, { status: 'disabled' }).catch(() => undefined);
+          continue;
+        }
         if (isInstagramLogin(account)) {
           await replyToInstagramLoginMessage(senderId, reply, account.accessToken);
         } else {

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
 import { firestore } from '../db/firestore';
 import {
-  getInstagramAutoResponseEnabled,
+  getInstagramAutoResponseEnabledForAccount,
   getStoredInstagramAccount,
   sendStoredInstagramReply,
   serializeInstagramMessage,
@@ -59,7 +59,7 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
     };
     let autoResponseEnabled = true;
     try {
-      autoResponseEnabled = await getInstagramAutoResponseEnabled(userId);
+      autoResponseEnabled = await getInstagramAutoResponseEnabledForAccount(userId, [connectedAccountId, String(storedInstagramAccount.username ?? '')]);
     } catch (error) {
       console.warn('[instagram-inbox] settings lookup failed; using safe default', (error as Error).message);
     }
@@ -164,7 +164,12 @@ router.put('/instagram/auto-response', requireFirebase, async (req, res, next) =
   try {
     const userId = requireUserId(req as AuthedRequest);
     const payload = z.object({ enabled: z.boolean() }).parse(req.body ?? {});
-    const enabled = await setInstagramAutoResponseEnabled(userId, payload.enabled);
+    const account = await getStoredInstagramAccount(userId, (req as AuthedRequest).authUser?.email);
+    const enabled = await setInstagramAutoResponseEnabled(
+      userId,
+      payload.enabled,
+      [String(account.accountId ?? ''), String(account.username ?? '')],
+    );
     res.json({ enabled });
   } catch (error) {
     next(error);
@@ -175,7 +180,8 @@ router.post('/instagram/messages/reply', requireFirebase, async (req, res, next)
   try {
     const userId = requireUserId(req as AuthedRequest);
     const payload = z.object({ messageId: z.string().trim().min(1), text: z.string().trim().min(1).max(2000) }).parse(req.body ?? {});
-    if (await getInstagramAutoResponseEnabled(userId)) {
+    const storedAccount = await getStoredInstagramAccount(userId, (req as AuthedRequest).authUser?.email);
+    if (await getInstagramAutoResponseEnabledForAccount(userId, [String(storedAccount.accountId ?? ''), String(storedAccount.username ?? '')])) {
       return res.status(409).json({ message: 'Turn off Instagram auto-response before sending a manual reply.' });
     }
     const ref = firestore.collection('messages').doc(payload.messageId);

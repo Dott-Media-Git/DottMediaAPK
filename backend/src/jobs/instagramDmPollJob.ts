@@ -9,7 +9,7 @@ import {
   InstagramLoginAccount,
 } from '../services/instagramAccountRegistry';
 import { recordOptOutIfRequested, recordOutreachOptIn } from '../services/outreachConsentService';
-import { getInstagramAutoResponseEnabled } from '../services/instagramInboxService';
+import { getInstagramAutoResponseEnabledForAccount } from '../services/instagramInboxService';
 import { syncInstagramInboxForUser } from '../services/instagramInboxSyncService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
@@ -244,12 +244,16 @@ export const pollInstagramDmsOnce = async () => {
         for (const message of messages.reverse()) {
           const reserved = await reserveMessage(target, message);
           if (!reserved) continue;
-          if (!(await getInstagramAutoResponseEnabled(target.userId))) {
+          if (!(await getInstagramAutoResponseEnabledForAccount(target.userId, target.username))) {
             await upsertReplyStatus(reserved.docRef, 'disabled', undefined, reserved.storageId);
             continue;
           }
           try {
             const reply = await generateReply(reserved.text, 'instagram', target.userId, 'message', { username: target.username });
+            if (!(await getInstagramAutoResponseEnabledForAccount(target.userId, target.username))) {
+              await upsertReplyStatus(reserved.docRef, 'disabled', undefined, reserved.storageId);
+              continue;
+            }
             await replyToInstagramLoginMessage(reserved.senderId, reply, accessToken);
             await upsertReplyStatus(reserved.docRef, 'sent', undefined, reserved.storageId);
           } catch (error) {
