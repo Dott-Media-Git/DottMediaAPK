@@ -191,7 +191,10 @@ test('HTTP handlers validate requests, ignore supplied ownership, and return dur
     assert.equal((await status.json()).job.active, true);
     const stop = await fetch(url, { method: 'DELETE', headers });
     assert.equal((await stop.json()).job.active, false);
+    // The initial background publish may complete before the stop request.
+    const countAtStop = fixture.posts.length;
     await fixture.service.runDueJobs();
-    assert.equal(fixture.posts.length, 0);
+    assert.equal(fixture.posts.length, countAtStop);
+    assert.ok(countAtStop <= 1);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });

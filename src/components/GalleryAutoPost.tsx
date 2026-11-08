@@ -3,8 +3,8 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import { colors } from '@constants/colors';
 import { DMButton } from '@components/DMButton';
 import type { MediaLibraryAsset } from '@services/mediaLibrary';
-import { fetchGalleryAutoPost, startGalleryAutoPost, stopGalleryAutoPost,
-  type GalleryAutoPostJob, type GalleryAutoPostPlatform } from '@services/social';
+import { fetchGalleryAutoPost, startGalleryAutoPost, stopGalleryAutoPost, fetchNatureRotation, stopNatureRotation,
+  type GalleryAutoPostJob, type GalleryAutoPostPlatform, type NatureRotation } from '@services/social';
 
 const names: Record<GalleryAutoPostPlatform, string> = {
   facebook: 'Facebook', instagram: 'Instagram', threads: 'Threads', linkedin: 'LinkedIn',
@@ -14,6 +14,7 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : '
 
 export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAsset[]; uploading: boolean }) {
   const [job, setJob] = useState<GalleryAutoPostJob | null>(null);
+  const [nature, setNature] = useState<NatureRotation | null>(null);
   const [platforms, setPlatforms] = useState<GalleryAutoPostPlatform[]>([]);
   const [chosen, setChosen] = useState<GalleryAutoPostPlatform[]>([]);
   const [hours, setHours] = useState('1');
@@ -50,6 +51,13 @@ export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAss
     const timer = setInterval(() => { if (!mutating.current) void refresh(); }, 30_000);
     return () => { mounted.current = false; clearInterval(timer); };
   }, [refresh]);
+  useEffect(() => {
+    let live = true;
+    const load = () => { void fetchNatureRotation().then(result => { if (live) setNature(result.job); }).catch(() => {}); };
+    load();
+    const timer = setInterval(load, 30_000);
+    return () => { live = false; clearInterval(timer); };
+  }, []);
 
   const open = () => {
     setHours(String(job?.intervalHours ?? 1));
@@ -106,6 +114,16 @@ export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAss
   return (
     <View style={styles.panel}>
       <Text style={styles.title}>Auto-post your gallery</Text>
+      {nature ? <View style={{ gap: 8 }}>
+        <Text style={styles.status}>Ngogo nature rotation: {nature.active ? 'Active' : 'Stopped'}</Text>
+        <Text style={styles.copy}>{nature.count} photos · Every 2 hours · Instagram and Threads</Text>
+        {nature.nextRunAt ? <Text style={styles.copy}>Next post: {new Date(nature.nextRunAt).toLocaleString()}</Text> : null}
+        {nature.error ? <Text style={styles.error}>Rotation paused: {nature.error}</Text> : null}
+        {nature.active ? <DMButton title="Stop nature rotation" style={styles.button} onPress={() => {
+          void stopNatureRotation().then(() => setNature(current => current ? { ...current, active: false, nextRunAt: null } : null))
+            .catch(cause => setError(errorText(cause)));
+        }} /> : null}
+      </View> : null}
       <Text style={styles.copy}>Post one item at a time, then repeat your gallery—even when Dotti is closed.</Text>
       {active && job ? <>
         <Text style={styles.status}>Active · Every {job.intervalHours === 24 ? 'day' : `${job.intervalHours} hour${job.intervalHours === 1 ? '' : 's'}`} · {job.assets.length} items</Text>

@@ -1525,6 +1525,30 @@ class SupabaseFallbackService {
     }
   }
 
+  async getNatureRotation(userId: string) {
+    const row = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.nature:${userId}` });
+    return row?.data?.natureRotation ?? null;
+  }
+
+  async updateNatureRotation(userId: string, change: (current: any) => any) {
+    const key = `nature:${userId}`;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const row = await this.getSingleRow<any>('dott_autopost_jobs', { user_id: `eq.${key}` });
+      if (!row) return null;
+      const current = row.data?.natureRotation ?? null;
+      const next = change(current);
+      if (next === current) return current;
+      const updatedAt = new Date(Math.max(Date.now(), Date.parse(row.updated_at) + 1)).toISOString();
+      const updated = await this.request<any[]>('PATCH', 'dott_autopost_jobs', {
+        params: { user_id: `eq.${key}`, updated_at: `eq.${row.updated_at}` },
+        body: { data: { ...row.data, natureRotation: next }, updated_at: updatedAt },
+        prefer: 'return=representation',
+      });
+      if (updated.length) return next;
+    }
+    throw new Error('Nature rotation changed concurrently; please retry.');
+  }
+
   async getDueGalleryAutoPostUsers(now: number) {
     if (!this.isConfigured()) return [] as string[];
     const rows = await this.request<any[]>('GET', 'dott_autopost_jobs', {

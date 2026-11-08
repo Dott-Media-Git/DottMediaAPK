@@ -476,11 +476,14 @@ export class AutoPostService {
     return true;
   }
 
-  async publishGalleryAsset(userId: string, platform: GalleryPlatform, asset: GalleryAsset, caption: string): Promise<GalleryResult> {
+  async publishGalleryAsset(userId: string, platform: GalleryPlatform, asset: GalleryAsset, caption: string, expectedUsername?: string): Promise<GalleryResult> {
     const publishPlatform = platform === 'instagram' && asset.kind === 'video' ? 'instagram_reels' : platform;
     try {
       const accounts = await this.galleryCredentials(userId);
       if (!this.hasGalleryCredentials(platform, accounts)) throw new Error('Reconnect this social account to continue.');
+      if (expectedUsername && String(accounts[platform]?.username ?? '').toLowerCase() !== expectedUsername.toLowerCase()) {
+        throw new Error('Connected account changed. Reconnect the intended account before resuming.');
+      }
       if (await isBwinAccountClosureActive(userId)) throw new Error('Posting is disabled for this account.');
       const validation = validateBwinSportsContent({ userId, platforms: [publishPlatform], caption,
         imageUrls: asset.kind === 'image' ? [asset.url] : [], videoUrl: asset.kind === 'video' ? asset.url : undefined });

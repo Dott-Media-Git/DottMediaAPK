@@ -10,6 +10,21 @@ export function createGalleryAutoPostRouter(
 ) {
 const router = Router();
 router.use(authenticate);
+router.get('/nature', async (req, res, next) => {
+  try {
+    const { ngogoNatureService } = await import('../services/ngogoNatureRuntime');
+    const job = await ngogoNatureService.status((req as AuthedRequest).authUser!.uid);
+    res.set('Cache-Control', 'no-store').json({ job: job ? { active: job.active, nextRunAt: job.nextRunAt,
+      count: job.assets.length, error: job.error } : null });
+  } catch (error) { next(error); }
+});
+router.delete('/nature', async (req, res, next) => {
+  try {
+    const { ngogoNatureService } = await import('../services/ngogoNatureRuntime');
+    await ngogoNatureService.stop((req as AuthedRequest).authUser!.uid); res.json({ stopped: true });
+  }
+  catch (error) { next(error); }
+});
 router.get('/', async (req, res, next) => {
   try {
     const userId = (req as AuthedRequest).authUser!.uid;

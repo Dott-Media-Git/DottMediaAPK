@@ -260,6 +260,11 @@ export const startGalleryAutoPost = (input: Pick<GalleryAutoPostJob, 'intervalHo
   authedFetch('/api/gallery/autopost', { method: 'POST', body: JSON.stringify(input) });
 export const stopGalleryAutoPost = (): Promise<{ job: GalleryAutoPostJob | null }> =>
   authedFetch('/api/gallery/autopost', { method: 'DELETE' });
+export type NatureRotation = { active: boolean; nextRunAt: number | null; count: number; error: string | null };
+export const fetchNatureRotation = (): Promise<{ job: NatureRotation | null }> =>
+  authedFetch('/api/gallery/autopost/nature', { cache: 'no-store' });
+export const stopNatureRotation = (): Promise<{ stopped: boolean }> =>
+  authedFetch('/api/gallery/autopost/nature', { method: 'DELETE' });
 
 export const uploadMediaFiles = async (files: File[]) => {
   const uploaded: UploadedMediaFile[] = [];
