@@ -592,7 +592,11 @@ const KNOWN_LIVE_SOCIAL_PROFILES: Array<{
     facebookPageId: SHECARE_FACEBOOK_PAGE_ID,
     instagramAccountId: SHECARE_INSTAGRAM_ACCOUNT_ID,
     facebookTokenEnv: ['SHECARE_FACEBOOK_PAGE_TOKEN', 'SHECARE_FACEBOOK_ACCESS_TOKEN'],
-    instagramTokenEnv: ['SHECARE_INSTAGRAM_ACCESS_TOKEN'],
+    instagramTokenEnv: [
+      'SHECARE_INSTAGRAM_LOGIN_TOKEN',
+      'SHECARE_DOCTOR_INSTAGRAM_LOGIN_TOKEN',
+      'SHECARE_INSTAGRAM_ACCESS_TOKEN',
+    ],
   },
   {
     userId: '80bYIeiuukNFtUvXTUobXmfC7pu1',
@@ -1624,6 +1628,8 @@ export async function getLiveSocialMetrics(
     }
     if ([userId, options?.scope?.scopeId, primaryOwnerId].includes(SHECARE_USER_ID)) {
       const shecareMetaToken =
+        process.env.SHECARE_INSTAGRAM_LOGIN_TOKEN?.trim() ||
+        process.env.SHECARE_DOCTOR_INSTAGRAM_LOGIN_TOKEN?.trim() ||
         process.env.SHECARE_INSTAGRAM_ACCESS_TOKEN?.trim() ||
         process.env.META_GRAPH_TOKEN?.trim() ||
         process.env.CLIENT_META_USER_TOKEN?.trim() ||
