@@ -1090,52 +1090,61 @@ const fetchInstagramAccountMetric = async (
 
   const until = Math.floor(Date.now() / 1000);
   const since = Math.max(Math.floor(cutoffMs / 1000), until - (30 * 24 * 60 * 60 - 1));
-  try {
-    const response = await axios.get(`${baseUrl}/${version}/${accountId}/insights`, {
-      params: {
-        metric: 'views,reach,accounts_engaged,total_interactions',
-        period: 'day',
-        metric_type: 'total_value',
-        since,
-        until,
-        access_token: accessToken,
-      },
-      timeout: 30000,
-    });
-    const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+
+  const fetchInsightRows = async (baseUrl: string, version: string) => {
+    const rows: any[] = [];
+    // Meta can reject an entire request when one metric in a comma-separated
+    // list is unavailable for the account. Fetch the groups independently so
+    // an unavailable engagement metric cannot erase valid view data.
+    for (const metric of ['views,impressions,reach', 'accounts_engaged', 'total_interactions']) {
+      try {
+        const response = await axios.get(`${baseUrl}/${version}/${accountId}/insights`, {
+          params: {
+            metric,
+            period: 'day',
+            metric_type: 'total_value',
+            since,
+            until,
+            access_token: accessToken,
+          },
+          timeout: 30000,
+        });
+        if (Array.isArray(response.data?.data)) rows.push(...response.data.data);
+      } catch (error) {
+        console.warn('[socialLive] Instagram account metric unavailable', {
+          metric,
+          baseUrl,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return rows;
+  };
+
+  const parseRows = (rows: any[]) => {
     const metricTotal = (metric: string) => {
       const row = rows.find((entry: any) => entry?.name === metric);
       const totalValue = toNumber(row?.total_value?.value);
       if (totalValue > 0) return totalValue;
-      return row?.values?.reduce((acc: number, entry: any) => acc + toNumber(entry?.value), 0) ?? 0;
+      return Array.isArray(row?.values)
+        ? row.values.reduce((acc: number, entry: any) => acc + toNumber(entry?.value), 0)
+        : 0;
     };
-    const result = {
-      views: metricTotal('views') || metricTotal('reach'),
+    return {
+      views: metricTotal('views') || metricTotal('impressions') || metricTotal('reach'),
       interactions: metricTotal('total_interactions') || metricTotal('accounts_engaged'),
     };
+  };
+
+  try {
+    const result = parseRows(await fetchInsightRows(baseUrl, version));
     if (result.views > 0 || result.interactions > 0) return result;
   } catch (error) {
     console.warn('[socialLive] direct Instagram account insights window fetch failed', error instanceof Error ? error.message : String(error));
   }
 
   try {
-    const response = await axios.get(`${baseUrl}/v24.0/${accountId}/insights`, {
-      params: {
-        metric: 'views,reach,accounts_engaged,total_interactions',
-        period: 'day',
-        metric_type: 'total_value',
-        since,
-        until,
-        access_token: accessToken,
-      },
-      timeout: 30000,
-    });
-    const rows = Array.isArray(response.data?.data) ? response.data.data : [];
-    const metricTotal = (metric: string) => toNumber(rows.find((entry: any) => entry?.name === metric)?.total_value?.value);
-    return {
-      views: metricTotal('views') || metricTotal('reach'),
-      interactions: metricTotal('total_interactions') || metricTotal('accounts_engaged'),
-    };
+    return parseRows(await fetchInsightRows(baseUrl, 'v24.0'));
   } catch (fallbackError) {
     console.warn('[socialLive] direct Instagram account insights fetch failed', {
       fallback: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
