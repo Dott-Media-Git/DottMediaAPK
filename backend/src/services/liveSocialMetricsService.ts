@@ -1636,26 +1636,22 @@ export async function getLiveSocialMetrics(
       mergeSocialAccountsPreferOverlay(accounts, storedRuntimeProfile.socialAccounts);
     }
     if ([userId, options?.scope?.scopeId, primaryOwnerId].includes(SHECARE_USER_ID)) {
-      const shecareMetaToken =
+      const shecareInstagramToken =
         process.env.SHECARE_INSTAGRAM_LOGIN_TOKEN?.trim() ||
         process.env.SHECARE_DOCTOR_INSTAGRAM_LOGIN_TOKEN?.trim() ||
         process.env.SHECARE_INSTAGRAM_ACCESS_TOKEN?.trim() ||
         process.env.META_GRAPH_TOKEN?.trim() ||
         process.env.CLIENT_META_USER_TOKEN?.trim() ||
         '';
-      if (shecareMetaToken) {
-        accounts.facebook = {
-          accessToken: shecareMetaToken,
-          pageId: SHECARE_FACEBOOK_PAGE_ID,
-        };
+      if (shecareInstagramToken) {
         const connectedInstagram = accounts.instagram ?? {};
         accounts.instagram = {
           ...connectedInstagram,
           // Prefer the connected account token so its provider/Graph host metadata
           // is retained. The environment token is only the fallback for the
           // legacy SheCare profile that has no stored Instagram connection.
-          accessToken: connectedInstagram.accessToken?.trim() || shecareMetaToken,
-          accountId: SHECARE_INSTAGRAM_ACCOUNT_ID,
+          accessToken: connectedInstagram.accessToken?.trim() || shecareInstagramToken,
+          accountId: connectedInstagram.accountId?.trim() || SHECARE_INSTAGRAM_ACCOUNT_ID,
         };
       }
     }

@@ -453,7 +453,7 @@ const renderThreadsHandoffHtml = (authorizationUrl: string) => {
 </html>`;
 };
 
-const getInstagramLoginScopes = () => {
+const getInstagramLoginScopes = (userId?: string) => {
   const renderEnv = resolveRenderEnv();
   const raw = process.env.INSTAGRAM_LOGIN_SCOPES ?? renderEnv.INSTAGRAM_LOGIN_SCOPES ?? '';
   // Messaging is an explicit capability of the Instagram Login token. Keep it
@@ -463,6 +463,10 @@ const getInstagramLoginScopes = () => {
   return uniqueScopes(
     raw.trim() ? splitScopes(raw) : [],
     ['instagram_business_basic', 'instagram_business_content_publish', 'instagram_business_manage_messages'],
+    // SheCare is the designated tester for the Instagram insights review.
+    // Keep this restricted while the permission is being reviewed, so other
+    // businesses can continue connecting with the currently approved scopes.
+    userId === 'tCE1FQ1cOFgdupOXP23mPUMQRAz1' ? ['instagram_business_manage_insights'] : [],
   );
 };
 
@@ -486,7 +490,7 @@ const buildInstagramOAuthUrl = (req: Request, userId: string, orgId?: string | n
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', getInstagramLoginScopes().join(','));
+  url.searchParams.set('scope', getInstagramLoginScopes(userId).join(','));
   url.searchParams.set('state', state);
   url.searchParams.set('enable_fb_login', '0');
   url.searchParams.set('force_authentication', '1');
@@ -1309,7 +1313,7 @@ router.get('/integrations/instagram/callback', async (req, res) => {
   let stage = 'validating Instagram permissions';
 
   try {
-    const requiredScopes = getInstagramLoginScopes();
+    const requiredScopes = getInstagramLoginScopes(state.userId);
     assertRequiredInstagramScopes(requiredScopes, callbackGrantedScopes, deniedScopes);
 
     stage = 'exchanging the OAuth code for a short-lived token';
