@@ -280,7 +280,9 @@ export const AccountIntegrationsScreen: React.FC = () => {
     setIntegrationNotice({
       kind: 'success',
       title: `${PLATFORM_LABELS[connected]} ${t('connected')}`,
-      message: t('Permissions were approved and the account is ready to use in Dott Media.'),
+      message: connected === 'instagram'
+        ? t('Your Instagram account is connected. Features such as comments, messages and insights require the corresponding Meta permissions.')
+        : t('Your account is connected. Available features depend on the permissions granted.'),
       expanded: true,
     });
     markSocialConnected(connected);

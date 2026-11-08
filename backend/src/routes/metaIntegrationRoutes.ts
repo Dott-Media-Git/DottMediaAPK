@@ -748,11 +748,8 @@ const assertRequiredInstagramScopes = (
   if (explicitlyDenied.length) {
     throw new Error(`Instagram did not grant required permissions: ${explicitlyDenied.join(', ')}`);
   }
-  if (!grantedScopes.size) return;
-  const missingScopes = requiredScopes.filter(scope => !grantedScopes.has(scope));
-  if (missingScopes.length) {
-    throw new Error(`Instagram did not grant required permissions: ${missingScopes.join(', ')}`);
-  }
+  // Meta's scope lists can be partial. Profile lookup below checks whether
+  // the token actually has the basic access needed for the connection.
 };
 
 const fetchInstagramMe = async (
@@ -1302,7 +1299,7 @@ router.get('/integrations/instagram/callback', async (req, res) => {
   const code = typeof req.query.code === 'string' ? req.query.code : '';
   const stateParam = typeof req.query.state === 'string' ? req.query.state : '';
   const state = verifySignedState(stateParam);
-  const deniedScopes = extractScopesFromPayload({ denied_scopes: req.query.denied_scopes });
+  const deniedScopes = extractScopesFromPayload({ scope: req.query.denied_scopes });
   const callbackGrantedScopes = extractScopesFromPayload({ granted_scopes: req.query.granted_scopes, scope: req.query.scope });
 
   if (!code || !state) {
@@ -1313,7 +1310,10 @@ router.get('/integrations/instagram/callback', async (req, res) => {
   let stage = 'validating Instagram permissions';
 
   try {
-    const requiredScopes = getInstagramLoginScopes();
+    // Only basic access is essential to establish an Instagram connection.
+    // Other requested scopes enable individual features and may be denied or
+    // omitted from an incomplete scope response without invalidating login.
+    const requiredScopes = ['instagram_business_basic'];
     assertRequiredInstagramScopes(requiredScopes, callbackGrantedScopes, deniedScopes);
 
     stage = 'exchanging the OAuth code for a short-lived token';
@@ -1353,6 +1353,8 @@ router.get('/integrations/instagram/callback', async (req, res) => {
       username: profile.username ?? currentAccounts.instagram?.username,
       accountType: profile.account_type ?? currentAccounts.instagram?.accountType,
       mediaCount: typeof profile.media_count === 'number' ? profile.media_count : currentAccounts.instagram?.mediaCount,
+      grantedScopes: Array.from(grantedScopes),
+      deniedScopes: Array.from(deniedScopes),
       connectedAt: new Date().toISOString(),
     };
 
