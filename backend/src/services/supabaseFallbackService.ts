@@ -677,6 +677,20 @@ class SupabaseFallbackService {
     }
   }
 
+  async getInboundMessage(id: string) {
+    if (!this.isConfigured() || !id) return null;
+    try {
+      return await this.getSingleRow<any>('dott_inbound_messages', { id: `eq.${id}` });
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      const rows = await this.databaseQuery<Record<string, unknown>>(
+        'select * from public.dott_inbound_messages where id = $1 limit 1',
+        [id],
+      );
+      return rows[0] ?? null;
+    }
+  }
+
   async updateInboundMessage(id: string, patch: { status?: string; reply?: string | null; error?: string | null }) {
     if (!this.isConfigured() || !id) return;
     await this.request('PATCH', 'dott_inbound_messages', {

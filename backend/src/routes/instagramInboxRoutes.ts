@@ -57,6 +57,12 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
       connected: Boolean(connectedAccountId && storedInstagramAccount.accessToken),
       username: storedInstagramAccount.username ? String(storedInstagramAccount.username) : null,
     };
+    let autoResponseEnabled = true;
+    try {
+      autoResponseEnabled = await getInstagramAutoResponseEnabled(userId);
+    } catch (error) {
+      console.warn('[instagram-inbox] settings lookup failed; using safe default', (error as Error).message);
+    }
     let firestoreMessages: Array<{ id: string; data: Record<string, any> }> = [];
     try {
       const snapshot = await withTimeout(firestore.collection('messages').where('ownerId', '==', userId).limit(200).get(), 5000, null);
@@ -113,7 +119,7 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
     // If persistence is temporarily unavailable, keep the inbox useful by
     // reading Meta directly for this request. This path never sends replies;
     // the normal POST /sync path remains responsible for auto-response work.
-    if (!messages.length) {
+    if (!autoResponseEnabled && !messages.length) {
       try {
         const liveSync = await withTimeout(
           syncInstagramInboxForUser(userId, authEmail, { sendReplies: false }),
@@ -125,13 +131,9 @@ router.get('/instagram/messages', requireFirebase, async (req, res, next) => {
         console.warn('[instagram-inbox] live fallback lookup failed', (error as Error).message);
       }
     }
-    let autoResponseEnabled = true;
-    try {
-      autoResponseEnabled = await getInstagramAutoResponseEnabled(userId);
-    } catch (error) {
-      console.warn('[instagram-inbox] settings lookup failed; using safe default', (error as Error).message);
-    }
-    res.json({ messages, autoResponseEnabled, connection });
+    // Inbox messages are intentionally hidden while Dotti auto-response is on.
+    // This keeps manual review/reply mode separate from automated handling.
+    res.json({ messages: autoResponseEnabled ? [] : messages, autoResponseEnabled, connection });
   } catch (error) {
     // A storage provider outage must not blank the inbox or turn a valid
     // connection into a generic 500 response. Return a usable empty state;
@@ -173,24 +175,52 @@ router.post('/instagram/messages/reply', requireFirebase, async (req, res, next)
   try {
     const userId = requireUserId(req as AuthedRequest);
     const payload = z.object({ messageId: z.string().trim().min(1), text: z.string().trim().min(1).max(2000) }).parse(req.body ?? {});
+    if (await getInstagramAutoResponseEnabled(userId)) {
+      return res.status(409).json({ message: 'Turn off Instagram auto-response before sending a manual reply.' });
+    }
     const ref = firestore.collection('messages').doc(payload.messageId);
     const snapshot = await ref.get();
-    if (!snapshot.exists) return res.status(404).json({ message: 'Message not found.' });
-    const data = snapshot.data() ?? {};
+    let data: Record<string, any> | null = snapshot.exists ? (snapshot.data() ?? {}) : null;
+    let usingSupabase = false;
+    if (!data) {
+      const row = await supabaseFallbackService.getInboundMessage(payload.messageId);
+      const rowPayload = row?.payload && typeof row.payload === 'object' ? row.payload as Record<string, unknown> : {};
+      const ownerId = String(rowPayload.ownerId ?? rowPayload.userId ?? '').trim();
+      if (!row || ownerId !== userId) return res.status(404).json({ message: 'Message not found.' });
+      data = {
+        ownerId,
+        platform: 'instagram',
+        type: 'dm',
+        senderId: row.sender_id,
+        senderUsername: row.profile_name,
+        text: row.message,
+        replyStatus: row.status,
+        replyText: row.reply,
+        replyError: row.error,
+        createdAt: row.received_at,
+        updatedAt: row.updated_at,
+        replyAt: row.updated_at,
+        accountId: rowPayload.accountId,
+        pageId: rowPayload.pageId,
+        targetKey: rowPayload.targetKey,
+        source: rowPayload.source,
+      };
+      usingSupabase = true;
+    }
     if (data.ownerId !== userId || data.platform !== 'instagram' || data.type !== 'dm') {
       return res.status(404).json({ message: 'Message not found.' });
     }
     await sendStoredInstagramReply({ userId, message: data, text: payload.text });
-    await ref.set(
-      {
-        replyStatus: 'manual_sent',
-        replyText: payload.text,
-        replyAt: new Date(),
-        updatedAt: new Date(),
-      },
-      { merge: true },
-    );
-    res.json({ message: serializeInstagramMessage(payload.messageId, { ...data, replyStatus: 'manual_sent', replyText: payload.text, replyAt: new Date(), updatedAt: new Date() }) });
+    const now = new Date();
+    if (usingSupabase) {
+      await supabaseFallbackService.updateInboundMessage(payload.messageId, { status: 'manual_sent', reply: payload.text, error: null });
+    } else {
+      await ref.set(
+        { replyStatus: 'manual_sent', replyText: payload.text, replyAt: now, updatedAt: now },
+        { merge: true },
+      );
+    }
+    res.json({ message: serializeInstagramMessage(payload.messageId, { ...data, replyStatus: 'manual_sent', replyText: payload.text, replyAt: now, updatedAt: now }) });
   } catch (error) {
     next(error);
   }

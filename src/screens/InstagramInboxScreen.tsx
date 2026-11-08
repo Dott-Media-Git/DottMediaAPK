@@ -66,7 +66,7 @@ export const InstagramInboxScreen: React.FC = () => {
         syncNotice = error?.message ?? 'Instagram inbox sync is temporarily unavailable.';
       }
       const inbox = await fetchInstagramInbox();
-      if (!inbox.messages.length && syncResult?.messages?.length) {
+      if (!inbox.autoResponseEnabled && !inbox.messages.length && syncResult?.messages?.length) {
         inbox.messages = syncResult.messages;
       }
       // Social Integrations and the inbox share the same authenticated

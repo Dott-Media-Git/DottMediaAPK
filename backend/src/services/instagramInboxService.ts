@@ -9,6 +9,12 @@ import { canUsePrimarySocialDefaults } from '../utils/socialAccess';
 
 type StoredMessage = admin.firestore.DocumentData;
 
+const isInstagramLoginAccount = (account: Record<string, unknown>) => {
+  const provider = String(account.provider ?? '').toLowerCase();
+  const graphBaseUrl = String(account.graphBaseUrl ?? '').toLowerCase();
+  return provider === 'instagram_login' || graphBaseUrl.includes('graph.instagram.com');
+};
+
 const normalizeInstagramAccount = (socialAccounts: Record<string, any> | undefined) => {
   const instagram = socialAccounts?.instagram;
   if (!instagram || typeof instagram !== 'object') return null;
@@ -219,6 +225,10 @@ export async function sendStoredInstagramReply(input: {
   const pageId = String(account.pageId ?? input.message.pageId ?? '').trim();
   if (!accessToken || !accountId) {
     throw new Error('Instagram is not connected for this account. Reconnect Instagram and try again.');
+  }
+  if (isInstagramLoginAccount(account)) {
+    await replyToInstagramLoginMessage(senderId, input.text, accessToken);
+    return;
   }
   await replyToInstagramMessage(senderId, input.text, { accessToken, igBusinessId: accountId, pageId: pageId || undefined });
 }
