@@ -180,12 +180,12 @@ export const InstagramInboxScreen: React.FC = () => {
       </DMCard>
 
       <View style={styles.sectionHeader}>
-        <View><Text style={styles.sectionTitle}>Recent messages</Text><Text style={styles.muted}>The inbox refreshes from your connected account.</Text></View>
+        <View><Text style={styles.sectionTitle}>Recent messages</Text><Text style={styles.muted}>{data?.autoResponseEnabled ? 'Auto-response is on; DMs are handled automatically and hidden here.' : 'Manual mode is on; messages from your connected account appear here.'}</Text></View>
         <Text style={styles.count}>{messages.length}</Text>
       </View>
 
       {loading ? <ActivityIndicator color={colors.accent} style={styles.loader} /> : messages.length === 0 ? (
-        <DMCard title="No Instagram DMs yet" subtitle="Send a message to your connected Instagram account from a tester account, then refresh this page. The background listener checks regularly too." />
+        <DMCard title={data?.autoResponseEnabled ? 'Messages are handled automatically' : 'No Instagram DMs yet'} subtitle={data?.autoResponseEnabled ? 'Turn off auto-response to review incoming messages and send manual replies from Dotti.' : 'Send a message to your connected Instagram account, then refresh this page.'} />
       ) : messages.map(message => (
         <DMCard key={message.id} style={styles.messageCard}>
           <View style={styles.messageHeader}>
