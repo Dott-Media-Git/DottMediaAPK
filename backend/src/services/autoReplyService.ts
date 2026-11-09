@@ -35,6 +35,7 @@ const ACCOUNT_REPLY_PROFILES: Array<{ profile: string; accountIds: string[]; pag
 ];
 
 const CLIENT_REPLY_PROFILES: Record<string, string> = {
+  ouwaugr76lhdq6ijbtuock9ymv93: 'ngogo',
   cmpzqccgggbhze9dbvtxfmbehp02: 'auxwellness',
   tce1fq1cofgdupoxp23mpumqraz1: 'shecare',
   '80byieiuuknftuvxtuobxmfc7pu1': 'dotthr',
@@ -79,7 +80,13 @@ const getAutoReplyPromptOverride = async (userId?: string) => {
     return cached.value || null;
   }
   try {
-    const snap = await firestore.collection('assistant_settings').doc(userId).get();
+    const read = firestore.collection('assistant_settings').doc(userId).get();
+    const snap = userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93'
+      ? await Promise.race([read, new Promise<never>((_, reject) => {
+          const timer = setTimeout(() => reject(new Error('Reply settings timed out')), 3000);
+          timer.unref();
+        })])
+      : await read;
     const value = (snap.data()?.autoReplyPrompt as string | undefined)?.trim() ?? '';
     replyPromptCache.set(userId, { value: value || '', fetchedAt: now, loaded: true });
     return value || null;
@@ -172,6 +179,7 @@ export async function generateReply(
     return 'Thanks for the support. For more football updates or to place bets, follow the link in the bio.';
   }
   const clientInstructions: Record<string, string> = {
+    ngogo: 'You reply for Ngogo Safari Lodge in Uganda. Be warm, concise and helpful. For bookings ask for dates and number of guests. Never invent prices, availability, activities, or contact details, and never promote Dott Media.',
     carmarketplace:
       'You reply for Carmarketug, a car marketplace. Be brief, helpful, and ask for budget, preferred model, location, or viewing details. Do not mention Dott Media or AI Sales Agent.',
     staysphere:

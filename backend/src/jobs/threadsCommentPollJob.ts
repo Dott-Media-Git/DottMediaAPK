@@ -4,6 +4,7 @@ import admin from 'firebase-admin';
 import { firestore } from '../db/firestore';
 import { generateReply, replyToThreadsComment } from '../services/autoReplyService';
 import { getPollSocialAccounts } from '../services/pollSocialAccountResolver';
+import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
@@ -29,6 +30,7 @@ type PollTarget = {
 };
 
 const CLIENT_POLL_USER_IDS = [
+  'ouwaugr76lhdQ6IJbTuoCK9yMV93',
   'cMPZQccGggbhZe9dbvtxFmBehP02',
   '80bYIeiuukNFtUvXTUobXmfC7pu1',
   'LVR7p3WzdFM51ds92Kacf6S40og2',
@@ -112,6 +114,17 @@ const reserveReply = async (reply: ReplyItem, threadId: string, target: PollTarg
   if (target.username && reply.username?.toLowerCase() === target.username.toLowerCase()) return null;
   if (!withinWindow(reply.timestamp)) return null;
 
+  // Use one authoritative store for Ngogo even when Firestore later recovers.
+  if (target.userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93') {
+    const storageId = `threads_reply_${replyId}`;
+    const claimed = await supabaseFallbackService.reserveInboundMessage({
+      id: storageId, channel: 'threads', senderId: reply.username ?? 'unknown',
+      recipientId: target.userId, message: text, messageType: 'comment', status: 'pending',
+      payload: { postId: threadId, accountId: target.accountId },
+    });
+    return claimed ? { docRef: null, storageId, text, replyId } : null;
+  }
+
   const docRef = firestore.collection('messages').doc(`threads_reply_${replyId}`);
   try {
     await docRef.create({
@@ -163,9 +176,11 @@ const processReply = async (reply: ReplyItem, threadId: string, target: PollTarg
       accountId: target.accountId,
       accessToken: target.accessToken,
     });
-    await upsertReplyStatus(reserved.docRef, 'sent');
+    if (reserved.docRef) await upsertReplyStatus(reserved.docRef, 'sent');
+    else if ('storageId' in reserved && reserved.storageId) await supabaseFallbackService.updateInboundMessage(reserved.storageId, { status: 'sent' });
   } catch (error) {
-    await upsertReplyStatus(reserved.docRef, 'failed', (error as Error).message);
+    if (reserved.docRef) await upsertReplyStatus(reserved.docRef, 'failed', (error as Error).message);
+    else if ('storageId' in reserved && reserved.storageId) await supabaseFallbackService.updateInboundMessage(reserved.storageId, { status: 'failed', error: 'Reply failed' });
     console.warn('[threads-comment-poll] reply failed', (error as Error).message);
   }
 };

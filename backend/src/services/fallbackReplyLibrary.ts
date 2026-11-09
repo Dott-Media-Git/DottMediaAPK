@@ -4,6 +4,7 @@ export type FallbackKind = 'message' | 'comment';
 export type ReplyProfile =
   | 'default'
   | 'auxwellness'
+  | 'ngogo'
   | 'bwinbetug'
   | 'carmarketplace'
   | 'staysphere'
@@ -323,6 +324,10 @@ const auxWellnessLibrary: Library = {
 
 const profileLibraries: Record<ReplyProfile, Library> = {
   default: defaultLibrary,
+  ngogo: {
+    message: { default: ['Thank you for contacting Ngogo Safari Lodge! Please share your travel dates and number of guests, and our team will help with your enquiry.'] },
+    comment: { default: ['Thank you for your interest in Ngogo Safari Lodge! Please send us a message with your dates and number of guests, and our team will be happy to help.'] },
+  },
   auxwellness: auxWellnessLibrary,
   bwinbetug: bwinbetLibrary,
   carmarketplace: carMarketplaceLibrary,

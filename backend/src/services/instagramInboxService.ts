@@ -116,6 +116,16 @@ const normalizeSettingKeys = (keys: string | string[] | undefined) => {
 };
 
 export async function getInstagramAutoResponseEnabledForAccount(userId: string, accountKeys?: string | string[]) {
+  if (userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93' && supabaseFallbackService.isConfigured()) {
+    try {
+      const setting = await supabaseFallbackService.getInboundMessage(`instagram_auto_response_setting_${userId}`);
+      const enabled = (setting?.payload as { enabled?: unknown } | undefined)?.enabled;
+      if (typeof enabled === 'boolean') return enabled;
+    } catch (error) {
+      console.warn('[instagram-inbox] durable setting read failed', (error as Error).message);
+      return false;
+    }
+  }
   try {
     const snap = await withTimeout(firestore.collection('assistant_settings').doc(userId).get(), 5000, null);
     if (snap) {
@@ -143,6 +153,13 @@ export async function getInstagramAutoResponseEnabledForAccount(userId: string, 
 }
 
 export async function setInstagramAutoResponseEnabled(userId: string, enabled: boolean, accountKeys?: string | string[]) {
+  if (userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93' && supabaseFallbackService.isConfigured()) {
+    await supabaseFallbackService.addInboundMessage({
+      id: `instagram_auto_response_setting_${userId}`, channel: 'settings', senderId: userId,
+      messageType: 'instagram_auto_response', status: 'configured', payload: { enabled },
+    });
+    return enabled;
+  }
   await firestore.collection('assistant_settings').doc(userId).set(
     {
       instagramAutoReplyEnabled: enabled,

@@ -656,6 +656,20 @@ class SupabaseFallbackService {
     }
   }
 
+  // Atomic insert: a duplicate reservation must never trigger a second reply.
+  async reserveInboundMessage(record: InboundMessageRecord): Promise<boolean> {
+    if (!this.isConfigured() || !record.id) throw new Error('Durable reply storage is unavailable');
+    const rows = await this.request<any[]>('POST', 'dott_inbound_messages', {
+      params: { on_conflict: 'id' },
+      prefer: 'resolution=ignore-duplicates,return=representation',
+      body: [{ id: record.id, channel: record.channel, sender_id: record.senderId,
+        recipient_id: record.recipientId ?? null, message: record.message ?? null,
+        message_type: record.messageType ?? null, status: record.status ?? 'pending',
+        received_at: NOW(), updated_at: NOW(), payload: sanitizeJson(record.payload ?? {}) ?? {} }],
+    });
+    return Array.isArray(rows) && rows.length === 1;
+  }
+
   async listInboundMessages(channel = 'instagram', limit = 200) {
     if (!this.isConfigured()) return [] as Array<Record<string, unknown>>;
     const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
