@@ -11,6 +11,7 @@ import {
 } from '../services/commentToDmService';
 import { getPollSocialAccounts } from '../services/pollSocialAccountResolver';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
+import { pickFallbackReply } from '../services/fallbackReplyLibrary';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const enabled = process.env.IG_COMMENT_POLL_ENABLED !== 'false';
@@ -132,7 +133,16 @@ const processComment = async (comment: CommentItem, target: PollTarget) => {
       payload: { accountId: target.igBusinessId, source: 'poller' } });
     if (!claimed) return;
     try {
-      const reply = await generateReply(text, 'instagram', target.userId, 'comment', { accountId: target.igBusinessId });
+      const fallback = pickFallbackReply({ channel: 'instagram', kind: 'comment',
+        profile: target.userId === NGOGO_USER_ID ? 'ngogo' : 'shecare' });
+      let timeout: NodeJS.Timeout | undefined;
+      let reply: string;
+      try {
+        reply = await Promise.race([
+          generateReply(text, 'instagram', target.userId, 'comment', { accountId: target.igBusinessId }),
+          new Promise<string>(resolve => { timeout = setTimeout(() => resolve(fallback), 10000); }),
+        ]);
+      } finally { if (timeout) clearTimeout(timeout); }
       await axios.post(`https://graph.instagram.com/${GRAPH_VERSION}/${commentId}/replies`, null,
         { params: { message: reply, access_token: target.accessToken }, timeout: 30000 });
       await supabaseFallbackService.updateInboundMessage(storageId, { status: 'sent' });
