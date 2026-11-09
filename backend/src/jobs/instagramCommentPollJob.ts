@@ -10,6 +10,7 @@ import {
   isCommentToDmTrigger,
 } from '../services/commentToDmService';
 import { getPollSocialAccounts } from '../services/pollSocialAccountResolver';
+import { supabaseFallbackService } from '../services/supabaseFallbackService';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v19.0';
 const enabled = process.env.IG_COMMENT_POLL_ENABLED !== 'false';
@@ -19,8 +20,10 @@ const commentLimit = Math.max(Number(process.env.IG_COMMENT_LIMIT ?? 10), 1);
 const windowHours = Math.max(Number(process.env.IG_COMMENT_WINDOW_HOURS ?? 24), 1);
 
 type MediaItem = { id: string; timestamp?: string };
-type CommentItem = { id: string; text?: string; timestamp?: string; from?: { id?: string } };
-type PollTarget = { userId?: string; igBusinessId: string; accessToken: string };
+type CommentItem = { id: string; text?: string; timestamp?: string; from?: { id?: string; username?: string } };
+type PollTarget = { userId?: string; igBusinessId: string; accessToken: string; instagramLogin?: boolean };
+const NGOGO_USER_ID = 'ouwaugr76lhdQ6IJbTuoCK9yMV93';
+const NGOGO_START_AT = Date.parse('2026-11-09T08:53:00Z');
 
 const KNOWN_IG_TARGETS: Record<string, { igBusinessId: string }> = {
   tCE1FQ1cOFgdupOXP23mPUMQRAz1: { igBusinessId: '17841437471047291' },
@@ -28,6 +31,7 @@ const KNOWN_IG_TARGETS: Record<string, { igBusinessId: string }> = {
 };
 
 const CLIENT_POLL_USER_IDS = [
+  NGOGO_USER_ID,
   'cMPZQccGggbhZe9dbvtxFmBehP02',
   'tCE1FQ1cOFgdupOXP23mPUMQRAz1',
   '80bYIeiuukNFtUvXTUobXmfC7pu1',
@@ -66,8 +70,8 @@ const withinWindow = (timestamp?: string) => {
   return Date.now() - createdAt <= windowHours * 60 * 60 * 1000;
 };
 
-const fetchRecentMedia = async (igBusinessId: string, accessToken: string) => {
-  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${igBusinessId}/media`;
+const fetchRecentMedia = async (igBusinessId: string, accessToken: string, instagramLogin = false) => {
+  const url = instagramLogin ? `https://graph.instagram.com/${GRAPH_VERSION}/me/media` : `https://graph.facebook.com/${GRAPH_VERSION}/${igBusinessId}/media`;
   const response = await axios.get(url, {
     params: {
       fields: 'id,timestamp',
@@ -79,8 +83,8 @@ const fetchRecentMedia = async (igBusinessId: string, accessToken: string) => {
   return (response.data?.data as MediaItem[] | undefined) ?? [];
 };
 
-const fetchComments = async (mediaId: string, accessToken: string) => {
-  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}/comments`;
+const fetchComments = async (mediaId: string, accessToken: string, instagramLogin = false) => {
+  const url = `${instagramLogin ? 'https://graph.instagram.com' : 'https://graph.facebook.com'}/${GRAPH_VERSION}/${mediaId}/comments`;
   const response = await axios.get(url, {
     params: {
       fields: 'id,text,timestamp,from',
@@ -113,6 +117,27 @@ const processComment = async (comment: CommentItem, target: PollTarget) => {
   if (!commentId || !text) return;
   if (fromId && fromId === target.igBusinessId) return;
   if (!withinWindow(comment.timestamp)) return;
+
+  if (target.userId === NGOGO_USER_ID) {
+    if (!target.instagramLogin || !fromId || comment.from?.username?.toLowerCase() === 'ngogo_safari_lodge') return;
+    const created = Date.parse(comment.timestamp ?? '');
+    if (!Number.isFinite(created) || created < NGOGO_START_AT) return;
+    const storageId = `instagram_comment_${commentId}`;
+    const claimed = await supabaseFallbackService.reserveInboundMessage({ id: storageId, channel: 'instagram',
+      senderId: fromId, recipientId: target.userId, message: text, messageType: 'comment', status: 'pending',
+      payload: { accountId: target.igBusinessId, source: 'poller' } });
+    if (!claimed) return;
+    try {
+      const reply = await generateReply(text, 'instagram', target.userId, 'comment', { accountId: target.igBusinessId });
+      await axios.post(`https://graph.instagram.com/${GRAPH_VERSION}/${commentId}/replies`, null,
+        { params: { message: reply, access_token: target.accessToken }, timeout: 30000 });
+      await supabaseFallbackService.updateInboundMessage(storageId, { status: 'sent' });
+    } catch (error) {
+      await supabaseFallbackService.updateInboundMessage(storageId, { status: 'failed', error: 'Comment reply failed' });
+      console.warn('[ig-comment-poll] Ngogo reply failed', (error as Error).message);
+    }
+    return;
+  }
 
   const dedupeKey = `instagram_comment_${commentId}`;
   const legacyDedupeKey = `instagram_comment_${target.igBusinessId}_${commentId}`;
@@ -204,9 +229,11 @@ const loadClientTargets = async (): Promise<PollTarget[]> => {
   await Promise.all(
     userIds.map(async userId => {
       const stored = await getPollSocialAccounts(userId);
-      const instagram = (stored?.socialAccounts?.instagram as { accountId?: string; accessToken?: string } | undefined);
+      const instagram = (stored?.socialAccounts?.instagram as { accountId?: string; accessToken?: string; provider?: string; username?: string } | undefined);
       if (instagram?.accountId && instagram.accessToken) {
-        targets.push({ userId, igBusinessId: instagram.accountId, accessToken: instagram.accessToken });
+        if (userId === NGOGO_USER_ID && instagram.username?.toLowerCase() !== 'ngogo_safari_lodge') return;
+        targets.push({ userId, igBusinessId: instagram.accountId, accessToken: instagram.accessToken,
+          instagramLogin: userId === NGOGO_USER_ID && instagram.provider === 'instagram_login' });
         return;
       }
 
@@ -235,9 +262,9 @@ export const pollInstagramCommentsOnce = async () => {
 
   for (const target of targets) {
     try {
-      const media = await fetchRecentMedia(target.igBusinessId, target.accessToken);
+      const media = await fetchRecentMedia(target.igBusinessId, target.accessToken, target.instagramLogin);
       for (const item of media) {
-        const comments = await fetchComments(item.id, target.accessToken);
+        const comments = await fetchComments(item.id, target.accessToken, target.instagramLogin);
         for (const comment of comments) {
           await processComment(comment, target);
         }
