@@ -478,9 +478,10 @@ router.post('/meta/webhook', async (req, res) => {
       for (const change of entry.changes ?? []) {
         // Instagram comments
         if (change.field === 'comments' && body.object === 'instagram') {
-          // Ngogo's Instagram Login comments are claimed by its durable poller.
+          // These Instagram Login comments are claimed by the durable poller.
           // Do not let the legacy Facebook Login webhook also reply to them.
-          if (instagramContext?.userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93' || entryId === '28534542979575439') continue;
+          if (['ouwaugr76lhdQ6IJbTuoCK9yMV93', 'tCE1FQ1cOFgdupOXP23mPUMQRAz1'].includes(instagramContext?.userId ?? '') ||
+              ['28534542979575439', '29367679299588358'].includes(entryId ?? '')) continue;
           const commentId = change.value?.id as string | undefined;
           const text = change.value?.text as string | undefined;
           const fromId = change.value?.from?.id as string | undefined;

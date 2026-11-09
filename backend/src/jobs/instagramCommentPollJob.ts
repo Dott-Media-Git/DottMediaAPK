@@ -23,7 +23,10 @@ type MediaItem = { id: string; timestamp?: string };
 type CommentItem = { id: string; text?: string; timestamp?: string; from?: { id?: string; username?: string } };
 type PollTarget = { userId?: string; igBusinessId: string; accessToken: string; instagramLogin?: boolean };
 const NGOGO_USER_ID = 'ouwaugr76lhdQ6IJbTuoCK9yMV93';
-const NGOGO_START_AT = Date.parse('2026-11-09T08:53:00Z');
+const instagramLoginTargets: Record<string, { username: string; startAt: number }> = {
+  [NGOGO_USER_ID]: { username: 'ngogo_safari_lodge', startAt: Date.parse('2026-11-09T08:53:00Z') },
+  tCE1FQ1cOFgdupOXP23mPUMQRAz1: { username: 'shecaredoctor', startAt: Date.parse('2026-11-09T09:48:00Z') },
+};
 
 const KNOWN_IG_TARGETS: Record<string, { igBusinessId: string }> = {
   tCE1FQ1cOFgdupOXP23mPUMQRAz1: { igBusinessId: '17841437471047291' },
@@ -118,10 +121,11 @@ const processComment = async (comment: CommentItem, target: PollTarget) => {
   if (fromId && fromId === target.igBusinessId) return;
   if (!withinWindow(comment.timestamp)) return;
 
-  if (target.userId === NGOGO_USER_ID) {
-    if (!target.instagramLogin || !fromId || comment.from?.username?.toLowerCase() === 'ngogo_safari_lodge') return;
+  const loginTarget = target.userId ? instagramLoginTargets[target.userId] : undefined;
+  if (loginTarget) {
+    if (!target.instagramLogin || !fromId || comment.from?.username?.toLowerCase() === loginTarget.username) return;
     const created = Date.parse(comment.timestamp ?? '');
-    if (!Number.isFinite(created) || created < NGOGO_START_AT) return;
+    if (!Number.isFinite(created) || created < loginTarget.startAt) return;
     const storageId = `instagram_comment_${commentId}`;
     const claimed = await supabaseFallbackService.reserveInboundMessage({ id: storageId, channel: 'instagram',
       senderId: fromId, recipientId: target.userId, message: text, messageType: 'comment', status: 'pending',
@@ -134,7 +138,7 @@ const processComment = async (comment: CommentItem, target: PollTarget) => {
       await supabaseFallbackService.updateInboundMessage(storageId, { status: 'sent' });
     } catch (error) {
       await supabaseFallbackService.updateInboundMessage(storageId, { status: 'failed', error: 'Comment reply failed' });
-      console.warn('[ig-comment-poll] Ngogo reply failed', (error as Error).message);
+      console.warn('[ig-comment-poll] Instagram Login reply failed', (error as Error).message);
     }
     return;
   }
@@ -231,9 +235,10 @@ const loadClientTargets = async (): Promise<PollTarget[]> => {
       const stored = await getPollSocialAccounts(userId);
       const instagram = (stored?.socialAccounts?.instagram as { accountId?: string; accessToken?: string; provider?: string; username?: string } | undefined);
       if (instagram?.accountId && instagram.accessToken) {
-        if (userId === NGOGO_USER_ID && instagram.username?.toLowerCase() !== 'ngogo_safari_lodge') return;
+        const loginTarget = instagramLoginTargets[userId];
+        if (loginTarget && instagram.username?.toLowerCase() !== loginTarget.username) return;
         targets.push({ userId, igBusinessId: instagram.accountId, accessToken: instagram.accessToken,
-          instagramLogin: userId === NGOGO_USER_ID && instagram.provider === 'instagram_login' });
+          instagramLogin: Boolean(loginTarget) && instagram.provider === 'instagram_login' });
         return;
       }
 
