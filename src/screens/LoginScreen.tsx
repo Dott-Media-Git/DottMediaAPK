@@ -75,6 +75,7 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
       >
+      <View style={styles.formContainer}>
       <LinearGradient
         colors={[colors.accent, colors.accentSecondary]}
         start={{ x: 0, y: 0 }}
@@ -133,6 +134,7 @@ export const LoginScreen: React.FC<Props> = ({ navigation }) => {
           <Text style={styles.linkLabel}>{t('Create an account')}</Text>
         </TouchableOpacity>
       </View>
+      </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -152,6 +154,11 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingHorizontal: 24,
     paddingBottom: 64
+  },
+  formContainer: {
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
   },
   hero: {
     borderRadius: 30,
