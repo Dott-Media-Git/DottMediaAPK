@@ -333,6 +333,9 @@ export const fetchSocialHistory = async (options?: {
   });
 };
 
+export const fetchRecoveredGallery = (): Promise<{ urls: string[] }> =>
+  authedFetch('/api/media/recover-gallery', { cache: 'no-store' });
+
 export const fetchSocialStatus = async (): Promise<{ status: SocialConnectionStatus }> => {
   return authedFetch('/api/social/status');
 };

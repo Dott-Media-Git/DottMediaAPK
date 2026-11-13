@@ -18,7 +18,7 @@ import { colors } from '@constants/colors';
 import { DMButton } from '@components/DMButton';
 import { GalleryAutoPost } from '@components/GalleryAutoPost';
 import { useAuth } from '@context/AuthContext';
-import { uploadMediaFiles } from '@services/social';
+import { fetchRecoveredGallery, uploadMediaFiles } from '@services/social';
 import {
   addMediaLibraryFiles,
   loadMediaLibrary,
@@ -28,6 +28,8 @@ import {
 
 type Filter = 'all' | 'image' | 'video';
 
+const NGOGO_USER_ID = 'ouwaugr76lhdQ6IJbTuoCK9yMV93';
+const NGOGO_GALLERY_RECOVERY_KEY = `dott.ngogoGalleryHistoryRecovery.v1:${NGOGO_USER_ID}`;
 const AUX_WELLNESS_USER_ID = 'cMPZQccGggbhZe9dbvtxFmBehP02';
 const AUX_WELLNESS_GALLERY_SEEDED_KEY = `dott.auxWellnessGallerySeeded.v1:${AUX_WELLNESS_USER_ID}`;
 const AUX_WELLNESS_GALLERY_ASSETS: MediaLibraryAsset[] = Array.from(
@@ -68,6 +70,28 @@ export const ContentGalleryScreen: React.FC = () => {
         next = [...AUX_WELLNESS_GALLERY_ASSETS.filter(asset => !seen.has(asset.url)), ...current];
         await saveMediaLibrary(userId, next);
         await AsyncStorage.setItem(AUX_WELLNESS_GALLERY_SEEDED_KEY, 'true');
+      }
+      if (userId === NGOGO_USER_ID && !next.length && !(await AsyncStorage.getItem(NGOGO_GALLERY_RECOVERY_KEY))) {
+        try {
+          const { urls } = await fetchRecoveredGallery();
+          const latest = await loadMediaLibrary(userId);
+          if (!cancelled && !latest.length && urls.length) {
+            next = urls.map((url, index) => ({
+              id: `ngogo-history-recovered-${index}`,
+              name: `Recovered Ngogo photo ${index + 1}`,
+              url,
+              kind: 'image' as const,
+              createdAt: new Date().toISOString(),
+            }));
+            await saveMediaLibrary(userId, next);
+            await AsyncStorage.setItem(NGOGO_GALLERY_RECOVERY_KEY, 'true');
+            setMessage(`Recovered ${next.length} previously posted photos. Other uploads may still be on the original device.`);
+          } else {
+            next = latest;
+          }
+        } catch {
+          // Leave the gallery untouched if posting history is temporarily unavailable.
+        }
       }
       if (!cancelled) setAssets(next);
     };

@@ -2,8 +2,10 @@ import path from 'path';
 import createHttpError from 'http-errors';
 import multer from 'multer';
 import { Router } from 'express';
-import { requireFirebase } from '../middleware/firebaseAuth';
+import { requireFirebase, requireFirebaseStrict, type AuthedRequest } from '../middleware/firebaseAuth';
 import { saveUploadedMediaBuffer } from '../services/generatedMediaService';
+import { supabaseFallbackService } from '../services/supabaseFallbackService';
+import { recoverGalleryImageUrls } from '../services/galleryRecovery';
 
 const router = Router();
 
@@ -36,6 +38,15 @@ const inferMediaKind = (file: Express.Multer.File) => {
   if (file.mimetype.startsWith('video/')) return 'videos' as const;
   return null;
 };
+
+router.get('/api/media/recover-gallery', requireFirebaseStrict, async (req, res, next) => {
+  try {
+    if (!supabaseFallbackService.isConfigured()) throw createHttpError(503, 'Gallery recovery is temporarily unavailable');
+    const userId = (req as AuthedRequest).authUser!.uid;
+    const posts = await supabaseFallbackService.getPostsByUser(userId, 1000);
+    res.set('Cache-Control', 'no-store').json({ urls: recoverGalleryImageUrls(posts) });
+  } catch (error) { next(error); }
+});
 
 router.post('/api/media/upload', requireFirebase, upload.array('files', 12), async (req, res, next) => {
   try {
