@@ -12,6 +12,17 @@ const names: Record<GalleryAutoPostPlatform, string> = {
 };
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Unable to update Auto-post. Please try again.';
 
+function postingErrorMessage(error: string) {
+  const channel = /\bthreads\b/i.test(error) ? 'Threads' : /\binstagram\b/i.test(error) ? 'Instagram' : 'a connected account';
+  if (/media not found|media with id.*cannot be found|code=24.*subcode=4279009/i.test(error)) {
+    return `${channel} could not prepare this photo or video. Check the account before restarting the rotation.`;
+  }
+  if (/token|oauth|permission|not connected|authori[sz]/i.test(error)) {
+    return `${channel} needs attention. Check its connection in Social Integrations before restarting.`;
+  }
+  return `Dotti couldn't complete a post on ${channel}. Check your connected accounts and posting history before restarting.`;
+}
+
 export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAsset[]; uploading: boolean }) {
   const [job, setJob] = useState<GalleryAutoPostJob | null>(null);
   const [nature, setNature] = useState<NatureRotation | null>(null);
@@ -118,7 +129,7 @@ export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAss
         <Text style={styles.status}>Ngogo nature rotation: {nature.active ? 'Active' : 'Stopped'}</Text>
         <Text style={styles.copy}>{nature.count} photos · Every 2 hours · Instagram and Threads</Text>
         {nature.nextRunAt ? <Text style={styles.copy}>Next post: {new Date(nature.nextRunAt).toLocaleString()}</Text> : null}
-        {nature.error ? <Text style={styles.error}>Rotation paused: {nature.error}</Text> : null}
+        {nature.error ? <Text style={styles.error}>Rotation paused: {postingErrorMessage(nature.error)}</Text> : null}
         {nature.active ? <DMButton title="Stop nature rotation" style={styles.button} onPress={() => {
           void stopNatureRotation().then(() => setNature(current => current ? { ...current, active: false, nextRunAt: null } : null))
             .catch(cause => setError(errorText(cause)));
@@ -134,7 +145,7 @@ export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAss
         disabled={!loaded || uploading || !assets.length || busy || Boolean(job?.runToken)} />}
       {!active && job?.runToken ? <Text style={styles.copy}>Finishing the current post…</Text> : null}
       {hasChanged ? <Text style={styles.copy}>Your gallery has changed. Stop and restart Auto-post to use the updated gallery.</Text> : null}
-      {job?.error ? <Text accessibilityRole="alert" style={styles.error}>Auto-post paused: {job.error}</Text> : null}
+      {job?.error ? <Text accessibilityRole="alert" style={styles.error}>Auto-post paused: {postingErrorMessage(job.error)}</Text> : null}
       {notice ? <Text accessibilityLiveRegion="polite" style={styles.copy}>{notice}</Text> : null}
       {error && !visible ? <View><Text accessibilityRole="alert" style={styles.error}>{error}</Text>
         <Pressable accessibilityRole="button" onPress={() => void refresh()}><Text style={styles.link}>Refresh Auto-post status</Text></Pressable></View> : null}

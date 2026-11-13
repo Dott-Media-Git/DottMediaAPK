@@ -42,6 +42,7 @@ function formatThreadsError(error: any, fallback: string) {
 }
 
 async function waitForMediaReady(creationId: string, accessToken: string) {
+  let lastNotFound: unknown;
   for (let attempt = 0; attempt < READY_ATTEMPTS; attempt += 1) {
     try {
       const statusResp = await http.get(`${GRAPH_BASE_URL}/${GRAPH_VERSION}/${creationId}`, {
@@ -59,6 +60,14 @@ async function waitForMediaReady(creationId: string, accessToken: string) {
         throw new Error(detail || 'Threads media container failed');
       }
     } catch (error: any) {
+      const apiError = error?.response?.data?.error as ThreadsApiError | undefined;
+      // Threads can briefly return Media Not Found for a container it just
+      // created. Retry only the read; never recreate or republish a post here.
+      if (apiError?.code === 24 && apiError?.error_subcode === 4279009) {
+        lastNotFound = error;
+        await new Promise(resolve => setTimeout(resolve, READY_DELAY_MS));
+        continue;
+      }
       const message = error?.response?.data?.error?.message ?? error?.message ?? '';
       if (/unsupported get request|unknown path components|invalid parameter/i.test(message)) {
         return true;
@@ -69,7 +78,8 @@ async function waitForMediaReady(creationId: string, accessToken: string) {
     await new Promise(resolve => setTimeout(resolve, READY_DELAY_MS));
   }
 
-  return true;
+  if (lastNotFound) throw lastNotFound;
+  throw new Error('Threads is still preparing this media. Please try again later.');
 }
 
 async function publishWithRetry(accountId: string, accessToken: string, creationId: string) {
@@ -93,7 +103,9 @@ async function publishWithRetry(accountId: string, accessToken: string, creation
     } catch (error: any) {
       lastError = error;
       const message = error?.response?.data?.error?.message ?? error?.message ?? '';
-      if (attempt < PUBLISH_RETRIES - 1 && /not ready|not available|processing|try again/i.test(message)) {
+      const apiError = error?.response?.data?.error as ThreadsApiError | undefined;
+      const temporarilyMissing = apiError?.code === 24 && apiError?.error_subcode === 4279009;
+      if (attempt < PUBLISH_RETRIES - 1 && (temporarilyMissing || /not ready|not available|processing|try again/i.test(message))) {
         await new Promise(resolve => setTimeout(resolve, PUBLISH_RETRY_DELAY_MS));
         continue;
       }
