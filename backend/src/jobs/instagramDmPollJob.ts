@@ -87,8 +87,12 @@ const getStoredInstagramLoginUsers = async () => {
   // Supabase is the primary fallback store, but a newly connected account may
   // be visible in Firestore before the fallback row is written.
   try {
-    const snapshot = await firestore.collection('users').select('email', 'socialAccounts').limit(1000).get();
-    for (const doc of snapshot.docs) {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const snapshot = await Promise.race([
+      firestore.collection('users').select('email', 'socialAccounts').limit(1000).get(),
+      new Promise<null>(resolve => { timeout = setTimeout(() => resolve(null), 5000); }),
+    ]).finally(() => { if (timeout) clearTimeout(timeout); });
+    for (const doc of snapshot?.docs ?? []) {
       const data = doc.data() as { email?: string; socialAccounts?: Record<string, any> };
       const instagram = data.socialAccounts?.instagram;
       if (!isInstagramLoginAccount(instagram) || !String(instagram?.accessToken ?? '').trim()) continue;
@@ -199,6 +203,8 @@ const reserveMessage = async (
 
 export const pollInstagramDmsOnce = async () => {
   const storedAccounts = await getStoredInstagramLoginUsers();
+  // Keep Ngogo responsive even when another account's provider is slow.
+  storedAccounts.sort((a, b) => Number(b.userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93') - Number(a.userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93'));
   const handledUserIds = new Set<string>();
 
   // OAuth-connected Instagram Login accounts are persisted per user. Poll

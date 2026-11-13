@@ -8,6 +8,10 @@ import {
   serializeInstagramMessage,
 } from './instagramInboxService';
 import { supabaseFallbackService } from './supabaseFallbackService';
+import { pickFallbackReply } from './fallbackReplyLibrary';
+import { replyWithDeadline } from './replyWithDeadline';
+
+const NGOGO_USER_ID = 'ouwaugr76lhdQ6IJbTuoCK9yMV93';
 
 type InstagramConversation = {
   id?: string;
@@ -194,17 +198,31 @@ export async function syncInstagramInboxForUser(
       };
 
       let firestoreRef: admin.firestore.DocumentReference<admin.firestore.DocumentData> | null = null;
-      try {
-        firestoreRef = firestore.collection('messages').doc(storageId);
-        await firestoreRef.create(payload);
-      } catch (error) {
-        if (isAlreadyExistsError(error)) continue;
-        firestoreRef = null;
-      }
-
       let fallbackStored = false;
-      try {
-        await supabaseFallbackService.addInboundMessage({
+      const durableReservation = userId === NGOGO_USER_ID && supabaseFallbackService.isConfigured();
+      if (durableReservation) {
+        try {
+          fallbackStored = await supabaseFallbackService.reserveInboundMessage({
+            id: storageId, channel: 'instagram', senderId, message: text, messageType: 'dm',
+            status: 'pending', receivedAt: createdAt,
+            payload: { ownerId: userId, accountId: account.accountId, source: 'instagram-inbox-sync',
+              senderUsername: message.from?.username ?? message.from?.name ?? null },
+          });
+          if (!fallbackStored) continue;
+        } catch (error) {
+          console.warn('[instagram-inbox] durable DM reservation failed; skipping reply', safeError(error));
+          continue;
+        }
+      } else {
+        try {
+          firestoreRef = firestore.collection('messages').doc(storageId);
+          await firestoreRef.create(payload);
+        } catch (error) {
+          if (isAlreadyExistsError(error)) continue;
+          firestoreRef = null;
+        }
+        try {
+          await supabaseFallbackService.addInboundMessage({
           id: storageId,
           channel: 'instagram',
           senderId,
@@ -215,12 +233,13 @@ export async function syncInstagramInboxForUser(
           receivedAt: createdAt,
           payload: { ownerId: userId, accountId: account.accountId, source: 'instagram-inbox-sync' },
         });
-        fallbackStored = true;
-      } catch (error) {
+          fallbackStored = true;
+        } catch (error) {
         // A storage outage must not discard a DM that Meta has already
         // delivered. The sanitized sync response below keeps it visible for
         // the current refresh while the background poller retries persistence.
-        console.warn('[instagram-inbox] fallback message save failed', (error as Error).message);
+          console.warn('[instagram-inbox] fallback message save failed', (error as Error).message);
+        }
       }
       existingIds.add(storageId);
       synced += 1;
@@ -231,6 +250,7 @@ export async function syncInstagramInboxForUser(
       }
 
       if (!shouldSendReplies) {
+        if (durableReservation) await supabaseFallbackService.updateInboundMessage(storageId, { status: 'disabled' }).catch(() => undefined);
         continue;
       }
 
@@ -241,7 +261,14 @@ export async function syncInstagramInboxForUser(
       }
 
       try {
-        const reply = await generateReply(text, 'instagram', userId, 'message', { accountId: account.accountId, username: account.username });
+        if (durableReservation && Date.now() - new Date(createdAt).getTime() > 24 * 60 * 60 * 1000) {
+          await supabaseFallbackService.updateInboundMessage(storageId, { status: 'expired', error: 'Reply window expired' });
+          continue;
+        }
+        const generated = generateReply(text, 'instagram', userId, 'message', { accountId: account.accountId, username: account.username });
+        const reply = durableReservation
+          ? await replyWithDeadline(generated, pickFallbackReply({ channel: 'instagram', kind: 'message', profile: 'ngogo' }), 10000)
+          : await generated;
         if (!(await getInstagramAutoResponseEnabledForAccount(userId, [account.accountId, account.username ?? '']))) {
           if (firestoreRef) await firestoreRef.set({ replyStatus: 'disabled', replyAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
           await supabaseFallbackService.updateInboundMessage(storageId, { status: 'disabled' }).catch(() => undefined);

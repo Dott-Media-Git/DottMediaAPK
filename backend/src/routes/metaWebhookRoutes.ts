@@ -543,6 +543,9 @@ router.post('/meta/webhook', async (req, res) => {
 
         // Instagram message events (changes payload)
         if (change.field === 'messages' && body.object === 'instagram') {
+          // Ngogo's Instagram Login inbox poller owns DM replies and uses an
+          // atomic message reservation; avoid a second independent sender.
+          if (instagramContext?.userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93') continue;
           const messages = Array.isArray(change.value?.messages) ? change.value.messages : [];
           for (const msg of messages) {
             const senderId = typeof msg?.from === 'string' ? msg.from : msg?.from?.id as string | undefined;
@@ -680,6 +683,7 @@ router.post('/meta/webhook', async (req, res) => {
 
           // Avoid replying to self
           const context = body.object === 'instagram' ? instagramContext : facebookContext;
+          if (body.object === 'instagram' && context?.userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93') continue;
           const ownId = body.object === 'instagram'
             ? (context?.accountId ?? igBusinessId)
             : (context?.pageId ?? pageId);

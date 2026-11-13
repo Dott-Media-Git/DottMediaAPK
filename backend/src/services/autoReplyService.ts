@@ -368,7 +368,7 @@ export async function replyToInstagramLoginMessage(userId: string, message: stri
         recipient: { id: userId },
         message: { text: message },
       },
-      { params: { access_token: token } },
+      { params: { access_token: token }, timeout: 15000 },
     );
   } catch (error) {
     throw formatAxiosError(error, 'IG Login DM reply');
