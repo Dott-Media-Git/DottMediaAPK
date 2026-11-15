@@ -149,6 +149,8 @@ export interface SocialAccounts {
 type PublishPayload = {
   caption: string;
   imageUrls: string[];
+  maxImages?: number;
+  preserveCaption?: boolean;
   videoUrl?: string;
   videoTitle?: string;
   privacyStatus?: 'private' | 'public' | 'unlisted';
@@ -617,6 +619,7 @@ export class SocialPostingService {
         const payload: PublishPayload = {
           caption: [post.caption, post.hashtags].filter(Boolean).join('\n\n'),
           imageUrls: post.imageUrls,
+          ...(post.userId === 'acmVetCcOiTHeGk5D7eDYieamDF3' ? { maxImages: 10, preserveCaption: true } : {}),
           videoUrl: post.videoUrl,
           videoTitle: post.videoTitle,
           credentials: socialAccounts,
