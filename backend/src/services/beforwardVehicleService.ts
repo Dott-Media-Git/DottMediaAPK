@@ -121,10 +121,13 @@ const fetchImageBuffer = async (url: string) => {
   return Buffer.from(response.data);
 };
 
-const formatUgxPrice = (value?: number) => {
-  if (!value || !Number.isFinite(value) || value <= 0) return '';
-  return `UGX ${Math.round(value).toLocaleString('en-US')}`;
-};
+export function formatCarmarketCoverPrice(value?: number) {
+  if (!value || !Number.isFinite(value) || value <= 0) return 'Price on request';
+  if (value >= 1_000_000) {
+    return `Only ${Number((value / 1_000_000).toFixed(6))}M`;
+  }
+  return `Only UGX ${Math.round(value).toLocaleString('en-US')}`;
+}
 
 export function extractCarmarketListingPrice(text: string) {
   const ugx = text.match(/\blisted\s+(?:for sale|for rent)\s+at\s+UGX\s*([\d,]+(?:\.\d+)?)/i)?.[1];
@@ -533,8 +536,8 @@ export async function renderCarmarketCoverImage(vehicle: BeforwardVehicle) {
   const source = await fetchImageBuffer(sourceImageUrl);
   const width = 1080;
   const height = 1080;
-  const usdPrice = vehicle.priceUsd ? `$${Number(vehicle.priceUsd.replace(/,/g, '')).toLocaleString('en-US')}` : '';
-  const priceText = (vehicle.source === 'Milele' ? usdPrice : formatUgxPrice(vehicle.priceUgx) || usdPrice) || 'Price on request';
+  // Milele's UGX value is an estimate, not a seller's quoted shilling price.
+  const priceText = formatCarmarketCoverPrice(vehicle.source === 'Milele' || vehicle.source === 'BE FORWARD' ? undefined : vehicle.priceUgx);
   const priceFontSize = priceText.length > 12 ? 34 : 48;
   const title = vehicle.title.replace(/\s+/g, ' ').trim();
   const headline = title.length > 34 ? `${title.slice(0, 31).trim()}...` : title;

@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import sharp from 'sharp';
-import { renderCarmarketListingImage } from '../services/beforwardVehicleService';
+import { formatCarmarketCoverPrice, renderCarmarketListingImage } from '../services/beforwardVehicleService';
+
+test('cover prices use the Only format without rounding away the listed amount', () => {
+  assert.equal(formatCarmarketCoverPrice(406_000_000), 'Only 406M');
+  assert.equal(formatCarmarketCoverPrice(54_206_000), 'Only 54.206M');
+  assert.equal(formatCarmarketCoverPrice(undefined), 'Price on request');
+});
 
 test('listing photo has a brand mark in the top-left while the rest remains clear', async () => {
   const original = await sharp({ create: { width: 1080, height: 1080, channels: 3, background: '#ffffff' } }).png().toBuffer();
