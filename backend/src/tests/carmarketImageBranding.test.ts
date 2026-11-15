@@ -1,12 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import sharp from 'sharp';
-import { formatCarmarketCoverPrice, renderCarmarketListingImage } from '../services/beforwardVehicleService';
+import { formatCarmarketCoverPrice, parseUsdUgxRate, renderCarmarketListingImage } from '../services/beforwardVehicleService';
 
 test('cover prices use the Only format without rounding away the listed amount', () => {
   assert.equal(formatCarmarketCoverPrice(406_000_000), 'Only 406M');
   assert.equal(formatCarmarketCoverPrice(54_206_000), 'Only 54.206M');
   assert.equal(formatCarmarketCoverPrice(undefined), 'Price on request');
+});
+
+test('USD conversion rejects stale or invalid rates', () => {
+  const now = Date.UTC(2026, 10, 15);
+  const response = { result: 'success', base_code: 'USD', rates: { UGX: 3700 }, time_last_update_unix: now / 1000 };
+  assert.equal(parseUsdUgxRate(response, now).rate, 3700);
+  assert.throws(() => parseUsdUgxRate({ ...response, rates: { UGX: 0 } }, now));
+  assert.throws(() => parseUsdUgxRate({ ...response, time_last_update_unix: now / 1000 - 4 * 86400 }, now));
 });
 
 test('listing photo has a brand mark in the top-left while the rest remains clear', async () => {

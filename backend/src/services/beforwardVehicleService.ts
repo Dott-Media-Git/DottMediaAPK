@@ -22,6 +22,7 @@ export type BeforwardVehicle = {
   images: string[];
   summary: Record<string, string>;
   description?: string;
+  ugxConversion?: { amount: number; updatedAt: string };
 };
 
 const BASE_URL = 'https://www.beforward.jp';
@@ -127,6 +128,29 @@ export function formatCarmarketCoverPrice(value?: number) {
     return `Only ${Number((value / 1_000_000).toFixed(6))}M`;
   }
   return `Only UGX ${Math.round(value).toLocaleString('en-US')}`;
+}
+
+let ugxRateCache: { rate: number; updatedAt: string; fetchedAt: number } | undefined;
+let ugxRateRequest: Promise<{ rate: number; updatedAt: string; fetchedAt: number }> | undefined;
+
+export function parseUsdUgxRate(data: any, now = Date.now()) {
+  const rate = Number(data?.rates?.UGX);
+  const updated = Number(data?.time_last_update_unix) * 1000;
+  if (data?.result !== 'success' || data?.base_code !== 'USD' || !Number.isFinite(rate) || rate <= 0 ||
+      !Number.isFinite(updated) || updated > now + 300_000 || now - updated > 72 * 60 * 60 * 1000) {
+    throw new Error('USD to UGX rate unavailable or stale');
+  }
+  return { rate, updatedAt: new Date(updated).toISOString(), fetchedAt: now };
+}
+
+async function getUsdUgxRate() {
+  if (ugxRateCache && Date.now() - ugxRateCache.fetchedAt < 60 * 60 * 1000) return ugxRateCache;
+  if (!ugxRateRequest) {
+    ugxRateRequest = axios.get('https://open.er-api.com/v6/latest/USD', { timeout: 10000 })
+      .then(response => { ugxRateCache = parseUsdUgxRate(response.data); return ugxRateCache; })
+      .finally(() => { ugxRateRequest = undefined; });
+  }
+  return ugxRateRequest;
 }
 
 export function extractCarmarketListingPrice(text: string) {
@@ -536,8 +560,20 @@ export async function renderCarmarketCoverImage(vehicle: BeforwardVehicle) {
   const source = await fetchImageBuffer(sourceImageUrl);
   const width = 1080;
   const height = 1080;
-  // Milele's UGX value is an estimate, not a seller's quoted shilling price.
-  const priceText = formatCarmarketCoverPrice(vehicle.source === 'Milele' || vehicle.source === 'BE FORWARD' ? undefined : vehicle.priceUgx);
+  // Milele and BE FORWARD populate priceUgx from an older estimate, not a seller quote.
+  const quotedUgx = vehicle.source === 'Milele' || vehicle.source === 'BE FORWARD' ? undefined : vehicle.priceUgx;
+  vehicle.ugxConversion = undefined;
+  const usd = Number(String(vehicle.priceUsd ?? '').replace(/,/g, ''));
+  if (!quotedUgx && Number.isFinite(usd) && usd > 0) {
+    try {
+      const exchange = await getUsdUgxRate();
+      vehicle.ugxConversion = { amount: Math.round(usd * exchange.rate), updatedAt: exchange.updatedAt };
+    } catch (error) {
+      console.warn('[carmarket] Live USD to UGX rate unavailable; omitting converted price');
+    }
+  }
+  const coverAmount = quotedUgx || vehicle.ugxConversion?.amount;
+  const priceText = vehicle.ugxConversion ? formatCarmarketCoverPrice(Math.round(coverAmount! / 100_000) * 100_000) : formatCarmarketCoverPrice(coverAmount);
   const priceFontSize = priceText.length > 12 ? 34 : 48;
   const title = vehicle.title.replace(/\s+/g, ' ').trim();
   const headline = title.length > 34 ? `${title.slice(0, 31).trim()}...` : title;
@@ -561,6 +597,7 @@ export async function renderCarmarketCoverImage(vehicle: BeforwardVehicle) {
       <text x="86" y="94" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="900">CarMarketPlace</text>
       <rect x="58" y="792" width="420" height="104" rx="34" fill="#facc15"/>
       <text x="92" y="860" fill="#111827" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="${priceFontSize}" font-weight="900">${escapeSvg(priceText)}</text>
+      ${vehicle.ugxConversion ? '<text x="92" y="884" fill="#111827" font-family="Arial, Helvetica, sans-serif" font-size="17">Approx. UGX · ExchangeRate-API</text>' : ''}
       <rect x="58" y="912" width="${width - 116}" height="88" rx="28" fill="#05070a" opacity="0.70"/>
       <text x="88" y="968" fill="#ffffff" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="36" font-weight="900">${escapeSvg(headline)}</text>
     </svg>
@@ -595,10 +632,13 @@ export async function prepareCarmarketVehicleImage(imageUrl: string) {
 }
 
 export function buildCarmarketVehicleCaption(vehicle: BeforwardVehicle) {
+  const conversionNote = vehicle.ugxConversion
+    ? `\n\nUGX amount on image is approximate; the seller lists this vehicle in USD. Rates by Exchange Rate API: https://www.exchangerate-api.com (updated ${vehicle.ugxConversion.updatedAt.slice(0, 10)}). Confirm the final price with the seller.`
+    : '';
   if (vehicle.description?.trim()) {
     const usd = vehicle.priceUsd ? `$${Number(vehicle.priceUsd.replace(/,/g, '')).toLocaleString('en-US')}` : '';
     const amount = vehicle.source === 'Milele' ? usd : vehicle.priceUgx ? `UGX ${vehicle.priceUgx.toLocaleString('en-US')}` : usd;
-    return amount && !vehicle.description.includes(amount) ? `${vehicle.description.trim()}\n\nListed price: ${amount}. See the listing for any additional fees.\n${vehicle.url}` : vehicle.description.trim();
+    return (amount && !vehicle.description.includes(amount) ? `${vehicle.description.trim()}\n\nListed price: ${amount}. See the listing for any additional fees.\n${vehicle.url}` : vehicle.description.trim()) + conversionNote;
   }
   const priceUsd = vehicle.priceUsd ? `Listed price: $${vehicle.priceUsd}` : '';
   const lines = [
@@ -609,5 +649,5 @@ export function buildCarmarketVehicleCaption(vehicle: BeforwardVehicle) {
     '',
     vehicle.url,
   ];
-  return lines.filter((line, index) => line || lines[index - 1]).join('\n');
+  return lines.filter((line, index) => line || lines[index - 1]).join('\n') + conversionNote;
 }
