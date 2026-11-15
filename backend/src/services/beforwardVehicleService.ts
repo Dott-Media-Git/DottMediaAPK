@@ -8,6 +8,8 @@ import {
   isEligibleCarmarketVehicle,
   isHighValueCarmarketVehicle,
   isPreferredCarmarketModel,
+  hasRecentCarmarketStock,
+  CARMARKET_AUTOPOST_SOURCES,
 } from './carmarketVehicleSelection.js';
 
 export type BeforwardVehicle = {
@@ -229,7 +231,7 @@ async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}
   const html = await fetchHtml('https://www.carbarn.ug/cars');
   let fallback: BeforwardVehicle | null = null;
   for (const vehicle of parseCarbarnEmbeddedVehicles(html)) {
-    if (vehicle.stockNo && options.recentStockNos?.has(vehicle.stockNo)) continue;
+    if (hasRecentCarmarketStock(vehicle.stockNo, options.recentStockNos)) continue;
     if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) {
       if (isHighValueCarmarketVehicle(vehicle)) return vehicle;
       fallback ??= vehicle;
@@ -252,7 +254,7 @@ async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}
         if (!isEligibleCarmarketVehicle({ title, summary: {}, priceUgx: Number(item?.offers?.price) })) continue;
         const url = String(item?.url ?? '').trim();
         const stockNo = url.match(/-(\d+)$/)?.[1] || url.split('/').pop() || '';
-        if (stockNo && options.recentStockNos?.has(`CARBARN-${stockNo}`)) continue;
+        if (hasRecentCarmarketStock(`CARBARN-${stockNo}`, options.recentStockNos)) continue;
         const image = normalizeUrl(String(item?.image ?? '').trim());
         if (!url || !image) continue;
         const embeddedImages = extractCarbarnEmbeddedImages(html, String(item?.name ?? '').trim());
@@ -331,7 +333,7 @@ async function pickMileleVehicle(options: { recentStockNos?: Set<string> } = {})
   let fallback: BeforwardVehicle | null = null;
   for (const link of unique(preferred)) {
     const stockKey = `MILELE-${link.replace(/\/+$/, '').split('/').pop()?.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 42)}`;
-    if (stockKey && options.recentStockNos?.has(stockKey)) continue;
+    if (hasRecentCarmarketStock(stockKey, options.recentStockNos)) continue;
     try {
       const vehicle = await fetchMileleVehicle(link);
       if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) {
@@ -404,7 +406,7 @@ async function pickCarmarketAppVehicle(options: { recentStockNos?: Set<string> }
   for (const link of ordered.slice(0, 12)) {
     try {
       const vehicle = await fetchCarmarketAppVehicle(link);
-      if (vehicle.stockNo && options.recentStockNos?.has(vehicle.stockNo)) continue;
+      if (hasRecentCarmarketStock(vehicle.stockNo, options.recentStockNos)) continue;
       if (isEligibleCarmarketVehicle(vehicle)) {
         if (isHighValueCarmarketVehicle(vehicle)) return vehicle;
         fallback ??= vehicle;
@@ -463,10 +465,9 @@ export async function pickCarmarketVehicle(options: {
   recentSourceKeys?: string[];
 } = {}) {
   const allSources = [
-    { key: 'carmarketplace', pick: pickCarmarketAppVehicle },
-    { key: 'carbarn', pick: pickCarbarnVehicle },
-    { key: 'milele', pick: pickMileleVehicle },
-    { key: 'beforward', pick: pickBeforwardVehicle },
+    { key: CARMARKET_AUTOPOST_SOURCES[0], pick: pickCarmarketAppVehicle },
+    { key: CARMARKET_AUTOPOST_SOURCES[1], pick: pickCarbarnVehicle },
+    { key: CARMARKET_AUTOPOST_SOURCES[2], pick: pickMileleVehicle },
   ];
   const priority = (process.env.CARMARKET_SOURCE_PRIORITY ?? '').trim().toLowerCase();
   const configured = priority

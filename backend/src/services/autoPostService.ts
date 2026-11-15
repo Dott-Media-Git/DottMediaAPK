@@ -6210,6 +6210,9 @@ export class AutoPostService {
 
   private extractContentKeys(value: string) {
     const keys: string[] = [];
+    for (const match of value.matchAll(/carmarket-stock:([^\s,]+)/gi)) {
+      keys.push(`carmarket-stock:${match[1].toUpperCase()}`);
+    }
     for (const match of value.matchAll(/beforward-stock:([^\s,]+)/gi)) {
       keys.push(`beforward-stock:${match[1].toUpperCase()}`);
     }

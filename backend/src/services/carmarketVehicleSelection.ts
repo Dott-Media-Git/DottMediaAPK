@@ -3,6 +3,16 @@ const preferredModels = /\b(?:lexus|mercedes(?:[ -]benz)?|bmw|audi|porsche|volvo
 
 export const isPreferredCarmarketModel = (title: string): boolean => preferredModels.test(title);
 
+// Listing identifiers from the marketplace include lowercase UUIDs. Compare
+// them consistently with the normalized keys kept in posting history.
+export function hasRecentCarmarketStock(stockNo: string | null | undefined, recentStockNos?: Set<string>): boolean {
+  if (!stockNo || !recentStockNos?.size) return false;
+  const normalized = stockNo.trim().toUpperCase();
+  return [...recentStockNos].some(value => value.trim().toUpperCase() === normalized);
+}
+
+export const CARMARKET_AUTOPOST_SOURCES = ['carmarketplace', 'carbarn', 'milele'] as const;
+
 const configuredHighValueMinimum = Number(process.env.CARMARKET_HIGH_VALUE_MIN_UGX ?? 100_000_000);
 export const CARMARKET_HIGH_VALUE_MIN_UGX = Number.isFinite(configuredHighValueMinimum)
   ? Math.max(configuredHighValueMinimum, 0)
