@@ -569,14 +569,25 @@ export async function renderCarmarketCoverImage(vehicle: BeforwardVehicle) {
   return uploadCarmarketImage(buffer, 'covers');
 }
 
-export async function prepareCarmarketVehicleImage(imageUrl: string) {
-  const source = await fetchImageBuffer(imageUrl);
-  const buffer = await sharp(source)
+export async function renderCarmarketListingImage(source: Buffer) {
+  const logo = Buffer.from(`
+    <svg width="1080" height="1080" xmlns="http://www.w3.org/2000/svg">
+      <rect x="704" y="58" width="318" height="54" rx="27" fill="#05070a" opacity="0.74"/>
+      <text x="732" y="94" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="900">CarMarketPlace</text>
+    </svg>
+  `);
+  return sharp(source)
     .rotate()
     .resize(1080, 1080, { fit: 'cover', position: 'attention' })
     .sharpen()
+    .composite([{ input: logo, top: 0, left: 0 }])
     .jpeg({ quality: 92, mozjpeg: true, chromaSubsampling: '4:4:4' })
     .toBuffer();
+}
+
+export async function prepareCarmarketVehicleImage(imageUrl: string) {
+  const source = await fetchImageBuffer(imageUrl);
+  const buffer = await renderCarmarketListingImage(source);
   return uploadCarmarketImage(buffer, 'listing');
 }
 
