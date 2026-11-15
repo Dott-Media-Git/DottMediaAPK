@@ -5,7 +5,7 @@ import axios from 'axios';
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import admin from 'firebase-admin';
 import { z } from 'zod';
-import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
+import { requireFirebase, requireFirebaseStrict, AuthedRequest } from '../middleware/firebaseAuth';
 import { socialSchedulingService, TIKTOK_SCHEDULE_MESSAGE } from '../packages/services/socialSchedulingService';
 import { consumeUsage, isFirestoreResourceExhausted, resolveBillingScope } from '../services/billing/billingService';
 import { socialPostingService } from '../packages/services/socialPostingService';
@@ -1136,7 +1136,7 @@ router.get('/posts/publish-status', requireFirebase, async (req, res, next) => {
   }
 });
 
-router.post('/autopost/publishNextFeedNow', requireFirebase, async (req, res, next) => {
+router.post('/autopost/publishNextFeedNow', requireFirebaseStrict, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
     if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
