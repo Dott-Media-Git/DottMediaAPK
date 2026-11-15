@@ -5423,6 +5423,7 @@ export class AutoPostService {
           videoUrl
             ? []
             : hasLocalGeneratedImages &&
+                clientPhotoProfile?.key !== 'carmarketplace' &&
                 clientInstagramSourceImageUrls.length &&
                 (platform === 'instagram' || platform === 'instagram_story')
               ? clientInstagramSourceImageUrls

@@ -121,12 +121,16 @@ const fetchImageBuffer = async (url: string) => {
   return Buffer.from(response.data);
 };
 
-const formatUgxMillions = (value?: number) => {
+const formatUgxPrice = (value?: number) => {
   if (!value || !Number.isFinite(value) || value <= 0) return '';
-  const millions = value / 1_000_000;
-  const rounded = millions >= 100 ? Math.round(millions) : Math.round(millions * 10) / 10;
-  return `Only ${String(rounded).replace(/\.0$/, '')}M`;
+  return `UGX ${Math.round(value).toLocaleString('en-US')}`;
 };
+
+export function extractCarmarketListingPrice(text: string) {
+  const ugx = text.match(/\blisted\s+(?:for sale|for rent)\s+at\s+UGX\s*([\d,]+(?:\.\d+)?)/i)?.[1];
+  const usd = text.match(/\blisted\s+(?:for sale|for rent)\s+at\s+\$\s*([\d,]+(?:\.\d+)?)/i)?.[1];
+  return { priceUgx: ugx ? Number(ugx.replace(/,/g, '')) : undefined, priceUsd: usd?.replace(/,/g, '') };
+}
 
 const estimateUgxFromUsd = (priceUsd?: string) => {
   const numeric = Number(String(priceUsd ?? '').replace(/[^\d.]/g, ''));
@@ -399,15 +403,13 @@ export async function fetchCarmarketAppVehicle(url: string): Promise<BeforwardVe
   const images = unique(Array.from(html.matchAll(imagePattern), match => match[0].replace(/&amp;/g, '&'))).slice(0, 10);
   if (!images.length) throw new Error('CarMarketplace listing has no usable gallery');
   const year = bodyText.match(/\b(?:19|20)\d{2}\b/)?.[0] || title.match(/\b(?:19|20)\d{2}\b/)?.[0] || '';
-  const priceUsd =
-    bodyText.match(/\bat\s+\$\s*([\d,]+(?:\.\d+)?)/i)?.[1]?.replace(/,/g, '') ||
-    bodyText.match(/\$\s*([\d,]+(?:\.\d+)?)/)?.[1]?.replace(/,/g, '');
+  const { priceUsd, priceUgx } = extractCarmarketListingPrice(bodyText);
   const mileage = bodyText.match(/([\d,]+)\s*mi\b/i)?.[1]?.replace(/,/g, '') || '';
   return {
     title,
     stockNo: id ? `CARMARKET-${id}` : `CARMARKET-${crypto.createHash('sha1').update(vehicleUrl).digest('hex').slice(0, 12)}`,
     priceUsd,
-    priceUgx: estimateUgxFromUsd(priceUsd),
+    priceUgx,
     source: 'CarMarketplace',
     url: vehicleUrl,
     images,
@@ -531,7 +533,8 @@ export async function renderCarmarketCoverImage(vehicle: BeforwardVehicle) {
   const source = await fetchImageBuffer(sourceImageUrl);
   const width = 1080;
   const height = 1080;
-  const priceText = formatUgxMillions(vehicle.priceUgx ?? estimateUgxFromUsd(vehicle.priceUsd));
+  const priceText = formatUgxPrice(vehicle.priceUgx) || (vehicle.priceUsd ? `$${Number(vehicle.priceUsd.replace(/,/g, '')).toLocaleString('en-US')}` : 'Price on request');
+  const priceFontSize = priceText.length > 12 ? 34 : 48;
   const title = vehicle.title.replace(/\s+/g, ' ').trim();
   const headline = title.length > 34 ? `${title.slice(0, 31).trim()}...` : title;
   const base = await sharp(source)
@@ -552,12 +555,8 @@ export async function renderCarmarketCoverImage(vehicle: BeforwardVehicle) {
       <rect width="${width}" height="${height}" fill="url(#shade)"/>
       <rect x="58" y="58" width="318" height="54" rx="27" fill="#05070a" opacity="0.74"/>
       <text x="86" y="94" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="900">CarMarketPlace</text>
-      ${
-        priceText
-          ? `<rect x="58" y="792" width="420" height="104" rx="34" fill="#facc15"/>
-      <text x="92" y="860" fill="#111827" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="54" font-weight="900">${priceText}</text>`
-          : ''
-      }
+      <rect x="58" y="792" width="420" height="104" rx="34" fill="#facc15"/>
+      <text x="92" y="860" fill="#111827" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="${priceFontSize}" font-weight="900">${escapeSvg(priceText)}</text>
       <rect x="58" y="912" width="${width - 116}" height="88" rx="28" fill="#05070a" opacity="0.70"/>
       <text x="88" y="968" fill="#ffffff" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="36" font-weight="900">${escapeSvg(headline)}</text>
     </svg>
@@ -581,7 +580,10 @@ export async function prepareCarmarketVehicleImage(imageUrl: string) {
 }
 
 export function buildCarmarketVehicleCaption(vehicle: BeforwardVehicle) {
-  if (vehicle.description?.trim()) return vehicle.description.trim();
+  if (vehicle.description?.trim()) {
+    const amount = vehicle.priceUgx ? `UGX ${vehicle.priceUgx.toLocaleString('en-US')}` : vehicle.priceUsd ? `$${Number(vehicle.priceUsd.replace(/,/g, '')).toLocaleString('en-US')}` : '';
+    return amount && !vehicle.description.includes(amount) ? `${vehicle.description.trim()}\n\nListed price: ${amount}. See the listing for any additional fees.\n${vehicle.url}` : vehicle.description.trim();
+  }
   const priceUsd = vehicle.priceUsd ? `Listed price: $${vehicle.priceUsd}` : '';
   const lines = [
     `${vehicle.title}`,
