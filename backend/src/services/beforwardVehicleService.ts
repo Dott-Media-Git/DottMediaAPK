@@ -572,8 +572,8 @@ export async function renderCarmarketCoverImage(vehicle: BeforwardVehicle) {
 export async function renderCarmarketListingImage(source: Buffer) {
   const logo = Buffer.from(`
     <svg width="1080" height="1080" xmlns="http://www.w3.org/2000/svg">
-      <rect x="704" y="58" width="318" height="54" rx="27" fill="#05070a" opacity="0.74"/>
-      <text x="732" y="94" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="900">CarMarketPlace</text>
+      <rect x="58" y="58" width="318" height="54" rx="27" fill="#05070a" opacity="0.74"/>
+      <text x="86" y="94" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="900">CarMarketPlace</text>
     </svg>
   `);
   return sharp(source)
