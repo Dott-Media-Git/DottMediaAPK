@@ -573,7 +573,7 @@ export async function renderCarmarketCoverImage(vehicle: BeforwardVehicle) {
     }
   }
   const coverAmount = quotedUgx || vehicle.ugxConversion?.amount;
-  const priceText = vehicle.ugxConversion ? formatCarmarketCoverPrice(Math.round(coverAmount! / 100_000) * 100_000).replace('Only ', 'Only ~') : formatCarmarketCoverPrice(coverAmount);
+  const priceText = vehicle.ugxConversion ? formatCarmarketCoverPrice(Math.round(coverAmount! / 100_000) * 100_000) : formatCarmarketCoverPrice(coverAmount);
   const priceFontSize = priceText.length > 12 ? 34 : 48;
   const title = vehicle.title.replace(/\s+/g, ' ').trim();
   const headline = title.length > 34 ? `${title.slice(0, 31).trim()}...` : title;
