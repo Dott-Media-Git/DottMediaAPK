@@ -533,7 +533,8 @@ export async function renderCarmarketCoverImage(vehicle: BeforwardVehicle) {
   const source = await fetchImageBuffer(sourceImageUrl);
   const width = 1080;
   const height = 1080;
-  const priceText = formatUgxPrice(vehicle.priceUgx) || (vehicle.priceUsd ? `$${Number(vehicle.priceUsd.replace(/,/g, '')).toLocaleString('en-US')}` : 'Price on request');
+  const usdPrice = vehicle.priceUsd ? `$${Number(vehicle.priceUsd.replace(/,/g, '')).toLocaleString('en-US')}` : '';
+  const priceText = (vehicle.source === 'Milele' ? usdPrice : formatUgxPrice(vehicle.priceUgx) || usdPrice) || 'Price on request';
   const priceFontSize = priceText.length > 12 ? 34 : 48;
   const title = vehicle.title.replace(/\s+/g, ' ').trim();
   const headline = title.length > 34 ? `${title.slice(0, 31).trim()}...` : title;
@@ -581,7 +582,8 @@ export async function prepareCarmarketVehicleImage(imageUrl: string) {
 
 export function buildCarmarketVehicleCaption(vehicle: BeforwardVehicle) {
   if (vehicle.description?.trim()) {
-    const amount = vehicle.priceUgx ? `UGX ${vehicle.priceUgx.toLocaleString('en-US')}` : vehicle.priceUsd ? `$${Number(vehicle.priceUsd.replace(/,/g, '')).toLocaleString('en-US')}` : '';
+    const usd = vehicle.priceUsd ? `$${Number(vehicle.priceUsd.replace(/,/g, '')).toLocaleString('en-US')}` : '';
+    const amount = vehicle.source === 'Milele' ? usd : vehicle.priceUgx ? `UGX ${vehicle.priceUgx.toLocaleString('en-US')}` : usd;
     return amount && !vehicle.description.includes(amount) ? `${vehicle.description.trim()}\n\nListed price: ${amount}. See the listing for any additional fees.\n${vehicle.url}` : vehicle.description.trim();
   }
   const priceUsd = vehicle.priceUsd ? `Listed price: $${vehicle.priceUsd}` : '';

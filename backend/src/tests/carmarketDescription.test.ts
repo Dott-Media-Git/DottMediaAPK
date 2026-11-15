@@ -20,4 +20,7 @@ test('reads the actual listing currency and includes a known price with the desc
   const caption = buildCarmarketVehicleCaption({ title: 'Car', stockNo: '1', url: 'https://example.com/car', images: [], summary: {}, description: 'Seller description', priceUgx: 185000000 });
   assert.match(caption, /^Seller description/);
   assert.match(caption, /Listed price: UGX 185,000,000/);
+  const importedCaption = buildCarmarketVehicleCaption({ title: 'Car', stockNo: '2', url: 'https://example.com/car', images: [], summary: {}, description: 'Seller description', source: 'Milele', priceUsd: '50000', priceUgx: 190000000 });
+  assert.match(importedCaption, /Listed price: \$50,000/);
+  assert.doesNotMatch(importedCaption, /UGX 190,000,000/);
 });
