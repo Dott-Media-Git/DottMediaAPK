@@ -11,10 +11,10 @@ test('cover prices use the Only format without rounding away the listed amount',
 
 test('USD conversion rejects stale or invalid rates', () => {
   const now = Date.UTC(2026, 10, 15);
-  const response = { result: 'success', base_code: 'USD', rates: { UGX: 3700 }, time_last_update_unix: now / 1000 };
+  const response = { date: '2026-11-15', usd: { ugx: 3700 } };
   assert.equal(parseUsdUgxRate(response, now).rate, 3700);
-  assert.throws(() => parseUsdUgxRate({ ...response, rates: { UGX: 0 } }, now));
-  assert.throws(() => parseUsdUgxRate({ ...response, time_last_update_unix: now / 1000 - 4 * 86400 }, now));
+  assert.throws(() => parseUsdUgxRate({ ...response, usd: { ugx: 0 } }, now));
+  assert.throws(() => parseUsdUgxRate({ ...response, date: '2026-11-11' }, now));
 });
 
 test('listing photo has a brand mark in the top-left while the rest remains clear', async () => {
