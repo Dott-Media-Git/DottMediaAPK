@@ -21,6 +21,7 @@ export type BeforwardVehicle = {
   url: string;
   images: string[];
   summary: Record<string, string>;
+  description?: string;
 };
 
 const BASE_URL = 'https://www.beforward.jp';
@@ -69,6 +70,29 @@ const decodeHtmlText = (value: string) =>
     .trim();
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export function extractVehicleDescription(html: string, source: string): string {
+  const $ = cheerio.load(html);
+  if (source === 'CarMarketplace') {
+    const heading = $('h1,h2,h3').filter((_, el) => $(el).text().trim().toLowerCase() === 'about this vehicle').first();
+    const description = heading.parent().find('p.whitespace-pre-line').first().text().trim();
+    if (description) return description;
+  }
+  for (const element of $('script[type="application/ld+json"]').toArray()) {
+    try {
+      const data = JSON.parse($(element).text());
+      const entries = Array.isArray(data) ? data : data['@graph'] || [data];
+      for (const entry of entries) {
+        const type = Array.isArray(entry?.['@type']) ? entry['@type'] : [entry?.['@type']];
+        if (type.some((value: unknown) => /^(vehicle|car|product)$/i.test(String(value))) && typeof entry.description === 'string' && entry.description.trim()) return entry.description.trim();
+      }
+    } catch { /* Ignore unrelated JSON-LD. */ }
+  }
+  return $('.stm-car-listing-data-single .listing-description, .listing-description, .vehicle-description').first().text().trim()
+    || $('meta[property="og:description"]').attr('content')?.trim()
+    || $('meta[name="description"]').attr('content')?.trim()
+    || '';
+}
 
 async function fetchHtml(url: string) {
   const response = await axios.get(url, {
@@ -232,7 +256,7 @@ async function pickCarbarnVehicle(options: { recentStockNos?: Set<string> } = {}
   let fallback: BeforwardVehicle | null = null;
   for (const vehicle of parseCarbarnEmbeddedVehicles(html)) {
     if (hasRecentCarmarketStock(vehicle.stockNo, options.recentStockNos)) continue;
-    if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) {
+    if (vehicle.images.length > 0 && isEligibleCarmarketVehicle(vehicle)) {
       if (isHighValueCarmarketVehicle(vehicle)) return vehicle;
       fallback ??= vehicle;
     }
@@ -305,7 +329,7 @@ async function fetchMileleVehicle(url: string): Promise<BeforwardVehicle> {
       ),
     ].map(url => normalizeUrl(url)),
   ).slice(0, 10);
-  if (images.length < 2) throw new Error('No Milele vehicle gallery images found');
+  if (!images.length) throw new Error('No Milele vehicle gallery images found');
   const slug = vehicleUrl.replace(/\/+$/, '').split('/').pop() || crypto.randomUUID();
   const priceText = /PRICE\s+AS\s+REQUEST/i.test(html) ? undefined : $('body').text().match(/\$\s*[\d,]+/)?.[0];
   return {
@@ -316,6 +340,7 @@ async function fetchMileleVehicle(url: string): Promise<BeforwardVehicle> {
     source: 'Milele',
     url: vehicleUrl,
     images,
+    description: extractVehicleDescription(html, 'Milele'),
     summary: {},
   };
 }
@@ -336,7 +361,7 @@ async function pickMileleVehicle(options: { recentStockNos?: Set<string> } = {})
     if (hasRecentCarmarketStock(stockKey, options.recentStockNos)) continue;
     try {
       const vehicle = await fetchMileleVehicle(link);
-      if (vehicle.images.length > 1 && isEligibleCarmarketVehicle(vehicle)) {
+      if (vehicle.images.length > 0 && isEligibleCarmarketVehicle(vehicle)) {
         if (isHighValueCarmarketVehicle(vehicle)) return vehicle;
         fallback ??= vehicle;
       }
@@ -372,7 +397,7 @@ export async function fetchCarmarketAppVehicle(url: string): Promise<BeforwardVe
     ? new RegExp(`https://[^\\s"'<>]+/vehicles/${escapeRegExp(id)}/\\d+\\.(?:jpg|jpeg|png|webp)`, 'gi')
     : /https:\/\/[^\s"'<>]+\/vehicles\/[^\s"'<>]+\/\d+\.(?:jpg|jpeg|png|webp)/gi;
   const images = unique(Array.from(html.matchAll(imagePattern), match => match[0].replace(/&amp;/g, '&'))).slice(0, 10);
-  if (images.length < 2) throw new Error('CarMarketplace listing has no usable gallery');
+  if (!images.length) throw new Error('CarMarketplace listing has no usable gallery');
   const year = bodyText.match(/\b(?:19|20)\d{2}\b/)?.[0] || title.match(/\b(?:19|20)\d{2}\b/)?.[0] || '';
   const priceUsd =
     bodyText.match(/\bat\s+\$\s*([\d,]+(?:\.\d+)?)/i)?.[1]?.replace(/,/g, '') ||
@@ -386,6 +411,7 @@ export async function fetchCarmarketAppVehicle(url: string): Promise<BeforwardVe
     source: 'CarMarketplace',
     url: vehicleUrl,
     images,
+    description: extractVehicleDescription(html, 'CarMarketplace'),
     summary: { year, mileage },
   };
 }
@@ -486,7 +512,12 @@ export async function pickCarmarketVehicle(options: {
   for (let index = 0; index < sources.length; index += 1) {
     const source = sources[index];
     try {
-      return await source.pick(options);
+      const vehicle = await source.pick(options);
+      if (source.key === 'carbarn') {
+        const detailHtml = await fetchHtml(vehicle.url);
+        vehicle.description = extractVehicleDescription(detailHtml, 'Carbarn Uganda');
+      }
+      return vehicle;
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }
@@ -550,23 +581,15 @@ export async function prepareCarmarketVehicleImage(imageUrl: string) {
 }
 
 export function buildCarmarketVehicleCaption(vehicle: BeforwardVehicle) {
-  const priceUsd = vehicle.priceUsd ? `FOB price on listing: $${vehicle.priceUsd}` : '';
+  if (vehicle.description?.trim()) return vehicle.description.trim();
+  const priceUsd = vehicle.priceUsd ? `Listed price: $${vehicle.priceUsd}` : '';
   const lines = [
     `${vehicle.title}`,
     vehicle.source ? `Source: ${vehicle.source}` : '',
     vehicle.stockNo ? `Stock: ${vehicle.stockNo}` : '',
     priceUsd,
     '',
-    'Actual vehicle photos from the listing. Swipe through the exterior and interior views, then message Carmarketug with your budget or preferred car type.',
-    '',
-    'Imported vehicle options are subject to availability, shipping, taxes, clearing, inspection, and local registration costs.',
-    '',
     vehicle.url,
-    vehicle.source === 'CarMarketplace'
-      ? `Browse more listings: ${CARMARKET_PUBLIC_URL}\nOpen the marketplace app: ${CARMARKET_APP_URL}`
-      : '',
-    '',
-    '#Carmarketug #CarMarketUg #UgandaCars #ToyotaUganda #CarImportUganda #KampalaCars',
   ];
   return lines.filter((line, index) => line || lines[index - 1]).join('\n');
 }

@@ -183,6 +183,7 @@ type VideoSelection = { videoUrl?: string; nextCursor?: number; caption?: string
 type FootballTrendContentType = 'news' | 'video' | 'result' | 'prediction' | 'table' | 'top_scorer';
 type ExecuteOptions = {
   platforms?: string[];
+  manualFeed?: boolean;
   intervalHours?: number;
   nextRunField?: 'nextRun' | 'reelsNextRun' | 'storyNextRun';
   lastRunField?: 'lastRunAt' | 'reelsLastRunAt' | 'storyLastRunAt';
@@ -507,6 +508,7 @@ export class AutoPostService {
   }
 
   private memoryStore = new Map<string, AutoPostJob>();
+  private manualFeedInProgress = new Set<string>();
   private useMemory =
     config.security.allowMockAuth &&
     !process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim() &&
@@ -1998,6 +2000,20 @@ export class AutoPostService {
         error: error instanceof Error ? error.message : String(error),
       });
       return true;
+    }
+  }
+
+  async publishNextFeedNow(userId: string) {
+    if (this.manualFeedInProgress.has(userId)) throw Object.assign(new Error('A post is already being sent.'), { status: 409 });
+    this.manualFeedInProgress.add(userId);
+    try {
+      const job = await this.loadAutopostJob(userId);
+      if (!job || job.active === false) throw Object.assign(new Error('Auto-post is not active.'), { status: 400 });
+      const platforms = (job.platforms ?? []).filter(platform => ['facebook', 'instagram', 'threads'].includes(platform));
+      if (!platforms.length) throw Object.assign(new Error('No supported feed accounts are selected.'), { status: 400 });
+      return await this.executeJob(userId, job, { platforms, manualFeed: true });
+    } finally {
+      this.manualFeedInProgress.delete(userId);
     }
   }
 
@@ -4739,7 +4755,7 @@ export class AutoPostService {
     const effectiveIntervalHours = Math.max(intervalHours, isReelsRun ? 0.25 : 0.05);
     const requestedPlatforms = options.platforms ?? job.platforms ?? [];
     const platforms = requestedPlatforms.filter(
-      platform => !this.shouldSkipNicheInstagramAttempt(userId, job, platform),
+      platform => options.manualFeed || !this.shouldSkipNicheInstagramAttempt(userId, job, platform),
     );
     const instagramAttemptFields = new Set(
       platforms
@@ -4986,6 +5002,7 @@ export class AutoPostService {
     const historyEntries: HistoryEntry[] = [];
     let usedClientSourceImageUrl: string | null = null;
     let carmarketVehicleCaption: string | null = null;
+    let carmarketVehicleUrl: string | null = null;
     let usedBeforwardStockKey: string | null = null;
     let usedCarmarketSourceKey: string | null = null;
     let staysphereListingCaption: string | null = null;
@@ -5014,9 +5031,10 @@ export class AutoPostService {
           .map(value => String(value).match(/carmarket-source:([a-z]+)/i)?.[1]?.toLowerCase())
           .filter((value): value is string => Boolean(value));
         const vehicle = await pickCarmarketVehicle({ recentStockNos, recentSourceKeys });
+        carmarketVehicleUrl = vehicle.url;
         usedCarmarketSourceKey = `carmarket-source:${getCarmarketSourceKey(vehicle)}`;
         const vehicleImages = vehicle.images.slice(0, isStoryRun ? 1 : 10);
-        clientInstagramSourceImageUrls = vehicleImages.slice(0, isStoryRun ? 1 : 5);
+        clientInstagramSourceImageUrls = vehicleImages;
         if (isStoryRun) {
           imageUrls = clientInstagramSourceImageUrls;
           carmarketVehicleCaption = buildCarmarketVehicleCaption(vehicle);
@@ -5033,7 +5051,7 @@ export class AutoPostService {
             throw new Error('carmarket_cover_render_failed');
           }
           const preparedVehicleImages = await Promise.all(
-            vehicleImages.slice(1, 5).map(async imageUrl => {
+            vehicleImages.slice(1, 10).map(async imageUrl => {
               try {
                 return await prepareCarmarketVehicleImage(imageUrl);
               } catch (error) {
@@ -5313,6 +5331,18 @@ export class AutoPostService {
         ? { caption: threadSafeCaption, signature: this.buildCaptionSignature(platform, threadSafeCaption) }
         : this.ensureCaptionVariety(platform, brandedCaption, captionHistory, userId);
       let caption = this.limitThreadsCaption(platform, captionSelection.caption);
+      if (carmarketVehicleCaption && carmarketVehicleUrl && platform === 'threads' && carmarketVehicleCaption.length > 500) {
+        const suffix = `\n\nFull listing: ${carmarketVehicleUrl}`;
+        if (suffix.length < 497) {
+          const room = 500 - suffix.length - 3;
+          caption = `${carmarketVehicleCaption.slice(0, room).trimEnd()}...${suffix}`;
+        }
+      }
+      // Instagram limits captions to 2,200 characters; keep descriptions as
+      // supplied unless they exceed the platform's maximum.
+      if (carmarketVehicleCaption && platform === 'instagram' && caption.length > 2200) {
+        caption = `${caption.slice(0, 2197).trimEnd()}...`;
+      }
       let signature =
         caption === captionSelection.caption
           ? captionSelection.signature
@@ -5402,6 +5432,7 @@ export class AutoPostService {
         const response = await (publisher as any)({
           caption,
           imageUrls: publishImageUrls,
+          ...(carmarketVehicleCaption && !isStoryRun ? { maxImages: 10, preserveCaption: true } : {}),
           videoUrl,
           videoTitle,
           privacyStatus,

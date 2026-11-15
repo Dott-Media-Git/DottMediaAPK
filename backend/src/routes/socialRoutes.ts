@@ -1136,6 +1136,17 @@ router.get('/posts/publish-status', requireFirebase, async (req, res, next) => {
   }
 });
 
+router.post('/autopost/publishNextFeedNow', requireFirebase, async (req, res, next) => {
+  try {
+    const authUser = (req as AuthedRequest).authUser;
+    if (!authUser) return res.status(401).json({ message: 'Unauthorized' });
+    const result = await autoPostService.publishNextFeedNow(authUser.uid);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/autopost/runNow', requireFirebase, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;

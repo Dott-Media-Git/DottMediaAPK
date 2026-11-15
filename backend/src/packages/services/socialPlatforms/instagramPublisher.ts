@@ -7,6 +7,8 @@ type PublishInput = {
   caption: string;
   imageUrls: string[];
   credentials?: SocialAccounts;
+  maxImages?: number;
+  preserveCaption?: boolean;
 };
 
 type ReelPublishInput = {
@@ -103,7 +105,7 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
   }
 
   const { accessToken } = credentials.instagram;
-  const caption = appendCommentToDmCaptionCta(input.caption, { username: credentials.instagram.username });
+  const caption = input.preserveCaption ? input.caption : appendCommentToDmCaptionCta(input.caption, { username: credentials.instagram.username });
   const baseUrl = getInstagramGraphBaseUrl(credentials.instagram);
 
   if (!input.imageUrls || input.imageUrls.length === 0) {
@@ -114,7 +116,8 @@ export async function publishToInstagram(input: PublishInput): Promise<{ remoteI
     let creationId: string | undefined;
     if (input.imageUrls.length > 1) {
       const childContainers: string[] = [];
-      for (const imageUrl of input.imageUrls.slice(0, CAROUSEL_MAX_IMAGES)) {
+      const maxImages = input.maxImages ? Math.min(Math.max(input.maxImages, 1), 10) : CAROUSEL_MAX_IMAGES;
+      for (const imageUrl of input.imageUrls.slice(0, maxImages)) {
         const childResponse = await http.post(`${baseUrl}/media`, {
           image_url: imageUrl,
           is_carousel_item: true,

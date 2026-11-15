@@ -11,6 +11,8 @@ type PublishInput = {
   imageUrls: string[];
   videoUrl?: string;
   credentials?: SocialAccounts;
+  maxImages?: number;
+  preserveCaption?: boolean;
 };
 
 // v18 falls back to the deprecated publish_actions behavior for Page media.
@@ -54,7 +56,8 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
   }
 
   const { accessToken, pageId } = credentials.facebook;
-  const caption = appendCommentToDmCaptionCta(input.caption, { pageId });
+  const caption = input.preserveCaption ? input.caption : appendCommentToDmCaptionCta(input.caption, { pageId });
+  const maxImages = input.maxImages ? Math.min(Math.max(input.maxImages, 1), 10) : FACEBOOK_ALBUM_MAX_IMAGES;
   const baseUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${pageId}`;
   const publishSinglePhoto = () =>
     http.post(`${baseUrl}/photos`, {
@@ -71,10 +74,10 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
         description: caption,
         access_token: accessToken,
       });
-    } else if (input.imageUrls && input.imageUrls.length > 1 && FACEBOOK_ALBUM_MAX_IMAGES > 1) {
+    } else if (input.imageUrls && input.imageUrls.length > 1 && maxImages > 1) {
       try {
         const photoUploads = await Promise.all(
-          input.imageUrls.slice(0, FACEBOOK_ALBUM_MAX_IMAGES).map(url =>
+          input.imageUrls.slice(0, maxImages).map(url =>
             http.post(`${baseUrl}/photos`, {
               url,
               published: false,
@@ -95,7 +98,7 @@ export async function publishToFacebook(input: PublishInput): Promise<{ remoteId
           access_token: accessToken,
         });
       } catch (error) {
-        if (!isPayloadSizeError(error)) throw error;
+        if (input.preserveCaption || !isPayloadSizeError(error)) throw error;
         console.warn('Facebook multi-photo publish too large; retrying with single cover image');
         response = await publishSinglePhoto();
       }
