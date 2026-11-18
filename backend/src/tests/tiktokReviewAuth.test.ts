@@ -31,3 +31,21 @@ test('concurrent sandbox requests cannot change the production client or token n
  assert.equal(tikTokEnvironment(),'production');assert.equal(tikTokConnectionKey('same-user'),'same-user');
  await Promise.all(tasks);assert.equal(tikTokEnvironment(),'production');
 });
+
+test('TikTok authorization asks to show consent while retaining signed state and sandbox configuration', async () => {
+  const { buildOAuthUrl } = await import('../routes/tiktokIntegrationRoutes');
+  const { runTikTokContext } = await import('../services/tiktokReviewConfig');
+  const { verifySignedState } = await import('../utils/oauthState');
+  const url = runTikTokContext({ environment: 'sandbox', client: {
+    clientKey: 'test-sandbox-key', clientSecret: 'test-secret', redirectUri: 'https://example.com/callback'
+  } }, () => new URL(buildOAuthUrl({} as any, 'test-user')));
+  assert.equal(url.origin, 'https://www.tiktok.com');
+  assert.equal(url.searchParams.get('disable_auto_auth'), '1');
+  assert.equal(url.searchParams.get('client_key'), 'test-sandbox-key');
+  assert.equal(url.searchParams.get('response_type'), 'code');
+  assert.equal(url.searchParams.get('scope'), 'user.info.basic,video.publish');
+  const state = url.searchParams.get('state');
+  assert.ok(state);
+  assert.ok(verifySignedState(state));
+  assert.equal(verifySignedState(state + 'tampered'), null);
+});

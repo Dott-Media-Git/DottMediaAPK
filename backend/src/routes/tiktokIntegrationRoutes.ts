@@ -92,7 +92,7 @@ const ensureTikTokClientConfig = (req: Request) => {
   return { clientKey, clientSecret, redirectUri, scopes: getScopes() };
 };
 
-const buildOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null, returnUrl?: unknown) => {
+export const buildOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null, returnUrl?: unknown) => {
   const { clientKey, redirectUri, scopes } = ensureTikTokClientConfig(req);
   let safeReturn = sanitizeOAuthReturnUrl(returnUrl);
   if(tikTokEnvironment()==='sandbox'){const back=new URL(oauthSuccessRedirect('tiktok',safeReturn));back.searchParams.set('tiktokSandbox','1');safeReturn=back.toString();}
@@ -107,6 +107,8 @@ const buildOAuthUrl = (req: Request, userId: string, orgId?: string | null, emai
   oauthUrl.searchParams.set('client_key', clientKey);
   oauthUrl.searchParams.set('redirect_uri', redirectUri);
   oauthUrl.searchParams.set('response_type', 'code');
+  // Ask TikTok to show its own consent screen even for an existing session.
+  oauthUrl.searchParams.set('disable_auto_auth', '1');
   oauthUrl.searchParams.set('scope', scopes.join(','));
   oauthUrl.searchParams.set('state', state);
   return oauthUrl.toString();
