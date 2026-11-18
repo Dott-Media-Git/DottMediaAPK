@@ -5,6 +5,8 @@ import { firestore } from '../db/firestore';
 import { generateReply, replyToThreadsComment } from '../services/autoReplyService';
 import { getPollSocialAccounts } from '../services/pollSocialAccountResolver';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
+import { optedInAfter, replyIsAfterOptIn } from '../services/threadsReplyEligibility';
+import { pickFallbackReply } from '../services/fallbackReplyLibrary';
 
 const GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
@@ -27,6 +29,8 @@ type PollTarget = {
   accountId: string;
   accessToken: string;
   username?: string;
+  supabaseReplies?: boolean;
+  repliesAfter?: string;
 };
 
 const CLIENT_POLL_USER_IDS = [
@@ -66,6 +70,33 @@ const withinWindow = (timestamp?: string) => {
   const createdAt = new Date(timestamp).getTime();
   if (!Number.isFinite(createdAt)) return true;
   return Date.now() - createdAt <= windowHours * 60 * 60 * 1000;
+};
+
+const loadAccountsWithDeadline = async (userId: string) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      getPollSocialAccounts(userId),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), 3000); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
+// A failed or stalled Firebase read means the AI usage ledger cannot be
+// checked reliably. Use a non-AI acknowledgement instead of starting an
+// uncancellable billing transaction and then racing it against a reply.
+const canCheckAiUsage = async (userId: string) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      firestore.collection('users').doc(userId).get().then(() => true).catch(() => false),
+      new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 3000); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 };
 
 const fetchRecentThreads = async (target: PollTarget) => {
@@ -113,9 +144,10 @@ const reserveReply = async (reply: ReplyItem, threadId: string, target: PollTarg
   if (reply.is_reply_owned_by_me) return null;
   if (target.username && reply.username?.toLowerCase() === target.username.toLowerCase()) return null;
   if (!withinWindow(reply.timestamp)) return null;
+  if (!replyIsAfterOptIn(reply.timestamp, target.repliesAfter)) return null;
 
   // Use one authoritative store for Ngogo even when Firestore later recovers.
-  if (target.userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93') {
+  if (target.userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93' || target.supabaseReplies) {
     const storageId = `threads_reply_${replyId}`;
     const claimed = await supabaseFallbackService.reserveInboundMessage({
       id: storageId, channel: 'threads', senderId: reply.username ?? 'unknown',
@@ -166,12 +198,26 @@ const reserveReply = async (reply: ReplyItem, threadId: string, target: PollTarg
   }
 };
 
-const processReply = async (reply: ReplyItem, threadId: string, target: PollTarget) => {
+export const processReply = async (reply: ReplyItem, threadId: string, target: PollTarget) => {
   const reserved = await reserveReply(reply, threadId, target);
   if (!reserved) return;
 
   try {
-    const response = await generateReply(reserved.text, 'threads', target.userId, 'comment', { accountId: target.accountId });
+    const fallback = target.userId === 'ouwaugr76lhdQ6IJbTuoCK9yMV93'
+      ? pickFallbackReply({ channel: 'threads', kind: 'comment', profile: 'ngogo' })
+      : 'Thank you for your comment! We appreciate your interest.';
+    const response = await canCheckAiUsage(target.userId)
+      ? await generateReply(reserved.text, 'threads', target.userId, 'comment',
+          { accountId: target.accountId, username: target.username }, { neutralUnknown: true })
+      : fallback;
+    if (target.supabaseReplies) {
+      const current = await supabaseFallbackService.getInboundMessage(`threads_auto_response_setting_${target.userId}`);
+      const setting = current?.payload as { enabled?: boolean } | undefined;
+      if (setting?.enabled !== true) {
+        if ('storageId' in reserved && reserved.storageId) await supabaseFallbackService.updateInboundMessage(reserved.storageId, { status: 'skipped' });
+        return;
+      }
+    }
     await replyToThreadsComment(reserved.replyId, response, {
       accountId: target.accountId,
       accessToken: target.accessToken,
@@ -195,18 +241,45 @@ const loadClientTargets = async (): Promise<PollTarget[]> => {
 
   await Promise.all(
     userIds.map(async userId => {
-      const stored = await getPollSocialAccounts(userId);
+      const stored = await loadAccountsWithDeadline(userId);
       const threads = (stored?.socialAccounts?.threads as { accountId?: string; accessToken?: string; username?: string } | undefined);
       if (threads?.accountId && threads.accessToken) {
+        const setting = await supabaseFallbackService.getInboundMessage(`threads_auto_response_setting_${userId}`);
+        const payload = setting?.payload as { enabled?: boolean } | undefined;
+        if (payload?.enabled === false) return;
+        const since = typeof setting?.received_at === 'string' ? setting.received_at : '';
         targets.push({
           userId,
           accountId: threads.accountId,
           accessToken: threads.accessToken,
           username: threads.username,
+          ...(payload?.enabled === true && since && Number.isFinite(Date.parse(since))
+            ? { supabaseReplies: true, repliesAfter: since } : {}),
         });
       }
     }),
   );
+
+  // Newly opted-in businesses use Supabase for both their connection and
+  // deduplicated reply records. Do not replay replies from before opt-in.
+  const legacyIds = new Set(userIds);
+  let cursor = '';
+  for (;;) {
+    const rows = await supabaseFallbackService.getAllSocialAccounts(250, cursor);
+    for (const row of rows) {
+      if (!row.userId || legacyIds.has(row.userId)) continue;
+      const threads = row.socialAccounts.threads as { accountId?: string; accessToken?: string; username?: string } | undefined;
+      if (!threads?.accountId || !threads.accessToken) continue;
+      const setting = await supabaseFallbackService.getInboundMessage(`threads_auto_response_setting_${row.userId}`);
+      const since = optedInAfter(setting);
+      if (!since) continue;
+      targets.push({ userId: row.userId, accountId: threads.accountId, accessToken: threads.accessToken,
+        username: threads.username, supabaseReplies: true, repliesAfter: since });
+    }
+    const next = rows.at(-1)?.userId ?? '';
+    if (rows.length < 250 || !next || next <= cursor) break;
+    cursor = next;
+  }
 
   const seen = new Set<string>();
   return targets.filter(target => {

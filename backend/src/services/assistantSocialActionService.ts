@@ -3,6 +3,7 @@ import { firestore } from '../db/firestore';
 import { contentGenerationService } from '../packages/services/contentGenerationService';
 import { socialSchedulingService, type SchedulePayload } from '../packages/services/socialSchedulingService';
 import { socialPostingService } from '../packages/services/socialPostingService';
+import { supabaseFallbackService } from './supabaseFallbackService';
 
 const supportedPlatforms = new Set<SchedulePayload['platforms'][number]>([
   'instagram', 'instagram_reels', 'instagram_story', 'facebook', 'facebook_story',
@@ -44,13 +45,39 @@ class AssistantSocialActionService {
   }
 
   async configureReplies(input: { userId: string; enabled: boolean; instructions?: string }) {
-    await firestore.collection('assistant_settings').doc(input.userId).set({
+    const threadsSaved = supabaseFallbackService.isConfigured();
+    if (threadsSaved) {
+      await supabaseFallbackService.addInboundMessage({
+        id: `threads_auto_response_setting_${input.userId}`,
+        channel: 'settings', senderId: input.userId, recipientId: input.userId,
+        messageType: 'threads_auto_response', status: 'configured',
+        payload: { enabled: input.enabled },
+      });
+      const saved = await supabaseFallbackService.getInboundMessage(`threads_auto_response_setting_${input.userId}`);
+      if ((saved?.payload as { enabled?: unknown } | undefined)?.enabled !== input.enabled) {
+        throw new Error('Unable to confirm that the Threads auto-response setting was saved.');
+      }
+    }
+    const firebaseUpdate = firestore.collection('assistant_settings').doc(input.userId).set({
       autoReplyEnabled: input.enabled,
       autoReplyPrompt: input.instructions?.trim() || admin.firestore.FieldValue.delete(),
       autoReplyUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
       autoReplyUpdatedBy: 'dotti',
     }, { merge: true });
-    return { enabled: input.enabled };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        firebaseUpdate,
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Reply settings timed out')), 4000); }),
+      ]);
+      return { enabled: input.enabled, threadsSaved, otherSettingsSynced: true };
+    } catch (error) {
+      if (!threadsSaved) throw error;
+      return { enabled: input.enabled, threadsSaved: true, otherSettingsSynced: false,
+        warning: 'Threads settings were saved, but other channel settings could not be confirmed.' };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 }
 

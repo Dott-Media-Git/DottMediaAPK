@@ -1756,8 +1756,11 @@ export class AssistantService {
           if (toolCall.function.name === 'configure_account_replies' && context.userId) {
             try {
               const input = params as { enabled?: boolean; instructions?: string };
-              await assistantSocialActionService.configureReplies({ userId: context.userId, enabled: input.enabled !== false, instructions: input.instructions });
-              return { type: 'text', text: input.enabled === false ? 'Automatic comment and message replies are disabled for this account.' : 'Automatic comment and message replies are live for this account and will follow your reply instructions.' };
+              const result = await assistantSocialActionService.configureReplies({ userId: context.userId, enabled: input.enabled !== false, instructions: input.instructions });
+              if (result.threadsSaved && !result.otherSettingsSynced) {
+                return { type: 'text', text: `Threads auto-replies are ${result.enabled ? 'enabled' : 'disabled'}. Other channel settings could not be confirmed; please check them separately.` };
+              }
+              return { type: 'text', text: `Your automatic reply settings were saved${result.threadsSaved ? ', including Threads' : ''}. Check each channel's settings and permissions to confirm its replies are active.` };
             } catch (error) {
               return { type: 'text', text: `I could not update account replies: ${error instanceof Error ? error.message : String(error)}` };
             }

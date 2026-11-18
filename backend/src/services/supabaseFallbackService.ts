@@ -1389,14 +1389,15 @@ class SupabaseFallbackService {
     );
   }
 
-  async getAllSocialAccounts(limit = 1000) {
+  async getAllSocialAccounts(limit = 1000, afterUserId?: string) {
     if (!this.isConfigured()) return [] as Array<{ userId: string; email?: string | null; socialAccounts: Record<string, unknown> }>;
     try {
       const rows = await this.request<any[]>('GET', 'dott_social_accounts', {
         params: {
           select: '*',
-          order: 'updated_at.desc',
+          order: afterUserId === undefined ? 'updated_at.desc' : 'user_id.asc',
           limit,
+          ...(afterUserId ? { user_id: `gt.${afterUserId}` } : {}),
         },
       });
       return Array.isArray(rows)
@@ -1410,8 +1411,10 @@ class SupabaseFallbackService {
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (status !== 404 && this.hasDatabaseFallback()) {
         const rows = await this.databaseQuery<any>(
-          'select user_id, email, accounts from public.dott_social_accounts order by updated_at desc limit $1',
-          [limit],
+          afterUserId === undefined
+            ? 'select user_id, email, accounts from public.dott_social_accounts order by updated_at desc limit $1'
+            : 'select user_id, email, accounts from public.dott_social_accounts where user_id > $2 order by user_id asc limit $1',
+          afterUserId === undefined ? [limit] : [limit, afterUserId],
         );
         return rows.map(row => ({
           userId: row.user_id,

@@ -173,6 +173,7 @@ export async function generateReply(
   userId?: string,
   kind: FallbackKind = 'message',
   identity?: ReplyAccountIdentity,
+  options?: { neutralUnknown?: boolean },
 ) {
   const profile = await getReplyProfile(userId, identity);
   if (profile === 'bwinbetug' && kind === 'comment') {
@@ -206,10 +207,14 @@ export async function generateReply(
       ? `You are our sports team's sports assistant. Reply briefly (1-2 sentences), friendly, and sports-focused. ${bwinInstruction} Platform: ${platform}.`
       : profile && clientInstructions[profile]
         ? `${clientInstructions[profile]} Reply in 1-2 sentences. Platform: ${platform}.`
-      : `You are Dotti, the Dott Media AI assistant. Reply briefly (1-2 sentences), friendly, and guide them to buy or book the Dott Media AI Sales Agent. Always include a clear CTA like 'Grab the AI Sales Agent' or 'Book a demo'. Platform: ${platform}.`;
+      : options?.neutralUnknown && !profile
+        ? `Reply on behalf of the business to the comment in 1-2 friendly sentences. Do not invent products, prices, contact details, or promote another business. Platform: ${platform}.`
+        : `You are Dotti, the Dott Media AI assistant. Reply briefly (1-2 sentences), friendly, and guide them to buy or book the Dott Media AI Sales Agent. Always include a clear CTA like 'Grab the AI Sales Agent' or 'Book a demo'. Platform: ${platform}.`;
   const override = await getAutoReplyPromptOverride(userId);
   const system = override ? `${baseSystem}\nAdditional guidance: ${override}` : baseSystem;
-  const fallback = pickFallbackReply({ channel: platform, kind, profile });
+  const fallback = options?.neutralUnknown && !profile
+    ? 'Thank you for your comment! We appreciate your interest.'
+    : pickFallbackReply({ channel: platform, kind, profile });
   if (!aiRepliesEnabled()) {
     return fallback;
   }
@@ -297,12 +302,20 @@ export async function replyToThreadsComment(
     });
     const creationId = createResp.data?.id as string | undefined;
     if (!creationId) throw new Error('Threads reply container missing id');
-    await axios.post(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/${accountId}/threads_publish`, null, {
-      params: {
-        creation_id: creationId,
-        access_token: token,
-      },
-    });
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        await axios.post(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/${accountId}/threads_publish`, null, {
+          params: { creation_id: creationId, access_token: token },
+        });
+        break;
+      } catch (error) {
+        const apiError = (error as AxiosError<{ error?: { code?: number; error_subcode?: number } }>).response?.data?.error;
+        // Retry only Meta's explicit not-found response for the just-created
+        // container. Network errors can be ambiguous and must not be retried.
+        if (apiError?.code !== 24 || apiError.error_subcode !== 4279009 || attempt === 5) throw error;
+        await new Promise(resolve => setTimeout(resolve, 2500));
+      }
+    }
   } catch (error) {
     throw formatAxiosError(error, 'Threads comment reply');
   }
