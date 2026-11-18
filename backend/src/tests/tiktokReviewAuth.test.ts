@@ -43,7 +43,13 @@ test('TikTok authorization asks to show consent while retaining signed state and
   assert.equal(url.searchParams.get('disable_auto_auth'), '1');
   assert.equal(url.searchParams.get('client_key'), 'test-sandbox-key');
   assert.equal(url.searchParams.get('response_type'), 'code');
-  assert.equal(url.searchParams.get('scope'), 'user.info.basic,video.publish');
+  assert.deepEqual(url.searchParams.get('scope')?.split(',').sort(), [
+    'user.info.basic', 'user.info.profile', 'user.info.stats', 'video.list', 'video.publish', 'video.upload'
+  ].sort());
+  const productionUrl = runTikTokContext({ environment: 'production', client: {
+    clientKey: 'test-production-key', clientSecret: 'test-secret', redirectUri: 'https://example.com/callback'
+  } }, () => new URL(buildOAuthUrl({} as any, 'test-user')));
+  assert.equal(productionUrl.searchParams.get('scope'), 'user.info.basic,video.publish');
   const state = url.searchParams.get('state');
   assert.ok(state);
   assert.ok(verifySignedState(state));

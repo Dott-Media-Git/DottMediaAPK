@@ -41,7 +41,12 @@ const getBaseUrl = (req: Request) => {
 const computeRedirectUri = (req: Request) => `${getBaseUrl(req)}${CALLBACK_PATH}`;
 const computeConnectUrl = (req: Request) => `${getBaseUrl(req)}/integrations/tiktok/connect`;
 
-const getScopes = () => ['user.info.basic', 'video.publish'];
+const getRequiredScopes = () => ['user.info.basic', 'video.publish'];
+// The review sandbox has additional scopes enabled for review; production
+// requests only the permissions used by the current direct-post flow.
+const getScopes = () => tikTokEnvironment() === 'sandbox'
+  ? [...getRequiredScopes(), 'user.info.profile', 'user.info.stats', 'video.list', 'video.upload']
+  : getRequiredScopes();
 
 const splitScopes = (value: unknown) =>
   String(value ?? '')
@@ -266,7 +271,7 @@ router.get('/integrations/tiktok/callback', async (req, res) => {
   }
 
   try {
-    assertRequiredScopes(getScopes(), scope);
+    assertRequiredScopes(getRequiredScopes(), scope);
   } catch (error) {
     res.status(400).send(renderCallbackHtml('TikTok connection failed', (error as Error).message));
     return;
