@@ -302,12 +302,20 @@ export async function replyToThreadsComment(
     });
     const creationId = createResp.data?.id as string | undefined;
     if (!creationId) throw new Error('Threads reply container missing id');
-    await axios.post(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/${accountId}/threads_publish`, null, {
-      params: {
-        creation_id: creationId,
-        access_token: token,
-      },
-    });
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        await axios.post(`${THREADS_GRAPH_BASE_URL}/${THREADS_GRAPH_VERSION}/${accountId}/threads_publish`, null, {
+          params: { creation_id: creationId, access_token: token },
+        });
+        break;
+      } catch (error) {
+        const apiError = (error as AxiosError<{ error?: { code?: number; error_subcode?: number } }>).response?.data?.error;
+        // Retry only Meta's explicit not-found response for the just-created
+        // container. Network errors can be ambiguous and must not be retried.
+        if (apiError?.code !== 24 || apiError.error_subcode !== 4279009 || attempt === 5) throw error;
+        await new Promise(resolve => setTimeout(resolve, 2500));
+      }
+    }
   } catch (error) {
     throw formatAxiosError(error, 'Threads comment reply');
   }
