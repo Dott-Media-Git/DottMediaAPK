@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Image, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -22,8 +22,8 @@ type AccountClosureState = {
   message?: string;
 };
 
-const ProfileDetail = ({ label, value }: { label: string; value?: string }) => (
-  <View style={styles.detailRow}>
+const ProfileDetail = ({ label, value, wide }: { label: string; value?: string; wide?: boolean }) => (
+  <View style={[styles.detailRow, wide && styles.detailRowWide]}>
     <Text style={styles.detailLabel}>{label}</Text>
     <Text style={styles.detailValue}>{value?.trim() || '—'}</Text>
   </View>
@@ -44,6 +44,8 @@ const formatCountdown = (remainingMs: number) => {
 };
 
 export const ProfileScreen: React.FC = () => {
+  const { width } = useWindowDimensions();
+  const wide = Platform.OS === 'web' && width >= 768;
   const { state, signOut, updateAccountProfile } = useAuth();
   const { t } = useI18n();
   const navigation = useNavigation<any>();
@@ -203,6 +205,7 @@ export const ProfileScreen: React.FC = () => {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.page}>
       <DMCard title={t('Profile')} subtitle={t('Keep your public account and business details current.')}>
         <View style={styles.profileRow}>
           {photoURL ? (
@@ -221,7 +224,7 @@ export const ProfileScreen: React.FC = () => {
           </View>
         </View>
         {!editing ? (
-          <TouchableOpacity style={styles.editButton} onPress={() => setEditing(true)}>
+          <TouchableOpacity style={[styles.editButton, wide && styles.compactAction]} onPress={() => setEditing(true)}>
             <Ionicons name="create-outline" size={18} color={colors.background} />
             <Text style={styles.editButtonText}>{t('Change profile')}</Text>
           </TouchableOpacity>
@@ -264,28 +267,28 @@ export const ProfileScreen: React.FC = () => {
             <Text style={styles.bioText}>{bio?.trim() || t('No biography added yet.')}</Text>
           </DMCard>
           <DMCard title={t('Profile information')} subtitle={t('Your saved personal and business details.')}>
-            <ProfileDetail label={t('Full name')} value={name} />
-            <ProfileDetail label={t('Job title')} value={jobTitle} />
-            <ProfileDetail label={t('Company')} value={companyName} />
-            <ProfileDetail label={t('Contact email')} value={contactEmail} />
-            <ProfileDetail label={t('Phone')} value={phone} />
-            <ProfileDetail label={t('Website')} value={website} />
-            <ProfileDetail label={t('Business address')} value={businessAddress} />
+            <ProfileDetail label={t('Full name')} value={name} wide={wide} />
+            <ProfileDetail label={t('Job title')} value={jobTitle} wide={wide} />
+            <ProfileDetail label={t('Company')} value={companyName} wide={wide} />
+            <ProfileDetail label={t('Contact email')} value={contactEmail} wide={wide} />
+            <ProfileDetail label={t('Phone')} value={phone} wide={wide} />
+            <ProfileDetail label={t('Website')} value={website} wide={wide} />
+            <ProfileDetail label={t('Business address')} value={businessAddress} wide={wide} />
           </DMCard>
         </>
       )}
 
       <DMCard title={t('Account & Billing')} subtitle={t('View your current plan, usage, invoices, and upgrade options.')}>
         <Text style={styles.planStatus}>{t('Subscription status')}: {state.subscriptionStatus}</Text>
-        <DMButton title={t('Manage plan and usage')} onPress={() => navigation.navigate('AccountBilling')} />
+        <DMButton title={t('Manage plan and usage')} style={wide && styles.compactAction} onPress={() => navigation.navigate('AccountBilling')} />
       </DMCard>
 
       <DMCard title={t('Account')}>
-        <TouchableOpacity style={styles.signOutButton} onPress={signOut}>
+        <TouchableOpacity style={[styles.signOutButton, wide && styles.compactAction]} onPress={signOut}>
           <Text style={styles.signOutText}>{t('Sign out')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={styles.deleteAccountButton}
+          style={[styles.deleteAccountButton, wide && styles.compactAction]}
           onPress={confirmAccountDeletion}
           disabled={deletingAccount}
         >
@@ -297,6 +300,7 @@ export const ProfileScreen: React.FC = () => {
           {t('You can also request deletion at dottmediaapk.web.app/delete-account.')}
         </Text>
       </DMCard>
+      </View>
     </ScrollView>
   );
 };
@@ -304,6 +308,7 @@ export const ProfileScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { padding: 20, paddingBottom: 48 },
+  page: { width: '100%', maxWidth: 900, alignSelf: 'center' },
   profileRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   avatar: { width: 76, height: 76, borderRadius: 38, borderWidth: 2, borderColor: colors.accent },
   avatarFallback: {
@@ -317,9 +322,11 @@ const styles = StyleSheet.create({
   photoAction: { color: colors.accent, fontWeight: '700', marginTop: 10 },
   editButton: { marginTop: 20, backgroundColor: colors.accent, borderRadius: 14, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
   editButtonText: { color: colors.background, fontWeight: '800' },
+  compactAction: { width: 260, alignSelf: 'flex-start' },
   detailRow: { paddingVertical: 13, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  detailLabel: { color: colors.subtext, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 5 },
-  detailValue: { color: colors.text, fontSize: 16, fontWeight: '600' },
+  detailRowWide: { flexDirection: 'row', alignItems: 'center', gap: 20 },
+  detailLabel: { color: colors.subtext, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 5, minWidth: 155 },
+  detailValue: { color: colors.text, fontSize: 16, fontWeight: '600', flexShrink: 1 },
   bioText: { color: colors.text, fontSize: 16, lineHeight: 25 },
   formActions: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 8 },
   cancelButton: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 14, paddingVertical: 13, alignItems: 'center' },

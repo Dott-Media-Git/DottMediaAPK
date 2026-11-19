@@ -535,12 +535,19 @@ export const AccountIntegrationsScreen: React.FC = () => {
 
   const handleTikTokDisconnect = async () => {
     setTikTokLoading(true);
+    setIntegrationNotice({ kind: 'success', title: t('Disconnecting TikTok'), message: t('Removing the saved account now. This usually takes a few seconds.'), expanded: true });
     try {
       await disconnectTikTok(orgId);
-      await loadTikTok();
-      Alert.alert(t('Success'), t('TikTok disconnected.'));
+      const response = await fetchTikTokStatus(orgId);
+      if (!response || !Object.prototype.hasOwnProperty.call(response, 'status')) throw new Error(t('Could not confirm that TikTok disconnected. Please refresh and check the connection.'));
+      const status = (response as { status: TikTokStatus | null }).status;
+      if (status?.connected) throw new Error(t('Could not confirm that TikTok disconnected. Please refresh and check the connection.'));
+      setTikTokStatus(status ?? { connected: false });
+      setIntegrationNotice({ kind: 'success', title: t('TikTok disconnected.'), message: t('You can connect a TikTok account again whenever you are ready.'), expanded: true });
     } catch (error: any) {
-      Alert.alert(t('Error'), error.message ?? t('Failed to disconnect TikTok'));
+      const message = error.message ?? t('Failed to disconnect TikTok');
+      setIntegrationNotice({ kind: 'error', title: t('Disconnect failed'), message, expanded: true });
+      if (Platform.OS !== 'web') Alert.alert(t('Error'), message);
     } finally {
       setTikTokLoading(false);
     }
@@ -815,6 +822,10 @@ export const AccountIntegrationsScreen: React.FC = () => {
   };
 
   const confirmDisconnect = (platform: PlatformKey, action: () => void) => {
+    if (Platform.OS === 'web') {
+      if (window.confirm(`${t('Disconnect')} ${PLATFORM_LABELS[platform]}?`)) action();
+      return;
+    }
     Alert.alert(t('Disconnect'), t('Are you sure?'), [
       { text: t('Cancel'), style: 'cancel' },
       { text: t('Disconnect'), style: 'destructive', onPress: action }

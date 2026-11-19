@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Linking, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DMButton } from '@components/DMButton';
 import { DMCard } from '@components/DMCard';
@@ -72,6 +72,8 @@ export const SubscriptionScreen: React.FC = () => {
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'flutterwave_mobile_money'>('stripe');
   const [mobileMoneyPhone, setMobileMoneyPhone] = useState('');
+  const [contentWidth, setContentWidth] = useState(0);
+  const showPlanColumns = Platform.OS === 'web' && contentWidth >= 850;
 
   useEffect(() => {
     let active = true;
@@ -163,6 +165,7 @@ export const SubscriptionScreen: React.FC = () => {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.contentInner} onLayout={event => setContentWidth(event.nativeEvent.layout.width)}>
       <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.hero}>
         <Text style={styles.badge}>{t('Packages')}</Text>
         <Text style={styles.title}>{t('Dott Media Packaging')}</Text>
@@ -221,7 +224,7 @@ export const SubscriptionScreen: React.FC = () => {
         </DMCard>
       ) : null}
 
-      <View style={styles.planGrid}>
+      <View style={[styles.planGrid, showPlanColumns && styles.planGridWide]}>
         {plans.filter(plan => visiblePlanIds.has(plan.id)).map(plan => {
           const isCurrentPlan = plan.id === currentPlanId && (plan.id !== 'free' || state.subscriptionStatus === 'active');
           return (
@@ -229,7 +232,7 @@ export const SubscriptionScreen: React.FC = () => {
             key={plan.id}
             title={t(plan.name)}
             subtitle={t(plan.description)}
-            style={styles.planCard}
+            style={[styles.planCard, showPlanColumns && styles.planCardWide]}
           >
             <View style={styles.planHeader}>
               <Text style={styles.price}>{formatPrice(plan.priceMonthlyCents)}</Text>
@@ -298,6 +301,7 @@ export const SubscriptionScreen: React.FC = () => {
           ))}
         </DMCard>
       ) : null}
+      </View>
     </ScrollView>
   );
 };
@@ -309,6 +313,11 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 24
+  },
+  contentInner: {
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 1120 : undefined,
+    alignSelf: 'center'
   },
   hero: {
     borderRadius: 24,
@@ -381,8 +390,16 @@ const styles = StyleSheet.create({
   planGrid: {
     gap: 16
   },
+  planGridWide: {
+    flexDirection: 'row',
+    alignItems: 'flex-start'
+  },
   planCard: {
     marginBottom: 0
+  },
+  planCardWide: {
+    flex: 1,
+    minWidth: 0
   },
   planHeader: {
     flexDirection: 'row',
