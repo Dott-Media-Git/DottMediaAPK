@@ -19,6 +19,7 @@ import { resolveFacebookPageId, resolveInstagramAccountId, resolveThreadsAccount
 import { fetchBwinMetaSocialProfile, resolveKnownLiveSocialProfile } from '../services/liveSocialMetricsService';
 import { canUsePrimarySocialDefaults } from '../utils/socialAccess';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
+import { threadsScopesForUser } from '../utils/threadsScopes';
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
@@ -528,17 +529,18 @@ const getThreadsAppConfig = (req: Request) => {
   return { appId, appSecret, redirectUri };
 };
 
-const getThreadsScopes = () => {
+const getThreadsScopes = (userId?: string) => {
   const renderEnv = resolveRenderEnv();
   const raw = process.env.THREADS_APP_SCOPES ?? renderEnv.THREADS_APP_SCOPES ?? '';
+  const reviewIds = process.env.THREADS_REPLY_SCOPE_REVIEW_USER_IDS ?? renderEnv.THREADS_REPLY_SCOPE_REVIEW_USER_IDS ?? '';
   if (raw.trim()) {
-    return raw
+    return threadsScopesForUser(raw
       .split(',')
       .map(scope => scope.trim())
-      .filter(Boolean);
+      .filter(Boolean), userId, reviewIds);
   }
 
-  return ['threads_basic', 'threads_content_publish'];
+  return threadsScopesForUser(['threads_basic', 'threads_content_publish'], userId, reviewIds);
 };
 
 const buildThreadsConnectUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null) => {
@@ -555,7 +557,7 @@ const buildThreadsConnectUrl = (req: Request, userId: string, orgId?: string | n
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', getThreadsScopes().join(','));
+  url.searchParams.set('scope', getThreadsScopes(userId).join(','));
   url.searchParams.set('state', createSignedState(userId, { orgId: orgId || undefined, email: email || undefined }));
   return url.toString();
 };

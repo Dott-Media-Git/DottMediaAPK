@@ -11,6 +11,7 @@ import { autoPostService } from '../services/autoPostService';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
 import { consumeUsage, isFirestoreResourceExhausted, resolveBillingScope } from '../services/billing/billingService';
 import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect';
+import { threadsScopesForUser } from '../utils/threadsScopes';
 
 const router = Router();
 
@@ -369,14 +370,15 @@ const buildOAuthUrl = (
   return url.toString();
 };
 
-const getThreadsScopes = () => {
+const getThreadsScopes = (userId?: string) => {
   const renderEnv = resolveRenderEnv();
   const raw = process.env.THREADS_APP_SCOPES ?? renderEnv.THREADS_APP_SCOPES ?? '';
+  const reviewIds = process.env.THREADS_REPLY_SCOPE_REVIEW_USER_IDS ?? renderEnv.THREADS_REPLY_SCOPE_REVIEW_USER_IDS ?? '';
   if (raw.trim()) {
-    return splitScopes(raw);
+    return threadsScopesForUser(splitScopes(raw), userId, reviewIds);
   }
 
-  return ['threads_basic', 'threads_content_publish'];
+  return threadsScopesForUser(['threads_basic', 'threads_content_publish'], userId, reviewIds);
 };
 
 const buildThreadsOAuthUrl = (req: Request, userId: string, orgId?: string | null, email?: string | null, returnUrl?: unknown) => {
@@ -405,7 +407,7 @@ const buildThreadsOAuthUrl = (req: Request, userId: string, orgId?: string | nul
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', getThreadsScopes().join(','));
+  url.searchParams.set('scope', getThreadsScopes(userId).join(','));
   url.searchParams.set('state', state);
   url.searchParams.set('return_scopes', 'true');
   url.searchParams.set('auth_type', 'rerequest');
@@ -1010,7 +1012,7 @@ router.get('/integrations/threads/config', requireFirebase, async (req, res, nex
       appIdConfigured: Boolean(appId),
       appSecretConfigured: true,
       redirectUri,
-      scopes: getThreadsScopes(),
+      scopes: getThreadsScopes((req as AuthedRequest).authUser?.uid),
       callbackPath: THREADS_CALLBACK_PATH,
     });
   } catch (error) {
