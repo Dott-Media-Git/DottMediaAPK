@@ -13,6 +13,7 @@ import { consumeUsage, isFirestoreResourceExhausted, resolveBillingScope } from 
 import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect';
 import { threadsScopesForUser } from '../utils/threadsScopes';
 import { isOptionalMetaScope, withFacebookInsightsScope } from '../utils/metaFacebookInsightsScope';
+import { meterConnectionUsage } from '../utils/connectionUsage';
 
 const router = Router();
 
@@ -886,6 +887,7 @@ const persistSocialAccounts = async (
   }
 
   try {
+    if (!supabaseFallbackService.isConfigured()) throw new Error('Fallback social storage is not configured');
     await supabaseFallbackService.upsertSocialAccounts(userId, payload);
   } catch (error) {
     fallbackError = error;
@@ -1251,7 +1253,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
 
     const newlyConnectedPlatforms = connectedPlatforms.filter(platform => !(previouslyConnectedAccounts as Record<string, unknown>)[platform]);
     if (newlyConnectedPlatforms.length) {
-      await consumeUsage(
+      const metering = await meterConnectionUsage(() => consumeUsage(
         resolveBillingScope(
           state.userId,
           typeof state.orgId === 'string' ? state.orgId : undefined,
@@ -1259,7 +1261,10 @@ router.get('/integrations/meta/callback', async (req, res) => {
         ),
         'connectedSocials',
         newlyConnectedPlatforms.length,
-      );
+      ), isFirestoreResourceExhausted, supabaseFallbackService.isConfigured());
+      if (metering === 'quota_unavailable') {
+        console.warn('[meta] connection usage not recorded because Firestore quota is exhausted', { userId: state.userId });
+      }
     }
 
     await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
