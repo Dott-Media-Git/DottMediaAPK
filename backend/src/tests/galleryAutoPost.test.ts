@@ -171,6 +171,65 @@ test('a continuing rotation still pauses on an unexpected publishing exception',
   assert.equal((await service.status('alice'))?.active, false);
 });
 
+test('resuming a stopped rotation preserves its gallery and cursor, without affecting other jobs', async () => {
+  const fixture = setup();
+  const service = new GalleryAutoPostService({ ...fixture.dependencies, continueOnFailure: true });
+  await service.start('alice', { ...input, intervalHours: 2 });
+  await service.start('bob', input);
+  await service.runUser('alice');
+  await service.stop('alice');
+  await service.stop('bob');
+  const before = await service.status('alice');
+  const resumed = await service.resume('alice');
+  assert.equal(resumed.active, true);
+  assert.equal(resumed.cursor, 1);
+  assert.equal(resumed.intervalHours, 2);
+  assert.deepEqual(resumed.assets, before?.assets);
+  assert.equal((await service.status('bob'))?.active, false);
+  await service.runUser('alice');
+  assert.deepEqual(fixture.posts, ['facebook:photo', 'facebook:video']);
+  assert.equal((await service.status('alice'))?.nextRunAt, 1_000_000 + 2 * 3_600_000);
+});
+
+test('resume refuses missing and disconnected accounts and skips an uncertain interrupted item', async () => {
+  const fixture = setup();
+  const service = new GalleryAutoPostService({ ...fixture.dependencies, continueOnFailure: true });
+  await assert.rejects(() => service.resume('missing'), /not found/);
+  await service.start('alice', input);
+  await fixture.store.update('alice', job => ({ ...job!, runToken: 'old-run', runStartedAt: 1_000_000 }));
+  fixture.advance(31 * 60_000);
+  const resumed = await service.resume('alice');
+  assert.equal(resumed.cursor, 1);
+  await service.runUser('alice');
+  assert.deepEqual(fixture.posts, ['facebook:video']);
+
+  await service.stop('alice');
+  fixture.dependencies.connected = async () => [];
+  const disconnected = new GalleryAutoPostService({ ...fixture.dependencies, continueOnFailure: true });
+  await assert.rejects(() => disconnected.resume('alice'), /Reconnect/);
+  assert.equal((await disconnected.status('alice'))?.active, false);
+  await assert.rejects(() => fixture.service.resume('alice'), /cannot be resumed/);
+});
+
+test('resume waits for a stopped rotation\'s in-flight publish to finish', async () => {
+  const fixture = setup();
+  let release!: () => void;
+  let started!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const began = new Promise<void>(resolve => { started = resolve; });
+  fixture.dependencies.publish = async (_user, platform) => { started(); await pending; return { platform, status: 'posted' }; };
+  const service = new GalleryAutoPostService({ ...fixture.dependencies, continueOnFailure: true });
+  await service.start('alice', input);
+  const run = service.runUser('alice');
+  await began;
+  await service.stop('alice');
+  await assert.rejects(() => service.resume('alice'), /still finishing/);
+  release();
+  await run;
+  const resumed = await service.resume('alice');
+  assert.equal(resumed.cursor, 1);
+});
+
 test('interrupted runs pause rather than repeating an uncertain external publish', async () => {
   const fixture = setup();
   await fixture.service.start('alice', input);

@@ -3,7 +3,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import { colors } from '@constants/colors';
 import { DMButton } from '@components/DMButton';
 import type { MediaLibraryAsset } from '@services/mediaLibrary';
-import { fetchGalleryAutoPost, startGalleryAutoPost, stopGalleryAutoPost, fetchNatureRotation, stopNatureRotation,
+import { fetchGalleryAutoPost, startGalleryAutoPost, stopGalleryAutoPost, fetchNatureRotation, stopNatureRotation, resumeNatureRotation,
   type GalleryAutoPostJob, type GalleryAutoPostPlatform, type NatureRotation } from '@services/social';
 
 const names: Record<GalleryAutoPostPlatform, string> = {
@@ -26,6 +26,7 @@ function postingErrorMessage(error: string) {
 export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAsset[]; uploading: boolean }) {
   const [job, setJob] = useState<GalleryAutoPostJob | null>(null);
   const [nature, setNature] = useState<NatureRotation | null>(null);
+  const [natureBusy, setNatureBusy] = useState(false);
   const [platforms, setPlatforms] = useState<GalleryAutoPostPlatform[]>([]);
   const [chosen, setChosen] = useState<GalleryAutoPostPlatform[]>([]);
   const [hours, setHours] = useState('1');
@@ -37,6 +38,8 @@ export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAss
   const [notice, setNotice] = useState('');
   const mounted = useRef(true);
   const mutating = useRef(false);
+  const natureMutating = useRef(false);
+  const natureVersion = useRef(0);
   const version = useRef(0);
   const interval = Number(hours.trim());
   const validInterval = hours.trim().length > 0 && Number.isFinite(interval) && interval >= 1 && interval <= 24;
@@ -64,7 +67,13 @@ export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAss
   }, [refresh]);
   useEffect(() => {
     let live = true;
-    const load = () => { void fetchNatureRotation().then(result => { if (live) setNature(result.job); }).catch(() => {}); };
+    const load = () => {
+      if (natureMutating.current) return;
+      const requestVersion = natureVersion.current;
+      void fetchNatureRotation().then(result => {
+        if (live && !natureMutating.current && requestVersion === natureVersion.current) setNature(result.job);
+      }).catch(() => {});
+    };
     load();
     const timer = setInterval(load, 30_000);
     return () => { live = false; clearInterval(timer); };
@@ -119,6 +128,27 @@ export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAss
     } catch (cause) { if (mounted.current) setError(errorText(cause)); }
     finally { mutating.current = false; if (mounted.current) setBusy(false); }
   };
+  const changeNatureRotation = async (resume: boolean) => {
+    if (natureMutating.current) return;
+    natureMutating.current = true;
+    natureVersion.current += 1;
+    setNatureBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      if (resume) {
+        const response = await resumeNatureRotation();
+        if (mounted.current) {
+          setNature(response.job);
+          setNotice('Nature rotation resumed. The next photo will be posted shortly, then every two hours.');
+        }
+      } else {
+        await stopNatureRotation();
+        if (mounted.current) setNature(current => current ? { ...current, active: false, nextRunAt: null } : null);
+      }
+    } catch (cause) { if (mounted.current) setError(errorText(cause)); }
+    finally { natureMutating.current = false; if (mounted.current) setNatureBusy(false); }
+  };
   const active = Boolean(job?.active);
   const hasChanged = active && (assets.length !== job?.assets.length || assets.some((asset, index) => asset.url !== job?.assets[index]?.url));
 
@@ -130,10 +160,8 @@ export function GalleryAutoPost({ assets, uploading }: { assets: MediaLibraryAss
         <Text style={styles.copy}>{nature.count} photos · Every 2 hours · Instagram and Threads</Text>
         {nature.nextRunAt ? <Text style={styles.copy}>Next post: {new Date(nature.nextRunAt).toLocaleString()}</Text> : null}
         {nature.error ? <Text style={styles.error}>Rotation paused: {postingErrorMessage(nature.error)}</Text> : null}
-        {nature.active ? <DMButton title="Stop nature rotation" style={styles.button} onPress={() => {
-          void stopNatureRotation().then(() => setNature(current => current ? { ...current, active: false, nextRunAt: null } : null))
-            .catch(cause => setError(errorText(cause)));
-        }} /> : null}
+        <DMButton title={nature.active ? 'Stop nature rotation' : 'Resume nature rotation'} style={styles.button}
+          onPress={() => void changeNatureRotation(!nature.active)} loading={natureBusy} disabled={natureBusy} />
       </View> : null}
       <Text style={styles.copy}>Post one item at a time, then repeat your gallery—even when Dotti is closed.</Text>
       {active && job ? <>

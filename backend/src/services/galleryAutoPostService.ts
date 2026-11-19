@@ -95,8 +95,35 @@ export class GalleryAutoPostService {
 
   stop(userId: string) {
     return this.dependencies.store.update(userId, job => job
-      ? { ...job, active: false, nextRunAt: null, runToken: null, runStartedAt: null }
+      ? { ...job, active: false, nextRunAt: null,
+          ...(this.dependencies.continueOnFailure ? {} : { runToken: null, runStartedAt: null }) }
       : null);
+  }
+
+  async resume(userId: string) {
+    if (!this.dependencies.continueOnFailure) throw Object.assign(new Error('This rotation cannot be resumed.'), { status: 403 });
+    const job = await this.status(userId);
+    if (!job?.assets.length) throw Object.assign(new Error('Nature rotation was not found.'), { status: 404 });
+    if (job.active) return job;
+    if (job.runToken) throw Object.assign(new Error('A post is still finishing. Please try again shortly.'), { status: 409 });
+    const connected = await this.dependencies.connected(userId);
+    if (job.platforms.some(platform => !connected.includes(platform))) {
+      throw Object.assign(new Error('Reconnect Instagram and Threads before resuming the nature rotation.'), { status: 400 });
+    }
+    const now = this.now();
+    const resumed = await this.dependencies.store.update(userId, current => {
+      if (!current?.assets.length) throw Object.assign(new Error('Nature rotation was not found.'), { status: 404 });
+      if (current.active) return current;
+      if (current.runToken) throw Object.assign(new Error('A post is still finishing. Please try again shortly.'), { status: 409 });
+      // A crashed worker may have published the current item before it stopped.
+      // Skip that uncertain item when the owner explicitly resumes.
+      const uncertain = current.error?.startsWith('Posting was interrupted.') ?? false;
+      const cursor = uncertain ? (current.cursor + 1) % current.assets.length : current.cursor;
+      return { ...current, active: true, cursor,
+        cycles: current.cycles + (uncertain && cursor === 0 ? 1 : 0), nextRunAt: now, error: null };
+    });
+    if (!resumed) throw Object.assign(new Error('Nature rotation was not found.'), { status: 404 });
+    return resumed;
   }
 
   async runDueJobs() {

@@ -265,6 +265,8 @@ export const fetchNatureRotation = (): Promise<{ job: NatureRotation | null }> =
   authedFetch('/api/gallery/autopost/nature', { cache: 'no-store' });
 export const stopNatureRotation = (): Promise<{ stopped: boolean }> =>
   authedFetch('/api/gallery/autopost/nature', { method: 'DELETE' });
+export const resumeNatureRotation = (): Promise<{ job: NatureRotation }> =>
+  authedFetch('/api/gallery/autopost/nature/resume', { method: 'POST' });
 
 export const uploadMediaFiles = async (files: File[]) => {
   const uploaded: UploadedMediaFile[] = [];

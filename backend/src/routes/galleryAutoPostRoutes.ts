@@ -18,6 +18,14 @@ router.get('/nature', async (req, res, next) => {
       count: job.assets.length, error: job.active ? null : job.error } : null });
   } catch (error) { next(error); }
 });
+router.post('/nature/resume', async (req, res, next) => {
+  try {
+    const { ngogoNatureService } = await import('../services/ngogoNatureRuntime');
+    const job = await ngogoNatureService.resume((req as AuthedRequest).authUser!.uid);
+    res.set('Cache-Control', 'no-store').json({ job: { active: job.active, nextRunAt: job.nextRunAt,
+      count: job.assets.length, error: job.active ? null : job.error } });
+  } catch (error) { next(error); }
+});
 router.delete('/nature', async (req, res, next) => {
   try {
     const { ngogoNatureService } = await import('../services/ngogoNatureRuntime');
