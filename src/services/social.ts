@@ -364,6 +364,12 @@ export type InstagramInboxResponse = {
 export const fetchInstagramInbox = async (): Promise<InstagramInboxResponse> =>
   authedFetch('/api/instagram/messages', { cache: 'no-store' });
 
+export type ThreadsReply = { id: string; sender: string | null; text: string; status: string; reply: string | null; receivedAt: string | null; updatedAt: string | null };
+export type ThreadsRepliesResponse = { connection: { connected: boolean; username: string | null }; autoResponseEnabled: boolean; replies: ThreadsReply[] };
+export const fetchThreadsReplies = (): Promise<ThreadsRepliesResponse> => authedFetch('/api/threads/replies', { cache: 'no-store' });
+export const updateThreadsAutoResponse = (enabled: boolean): Promise<{ enabled: boolean }> =>
+  authedFetch('/api/threads/auto-response', { method: 'PUT', body: JSON.stringify({ enabled }) });
+
 export const syncInstagramInbox = async (): Promise<{
   synced: number;
   replied: number;

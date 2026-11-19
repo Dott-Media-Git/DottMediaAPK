@@ -7,6 +7,7 @@ import { getPollSocialAccounts } from '../services/pollSocialAccountResolver';
 import { supabaseFallbackService } from '../services/supabaseFallbackService';
 import { optedInAfter, replyIsAfterOptIn } from '../services/threadsReplyEligibility';
 import { pickFallbackReply } from '../services/fallbackReplyLibrary';
+import { getLegacyThreadsReplyUserIds } from '../services/threadsReplyTargets';
 
 const GRAPH_VERSION = process.env.THREADS_GRAPH_VERSION ?? 'v1.0';
 const GRAPH_BASE_URL = process.env.THREADS_GRAPH_BASE_URL ?? 'https://graph.threads.net';
@@ -32,17 +33,6 @@ type PollTarget = {
   supabaseReplies?: boolean;
   repliesAfter?: string;
 };
-
-const CLIENT_POLL_USER_IDS = [
-  'ouwaugr76lhdQ6IJbTuoCK9yMV93',
-  'cMPZQccGggbhZe9dbvtxFmBehP02',
-  '80bYIeiuukNFtUvXTUobXmfC7pu1',
-  'LVR7p3WzdFM51ds92Kacf6S40og2',
-  '1zvY9nNyXMcfxdPQEyx0bIdK7r53',
-  'acmVetCcOiTHeGk5D7eDYieamDF3',
-  'D1iNgjLKNRaQhH35M0NmGfw1LVD2',
-  'vzdH1DnfFLVjlY8bBgC26WACmmw2',
-];
 
 const isAlreadyExistsError = (error: unknown) => {
   const err = error as { code?: number | string; message?: string };
@@ -210,10 +200,10 @@ export const processReply = async (reply: ReplyItem, threadId: string, target: P
       ? await generateReply(reserved.text, 'threads', target.userId, 'comment',
           { accountId: target.accountId, username: target.username }, { neutralUnknown: true })
       : fallback;
-    if (target.supabaseReplies) {
+    {
       const current = await supabaseFallbackService.getInboundMessage(`threads_auto_response_setting_${target.userId}`);
       const setting = current?.payload as { enabled?: boolean } | undefined;
-      if (setting?.enabled !== true) {
+      if (setting?.enabled === false || (target.supabaseReplies && setting?.enabled !== true)) {
         if ('storageId' in reserved && reserved.storageId) await supabaseFallbackService.updateInboundMessage(reserved.storageId, { status: 'skipped' });
         return;
       }
@@ -223,7 +213,7 @@ export const processReply = async (reply: ReplyItem, threadId: string, target: P
       accessToken: target.accessToken,
     });
     if (reserved.docRef) await upsertReplyStatus(reserved.docRef, 'sent');
-    else if ('storageId' in reserved && reserved.storageId) await supabaseFallbackService.updateInboundMessage(reserved.storageId, { status: 'sent' });
+    else if ('storageId' in reserved && reserved.storageId) await supabaseFallbackService.updateInboundMessage(reserved.storageId, { status: 'sent', reply: response });
   } catch (error) {
     if (reserved.docRef) await upsertReplyStatus(reserved.docRef, 'failed', (error as Error).message);
     else if ('storageId' in reserved && reserved.storageId) await supabaseFallbackService.updateInboundMessage(reserved.storageId, { status: 'failed', error: 'Reply failed' });
@@ -232,11 +222,7 @@ export const processReply = async (reply: ReplyItem, threadId: string, target: P
 };
 
 const loadClientTargets = async (): Promise<PollTarget[]> => {
-  const configuredIds = (process.env.THREADS_COMMENT_POLL_USER_IDS ?? '')
-    .split(',')
-    .map(value => value.trim())
-    .filter(Boolean);
-  const userIds = Array.from(new Set([...CLIENT_POLL_USER_IDS, ...configuredIds]));
+  const userIds = getLegacyThreadsReplyUserIds();
   const targets: PollTarget[] = [];
 
   await Promise.all(

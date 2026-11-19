@@ -691,6 +691,23 @@ class SupabaseFallbackService {
     }
   }
 
+  async listInboundMessagesForRecipient(channel: string, recipientId: string, limit = 100) {
+    if (!this.isConfigured() || !recipientId) throw new Error('Reply storage unavailable');
+    const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 200);
+    try {
+      const rows = await this.request<any[]>('GET', 'dott_inbound_messages', {
+        params: { channel: `eq.${channel}`, recipient_id: `eq.${recipientId}`, order: 'received_at.desc', limit: safeLimit },
+      });
+      return Array.isArray(rows) ? rows : [];
+    } catch (error) {
+      if (!this.hasDatabaseFallback()) throw error;
+      return this.databaseQuery<Record<string, unknown>>(
+        'select * from public.dott_inbound_messages where channel = $1 and recipient_id = $2 order by received_at desc limit $3',
+        [channel, recipientId, safeLimit],
+      );
+    }
+  }
+
   async getInboundMessage(id: string) {
     if (!this.isConfigured() || !id) return null;
     try {

@@ -14,13 +14,14 @@ test('Supabase reply processing respects opt-out and never sends a duplicate', a
   let enabled = true;
   let creates = 0;
   let publishes = 0;
+  let lastReply: string | null | undefined;
   const records = new Map<string, string>();
   (store as any).reserveInboundMessage = async (item: { id: string }) => {
     if (records.has(item.id)) return false;
     records.set(item.id, 'pending');
     return true;
   };
-  (store as any).updateInboundMessage = async (id: string, patch: { status: string }) => records.set(id, patch.status);
+  (store as any).updateInboundMessage = async (id: string, patch: { status: string; reply?: string | null }) => { records.set(id, patch.status); if (patch.reply) lastReply = patch.reply; };
   (store as any).getInboundMessage = async () => ({ payload: { enabled } });
   (axios as any).post = async (url: string) => {
     if (url.endsWith('/threads_publish')) { publishes++; return { data: { id: 'published' } }; }
@@ -34,10 +35,14 @@ test('Supabase reply processing respects opt-out and never sends a duplicate', a
     assert.equal(creates, 1);
     assert.equal(publishes, 1);
     assert.equal(records.get('threads_reply_reply-1'), 'sent');
+    assert.ok(lastReply, 'a successful response must be saved for display in Dotti');
     enabled = false;
     await processReply({ ...item, id: 'reply-2' }, 'post', target);
     assert.equal(publishes, 1);
     assert.equal(records.get('threads_reply_reply-2'), 'skipped');
+    await processReply({ ...item, id: 'reply-legacy' }, 'post', { ...target, userId: 'ouwaugr76lhdQ6IJbTuoCK9yMV93', supabaseReplies: false });
+    assert.equal(publishes, 1);
+    assert.equal(records.get('threads_reply_reply-legacy'), 'skipped');
     enabled = true;
     (firestore as any).collection = () => ({ doc: () => ({ get: async () => { throw new Error('quota'); } }) });
     await processReply({ ...item, id: 'reply-3' }, 'post', target);
@@ -50,6 +55,21 @@ test('Supabase reply processing respects opt-out and never sends a duplicate', a
     (axios as any).post = originals.post;
     (firestore as any).collection = originals.collection;
   }
+});
+
+test('Threads inbox query always constrains the authenticated recipient', async () => {
+  const { supabaseFallbackService: store } = await import('../services/supabaseFallbackService');
+  const originalConfigured = store.isConfigured;
+  const originalRequest = (store as any).request;
+  let params: any;
+  (store as any).isConfigured = () => true;
+  (store as any).request = async (_method: string, _table: string, options: any) => { params = options.params; return []; };
+  try {
+    await store.listInboundMessagesForRecipient('threads', 'user-a');
+    assert.equal(params.channel, 'eq.threads');
+    assert.equal(params.recipient_id, 'eq.user-a');
+    await assert.rejects(store.listInboundMessagesForRecipient('threads', ''));
+  } finally { (store as any).isConfigured = originalConfigured; (store as any).request = originalRequest; }
 });
 
 test('account discovery uses a stable cursor for successive Supabase pages', async () => {

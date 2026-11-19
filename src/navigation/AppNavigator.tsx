@@ -30,6 +30,7 @@ import { AdminDashboardScreen } from '@screens/admin/AdminDashboardScreen';
 import { WebScreenFrame } from '@components/WebScreenFrame';
 import { WebChatScreen } from '@screens/WebChatScreen';
 import { InstagramInboxScreen } from '@screens/InstagramInboxScreen';
+import { ThreadsRepliesScreen } from '@screens/ThreadsRepliesScreen';
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 const RootStack = createNativeStackNavigator();
@@ -69,6 +70,7 @@ const linking = {
           TrendingNews: 'trending',
           Support: 'support',
           InstagramInbox: 'instagram-inbox',
+          ThreadsReplies: 'threads-replies',
           Admin: 'admin'
         }
       },
@@ -124,6 +126,7 @@ const baseDrawerScreens = [
   { name: 'ContentGallery', labelKey: 'Content Gallery', component: ContentGalleryScreen, icon: 'images-outline' },
   { name: 'PostingHistory', labelKey: 'Posting History', component: PostingHistoryScreen, icon: 'time-outline' },
   { name: 'InstagramInbox', labelKey: 'Instagram Inbox', component: InstagramInboxScreen, icon: 'logo-instagram' },
+  { name: 'ThreadsReplies', labelKey: 'Threads Replies', component: ThreadsRepliesScreen, icon: 'chatbubbles-outline' },
   { name: 'TrendingNews', labelKey: 'Your trending News', component: TrendingNewsScreen, icon: 'pulse-outline' },
   {
     name: 'AccountIntegrations',
