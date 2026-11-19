@@ -12,6 +12,7 @@ import { supabaseFallbackService } from '../services/supabaseFallbackService';
 import { consumeUsage, isFirestoreResourceExhausted, resolveBillingScope } from '../services/billing/billingService';
 import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect';
 import { threadsScopesForUser } from '../utils/threadsScopes';
+import { isOptionalMetaScope, withFacebookInsightsScope } from '../utils/metaFacebookInsightsScope';
 
 const router = Router();
 
@@ -293,17 +294,17 @@ const getScopes = (platform: MetaConnectPlatform = 'all') => {
     renderEnv.META_APP_SCOPES ??
     '';
   if (raw.trim()) {
-    return splitScopes(raw);
+    return withFacebookInsightsScope(splitScopes(raw), platform);
   }
 
-  if (platform === 'facebook') return defaultFacebookScopes;
+  if (platform === 'facebook') return withFacebookInsightsScope(defaultFacebookScopes, platform);
   if (platform === 'instagram') return defaultInstagramScopes;
   if (platform === 'ads') return defaultAdsScopes;
   // The combined Meta connection is also used by the dashboard's Ads
   // Performance card. Request the Ads scopes here as well so a user who
   // connects Meta once through the general flow receives a token that can
   // read ad accounts and insights.
-  return uniqueScopes(defaultFacebookScopes, defaultInstagramScopes, defaultAdsScopes);
+  return withFacebookInsightsScope(uniqueScopes(defaultFacebookScopes, defaultInstagramScopes, defaultAdsScopes), platform);
 };
 
 const getBusinessLoginConfigId = (platform: MetaConnectPlatform = 'all') => {
@@ -565,7 +566,7 @@ const fetchGrantedPermissions = async (userAccessToken: string) => {
 const assertRequiredPermissions = async (userAccessToken: string, platform: MetaConnectPlatform) => {
   const requiredScopes = getScopes(platform);
   const grantedScopes = await fetchGrantedPermissions(userAccessToken);
-  const missingScopes = requiredScopes.filter(scope => !grantedScopes.has(scope));
+  const missingScopes = requiredScopes.filter(scope => !isOptionalMetaScope(scope, platform) && !grantedScopes.has(scope));
   if (missingScopes.length) {
     throw new Error(`Meta did not grant required permissions: ${missingScopes.join(', ')}`);
   }
