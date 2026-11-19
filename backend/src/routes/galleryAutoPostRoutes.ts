@@ -15,7 +15,7 @@ router.get('/nature', async (req, res, next) => {
     const { ngogoNatureService } = await import('../services/ngogoNatureRuntime');
     const job = await ngogoNatureService.status((req as AuthedRequest).authUser!.uid);
     res.set('Cache-Control', 'no-store').json({ job: job ? { active: job.active, nextRunAt: job.nextRunAt,
-      count: job.assets.length, error: job.error } : null });
+      count: job.assets.length, error: job.active ? null : job.error } : null });
   } catch (error) { next(error); }
 });
 router.delete('/nature', async (req, res, next) => {

@@ -49,6 +49,7 @@ export function compatiblePlatforms(kind: GalleryAsset['kind'], platforms: Galle
 }
 type Dependencies = {
   store: GalleryStore;
+  continueOnFailure?: boolean;
   connected: (userId: string) => Promise<GalleryPlatform[]>;
   publish: (userId: string, platform: GalleryPlatform, asset: GalleryAsset, caption: string) => Promise<GalleryResult>;
   now?: () => number;
@@ -117,6 +118,7 @@ export class GalleryAutoPostService {
     if (!job || job.runToken !== runToken) return;
     const results: GalleryResult[] = [];
     let error: string | null = null;
+    let platformFailed = false;
     try {
       const asset = job.assets[job.cursor];
       for (const platform of compatiblePlatforms(asset.kind, job.platforms)) {
@@ -128,6 +130,7 @@ export class GalleryAutoPostService {
           ? { ...current, lastResults: [...results] } : current);
       }
       const failures = results.filter(result => result.status === 'failed');
+      platformFailed = failures.length > 0;
       if (failures.length) error = failures.map(result => `${result.platform}: ${result.error || 'Posting failed'}`).join('; ');
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Posting failed. Please check your connected accounts.';
@@ -135,7 +138,7 @@ export class GalleryAutoPostService {
     const finishedAt = this.now();
     await this.dependencies.store.update(userId, current => {
       if (current?.runToken !== runToken) return current;
-      const active = current.active && !error;
+      const active = current.active && (!error || (this.dependencies.continueOnFailure === true && platformFailed));
       const nextCursor = (job.cursor + 1) % job.assets.length;
       return { ...current, active, cursor: nextCursor,
         cycles: job.cycles + (nextCursor === 0 ? 1 : 0),

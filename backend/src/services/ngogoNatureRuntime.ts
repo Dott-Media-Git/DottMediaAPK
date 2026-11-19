@@ -23,6 +23,7 @@ const store: GalleryStore = {
 };
 export const ngogoNatureService = new GalleryAutoPostService({
   store,
+  continueOnFailure: true,
   connected: userId => autoPostService.galleryConnectedPlatforms(userId),
   publish: (userId, platform, asset) => {
     const index = Number.parseInt(asset.id.replace(/\D/g, ''), 10) || 0;

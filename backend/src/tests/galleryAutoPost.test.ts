@@ -136,6 +136,41 @@ test('a failed platform pauses the job without retrying successful platforms', a
   assert.match(job?.error ?? '', /Token expired/);
 });
 
+test('a continuing rotation skips a failed item and tries both platforms at the next interval', async () => {
+  const fixture = setup();
+  fixture.dependencies.publish = async (_user, platform, asset) => {
+    fixture.posts.push(`${platform}:${asset.id}`);
+    return platform === 'instagram' && asset.id === 'photo'
+      ? { platform, status: 'failed', error: 'Temporary failure' }
+      : { platform, status: 'posted' };
+  };
+  const service = new GalleryAutoPostService({ ...fixture.dependencies, continueOnFailure: true });
+  await service.start('alice', { ...input, platforms: ['facebook', 'instagram'] });
+  await service.runDueJobs();
+  let job = await service.status('alice');
+  assert.equal(job?.active, true);
+  assert.equal(job?.cursor, 1);
+  assert.match(job?.error ?? '', /Temporary failure/);
+  fixture.advance(3_599_999);
+  await service.runDueJobs();
+  assert.deepEqual(fixture.posts, ['facebook:photo', 'instagram:photo']);
+  fixture.advance(1);
+  await service.runDueJobs();
+  assert.deepEqual(fixture.posts, ['facebook:photo', 'instagram:photo', 'facebook:video', 'instagram:video']);
+  job = await service.status('alice');
+  assert.equal(job?.active, true);
+  assert.equal(job?.error, null);
+});
+
+test('a continuing rotation still pauses on an unexpected publishing exception', async () => {
+  const fixture = setup();
+  fixture.dependencies.publish = async () => { throw new Error('Unexpected failure'); };
+  const service = new GalleryAutoPostService({ ...fixture.dependencies, continueOnFailure: true });
+  await service.start('alice', input);
+  await service.runDueJobs();
+  assert.equal((await service.status('alice'))?.active, false);
+});
+
 test('interrupted runs pause rather than repeating an uncertain external publish', async () => {
   const fixture = setup();
   await fixture.service.start('alice', input);
