@@ -336,7 +336,9 @@ export const fetchSocialHistory = async (options?: {
 export const fetchRecoveredGallery = (): Promise<{ urls: string[] }> =>
   authedFetch('/api/media/recover-gallery', { cache: 'no-store' });
 
-export const fetchSocialStatus = async (): Promise<{ status: SocialConnectionStatus }> => {
+export type SocialAccountLabels = Partial<Record<keyof SocialConnectionStatus, string | null>>;
+
+export const fetchSocialStatus = async (): Promise<{ status: SocialConnectionStatus; accountLabels?: SocialAccountLabels }> => {
   return authedFetch('/api/social/status');
 };
 

@@ -20,6 +20,7 @@ import { fetchBwinMetaSocialProfile, resolveKnownLiveSocialProfile } from '../se
 import { canUsePrimarySocialDefaults } from '../utils/socialAccess';
 import { createSignedState, verifySignedState } from '../utils/oauthState';
 import { threadsScopesForUser } from '../utils/threadsScopes';
+import { socialAccountLabels } from '../utils/socialAccountLabels';
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
@@ -1363,7 +1364,7 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
         (allowDefaults && Boolean(config.tiktok.accessToken && config.tiktok.openId)),
     };
 
-    res.json({ status });
+    res.set('Cache-Control', 'no-store').json({ status, accountLabels: socialAccountLabels(accounts, youtube?.channelTitle) });
   } catch (error) {
     next(error);
   }

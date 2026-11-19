@@ -22,7 +22,8 @@ import {
   fetchTwitterConnectUrl,
   disconnectSocialPlatform,
   saveSocialCredentials,
-  type SocialConnectionStatus
+  type SocialConnectionStatus,
+  type SocialAccountLabels
 } from '@services/social';
 
 declare global {
@@ -129,16 +130,12 @@ const EMPTY_DRAFTS: Record<ManualPlatform, Record<string, string>> = {
   whatsapp: { accessToken: '', phoneNumberId: '', recipientPhoneNumbers: '' }
 };
 
-const KNOWN_ACCOUNT_LABELS: Record<string, string> = {
-  cMPZQccGggbhZe9dbvtxFmBehP02: 'Aux Wellness Hub',
-  HAo6YtFvhKgSySa8EoERKYYq2IV2: 'Dotti AI',
-};
-
 export const AccountIntegrationsScreen: React.FC = () => {
   const { state, orgId } = useAuth();
   const { t } = useI18n();
   const [socialAccounts, setSocialAccounts] = useState<Record<string, any>>({});
   const [socialStatus, setSocialStatus] = useState<SocialConnectionStatus | null>(null);
+  const [accountLabels, setAccountLabels] = useState<SocialAccountLabels>({});
   const [expandedPlatform, setExpandedPlatform] = useState<PlatformKey | null>(null);
   const [savingPlatform, setSavingPlatform] = useState<PlatformKey | null>(null);
   const [drafts, setDrafts] = useState<Record<ManualPlatform, Record<string, string>>>(EMPTY_DRAFTS);
@@ -213,11 +210,13 @@ export const AccountIntegrationsScreen: React.FC = () => {
   const loadSocialStatus = async () => {
     if (!state.user) {
       setSocialStatus(null);
+      setAccountLabels({});
       return;
     }
     try {
       const response = await fetchSocialStatus();
       setSocialStatus(response.status ?? null);
+      setAccountLabels(response.accountLabels ?? {});
     } catch (error) {
       console.warn('Failed to load social status', error);
     }
@@ -630,15 +629,20 @@ export const AccountIntegrationsScreen: React.FC = () => {
       .map(field => field.label);
   };
 
-  const getConnectedAccountLabel = (platform: ManualPlatform) => {
-    if (platform !== 'threads') return null;
-    const accountLabel = state.user?.uid ? KNOWN_ACCOUNT_LABELS[state.user.uid] : undefined;
-    if (accountLabel) return accountLabel;
+  const getConnectedAccountLabel = (platform: PlatformKey) => {
+    if (accountLabels[platform]) return accountLabels[platform];
+    if (platform === 'youtube') return youtubeStatus?.channelTitle || null;
     const account = (socialAccounts?.[platform] ?? {}) as Record<string, unknown>;
-    const username = String(account.username ?? '').trim();
-    if (username) return username.startsWith('@') ? username : `@${username}`;
-    const accountId = String(account.accountId ?? '').trim();
-    return accountId ? `Account ${accountId}` : null;
+    const fields = platform === 'facebook' ? ['pageName', 'name']
+      : platform === 'whatsapp' ? ['displayPhoneNumber', 'verifiedName', 'name']
+      : platform === 'linkedin' ? ['organizationName', 'companyName', 'name', 'displayName', 'username']
+      : ['username', 'name', 'displayName'];
+    for (const field of fields) {
+      if (typeof account[field] !== 'string' || !(account[field] as string).trim()) continue;
+      const label = (account[field] as string).trim();
+      return field === 'username' && ['instagram', 'threads', 'twitter', 'tiktok'].includes(platform) && !label.startsWith('@') ? `@${label}` : label;
+    }
+    return null;
   };
 
   const updateDraft = (platform: ManualPlatform, key: string, value: string) => {
@@ -976,7 +980,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
               : platform === 'tiktok'
                 ? tiktokMissing
                 : getManualMissing(manualPlatform);
-          const connectedAccountLabel = connected ? getConnectedAccountLabel(manualPlatform) : null;
+          const connectedAccountLabel = connected ? getConnectedAccountLabel(platform) : null;
           const isSaving = savingPlatform === platform;
           return (
             <View key={platform} style={styles.integrationCard}>
@@ -1001,8 +1005,8 @@ export const AccountIntegrationsScreen: React.FC = () => {
                       </Text>
                     </View>
                   </View>
-                  {connectedAccountLabel ? (
-                    <Text style={styles.connectedAccountLabel}>Connected to {connectedAccountLabel}</Text>
+                  {connected ? (
+                    <Text style={styles.connectedAccountLabel}>{connectedAccountLabel ? `Connected to ${connectedAccountLabel}` : 'Account name unavailable'}</Text>
                   ) : null}
                 </View>
                 {connected ? (
