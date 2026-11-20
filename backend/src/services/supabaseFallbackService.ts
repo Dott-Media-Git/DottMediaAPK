@@ -1193,8 +1193,29 @@ class SupabaseFallbackService {
     });
     // Never route a Page event to an arbitrary business if ownership is ambiguous.
     if (!Array.isArray(rows) || rows.length !== 1) return null;
-    return typeof rows[0].user_id === 'string' ? { userId: rows[0].user_id,
-      eventsOnly: rows[0].accounts?.facebook?.webhookEventsOnly === true } : null;
+    if (typeof rows[0].user_id !== 'string') return null;
+    const userId = rows[0].user_id;
+    const control = await this.getInboundMessage(`facebook_page_mode_${pageId}`);
+    const controlOwner = (control?.payload as Record<string, unknown> | undefined)?.ownerId;
+    if (control && controlOwner !== userId) return null;
+    return { userId, eventsOnly: control?.status === 'events_only' || rows[0].accounts?.facebook?.webhookEventsOnly === true };
+  }
+
+  async enableFacebookPageEventsOnly(userId: string, pageId: string) {
+    const id = `facebook_page_mode_${pageId}`;
+    const existing = await this.getInboundMessage(id);
+    if (existing) {
+      if (existing.status !== 'events_only' || (existing.payload as Record<string, unknown> | undefined)?.ownerId !== userId)
+        throw new Error('Page notification ownership needs attention');
+      return;
+    }
+    const inserted = await this.reserveInboundMessage({ id, channel: 'facebook_page_control', senderId: pageId,
+      status: 'events_only', payload: { ownerId: userId, accountId: pageId } });
+    if (!inserted) {
+      const current = await this.getInboundMessage(id);
+      if (current?.status !== 'events_only' || (current.payload as Record<string, unknown> | undefined)?.ownerId !== userId)
+        throw new Error('Page notification ownership changed');
+    }
   }
 
   async upsertTikTokIntegration(userId: string, record: Record<string, unknown>) {

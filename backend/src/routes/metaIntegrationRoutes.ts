@@ -1292,6 +1292,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
     if (connectedPlatforms.includes('facebook') && mayUpdateFacebookSubscription) {
       try {
         const { appId } = getMetaAppConfig(req);
+        await supabaseFallbackService.enableFacebookPageEventsOnly(state.userId, selectedPage.id);
         await ensureFacebookPageSubscription({ pageId: selectedPage.id, pageToken: selectedPage.access_token,
           appId, graphVersion: GRAPH_VERSION, messagingGranted: grantedPermissions.has('pages_messaging') });
       } catch (error) {
