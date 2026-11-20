@@ -14,6 +14,7 @@ import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedi
 import { threadsScopesForUser } from '../utils/threadsScopes';
 import { isOptionalMetaScope, withFacebookInsightsScope } from '../utils/metaFacebookInsightsScope';
 import { meterConnectionUsage } from '../utils/connectionUsage';
+import { ensureFacebookPageSubscription, readFacebookPageSubscription } from '../services/facebookPageSubscription';
 
 const router = Router();
 
@@ -571,6 +572,7 @@ const assertRequiredPermissions = async (userAccessToken: string, platform: Meta
   if (missingScopes.length) {
     throw new Error(`Meta did not grant required permissions: ${missingScopes.join(', ')}`);
   }
+  return grantedScopes;
 };
 
 const addScopesFromValue = (target: Set<string>, value: unknown) => {
@@ -1175,7 +1177,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
     const previouslyConnectedAccounts = { ...currentAccounts };
     const requestedPlatform = normalizeMetaConnectPlatform(state.platform);
     const userAccessToken = await exchangeLongLivedToken(req, shortLivedToken);
-    await assertRequiredPermissions(userAccessToken, requestedPlatform);
+    const grantedPermissions = await assertRequiredPermissions(userAccessToken, requestedPlatform);
 
     const pages = await fetchManagedPages(userAccessToken);
     if (!pages.length) {
@@ -1202,13 +1204,31 @@ router.get('/integrations/meta/callback', async (req, res) => {
     }
 
     const connectedPlatforms: string[] = [];
+    let mayUpdateFacebookSubscription = false;
 
     if (requestedPlatform === 'facebook' || requestedPlatform === 'ads' || requestedPlatform === 'all') {
+      let webhookEventsOnly = previousConnectedAccounts.facebook?.pageId === selectedPage.id &&
+        previousConnectedAccounts.facebook?.webhookEventsOnly === true;
+      try {
+        const { appId } = getMetaAppConfig(req);
+        const existing = await readFacebookPageSubscription({ pageId: selectedPage.id, pageToken: selectedPage.access_token,
+          appId, graphVersion: GRAPH_VERSION });
+        // Newly subscribed Pages collect events only; established subscriptions
+        // retain their existing reply behavior.
+        if (!existing.appExists) webhookEventsOnly = true;
+        // Do not change event types on an established legacy subscription;
+        // those events can trigger automatic replies under its existing policy.
+        mayUpdateFacebookSubscription = !existing.appExists || webhookEventsOnly;
+      } catch (error) {
+        const code = axios.isAxiosError(error) ? error.response?.data?.error?.code : undefined;
+        console.warn('[meta] Page webhook subscription preflight failed', { userId: state.userId, code });
+      }
       currentAccounts.facebook = {
         accessToken: selectedPage.access_token,
         userAccessToken,
         pageId: selectedPage.id,
         pageName: selectedPage.name ?? currentAccounts.facebook?.pageName,
+        ...(webhookEventsOnly ? { webhookEventsOnly: true } : {}),
       };
       connectedPlatforms.push('facebook');
     }
@@ -1268,6 +1288,18 @@ router.get('/integrations/meta/callback', async (req, res) => {
     }
 
     await persistSocialAccounts(state.userId, { email: userData.email ?? null, socialAccounts: currentAccounts });
+
+    if (connectedPlatforms.includes('facebook') && mayUpdateFacebookSubscription) {
+      try {
+        const { appId } = getMetaAppConfig(req);
+        await ensureFacebookPageSubscription({ pageId: selectedPage.id, pageToken: selectedPage.access_token,
+          appId, graphVersion: GRAPH_VERSION, messagingGranted: grantedPermissions.has('pages_messaging') });
+      } catch (error) {
+        // Do not log axios errors: they can contain Page access tokens.
+        const code = axios.isAxiosError(error) ? error.response?.data?.error?.code : undefined;
+        console.warn('[meta] Page webhook subscription failed', { userId: state.userId, code });
+      }
+    }
 
     try {
       await mergeAutopostPlatforms(state.userId, connectedPlatforms);

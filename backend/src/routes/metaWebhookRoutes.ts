@@ -30,6 +30,8 @@ import {
   isCommentToDmTrigger,
 } from '../services/commentToDmService.js';
 import { supabaseFallbackService } from '../services/supabaseFallbackService.js';
+import { verifyMetaWebhookSignature } from '../utils/metaWebhookSignature';
+import { storeFacebookPageEvents } from '../services/facebookPageWebhook';
 
 const router = Router();
 const verifyToken = process.env.META_VERIFY_TOKEN ?? process.env.VERIFY_TOKEN;
@@ -464,6 +466,37 @@ router.get('/meta/webhook', (req, res) => {
 router.post('/meta/webhook', async (req, res) => {
   try {
     const body = req.body;
+    if (body?.object === 'page') {
+      const secret = (process.env.META_APP_SECRET ?? process.env.FACEBOOK_APP_SECRET ?? '').trim();
+      const raw = (req as typeof req & { metaWebhookRawBody?: Buffer }).metaWebhookRawBody;
+      if (!verifyMetaWebhookSignature(raw, req.header('x-hub-signature-256'), secret)) {
+        return res.sendStatus(403);
+      }
+      if (!Array.isArray(body.entry)) return res.sendStatus(400);
+      try {
+        const eventOwners = new Map<string, string>();
+        const newEntries: any[] = [];
+        const existingEntries: any[] = [];
+        for (const entry of body.entry) {
+          const pageId = String(entry?.id ?? '');
+          const binding = await supabaseFallbackService.findFacebookPageBinding(pageId);
+          if (!binding) continue;
+          if (binding.eventsOnly) { eventOwners.set(pageId, binding.userId); newEntries.push(entry); }
+          else existingEntries.push(entry);
+        }
+        await storeFacebookPageEvents({ entry: newEntries }, {
+          findOwner: async pageId => eventOwners.get(pageId) ?? null,
+          reserve: event => supabaseFallbackService.reserveInboundMessage(event),
+        });
+        if (!existingEntries.length) return res.sendStatus(200);
+        // Existing Page subscriptions retain their established processing path.
+        body.entry = existingEntries;
+      } catch {
+        // A non-2xx response lets Meta retry when durable storage is unavailable.
+        console.warn('[meta-webhook] Page event could not be stored');
+        return res.sendStatus(503);
+      }
+    }
     logEvent('meta/webhook received', { object: body?.object, hasEntry: Array.isArray(body?.entry) });
     if (!body?.object || !Array.isArray(body.entry)) {
       return res.sendStatus(400);

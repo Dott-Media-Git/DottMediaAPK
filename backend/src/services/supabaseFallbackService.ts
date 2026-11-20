@@ -1186,6 +1186,17 @@ class SupabaseFallbackService {
     };
   }
 
+  async findFacebookPageBinding(pageId: string): Promise<{ userId: string; eventsOnly: boolean } | null> {
+    if (!this.isConfigured() || !pageId) throw new Error('Page account lookup is unavailable');
+    const rows = await this.request<any[]>('GET', 'dott_social_accounts', {
+      params: { 'accounts->facebook->>pageId': `eq.${pageId}`, select: 'user_id,accounts', limit: 2 },
+    });
+    // Never route a Page event to an arbitrary business if ownership is ambiguous.
+    if (!Array.isArray(rows) || rows.length !== 1) return null;
+    return typeof rows[0].user_id === 'string' ? { userId: rows[0].user_id,
+      eventsOnly: rows[0].accounts?.facebook?.webhookEventsOnly === true } : null;
+  }
+
   async upsertTikTokIntegration(userId: string, record: Record<string, unknown>) {
     if (!this.isConfigured() || !userId) {
       throw new Error('supabase_tiktok_storage_not_configured');
