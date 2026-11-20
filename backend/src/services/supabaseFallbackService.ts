@@ -4,6 +4,7 @@ import { Pool, type QueryResultRow } from 'pg';
 import dns from 'dns';
 import https from 'https';
 import { resolveAnalyticsScopeKey, type AnalyticsScope } from './analyticsScope';
+import { resolveFacebookPageBinding } from './facebookPageBinding';
 
 type QueryValue = string | number | boolean | null | undefined;
 
@@ -1189,16 +1190,10 @@ class SupabaseFallbackService {
   async findFacebookPageBinding(pageId: string): Promise<{ userId: string; eventsOnly: boolean } | null> {
     if (!this.isConfigured() || !pageId) throw new Error('Page account lookup is unavailable');
     const rows = await this.request<any[]>('GET', 'dott_social_accounts', {
-      params: { 'accounts->facebook->>pageId': `eq.${pageId}`, select: 'user_id,accounts', limit: 2 },
+      params: { 'accounts->facebook->>pageId': `eq.${pageId}`, select: 'user_id,accounts', limit: 20 },
     });
-    // Never route a Page event to an arbitrary business if ownership is ambiguous.
-    if (!Array.isArray(rows) || rows.length !== 1) return null;
-    if (typeof rows[0].user_id !== 'string') return null;
-    const userId = rows[0].user_id;
     const control = await this.getInboundMessage(`facebook_page_mode_${pageId}`);
-    const controlOwner = (control?.payload as Record<string, unknown> | undefined)?.ownerId;
-    if (control && controlOwner !== userId) return null;
-    return { userId, eventsOnly: control?.status === 'events_only' || rows[0].accounts?.facebook?.webhookEventsOnly === true };
+    return resolveFacebookPageBinding(rows, control as any);
   }
 
   async listFacebookPageEvents(userId: string, pageId: string) {
