@@ -940,7 +940,7 @@ const buildWithDefaults = (
   return merged;
 };
 
-const fetchFacebookMetric = async (
+export const fetchFacebookMetric = async (
   postId: string,
   facebookAccount: NonNullable<UserSocialAccounts['facebook']>,
 ) => {
@@ -954,24 +954,42 @@ const fetchFacebookMetric = async (
       const basicFields = postId.includes('_')
         ? 'id,likes.summary(true),reactions.summary(true),comments.summary(true),shares'
         : 'id,likes.summary(true),reactions.summary(true),comments.summary(true),shares,page_story_id';
-      const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${postId}`, {
-        params: {
-          fields: basicFields,
-          access_token: publishToken,
-        },
-        timeout: 30000,
-      });
+      // Post metadata and reaction summaries can require additional permissions;
+      // their failure must not prevent separately authorized insights loading.
+      let basicData: any = {};
+      try {
+        const basic = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${postId}`, {
+          params: { fields: basicFields, access_token: publishToken },
+          timeout: 30000,
+        });
+        basicData = basic.data ?? {};
+      } catch {
+        // Continue with the independently permitted insights endpoints.
+      }
 
-      const likes = Number(basic.data?.likes?.summary?.total_count ?? 0);
-      const reactions = Number(basic.data?.reactions?.summary?.total_count ?? 0);
-      const comments = Number(basic.data?.comments?.summary?.total_count ?? 0);
-      const shares = Number(basic.data?.shares?.count ?? 0);
+      const likes = Number(basicData?.likes?.summary?.total_count ?? 0);
+      const reactions = Number(basicData?.reactions?.summary?.total_count ?? 0);
+      const comments = Number(basicData?.comments?.summary?.total_count ?? 0);
+      const shares = Number(basicData?.shares?.count ?? 0);
       let views = 0;
       let interactions = Math.max(likes, reactions) + comments + shares;
       const analyticsPostId =
-        typeof basic.data?.page_story_id === 'string' && basic.data.page_story_id
-          ? basic.data.page_story_id
+        typeof basicData?.page_story_id === 'string' && basicData.page_story_id
+          ? basicData.page_story_id
           : postId;
+
+      try {
+        // Page profile views and post views are different metrics. Fetch post
+        // media views separately so an unsupported engagement metric cannot
+        // suppress a valid view count.
+        const postViews = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${analyticsPostId}/insights`, {
+          params: { metric: 'post_media_view', access_token: metricsToken },
+          timeout: 30000,
+        });
+        views = parseInsightValue(postViews.data, 'post_media_view');
+      } catch {
+        // Insights may be unavailable for a particular post or account.
+      }
 
       try {
         const insights = await axios.get(`https://graph.facebook.com/${GRAPH_VERSION}/${analyticsPostId}/insights`, {
