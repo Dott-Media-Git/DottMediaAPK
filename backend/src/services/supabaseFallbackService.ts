@@ -1201,6 +1201,15 @@ class SupabaseFallbackService {
     return { userId, eventsOnly: control?.status === 'events_only' || rows[0].accounts?.facebook?.webhookEventsOnly === true };
   }
 
+  async listFacebookPageEvents(userId: string, pageId: string) {
+    if (!this.isConfigured() || !userId || !pageId) throw new Error('Page activity is unavailable');
+    const rows = await this.request<any[]>('GET', 'dott_inbound_messages', { params: {
+      channel: 'eq.facebook', 'payload->>ownerId': `eq.${userId}`, 'payload->>accountId': `eq.${pageId}`,
+      message_type: 'in.(comment,dm)', select: 'id,message,message_type,received_at', order: 'received_at.desc', limit: 50,
+    } });
+    return Array.isArray(rows) ? rows : [];
+  }
+
   async enableFacebookPageEventsOnly(userId: string, pageId: string) {
     const id = `facebook_page_mode_${pageId}`;
     const existing = await this.getInboundMessage(id);

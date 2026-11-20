@@ -5,6 +5,7 @@ import { Alert, AppState, Linking, Modal, Platform, ScrollView, StyleSheet, Text
 import { Ionicons } from '@expo/vector-icons';
 import { doc, getDoc } from 'firebase/firestore';
 import TikTokPostComposer from '@components/TikTokPostComposer';
+import { FacebookPageActivity } from '@components/FacebookPageActivity';
 import { DMButton } from '@components/DMButton';
 import { colors } from '@constants/colors';
 
@@ -1029,6 +1030,7 @@ export const AccountIntegrationsScreen: React.FC = () => {
                 )}
               </View>
 
+              {platform === 'facebook' && connected ? <FacebookPageActivity /> : null}
               {platform==='tiktok'&&connected&&<View style={styles.integrationBody}><DMButton title={t('Review & post a video')} onPress={()=>setShowTikTokComposer(true)}/></View>}
               {!connected && isExpanded ? (
                 <View style={styles.integrationBody}>

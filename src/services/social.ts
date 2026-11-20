@@ -344,6 +344,10 @@ export const fetchSocialStatus = async (): Promise<{ status: SocialConnectionSta
   return authedFetch('/api/social/status');
 };
 
+export type FacebookPageEvent = { id: string; text: string | null; type: 'comment' | 'dm'; receivedAt: string | null };
+export const fetchFacebookPageEvents = (): Promise<{ events: FacebookPageEvent[] }> =>
+  authedFetch('/api/social/facebook/page-events', { cache: 'no-store' });
+
 export type InstagramInboxMessage = {
   id: string;
   platform: 'instagram' | string;

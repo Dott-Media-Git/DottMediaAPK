@@ -1370,6 +1370,21 @@ router.get('/social/status', requireFirebase, async (req, res, next) => {
   }
 });
 
+router.get('/social/facebook/page-events', requireFirebase, async (req, res, next) => {
+  try {
+    const userId = (req as AuthedRequest).authUser?.uid;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const stored = await supabaseFallbackService.getSocialAccounts(userId);
+    const facebook = stored?.socialAccounts?.facebook as { pageId?: string } | undefined;
+    if (!facebook?.pageId) return res.status(404).json({ message: 'Connect your Facebook Page first.' });
+    const binding = await supabaseFallbackService.findFacebookPageBinding(facebook.pageId);
+    if (!binding || binding.userId !== userId) return res.status(409).json({ message: 'This Page needs its connection checked before activity can be shown.' });
+    const events = await supabaseFallbackService.listFacebookPageEvents(userId, facebook.pageId);
+    res.set('Cache-Control', 'no-store').json({ events: events.map(row => ({ id: row.id, text: row.message,
+      type: row.message_type, receivedAt: row.received_at })) });
+  } catch (error) { next(error); }
+});
+
 router.get('/social/threads/connect-url', requireFirebase, async (req, res, next) => {
   try {
     const authUser = (req as AuthedRequest).authUser;
