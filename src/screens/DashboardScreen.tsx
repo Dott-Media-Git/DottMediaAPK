@@ -135,6 +135,9 @@ const toDateKey = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
+const toKampalaDateKey = (date: Date) =>
+  new Date(date.getTime() + 3 * 3_600_000).toISOString().slice(0, 10);
+
 const buildDateWindow = (count: number) => {
   const days: string[] = [];
   const today = new Date();
@@ -149,8 +152,9 @@ const buildDateWindow = (count: number) => {
   return days;
 };
 
-const getHoursSinceMidnight = () => {
+const getHoursSinceMidnight = (kampala = false) => {
   const now = new Date();
+  if (kampala) return Math.max(1, (now.getTime() - Date.parse(`${toKampalaDateKey(now)}T00:00:00+03:00`)) / 3_600_000);
   return Math.max(1, now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600);
 };
 
@@ -221,6 +225,7 @@ const hasLiveDashboardSignal = (
 
 export const DashboardScreen: React.FC = () => {
   const { state } = useAuth();
+  const isCarMarketDashboard = state.user?.email?.toLowerCase() === 'carmarketplace999@gmail.com';
   const { t, locale } = useI18n();
   const { width: viewportWidth } = useWindowDimensions();
   const [dashboardWidth, setDashboardWidth] = useState(viewportWidth);
@@ -584,7 +589,7 @@ export const DashboardScreen: React.FC = () => {
       try {
         const [rollingStats, todayStats] = await Promise.all([
           fetchLiveSocialStats(state.user.uid, analyticsScopeId, LIVE_SOCIAL_ROLLING_HOURS),
-          fetchLiveSocialStats(state.user.uid, analyticsScopeId, getHoursSinceMidnight()),
+          fetchLiveSocialStats(state.user.uid, analyticsScopeId, getHoursSinceMidnight(isCarMarketDashboard)),
         ]);
         if (mounted && rollingStats) {
           setLiveSocialStats(rollingStats);
@@ -608,7 +613,7 @@ export const DashboardScreen: React.FC = () => {
       mounted = false;
       if (timer) clearInterval(timer);
     };
-  }, [analyticsScopeId, hasCachedSnapshot, state.user?.uid]);
+  }, [analyticsScopeId, hasCachedSnapshot, isCarMarketDashboard, state.user?.uid]);
 
   useEffect(() => {
     const userId = state.user?.uid;
@@ -664,7 +669,7 @@ export const DashboardScreen: React.FC = () => {
     return formatCount(value);
   };
 
-  const todayDateKey = toDateKey(new Date());
+  const todayDateKey = isCarMarketDashboard ? toKampalaDateKey(new Date()) : toDateKey(new Date());
 
   const rollingPerformanceSummary = useMemo(() => {
     const byDate = new Map<
@@ -751,23 +756,10 @@ export const DashboardScreen: React.FC = () => {
     return t('Rolling live total across the last {{days}} days', { days: LIVE_SOCIAL_ROLLING_DAYS });
   }, [liveSocialLoading, rollingPerformanceSummary.availableDays, t]);
 
-  const heroStats = [
-    { label: t('Interactions'), value: formatCount(rollingPerformanceSummary.interactions) },
-    { label: t('Outbound'), value: formatCount(outboundStats.prospectsContacted) },
-    { label: t('Views'), value: formatCount(rollingPerformanceSummary.views) },
-    {
-      label: isBwinbetAccount ? t('Bet button clicks') : t('Conversions'),
-      value: isBwinbetAccount
-        ? formatCount(rollingPerformanceSummary.redirectClicks)
-        : formatCount(rollingPerformanceSummary.conversions),
-    }
-  ];
-
   const adSummary = adPerformance.summary;
   const formatCurrency = (value: number, currency = adPerformance.currency || 'USD') =>
     `${currency} ${Number(value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const isCarMarketAds = adPerformance.accountName === 'Car Market Place' ||
-    state.user?.email?.toLowerCase() === 'carmarketplace999@gmail.com';
+  const isCarMarketAds = adPerformance.accountName === 'Car Market Place' || isCarMarketDashboard;
   const adsReported = isCarMarketAds
     ? adPerformance.reportingStatus === 'reported'
     : adPerformance.reportingStatus === undefined || adPerformance.reportingStatus === 'reported';
@@ -793,12 +785,15 @@ export const DashboardScreen: React.FC = () => {
       : [t('No recent activity yet')];
 
   const dailyReviewStats = useMemo(() => {
+    const snapshotTime = Date.parse(todayLiveSocialStats.generatedAt);
+    const social = isCarMarketDashboard && (!Number.isFinite(snapshotTime) ||
+      toKampalaDateKey(new Date(snapshotTime)) !== todayDateKey) ? emptyLiveSocialStats : todayLiveSocialStats;
     const summary = {
-      views: Number(todayLiveSocialStats.summary.views ?? 0),
-      interactions: Number(todayLiveSocialStats.summary.interactions ?? 0),
+      views: Number(social.summary.views ?? 0),
+      interactions: Number(social.summary.interactions ?? 0),
       outbound: 0,
-      conversions: Number(todayLiveSocialStats.summary.conversions ?? 0),
-      redirectClicks: Number(todayLiveSocialStats.web.redirectClicks ?? 0),
+      conversions: Number(social.summary.conversions ?? 0),
+      redirectClicks: Number(social.web.redirectClicks ?? 0),
     };
 
     const applyHeatmapRow = (row?: Partial<ActivityHeatmapDaily>) => {
@@ -818,7 +813,25 @@ export const DashboardScreen: React.FC = () => {
     }
 
     return summary;
-  }, [activityHeatmapRestRows, activityHeatmapRows, historySeries, todayDateKey, todayLiveSocialStats]);
+  }, [activityHeatmapRestRows, activityHeatmapRows, historySeries, isCarMarketDashboard, todayDateKey, todayLiveSocialStats]);
+
+  const paidToday = adPerformance.today?.date === todayDateKey ? adPerformance.today : undefined;
+  const overview = isCarMarketAds ? {
+    views: dailyReviewStats.views + (paidToday?.views ?? 0),
+    interactions: dailyReviewStats.interactions + (paidToday?.interactions ?? 0),
+    conversions: dailyReviewStats.conversions + (paidToday?.conversions ?? 0),
+    outbound: dailyReviewStats.outbound,
+  } : {
+    ...rollingPerformanceSummary,
+    conversions: isBwinbetAccount ? rollingPerformanceSummary.redirectClicks : rollingPerformanceSummary.conversions,
+    outbound: outboundStats.prospectsContacted,
+  };
+  const heroStats = [
+    { label: t('Interactions'), value: formatCount(overview.interactions) },
+    { label: t('Outbound'), value: formatCount(overview.outbound) },
+    { label: t('Views'), value: formatCount(overview.views) },
+    { label: isBwinbetAccount ? t('Bet button clicks') : t('Conversions'), value: formatCount(overview.conversions) },
+  ];
 
   const handleDrilldown = (metric: ChartMetric) => {
     const dailyConversionValue = isBwinbetAccount ? dailyReviewStats.redirectClicks : dailyReviewStats.conversions;
@@ -1179,7 +1192,7 @@ export const DashboardScreen: React.FC = () => {
         <Text style={styles.heroEyebrow}>{t('Live cockpit')}</Text>
         <Text style={styles.heroTitle}>{t('Analytics overview')}</Text>
         <Text style={styles.heroSubtitle}>
-          {t('Realtime CRM signals across your connected channels.')}
+          {isCarMarketAds ? t('Today across organic social and ads') : t('Realtime CRM signals across your connected channels.')}
         </Text>
         <View style={styles.heroStatRow}>
           {heroStats.map(stat => (
@@ -1189,23 +1202,6 @@ export const DashboardScreen: React.FC = () => {
             </View>
           ))}
         </View>
-        {isCarMarketAds ? (
-          <>
-            <Text style={styles.heroSubtitle}>{t('Paid ads')} · {adStatusLabel}</Text>
-            <View style={styles.heroStatRow}>
-              {[
-                { label: t('Ad impressions'), value: adCount(adSummary.impressions) },
-                { label: t('Ad link clicks'), value: adCount(adSummary.inlineLinkClicks) },
-                { label: t('Ad spend'), value: adSpend(adSummary.spend) },
-              ].map(stat => (
-                <View key={stat.label} style={styles.heroStat}>
-                  <Text style={styles.heroStatLabel}>{stat.label}</Text>
-                  <Text style={styles.heroStatValue}>{stat.value}</Text>
-                </View>
-              ))}
-            </View>
-          </>
-        ) : null}
       </LinearGradient>
       {canUseOutboundPipeline ? (
         <DMCard title={t('Outbound Pipeline')} subtitle={t('Prospecting + booking overview')}>

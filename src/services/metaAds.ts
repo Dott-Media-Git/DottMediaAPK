@@ -87,6 +87,7 @@ export type AdPerformanceRow = {
 };
 
 export type AdPerformance = {
+  today?: { date: string; views: number; interactions: number; conversions: number };
   accountName?: string;
   reportingStatus?: 'reported' | 'pending' | 'unavailable';
   adStatusesAvailable?: boolean;

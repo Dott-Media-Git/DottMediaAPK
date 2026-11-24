@@ -4,6 +4,8 @@ import createHttpError from 'http-errors';
 import { firestore } from '../db/firestore.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { carMarketAdsAccountId, carMarketAdsOwnerId } from './carMarketAdsAccount.js';
+import { summarizeCarMarketAdDay } from './carMarketAdsDailyOverview.js';
+import { carMarketWebsite } from './metaAdsRotationWebsite.js';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -429,6 +431,7 @@ const carMarketInsightFields = 'spend,impressions,reach,clicks,inline_link_click
  */
 const getCarMarketAdPerformance = async (userId: string, limit: number) => {
   const now = Date.now();
+  const today = new Date(now + 3 * 3_600_000).toISOString().slice(0, 10);
   const since = new Date(now - 30 * 86_400_000).toISOString();
   const [owner, events] = await Promise.all([
     supabaseFallbackService.getSocialAccountsByEmail('carmarketplace999@gmail.com').catch(() => null),
@@ -457,7 +460,7 @@ const getCarMarketAdPerformance = async (userId: string, limit: number) => {
     }).catch(() => null),
     Promise.all(batches.map(batch => read('', {
       ids: batch.join(','),
-      fields: `id,account_id,status,effective_status,created_time,updated_time,campaign_id,adset_id,adset{start_time,end_time},insights.date_preset(last_30d){${carMarketInsightFields}}`,
+      fields: `id,account_id,status,effective_status,created_time,updated_time,campaign_id,adset_id,adset{start_time,end_time},creative{object_story_spec},insights.date_preset(last_30d){${carMarketInsightFields}},insights.date_preset(today).action_report_time(conversion).as(today_report){date_start,impressions,actions}`,
     }).catch(() => null))),
   ]) : Promise.resolve([null, []] as const));
   const metaAds = Object.assign({}, ...adBatches);
@@ -493,6 +496,10 @@ const getCarMarketAdPerformance = async (userId: string, limit: number) => {
     reportingStatus: (Array.isArray(totals?.data) ? totals.data.length ? 'reported' : 'pending' : 'unavailable') as
       'reported' | 'pending' | 'unavailable',
     adStatusesAvailable: events !== null && rows.every(row => row.reportingStatus !== 'unavailable'),
+    today: summarizeCarMarketAdDay(ids.flatMap(id => {
+      const ad = metaAds[id];
+      return ad?.id === id && `act_${ad.account_id}` === carMarketAdsAccountId ? [ad] : [];
+    }), today, carMarketWebsite),
     summary,
     rows: rows.slice(0, limit),
   };
