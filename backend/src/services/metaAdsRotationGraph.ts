@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { existingPostCreative } from './metaAdsExistingPost.js';
+import sharp from 'sharp';
+import { buildCarMarketWebsiteCreative, carMarketWebsite, carMarketWebsiteHeadline } from './metaAdsRotationWebsite.js';
 import type { RotationPost } from './metaAdsRotationPlan.js';
 import type { RotationMetaClient } from './metaAdsRotationRunner.js';
 
@@ -66,6 +67,24 @@ export async function connectCarMarketRotation(input: { pageId: string; userToke
     if (result.success !== true) throw new Error('Meta did not confirm the status change.');
   };
 
+  const uploadPostImage = async (url: string) => {
+    const assetUrl = new URL(url);
+    if (assetUrl.protocol !== 'https:' || assetUrl.username || assetUrl.password || assetUrl.port ||
+        !/(^|\.)(fbcdn\.net|cdninstagram\.com)$/.test(assetUrl.hostname)) {
+      throw new Error('The chosen post does not have a supported Meta image URL.');
+    }
+    const response = await axios.get<ArrayBuffer>(assetUrl.toString(), {
+      responseType: 'arraybuffer', timeout: 15_000, maxRedirects: 0, maxContentLength: 8_000_000,
+    });
+    const image = await sharp(Buffer.from(response.data), { limitInputPixels: 25_000_000 })
+      .rotate().resize({ width: 1440, height: 1440, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 90 }).toBuffer();
+    const { images } = await write(`${adAccountId}/adimages`, { bytes: image.toString('base64') });
+    const stored = Object.values(images ?? {})[0] as { hash?: string } | undefined;
+    if (!stored?.hash) throw new Error('Meta did not accept the image for the website ad.');
+    return stored.hash;
+  };
+
   const clientFor = (posts: { facebookPost: RotationPost; instagramPost: RotationPost }): RotationMetaClient => ({
     async verify() {
       if (!facebookPosts.some(post => post.id === posts.facebookPost.id) ||
@@ -76,7 +95,7 @@ export async function connectCarMarketRotation(input: { pageId: string; userToke
     async createCampaign(plan) {
       const result = await write(`${adAccountId}/campaigns`, {
         name: `Dotti Car Market Place • ${plan.startTime}`,
-        objective: 'OUTCOME_ENGAGEMENT',
+        objective: 'OUTCOME_TRAFFIC',
         special_ad_categories: '[]',
         bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
         ...plan.campaign,
@@ -91,9 +110,8 @@ export async function connectCarMarketRotation(input: { pageId: string; userToke
         start_time: plan.startTime,
         end_time: plan.endTime,
         billing_event: 'IMPRESSIONS',
-        optimization_goal: 'POST_ENGAGEMENT',
-        destination_type: 'ON_POST',
-        promoted_object: JSON.stringify({ page_id: page.id }),
+        optimization_goal: 'LINK_CLICKS',
+        destination_type: 'WEBSITE',
         targeting: JSON.stringify({
           geo_locations: { countries: ['UG'] },
           publisher_platforms: [platform],
@@ -103,10 +121,23 @@ export async function connectCarMarketRotation(input: { pageId: string; userToke
       return result.id;
     },
     async createCreative(_plan, platform, postId) {
+      const post = platform === 'facebook'
+        ? await read(postId, { fields: 'message,full_picture' }, page.access_token)
+        : await read(postId, { fields: 'caption,media_type,media_url,children{media_type,media_url}' });
+      const imageUrl = platform === 'facebook' ? post.full_picture
+        : post.media_type === 'IMAGE' ? post.media_url
+          : post.children?.data?.find((item: { media_type: string; media_url?: string }) =>
+            item.media_type === 'IMAGE' && item.media_url)?.media_url;
+      if (!imageUrl) throw new Error(`The selected ${platform} post has no image for its website ad.`);
+      const imageHash = await uploadPostImage(imageUrl);
       const result = await write(`${adAccountId}/adcreatives`, {
-        name: `Dotti • ${platform} • ${postId}`,
-        ...existingPostCreative({ platform, postId, pageId: page.id }),
-        ...(platform === 'instagram' ? { instagram_user_id: instagram.id, object_id: page.id } : {}),
+        name: `${carMarketWebsiteHeadline} • ${platform} • ${postId}`,
+        object_story_spec: JSON.stringify(buildCarMarketWebsiteCreative({
+          pageId: page.id,
+          instagramId: platform === 'instagram' ? instagram.id : undefined,
+          imageHash,
+          caption: platform === 'facebook' ? post.message : post.caption,
+        })),
       });
       return result.id;
     },
@@ -121,9 +152,9 @@ export async function connectCarMarketRotation(input: { pageId: string; userToke
     },
     async verifyCampaign(plan, campaignId) {
       const saved = await read(campaignId, {
-        fields: 'status,account_id,lifetime_budget,daily_budget,adsets{status,start_time,end_time,targeting,ads{id,status}}',
+        fields: 'status,account_id,lifetime_budget,daily_budget,objective,adsets{status,start_time,end_time,targeting,destination_type,optimization_goal,ads{id,status,creative{object_story_spec}}}',
       });
-      if (saved.status !== 'PAUSED' || `act_${saved.account_id}` !== adAccountId ||
+      if (saved.status !== 'PAUSED' || saved.objective !== 'OUTCOME_TRAFFIC' || `act_${saved.account_id}` !== adAccountId ||
           Number(saved.lifetime_budget) !== plan.campaign.lifetime_budget || Number(saved.daily_budget ?? 0) !== 0) {
         throw new Error('Meta did not confirm the paused campaign and shared lifetime budget.');
       }
@@ -131,16 +162,28 @@ export async function connectCarMarketRotation(input: { pageId: string; userToke
         status: string;
         start_time: string;
         end_time: string;
+        destination_type: string;
+        optimization_goal: string;
         targeting?: { publisher_platforms?: string[] };
-        ads?: { data: Array<{ status: string }> };
+        ads?: { data: Array<{
+          status: string;
+          creative?: { object_story_spec?: { link_data?: {
+            link?: string; name?: string; call_to_action?: { value?: { link?: string } };
+          } } };
+        }> };
       }> = saved.adsets?.data ?? [];
-      const confirmed = plan.ads.every(({ platform }) => adSets.some(set =>
-        set.status === 'PAUSED' && set.targeting?.publisher_platforms?.join(',') === platform &&
-        Math.floor(Date.parse(set.start_time) / 1000) === Math.floor(Date.parse(plan.startTime) / 1000) &&
-        Math.floor(Date.parse(set.end_time) / 1000) === Math.floor(Date.parse(plan.endTime) / 1000) &&
-        set.ads?.data.length === 1 && set.ads.data[0].status === 'PAUSED',
-      ));
-      if (adSets.length !== 2 || !confirmed) throw new Error('Meta did not confirm both paused ads and their schedules.');
+      const confirmed = plan.ads.every(({ platform }) => adSets.some(set => {
+        const ad = set.ads?.data[0];
+        const link = ad?.creative?.object_story_spec?.link_data;
+        return set.status === 'PAUSED' && set.destination_type === 'WEBSITE' && set.optimization_goal === 'LINK_CLICKS' &&
+          set.targeting?.publisher_platforms?.join(',') === platform &&
+          Math.floor(Date.parse(set.start_time) / 1000) === Math.floor(Date.parse(plan.startTime) / 1000) &&
+          Math.floor(Date.parse(set.end_time) / 1000) === Math.floor(Date.parse(plan.endTime) / 1000) &&
+          set.ads?.data.length === 1 && ad?.status === 'PAUSED' &&
+          link?.link === carMarketWebsite && link.name === carMarketWebsiteHeadline &&
+          link.call_to_action?.value?.link === carMarketWebsite;
+      }));
+      if (adSets.length !== 2 || !confirmed) throw new Error('Meta did not confirm the website links, placements, or schedules.');
     },
     activateAd: setActive,
     activateAdSet: setActive,
