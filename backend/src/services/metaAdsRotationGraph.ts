@@ -1,10 +1,10 @@
 import axios from 'axios';
 import sharp from 'sharp';
+import { carMarketAdsAccountId as adAccountId } from './carMarketAdsAccount.js';
 import { buildCarMarketWebsiteCreative, carMarketWebsite, carMarketWebsiteHeadline } from './metaAdsRotationWebsite.js';
 import type { RotationPost } from './metaAdsRotationPlan.js';
 import type { RotationMetaClient } from './metaAdsRotationRunner.js';
 
-const adAccountId = 'act_2415264498885686';
 const graph = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION ?? 'v23.0'}`;
 const instagramUsername = 'carmarketplace999';
 

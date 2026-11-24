@@ -3,6 +3,7 @@ import { connectCarMarketRotation } from './metaAdsRotationGraph.js';
 import { createSharedBudgetRotationPlan, type RotationPost } from './metaAdsRotationPlan.js';
 import { runSharedBudgetCycle, type RotationJournal } from './metaAdsRotationRunner.js';
 import { selectNextRotationPosts } from './metaAdsRotationSelection.js';
+import { carMarketAdsOwnerId } from './carMarketAdsAccount.js';
 
 const dayMs = 86_400_000;
 const kampalaOffset = 3 * 3_600_000;
@@ -11,7 +12,7 @@ type Pair = { facebookPost: RotationPost; instagramPost: RotationPost };
 
 export async function getCarMarketRotationConnection() {
   const owner = await supabaseFallbackService.getSocialAccountsByEmail('carmarketplace999@gmail.com');
-  if (!owner?.userId) {
+  if (owner?.userId !== carMarketAdsOwnerId) {
     throw new Error('The Car Market Place Dotti account was not found.');
   }
   const { facebook, instagram, metaAds } = owner.socialAccounts as Record<string, any>;

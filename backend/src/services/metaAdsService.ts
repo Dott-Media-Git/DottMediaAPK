@@ -3,6 +3,7 @@ import axios from 'axios';
 import createHttpError from 'http-errors';
 import { firestore } from '../db/firestore.js';
 import { supabaseFallbackService } from './supabaseFallbackService.js';
+import { carMarketAdsAccountId, carMarketAdsOwnerId } from './carMarketAdsAccount.js';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -419,6 +420,83 @@ const emptyAdInsights = () => ({
   cpc: 0,
   cpm: 0,
 });
+
+const carMarketInsightFields = 'spend,impressions,reach,clicks,inline_link_clicks,actions,cpc,cpm,ctr';
+
+/**
+ * Report the business's designated account totals and the ads recorded by its rotation.
+ * Draft tests use a different journal channel. Meta can report statuses before metrics.
+ */
+const getCarMarketAdPerformance = async (userId: string, limit: number) => {
+  const now = Date.now();
+  const since = new Date(now - 30 * 86_400_000).toISOString();
+  const [owner, events] = await Promise.all([
+    supabaseFallbackService.getSocialAccountsByEmail('carmarketplace999@gmail.com').catch(() => null),
+    supabaseFallbackService.listCarMarketRotationAds(userId, since).catch(() => null),
+  ]);
+  const accounts = owner?.userId === userId ? (owner.socialAccounts as Record<string, any> | null) : null;
+  const token = accounts?.metaAds?.userAccessToken || accounts?.metaAds?.accessToken || accounts?.facebook?.userAccessToken;
+  const read = async (path: string, params: Record<string, string>) =>
+    (await axios.get(`${GRAPH_BASE}/${path}`, {
+      params, timeout: 8_000, headers: { Authorization: `Bearer ${token}` },
+    })).data;
+  const ads = new Map<string, { platform: string; createdAt: string }>();
+  for (const event of events ?? []) {
+    const { metaId, platform } = event.payload ?? {};
+    if (metaId && /^\d+$/.test(metaId) && (platform === 'facebook' || platform === 'instagram') && !ads.has(metaId)) {
+      ads.set(metaId, { platform, createdAt: event.received_at });
+    }
+  }
+
+  const ids = [...ads.keys()];
+  const batches: string[][] = [];
+  for (let i = 0; i < ids.length; i += 25) batches.push(ids.slice(i, i + 25));
+  const [totals, adBatches] = await (token ? Promise.all([
+    read(`${carMarketAdsAccountId}/insights`, {
+      fields: carMarketInsightFields, date_preset: 'last_30d',
+    }).catch(() => null),
+    Promise.all(batches.map(batch => read('', {
+      ids: batch.join(','),
+      fields: `id,account_id,status,effective_status,created_time,updated_time,campaign_id,adset_id,adset{start_time,end_time},insights.date_preset(last_30d){${carMarketInsightFields}}`,
+    }).catch(() => null))),
+  ]) : Promise.resolve([null, []] as const));
+  const metaAds = Object.assign({}, ...adBatches);
+
+  const rows = ids.map(id => {
+    const entry = ads.get(id)!;
+    const meta = metaAds[id];
+    const verified = meta?.id === id && `act_${meta.account_id}` === carMarketAdsAccountId;
+    if (!verified) return {
+      ...parseMetaAdRow({ id }, null), ...entry, effectiveStatus: 'STATUS_UNAVAILABLE',
+      errorMessage: 'Meta ad status unavailable', reportingStatus: 'unavailable' as const,
+    };
+    const status = meta.effective_status ?? meta.status;
+    const effectiveStatus = status === 'ACTIVE' && Date.parse(meta.adset?.end_time) <= now ? 'COMPLETED'
+      : status === 'ACTIVE' && Date.parse(meta.adset?.start_time) > now ? 'SCHEDULED' : status;
+    return {
+      ...parseMetaAdRow(meta, meta.insights), ...entry, effectiveStatus,
+      reportingStatus: (meta.insights?.data?.length ? 'reported' : 'pending') as 'reported' | 'pending',
+    };
+  });
+  const summary = {
+    ...parseAdInsights(totals),
+    active: rows.filter(row => row.effectiveStatus === 'ACTIVE').length,
+    paused: rows.filter(row => row.effectiveStatus?.includes('PAUSED')).length,
+    failed: rows.filter(row => ['DISAPPROVED', 'WITH_ISSUES', 'FAILED'].includes(row.effectiveStatus ?? '')).length,
+    other: rows.filter(row => ['SCHEDULED', 'IN_PROCESS', 'PENDING_REVIEW', 'PENDING_BILLING_INFO'].includes(row.effectiveStatus ?? '')).length,
+  };
+  return {
+    generatedAt: new Date(now).toISOString(),
+    lookbackDays: 30,
+    currency: 'USD',
+    accountName: 'Car Market Place',
+    reportingStatus: (Array.isArray(totals?.data) ? totals.data.length ? 'reported' : 'pending' : 'unavailable') as
+      'reported' | 'pending' | 'unavailable',
+    adStatusesAvailable: events !== null && rows.every(row => row.reportingStatus !== 'unavailable'),
+    summary,
+    rows: rows.slice(0, limit),
+  };
+};
 
 const errorMessageFromMeta = (error: unknown) => {
   const data = axios.isAxiosError(error) ? error.response?.data : null;
@@ -871,7 +949,8 @@ export const metaAdsService = {
   },
 
   async getPerformance(userId: string, limit = 25) {
-    const cappedLimit = Math.min(Math.max(limit, 1), 50);
+    const cappedLimit = Math.min(Math.max(Number.isFinite(limit) ? limit : 25, 1), 50);
+    if (userId === carMarketAdsOwnerId) return getCarMarketAdPerformance(userId, cappedLimit);
     const [rule, socialAccounts, storedRuns] = await Promise.all([
       resolveRuleWithFallback(userId),
       loadUserSocialAccountsWithFallback(userId),

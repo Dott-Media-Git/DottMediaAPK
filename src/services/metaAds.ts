@@ -64,6 +64,7 @@ export type BoostRule = {
 };
 
 export type AdPerformanceRow = {
+  reportingStatus?: 'reported' | 'pending' | 'unavailable';
   id: string;
   adId?: string | null;
   platform?: string | null;
@@ -86,6 +87,9 @@ export type AdPerformanceRow = {
 };
 
 export type AdPerformance = {
+  accountName?: string;
+  reportingStatus?: 'reported' | 'pending' | 'unavailable';
+  adStatusesAvailable?: boolean;
   generatedAt: string;
   lookbackDays: number;
   currency: string;

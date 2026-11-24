@@ -692,6 +692,23 @@ class SupabaseFallbackService {
     }
   }
 
+  async listCarMarketRotationAds(userId: string, since: string) {
+    return this.request<Array<{
+      received_at: string;
+      payload: { metaId?: string; platform?: string };
+    }>>('GET', 'dott_inbound_messages', {
+      params: {
+        channel: 'eq.carmarket_ads_rotation_events',
+        sender_id: `eq.${userId}`,
+        status: 'eq.ad_created',
+        received_at: `gte.${since}`,
+        select: 'received_at,payload',
+        order: 'received_at.desc',
+        limit: 100,
+      },
+    });
+  }
+
   async getInboundMessage(id: string) {
     if (!this.isConfigured() || !id) return null;
     try {

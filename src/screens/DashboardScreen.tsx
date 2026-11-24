@@ -277,7 +277,9 @@ export const DashboardScreen: React.FC = () => {
         ? initialDashboardSnapshot?.rollingPerformanceRows ?? initialDashboardSnapshot?.activityHeatmapRestRows ?? []
         : []
   );
-  const [adPerformance, setAdPerformance] = useState<AdPerformance>(() => emptyAdPerformance);
+  const [adReport, setAdReport] = useState<{ userId: string; data: AdPerformance } | null>(null);
+  const [adPerformanceRefreshError, setAdPerformanceRefreshError] = useState(false);
+  const adPerformance = adReport && adReport.userId === state.user?.uid ? adReport.data : emptyAdPerformance;
   const [adPerformanceLoading, setAdPerformanceLoading] = useState(false);
   const [liveSocialLoading, setLiveSocialLoading] = useState(false);
   const [selectedRangeKey, setSelectedRangeKey] = useState<ReviewRangeKey>('7d');
@@ -322,7 +324,7 @@ export const DashboardScreen: React.FC = () => {
       setActivityHeatmapRows([]);
       setActivityHeatmapRestRows([]);
       setRollingPerformanceRows([]);
-      setAdPerformance(emptyAdPerformance);
+      setAdReport(null);
       setCacheReady(false);
       setHasCachedSnapshot(false);
     }
@@ -609,8 +611,11 @@ export const DashboardScreen: React.FC = () => {
   }, [analyticsScopeId, hasCachedSnapshot, state.user?.uid]);
 
   useEffect(() => {
-    if (!state.user?.uid) {
-      setAdPerformance(emptyAdPerformance);
+    const userId = state.user?.uid;
+    setAdPerformanceRefreshError(false);
+    if (!userId) {
+      setAdReport(null);
+      setAdPerformanceLoading(false);
       return;
     }
     let mounted = true;
@@ -621,9 +626,11 @@ export const DashboardScreen: React.FC = () => {
       try {
         const response = await fetchAdPerformance(12);
         if (mounted) {
-          setAdPerformance(response.performance ?? emptyAdPerformance);
+          setAdReport({ userId, data: response.performance ?? emptyAdPerformance });
+          setAdPerformanceRefreshError(false);
         }
       } catch (error) {
+        if (mounted) setAdPerformanceRefreshError(true);
         console.warn('Failed to refresh ad performance', error);
       } finally {
         if (mounted) setAdPerformanceLoading(false);
@@ -758,7 +765,22 @@ export const DashboardScreen: React.FC = () => {
 
   const adSummary = adPerformance.summary;
   const formatCurrency = (value: number, currency = adPerformance.currency || 'USD') =>
-    `${currency} ${formatCount(Number(value ?? 0))}`;
+    `${currency} ${Number(value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const isCarMarketAds = adPerformance.accountName === 'Car Market Place' ||
+    state.user?.email?.toLowerCase() === 'carmarketplace999@gmail.com';
+  const adsReported = isCarMarketAds
+    ? adPerformance.reportingStatus === 'reported'
+    : adPerformance.reportingStatus === undefined || adPerformance.reportingStatus === 'reported';
+  const adLinkCtr = adSummary.impressions > 0 ? 100 * adSummary.inlineLinkClicks / adSummary.impressions : 0;
+  const adCount = (value: number, available = adsReported) => available ? formatCount(value) : '—';
+  const adSpend = (value: number, available = adsReported) => available ? formatCurrency(value) : '—';
+  const adStatusLabel = adPerformanceRefreshError && adsReported
+    ? t('Last saved results · Refresh unavailable')
+    : adPerformanceRefreshError || adPerformance.reportingStatus === 'unavailable'
+      ? t('Meta ad metrics are temporarily unavailable')
+      : adPerformance.reportingStatus === 'pending'
+        ? t('Waiting for Meta to report delivery')
+        : adsReported ? t('Last {{days}} days', { days: adPerformance.lookbackDays }) : t('Loading Meta ad data…');
 
   const logItems =
     analytics.recentJobs && analytics.recentJobs.length > 0
@@ -1167,6 +1189,23 @@ export const DashboardScreen: React.FC = () => {
             </View>
           ))}
         </View>
+        {isCarMarketAds ? (
+          <>
+            <Text style={styles.heroSubtitle}>{t('Paid ads')} · {adStatusLabel}</Text>
+            <View style={styles.heroStatRow}>
+              {[
+                { label: t('Ad impressions'), value: adCount(adSummary.impressions) },
+                { label: t('Ad link clicks'), value: adCount(adSummary.inlineLinkClicks) },
+                { label: t('Ad spend'), value: adSpend(adSummary.spend) },
+              ].map(stat => (
+                <View key={stat.label} style={styles.heroStat}>
+                  <Text style={styles.heroStatLabel}>{stat.label}</Text>
+                  <Text style={styles.heroStatValue}>{stat.value}</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        ) : null}
       </LinearGradient>
       {canUseOutboundPipeline ? (
         <DMCard title={t('Outbound Pipeline')} subtitle={t('Prospecting + booking overview')}>
@@ -1271,43 +1310,47 @@ export const DashboardScreen: React.FC = () => {
         subtitle={
           adPerformanceLoading
             ? t('Refreshing live Meta ads data...')
-            : t('Live Meta ads performance for this account')
+            : isCarMarketAds ? `${t('Car Market Place')} · ${adStatusLabel}`
+              : t('Live Meta ads performance for this account')
         }
       >
         <View style={styles.liveSummaryRow}>
           <View style={styles.liveSummaryItem}>
             <Text style={styles.liveSummaryLabel}>{t('Spend')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCurrency(adSummary.spend)}</Text>
+            <Text style={styles.liveSummaryValue}>{adSpend(adSummary.spend)}</Text>
           </View>
           <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
             <Text style={styles.liveSummaryLabel}>{t('Reach')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(adSummary.reach)}</Text>
+            <Text style={styles.liveSummaryValue}>{adCount(adSummary.reach)}</Text>
           </View>
         </View>
         <View style={styles.liveSummaryRow}>
           <View style={styles.liveSummaryItem}>
             <Text style={styles.liveSummaryLabel}>{t('Impressions')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(adSummary.impressions)}</Text>
+            <Text style={styles.liveSummaryValue}>{adCount(adSummary.impressions)}</Text>
           </View>
           <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
             <Text style={styles.liveSummaryLabel}>{t('Messages')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(adSummary.messages)}</Text>
+            <Text style={styles.liveSummaryValue}>{adCount(adSummary.messages)}</Text>
           </View>
         </View>
         <View style={styles.liveSummaryRow}>
           <View style={styles.liveSummaryItem}>
-            <Text style={styles.liveSummaryLabel}>{t('Clicks')}</Text>
-            <Text style={styles.liveSummaryValue}>{formatCount(adSummary.clicks || adSummary.inlineLinkClicks)}</Text>
+            <Text style={styles.liveSummaryLabel}>{isCarMarketAds ? t('Ad link clicks') : t('Clicks')}</Text>
+            <Text style={styles.liveSummaryValue}>{adCount(isCarMarketAds ? adSummary.inlineLinkClicks : adSummary.clicks || adSummary.inlineLinkClicks)}</Text>
           </View>
           <View style={[styles.liveSummaryItem, styles.liveSummaryItemLast]}>
-            <Text style={styles.liveSummaryLabel}>{t('CTR')}</Text>
-            <Text style={styles.liveSummaryValue}>{Number(adSummary.ctr ?? 0).toFixed(2)}%</Text>
+            <Text style={styles.liveSummaryLabel}>{isCarMarketAds ? t('Link CTR') : t('CTR')}</Text>
+            <Text style={styles.liveSummaryValue}>{adsReported
+              ? `${(isCarMarketAds ? adLinkCtr : Number(adSummary.ctr ?? 0)).toFixed(2)}%` : '—'}</Text>
           </View>
         </View>
         <View style={styles.adStatusRow}>
           <Text style={styles.adStatusText}>
-            {t('Active')}: {formatCount(adSummary.active)} | {t('Paused')}: {formatCount(adSummary.paused)} | {t('Failed')}:{' '}
-            {formatCount(adSummary.failed)}
+            {isCarMarketAds && adPerformance.adStatusesAvailable !== true
+              ? t('Some Meta ad statuses are unavailable')
+              : `${t('Active')}: ${formatCount(adSummary.active)} | ${t('Paused')}: ${formatCount(adSummary.paused)} | ${t('Failed')}: ${formatCount(adSummary.failed)}${isCarMarketAds
+                ? ` | ${t('Pending')}: ${formatCount(adSummary.other)}` : ''}`}
           </Text>
         </View>
         {adPerformance.rows.length ? (
@@ -1315,12 +1358,16 @@ export const DashboardScreen: React.FC = () => {
             {adPerformance.rows.slice(0, 4).map(row => (
               <View key={row.id || row.adId || row.sourcePostId || `${row.platform}-${row.createdAt}`} style={styles.livePlatformRow}>
                 <View style={styles.livePlatformHeader}>
-                  <Text style={styles.livePlatformName}>{row.platform || t('Meta ad')}</Text>
-                  <Text style={styles.livePlatformPosts}>{row.effectiveStatus || row.status || t('Live')}</Text>
+                  <Text style={styles.livePlatformName}>{row.platform === 'facebook' ? t('Facebook')
+                    : row.platform === 'instagram' ? t('Instagram') : row.platform || t('Meta ad')}</Text>
+                  <Text style={styles.livePlatformPosts}>{t((row.effectiveStatus || row.status || 'Live').replace(/_/g, ' '))}</Text>
                 </View>
                 <Text style={styles.livePlatformMetrics}>
-                  {t('Reach')}: {formatCount(row.reach)} | {t('Messages')}: {formatCount(row.messages)} | {t('Spend')}:{' '}
-                  {formatCurrency(row.spend)}
+                  {t('Reach')}: {adCount(row.reach, row.reportingStatus ? row.reportingStatus === 'reported' : true)} |{' '}
+                  {isCarMarketAds
+                    ? `${t('Ad link clicks')}: ${adCount(row.inlineLinkClicks, row.reportingStatus === 'reported')}`
+                    : `${t('Messages')}: ${formatCount(row.messages)}`} | {t('Spend')}:{' '}
+                  {adSpend(row.spend, row.reportingStatus ? row.reportingStatus === 'reported' : true)}
                 </Text>
               </View>
             ))}
