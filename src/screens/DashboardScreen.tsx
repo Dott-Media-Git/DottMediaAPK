@@ -815,15 +815,12 @@ export const DashboardScreen: React.FC = () => {
     return summary;
   }, [activityHeatmapRestRows, activityHeatmapRows, historySeries, isCarMarketDashboard, todayDateKey, todayLiveSocialStats]);
 
-  const paidToday = adPerformance.today?.date === todayDateKey ? adPerformance.today : undefined;
-  const overview = isCarMarketAds ? {
-    views: dailyReviewStats.views + (paidToday?.views ?? 0),
-    interactions: dailyReviewStats.interactions + (paidToday?.interactions ?? 0),
-    conversions: dailyReviewStats.conversions + (paidToday?.conversions ?? 0),
-    outbound: dailyReviewStats.outbound,
-  } : {
-    ...rollingPerformanceSummary,
-    conversions: isBwinbetAccount ? rollingPerformanceSummary.redirectClicks : rollingPerformanceSummary.conversions,
+  const paidOverview = isCarMarketAds && adPerformance.overview?.until === todayDateKey ? adPerformance.overview : undefined;
+  const overview = {
+    views: rollingPerformanceSummary.views + (paidOverview?.views ?? 0),
+    interactions: rollingPerformanceSummary.interactions + (paidOverview?.interactions ?? 0),
+    conversions: (isBwinbetAccount ? rollingPerformanceSummary.redirectClicks : rollingPerformanceSummary.conversions) +
+      (paidOverview?.conversions ?? 0),
     outbound: outboundStats.prospectsContacted,
   };
   const heroStats = [
@@ -1192,7 +1189,7 @@ export const DashboardScreen: React.FC = () => {
         <Text style={styles.heroEyebrow}>{t('Live cockpit')}</Text>
         <Text style={styles.heroTitle}>{t('Analytics overview')}</Text>
         <Text style={styles.heroSubtitle}>
-          {isCarMarketAds ? t('Today across organic social and ads') : t('Realtime CRM signals across your connected channels.')}
+          {isCarMarketAds ? t('Last 30 days across organic social and ads') : t('Realtime CRM signals across your connected channels.')}
         </Text>
         <View style={styles.heroStatRow}>
           {heroStats.map(stat => (
