@@ -2,7 +2,6 @@ export type RotationPost = { id: string; platform: 'facebook' | 'instagram' };
 
 const dayMs = 86_400_000;
 const kampalaOffset = 3 * 3_600_000;
-const carMarketRotationDays = 10;
 
 export function getCarMarketRotationDay(startDate: string, now: number) {
   const anchor = Date.parse(`${startDate}T00:00:00.000+03:00`);
@@ -11,7 +10,6 @@ export function getCarMarketRotationDay(startDate: string, now: number) {
   }
   if (now < anchor) return { status: 'waiting_for_start_date' } as const;
   const day = Math.floor((now - anchor) / dayMs);
-  if (day >= carMarketRotationDays) return { status: 'rotation_finished' } as const;
   return {
     status: 'scheduled',
     date: new Date(now + kampalaOffset).toISOString().slice(0, 10),

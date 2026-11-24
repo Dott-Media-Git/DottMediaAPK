@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSharedBudgetRotationPlan, getCarMarketRotationDay } from '../services/metaAdsRotationPlan.js';
 
-test('closes the last eligible day at Kampala midnight and rejects new campaigns from day eleven', () => {
+test('continues scheduling pairs beyond the previous ten-day cutoff', () => {
   const start = '2026-11-24';
-  const end = Date.parse('2026-12-04T00:00:00+03:00');
-  assert.deepEqual(getCarMarketRotationDay(start, end - 1), {
-    status: 'scheduled', date: '2026-12-03', dayEnd: end, pairIndex: 4,
+  const dayEleven = Date.parse('2026-12-04T00:00:00+03:00');
+  assert.deepEqual(getCarMarketRotationDay(start, dayEleven), {
+    status: 'scheduled', date: '2026-12-04', dayEnd: Date.parse('2026-12-05T00:00:00+03:00'), pairIndex: 5,
   });
-  assert.deepEqual(getCarMarketRotationDay(start, end), { status: 'rotation_finished' });
+  assert.equal(getCarMarketRotationDay(start, Date.parse('2027-11-24T12:00:00+03:00')).status, 'scheduled');
 });
 
 const input = {
