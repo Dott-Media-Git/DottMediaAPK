@@ -1382,6 +1382,15 @@ class SupabaseFallbackService {
     };
   }
 
+  async getSocialAccountsByEmail(email: string) {
+    if (!this.isConfigured() || !email.trim()) return null;
+    const row = await this.getSingleRow<{ user_id: string; accounts: Record<string, unknown> }>(
+      'dott_social_accounts',
+      { email: `eq.${email.trim().toLowerCase()}`, select: 'user_id,accounts' },
+    );
+    return row ? { userId: row.user_id, socialAccounts: row.accounts } : null;
+  }
+
   async getSocialAccountsByIdentifiers(userIds: string[] = [], emails: string[] = []) {
     if (!this.isConfigured()) return null;
     const normalizedUserIds = Array.from(new Set(userIds.map(value => value.trim()).filter(Boolean)));
