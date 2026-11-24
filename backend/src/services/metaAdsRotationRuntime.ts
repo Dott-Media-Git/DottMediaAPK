@@ -1,12 +1,10 @@
 import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { connectCarMarketRotation } from './metaAdsRotationGraph.js';
-import { createSharedBudgetRotationPlan, type RotationPost } from './metaAdsRotationPlan.js';
+import { createSharedBudgetRotationPlan, getCarMarketRotationDay, type RotationPost } from './metaAdsRotationPlan.js';
 import { runSharedBudgetCycle, type RotationJournal } from './metaAdsRotationRunner.js';
 import { selectNextRotationPosts } from './metaAdsRotationSelection.js';
 import { carMarketAdsOwnerId } from './carMarketAdsAccount.js';
 
-const dayMs = 86_400_000;
-const kampalaOffset = 3 * 3_600_000;
 const channel = 'carmarket_ads_rotation';
 type Pair = { facebookPost: RotationPost; instagramPost: RotationPost };
 
@@ -43,15 +41,10 @@ export function rotationJournal(ownerId: string, pair: Pair, pairIndex: number, 
 }
 
 export async function runCarMarketRotation(startDate: string, now = Date.now()) {
-  const anchor = Date.parse(`${startDate}T00:00:00.000+03:00`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !Number.isFinite(anchor)) {
-    throw new Error('An activation date is required in YYYY-MM-DD format.');
-  }
-  if (now < anchor) return 'waiting_for_start_date';
-  const day = Math.floor((now - anchor) / dayMs);
-  const dayEnd = anchor + (day + 1) * dayMs;
+  const scheduledDay = getCarMarketRotationDay(startDate, now);
+  if (scheduledDay.status !== 'scheduled') return scheduledDay.status;
+  const { dayEnd, date, pairIndex } = scheduledDay;
   if (dayEnd - now < 15 * 60_000) return 'waiting_for_next_day';
-  const date = new Date(now + kampalaOffset).toISOString().slice(0, 10);
   const cycleKey = `${channel}_${date}`;
   if (await supabaseFallbackService.getInboundMessage(cycleKey)) return 'already_claimed';
 
@@ -61,7 +54,6 @@ export async function runCarMarketRotation(startDate: string, now = Date.now()) 
     throw new Error('A prior paid rotation needs reconciliation in Meta Ads Manager.');
   }
 
-  const pairIndex = Math.floor(day / 2);
   const { ownerId, connection } = await getCarMarketRotationConnection();
   const previousPair = previous?.payload as (Pair & { pairIndex: number }) | undefined;
   const pair = previousPair?.pairIndex === pairIndex ? previousPair : selectNextRotationPosts({

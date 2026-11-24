@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createSharedBudgetRotationPlan } from '../services/metaAdsRotationPlan.js';
+import { createSharedBudgetRotationPlan, getCarMarketRotationDay } from '../services/metaAdsRotationPlan.js';
+
+test('closes the last eligible day at Kampala midnight and rejects new campaigns from day eleven', () => {
+  const start = '2026-11-24';
+  const end = Date.parse('2026-12-04T00:00:00+03:00');
+  assert.deepEqual(getCarMarketRotationDay(start, end - 1), {
+    status: 'scheduled', date: '2026-12-03', dayEnd: end, pairIndex: 4,
+  });
+  assert.deepEqual(getCarMarketRotationDay(start, end), { status: 'rotation_finished' });
+});
 
 const input = {
   facebookPost: { id: '123_456', platform: 'facebook' as const },
