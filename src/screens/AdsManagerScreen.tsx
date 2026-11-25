@@ -8,7 +8,6 @@ import {
   fetchBoostRule,
   fetchMetaAdsApprovals,
   fetchMetaAdsAudit,
-  fetchMetaAdsConnection,
   fetchMetaAdsPolicy,
   fetchMetaAdAccounts,
   requestMetaAdsAction,
@@ -20,7 +19,6 @@ import {
   type MetaAdAccount,
   type MetaAdsApproval,
   type MetaAdsAuditEntry,
-  type MetaAdsConnection,
   type MetaAdsPolicy,
 } from '@services/metaAds';
 import { useAuth } from '@context/AuthContext';
@@ -79,7 +77,7 @@ const AdsManagerContent: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [boosting, setBoosting] = useState(false);
   const [accounts, setAccounts] = useState<MetaAdAccount[]>([]);
-  const [connection, setConnection] = useState<MetaAdsConnection | null>(null);
+  const [reportingAccount, setReportingAccount] = useState('');
   const [approvals, setApprovals] = useState<MetaAdsApproval[]>([]);
   const [audit, setAudit] = useState<MetaAdsAuditEntry[]>([]);
   const [policySaving, setPolicySaving] = useState(false);
@@ -133,8 +131,8 @@ const AdsManagerContent: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     setSetupError('');
-    const [ruleResult, accountResult, connectionResult, policyResult] = await Promise.allSettled([
-      fetchBoostRule(), fetchMetaAdAccounts(), fetchMetaAdsConnection(), fetchMetaAdsPolicy(),
+    const [ruleResult, accountResult, policyResult] = await Promise.allSettled([
+      fetchBoostRule(), fetchMetaAdAccounts(), fetchMetaAdsPolicy(),
     ]);
     if (ruleResult.status === 'fulfilled') {
       const saved = ruleResult.value.rule;
@@ -150,12 +148,11 @@ const AdsManagerContent: React.FC = () => {
       setBoostLoaded(true);
     }
     if (accountResult.status === 'fulfilled') setAccounts(accountResult.value.accounts ?? []);
-    if (connectionResult.status === 'fulfilled') setConnection(connectionResult.value.connection ?? null);
     if (policyResult.status === 'fulfilled') {
       setPolicy(policyResult.value.policy);
       setPolicyLoaded(true);
     }
-    if ([ruleResult, accountResult, connectionResult, policyResult].some(result => result.status === 'rejected')) {
+    if ([ruleResult, accountResult, policyResult].some(result => result.status === 'rejected')) {
       setSetupError('Some ad settings could not be loaded. Refresh to try again.');
     }
     setLoaded(true);
@@ -301,16 +298,17 @@ const AdsManagerContent: React.FC = () => {
         ))}
       </View>
 
-      {tab === 'performance' && <AdsPerformancePanel onSetup={() => setTab('setup')} />}
+      {tab === 'performance' && <AdsPerformancePanel onSetup={() => setTab('setup')} onAccountVerified={setReportingAccount} />}
 
       {tab === 'setup' && <>
         <View style={styles.panel}>
           <View style={styles.headerRow}>
             <View style={styles.flexCopy}>
               <Text style={styles.sectionTitle}>Meta ad accounts</Text>
-              <Text style={styles.helper}>{connection?.graphConnected
-                ? `${connection.accountCount} ad accounts available through Meta`
-                : 'Sign in to Meta to view your ad accounts.'}</Text>
+              <Text style={styles.helper}>{reportingAccount ? `${reportingAccount} is connected for reporting.`
+                : accounts.length ? `${accounts.length} available through Meta`
+                : !loaded || loading ? 'Checking Meta connection…'
+                : 'Connect or update your Meta authorization to manage ad accounts.'}</Text>
             </View>
             <RefreshButton loading={loading} onPress={() => void load()} />
           </View>
@@ -318,7 +316,7 @@ const AdsManagerContent: React.FC = () => {
           <TouchableOpacity accessibilityRole="button" style={[styles.connectButton, connectingAds && styles.disabled]}
             onPress={() => void handleConnectAds()} disabled={connectingAds}>
             <Ionicons name="logo-facebook" size={19} color="#ffffff" />
-            <Text style={styles.saveText}>{connectingAds ? 'Opening Meta…' : connection?.graphConnected ? 'Manage Meta connection' : 'Connect Meta Ads'}</Text>
+            <Text style={styles.saveText}>{connectingAds ? 'Opening Meta…' : reportingAccount || accounts.length ? 'Update Meta connection' : 'Connect Meta Ads'}</Text>
           </TouchableOpacity>
         </View>
         {policyLoaded && (
@@ -643,7 +641,10 @@ function reportDate(date: string, year = false) {
   });
 }
 
-const AdsPerformancePanel = ({ onSetup }: { onSetup: () => void }) => {
+const AdsPerformancePanel = ({ onSetup, onAccountVerified }: {
+  onSetup: () => void;
+  onAccountVerified: (name: string) => void;
+}) => {
   const [report, setReport] = useState<AdPerformance | null>(null);
   const [accountId, setAccountId] = useState<string>();
   const [channel, setChannel] = useState<ChannelFilter>('all');
@@ -657,13 +658,18 @@ const AdsPerformancePanel = ({ onSetup }: { onSetup: () => void }) => {
     setRefreshError(false);
     try {
       const { performance } = await fetchAdPerformance(30, id);
-      if (currentRequest === request.current) setReport(performance);
+      if (currentRequest === request.current) {
+        setReport(performance);
+        if (performance.accountId && (performance.reportingStatus === 'reported' || performance.reportingStatus === 'pending')) {
+          onAccountVerified(performance.accountName || performance.accountId);
+        }
+      }
     } catch {
       if (currentRequest === request.current) setRefreshError(true);
     } finally {
       if (currentRequest === request.current) setLoading(false);
     }
-  }, []);
+  }, [onAccountVerified]);
 
   useEffect(() => {
     void load(accountId);
