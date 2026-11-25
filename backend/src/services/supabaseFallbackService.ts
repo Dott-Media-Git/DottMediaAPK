@@ -344,6 +344,7 @@ class SupabaseFallbackService {
       params?: Record<string, QueryValue>;
       body?: unknown;
       prefer?: string;
+      timeoutMs?: number;
     } = {},
   ): Promise<T> {
     if (!this.isConfigured()) {
@@ -372,7 +373,7 @@ class SupabaseFallbackService {
         ...(options.prefer ? { Prefer: options.prefer } : {}),
       },
       data: options.body,
-      timeout: 30000,
+      timeout: options.timeoutMs ?? 30000,
       ...(supabaseHttpsAgent ? { httpsAgent: supabaseHttpsAgent } : {}),
     };
 
@@ -385,8 +386,11 @@ class SupabaseFallbackService {
       this.markRequestSuccess();
       return response.data;
     } catch (error) {
-      this.consecutiveFailures += 1;
       const sanitized = this.sanitizeRequestError(error, method, table);
+      if (options.timeoutMs && axios.isAxiosError(error) && ['ECONNABORTED', 'ETIMEDOUT'].includes(error.code ?? '')) {
+        throw sanitized;
+      }
+      this.consecutiveFailures += 1;
       if (this.shouldOpenCircuit(error) || this.consecutiveFailures >= 3) {
         const backoffMs = Math.min(120000, 30000 * this.consecutiveFailures);
         this.circuitOpenUntil = Date.now() + backoffMs;
@@ -401,9 +405,10 @@ class SupabaseFallbackService {
     }
   }
 
-  private async getSingleRow<T = any>(table: string, params: Record<string, QueryValue>) {
+  private async getSingleRow<T = any>(table: string, params: Record<string, QueryValue>, timeoutMs?: number) {
     const rows = await this.request<T[]>('GET', table, {
       params: { select: '*', limit: 1, ...params },
+      timeoutMs,
     });
     return Array.isArray(rows) && rows.length ? rows[0] : null;
   }
@@ -692,11 +697,12 @@ class SupabaseFallbackService {
     }
   }
 
-  async listCarMarketRotationAds(userId: string, since: string) {
+  async listCarMarketRotationAds(userId: string, since: string, timeoutMs?: number) {
     return this.request<Array<{
       received_at: string;
       payload: { metaId?: string; platform?: string };
     }>>('GET', 'dott_inbound_messages', {
+      timeoutMs,
       params: {
         channel: 'eq.carmarket_ads_rotation_events',
         sender_id: `eq.${userId}`,
@@ -1399,11 +1405,12 @@ class SupabaseFallbackService {
     };
   }
 
-  async getSocialAccountsByEmail(email: string) {
+  async getSocialAccountsByEmail(email: string, timeoutMs?: number) {
     if (!this.isConfigured() || !email.trim()) return null;
     const row = await this.getSingleRow<{ user_id: string; accounts: Record<string, unknown> }>(
       'dott_social_accounts',
       { email: `eq.${email.trim().toLowerCase()}`, select: 'user_id,accounts' },
+      timeoutMs,
     );
     return row ? { userId: row.user_id, socialAccounts: row.accounts } : null;
   }

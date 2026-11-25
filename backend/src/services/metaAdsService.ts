@@ -7,6 +7,7 @@ import { supabaseFallbackService } from './supabaseFallbackService.js';
 import { carMarketAdsAccountId, carMarketAdsOwnerId } from './carMarketAdsAccount.js';
 import { summarizeCarMarketAds } from './carMarketAdsOverview.js';
 import { carMarketWebsite } from './metaAdsRotationWebsite.js';
+import { getFacebookPageToken, resolveFacebookPageAccount } from './facebookAccountRegistry.js';
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? 'v23.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -358,10 +359,10 @@ const parseMetaAdRow = (ad: any, insights: any, now: number): AdPerformanceRow =
 type ReportAccount = { id: string; name?: string; currency?: string; timezone_name?: string };
 const adInsightFields = 'spend,impressions,reach,clicks,inline_link_clicks,actions,cpc,cpm,ctr';
 
-const readMetaAdsReport = async (token: string, path: string, params: Record<string, string>) => {
+const readMetaAdsReport = async (token: string, path: string, params: Record<string, string>, timeout = 8_000) => {
   try {
     const { data } = await axios.get(`${GRAPH_BASE}/${path}`, {
-      params, timeout: 8_000, headers: { Authorization: `Bearer ${token}` },
+      params, timeout, headers: { Authorization: `Bearer ${token}` },
     });
     return data;
   } catch {
@@ -384,42 +385,68 @@ const summarizeAdStatuses = (rows: AdPerformanceRow[]) => ({
 const getCarMarketAdPerformance = async (userId: string, limit: number) => {
   const now = Date.now();
   const window = metaAdsReportWindow(now, 'Africa/Kampala');
+  const timeRange = JSON.stringify(window);
   const since = new Date(now - 30 * 86_400_000).toISOString();
+  const account = resolveFacebookPageAccount({ userId });
+  const backupToken = account?.userId === carMarketAdsOwnerId ? getFacebookPageToken(account) : '';
   const [owner, events] = await Promise.all([
-    supabaseFallbackService.getSocialAccountsByEmail('carmarketplace999@gmail.com').catch(() => null),
-    supabaseFallbackService.listCarMarketRotationAds(userId, since).catch(() => null),
+    supabaseFallbackService.getSocialAccountsByEmail('carmarketplace999@gmail.com', 2_500).catch(() => null),
+    supabaseFallbackService.listCarMarketRotationAds(userId, since, 2_500).catch(() => null),
   ]);
   const accounts = owner?.userId === userId ? (owner.socialAccounts as Record<string, any> | null) : null;
-  const token = accounts?.metaAds?.userAccessToken || accounts?.metaAds?.accessToken || accounts?.facebook?.userAccessToken;
-  const ads = new Map<string, { platform: string; createdAt: string }>();
+  const primaryToken = accounts?.metaAds?.userAccessToken || accounts?.metaAds?.accessToken || accounts?.facebook?.userAccessToken;
+  const journal = new Map<string, { platform: string; createdAt: string }>();
   for (const event of events ?? []) {
     const { metaId, platform } = event.payload ?? {};
-    if (metaId && /^\d+$/.test(metaId) && (platform === 'facebook' || platform === 'instagram') && !ads.has(metaId)) {
-      ads.set(metaId, { platform, createdAt: event.received_at });
+    if (metaId && /^\d+$/.test(metaId) && (platform === 'facebook' || platform === 'instagram') && !journal.has(metaId)) {
+      journal.set(metaId, { platform, createdAt: event.received_at });
     }
   }
 
-  const ids = [...ads.keys()];
+  const ids = [...journal.keys()];
   const batches: string[][] = [];
   for (let i = 0; i < ids.length; i += 25) batches.push(ids.slice(i, i + 25));
-  const [totals, adBatches] = await (token ? Promise.all([
-    readMetaAdsReport(token, `${carMarketAdsAccountId}/insights`, {
-      fields: adInsightFields, time_range: JSON.stringify(window),
-    }).catch(() => null),
-    Promise.all(batches.map(batch => readMetaAdsReport(token, '', {
-      ids: batch.join(','),
-      fields: `id,name,account_id,status,effective_status,created_time,updated_time,campaign_id,adset_id,adset{start_time,end_time},creative{object_story_spec},insights.time_range(${JSON.stringify(window)}){${adInsightFields}},insights.time_range(${JSON.stringify(window)}).action_report_time(conversion).as(overview_report){date_start,date_stop,impressions,actions}`,
-    }).catch(() => null))),
-  ]) : Promise.resolve([null, []] as const));
-  const metaAds = Object.assign({}, ...adBatches);
+  const fields = [
+    'id,name,account_id,status,effective_status,created_time,updated_time,campaign_id,adset_id',
+    'adset{start_time,end_time},creative{object_story_spec}',
+    `insights.time_range(${timeRange}){${adInsightFields}}`,
+    `insights.time_range(${timeRange}).action_report_time(conversion).as(overview_report){date_start,date_stop,impressions,actions}`,
+  ].join(',');
+  const readTotals = (token: string) => readMetaAdsReport(token, `${carMarketAdsAccountId}/insights`, {
+    fields: adInsightFields, time_range: timeRange,
+  }, 4_500);
+  const readAds = async (token: string): Promise<{ ads: any[]; complete: boolean; available: boolean }> => {
+    if (events === null) {
+      const data = await readMetaAdsReport(token, `${carMarketAdsAccountId}/ads`, { fields, limit: '100' }, 4_500);
+      const available = Array.isArray(data?.data);
+      return { ads: available ? data.data : [], complete: available && !data.paging?.next, available };
+    }
+    const data = await Promise.all(batches.map(batch =>
+      readMetaAdsReport(token, '', { fields, ids: batch.join(',') }, 4_500)));
+    const byId = Object.assign({}, ...data);
+    const ads = ids.map(id => byId[id]).filter(ad => Boolean(ad?.id));
+    return { ads, complete: ads.length === ids.length, available: !ids.length || ads.length > 0 };
+  };
 
-  const rows = ids.map(id => {
-    const entry = ads.get(id)!;
-    const meta = metaAds[id];
-    const verified = meta?.id === id && `act_${meta.account_id}` === carMarketAdsAccountId;
-    if (!verified) return { ...parseMetaAdRow({ id }, null, now), ...entry };
-    return { ...parseMetaAdRow(meta, meta.insights, now), ...entry };
-  });
+  const token = primaryToken || backupToken;
+  let [totals, report] = token ? await Promise.all([readTotals(token), readAds(token)]) : [
+    null, { ads: [], complete: false, available: false },
+  ];
+  if (backupToken && token !== backupToken && (totals === null || !report.available)) {
+    [totals, report] = await Promise.all([
+      totals ?? readTotals(backupToken),
+      report.available ? report : readAds(backupToken),
+    ]);
+  }
+  const verified = report.ads.filter(ad => /^\d+$/.test(ad?.id ?? '') && `act_${ad.account_id}` === carMarketAdsAccountId);
+  const parsed = new Map<string, AdPerformanceRow>(verified.map(ad => {
+    const row = parseMetaAdRow(ad, ad.insights, now);
+    const knownPlatform = /^Dotti Car Market Place • (facebook|instagram)$/i.exec(ad.name ?? '')?.[1]?.toLowerCase();
+    return [ad.id, { ...row, platform: knownPlatform ?? null, ...journal.get(ad.id) }];
+  }));
+  const rows = events === null ? [...parsed.values()] : ids.map(id =>
+    parsed.get(id) ?? { ...parseMetaAdRow({ id }, null, now), ...journal.get(id) });
+  const adStatusesAvailable = report.available && rows.every(row => Boolean(row.effectiveStatus));
   return {
     generatedAt: new Date(now).toISOString(),
     lookbackDays: 30,
@@ -428,11 +455,10 @@ const getCarMarketAdPerformance = async (userId: string, limit: number) => {
     accountName: 'Car Market Place',
     dateRange: window,
     reportingStatus: metaAdsReportingStatus(totals),
-    adStatusesAvailable: events !== null && rows.every(row => Boolean(row.effectiveStatus)),
-    overview: summarizeCarMarketAds(ids.flatMap(id => {
-      const ad = metaAds[id];
-      return ad?.id === id && `act_${ad.account_id}` === carMarketAdsAccountId ? [ad] : [];
-    }), window, carMarketWebsite),
+    adStatusesAvailable,
+    overview: report.complete && verified.length === report.ads.length
+      ? summarizeCarMarketAds(verified, window, carMarketWebsite)
+      : undefined,
     summary: { ...parseAdInsights(totals), ...summarizeAdStatuses(rows) },
     rows: rows.slice(0, limit),
   };
