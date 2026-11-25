@@ -5,5 +5,6 @@ export function withFacebookInsightsScope(scopes: string[], platform: string): s
 }
 
 export function isOptionalMetaScope(scope: string, platform: string): boolean {
-  return scope === 'read_insights' && (platform === 'facebook' || platform === 'all');
+  return (scope === 'read_insights' && (platform === 'facebook' || platform === 'all')) ||
+    (scope === 'pages_manage_ads' && platform === 'ads');
 }

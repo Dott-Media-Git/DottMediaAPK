@@ -13,6 +13,7 @@ import { consumeUsage, isFirestoreResourceExhausted, resolveBillingScope } from 
 import { oauthSuccessRedirect, sanitizeOAuthReturnUrl } from '../utils/oauthRedirect';
 import { threadsScopesForUser } from '../utils/threadsScopes';
 import { isOptionalMetaScope, withFacebookInsightsScope } from '../utils/metaFacebookInsightsScope';
+import { defaultAdsScopes, withPageAdsScopes } from '../utils/metaAdsScopes';
 import { meterConnectionUsage } from '../utils/connectionUsage';
 import { ensureFacebookPageSubscription, readFacebookPageSubscription } from '../services/facebookPageSubscription';
 
@@ -271,14 +272,6 @@ const defaultInstagramScopes = [
   'business_management',
 ];
 
-const defaultAdsScopes = [
-  'ads_read',
-  'ads_management',
-  'business_management',
-  'pages_show_list',
-  'pages_read_engagement',
-];
-
 const getScopes = (platform: MetaConnectPlatform = 'all') => {
   const renderEnv = resolveRenderEnv();
   const platformEnvKey =
@@ -295,13 +288,13 @@ const getScopes = (platform: MetaConnectPlatform = 'all') => {
     process.env.META_APP_SCOPES ??
     renderEnv.META_APP_SCOPES ??
     '';
+  if (platform === 'ads') return withPageAdsScopes(splitScopes(raw));
   if (raw.trim()) {
     return withFacebookInsightsScope(splitScopes(raw), platform);
   }
 
   if (platform === 'facebook') return withFacebookInsightsScope(defaultFacebookScopes, platform);
   if (platform === 'instagram') return defaultInstagramScopes;
-  if (platform === 'ads') return defaultAdsScopes;
   // The combined Meta connection is also used by the dashboard's Ads
   // Performance card. Request the Ads scopes here as well so a user who
   // connects Meta once through the general flow receives a token that can
@@ -967,6 +960,7 @@ router.get('/integrations/meta/config', requireFirebase, async (req, res, next) 
       scopes: getScopes('all'),
       facebookScopes: getScopes('facebook'),
       instagramScopes: getScopes('instagram'),
+      adsScopes: getScopes('ads'),
       callbackPath: CALLBACK_PATH,
     });
   } catch (error) {
@@ -1193,6 +1187,9 @@ router.get('/integrations/meta/callback', async (req, res) => {
     const preferredPageId = String(currentAccounts.facebook?.pageId ?? '').trim();
 
     const preferredPage = preferredPageId ? pages.find(page => page.id === preferredPageId) : null;
+    if (requestedPlatform === 'ads' && preferredPageId && !preferredPage) {
+      throw new Error('Include your connected Facebook Page when authorizing Meta Ads.');
+    }
     const selectedPage =
       (requestedPlatform === 'instagram' && preferredPage?.instagram_business_account?.id ? preferredPage : null) ??
       (requestedPlatform !== 'instagram' ? preferredPage : null) ??
@@ -1206,7 +1203,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
     const connectedPlatforms: string[] = [];
     let mayUpdateFacebookSubscription = false;
 
-    if (requestedPlatform === 'facebook' || requestedPlatform === 'ads' || requestedPlatform === 'all') {
+    if (requestedPlatform === 'facebook' || requestedPlatform === 'all' || (requestedPlatform === 'ads' && !preferredPageId)) {
       let webhookEventsOnly = previousConnectedAccounts.facebook?.pageId === selectedPage.id &&
         previousConnectedAccounts.facebook?.webhookEventsOnly === true;
       try {
@@ -1235,8 +1232,11 @@ router.get('/integrations/meta/callback', async (req, res) => {
 
     if (requestedPlatform === 'ads') {
       currentAccounts.metaAds = {
+        ...(currentAccounts.metaAds ?? {}),
         connected: true,
+        accessToken: userAccessToken,
         userAccessToken,
+        grantedScopes: [...grantedPermissions],
         connectedAt: new Date().toISOString(),
       };
     }
@@ -1303,7 +1303,7 @@ router.get('/integrations/meta/callback', async (req, res) => {
     }
 
     try {
-      await mergeAutopostPlatforms(state.userId, connectedPlatforms);
+      if (connectedPlatforms.length) await mergeAutopostPlatforms(state.userId, connectedPlatforms);
     } catch (error) {
       console.warn('[meta] autopost platform merge failed after successful credential save', {
         userId: state.userId,
@@ -1324,13 +1324,15 @@ router.get('/integrations/meta/callback', async (req, res) => {
       state.returnUrl,
     ));
   } catch (error) {
-    console.error('[meta] connection failed', error);
+    const metaStatus = axios.isAxiosError(error) ? error.response?.status : undefined;
+    console.error('[meta] connection failed', { metaStatus, platform: state.platform });
     res
       .status(400)
       .send(
         renderCallbackHtml(
           'Meta connection failed',
-          (error as Error).message || 'Unable to complete the Meta connection flow.',
+          axios.isAxiosError(error) ? 'Meta could not complete authorization. Start the connection again from Dotti.'
+            : (error as Error).message || 'Unable to complete the Meta connection flow.',
         ),
       );
   }
