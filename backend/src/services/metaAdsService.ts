@@ -1,3 +1,4 @@
+import { metaAdsEffectiveStatus, metaAdsReportingStatus, metaAdsReportWindow } from './metaAdsReporting.js';
 import admin from 'firebase-admin';
 import axios from 'axios';
 import createHttpError from 'http-errors';
@@ -80,6 +81,10 @@ type ManualBoostInput = BoostPublishedPostInput & {
 };
 
 type AdPerformanceRow = {
+  name?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  reportingStatus?: ReturnType<typeof metaAdsReportingStatus>;
   id: string;
   adId?: string | null;
   platform?: string | null;
@@ -260,19 +265,6 @@ const loadUserSocialAccountsWithFallback = async (userId: string) => {
   return {};
 };
 
-const loadAdRunsWithFallback = async (userId: string, limit: number) => {
-  try {
-    const snap = await adRunsCollection.where('userId', '==', userId).limit(limit).get();
-    return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }) as Record<string, any>);
-  } catch (error) {
-    console.warn('[meta-ads] using Meta-only performance fallback', {
-      userId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return [];
-  }
-};
-
 const shecareFallbackAdAccount = () => ({
   id: SHECARE_AD_ACCOUNT_ID,
   name: SHECARE_AD_ACCOUNT_NAME,
@@ -290,16 +282,6 @@ const safeGet = async (url: string, params: Record<string, unknown>) => {
   } catch (error) {
     return null;
   }
-};
-
-const graphGet = async (url: string, params: Record<string, unknown>) => {
-  const response = await axios.get(url, { params, timeout: 10000 });
-  return response.data;
-};
-
-const firestoreDateToIso = (value: unknown) => {
-  const millis = toMillis(value);
-  return millis > 0 ? new Date(millis).toISOString() : null;
 };
 
 const numberFromInsight = (value: unknown) => {
@@ -356,74 +338,44 @@ const parseAdInsights = (payload: any) => {
   };
 };
 
-const rowHasInsightData = (row: AdPerformanceRow) =>
-  row.spend > 0 ||
-  row.impressions > 0 ||
-  row.reach > 0 ||
-  row.clicks > 0 ||
-  row.inlineLinkClicks > 0 ||
-  row.messages > 0 ||
-  row.leads > 0;
-
-const parseMetaAdRow = (adPayload: any, insightsPayload: any): AdPerformanceRow => ({
-  id: `meta:${String(adPayload?.id ?? '')}`,
-  adId: String(adPayload?.id ?? '') || null,
-  platform: 'meta_live',
-  sourcePostId: null,
-  status: adPayload?.status ?? null,
-  effectiveStatus: adPayload?.effective_status ?? null,
-  campaignId: adPayload?.campaign_id ?? null,
-  adSetId: adPayload?.adset_id ?? null,
-  ...emptyAdInsights(),
-  ...parseAdInsights(insightsPayload),
-  createdAt: adPayload?.created_time ?? null,
-  updatedAt: adPayload?.updated_time ?? null,
-  errorMessage: null,
+const parseMetaAdRow = (ad: any, insights: any, now: number): AdPerformanceRow => ({
+  id: `meta:${String(ad?.id ?? '')}`,
+  adId: ad?.id ?? null,
+  name: ad?.name ?? null,
+  status: ad?.status ?? null,
+  effectiveStatus: metaAdsEffectiveStatus(ad, now),
+  campaignId: ad?.campaign_id ?? null,
+  adSetId: ad?.adset_id ?? null,
+  startsAt: ad?.adset?.start_time ?? null,
+  endsAt: ad?.adset?.end_time ?? null,
+  // A valid ad can omit the expanded insights field before any delivery is reported.
+  reportingStatus: metaAdsReportingStatus(insights === undefined ? { data: [] } : insights),
+  ...parseAdInsights(insights),
+  createdAt: ad?.created_time ?? null,
+  updatedAt: ad?.updated_time ?? null,
 });
 
-const mergeAdPerformanceRows = (rows: AdPerformanceRow[], limit: number) => {
-  const byAdId = new Map<string, AdPerformanceRow>();
-  const withoutAdId: AdPerformanceRow[] = [];
+type ReportAccount = { id: string; name?: string; currency?: string; timezone_name?: string };
+const adInsightFields = 'spend,impressions,reach,clicks,inline_link_clicks,actions,cpc,cpm,ctr';
 
-  rows.forEach(row => {
-    const adId = String(row.adId ?? '').trim();
-    if (!adId) {
-      withoutAdId.push(row);
-      return;
-    }
-    const existing = byAdId.get(adId);
-    if (!existing) {
-      byAdId.set(adId, row);
-      return;
-    }
-    if (rowHasInsightData(row) || !rowHasInsightData(existing)) {
-      byAdId.set(adId, { ...existing, ...row, id: existing.id || row.id });
-    }
-  });
-
-  return [...byAdId.values(), ...withoutAdId]
-    .sort((a, b) => {
-      const aTime = toMillis(a.updatedAt ?? a.createdAt);
-      const bTime = toMillis(b.updatedAt ?? b.createdAt);
-      return bTime - aTime;
-    })
-    .slice(0, limit);
+const readMetaAdsReport = async (token: string, path: string, params: Record<string, string>) => {
+  try {
+    const { data } = await axios.get(`${GRAPH_BASE}/${path}`, {
+      params, timeout: 8_000, headers: { Authorization: `Bearer ${token}` },
+    });
+    return data;
+  } catch {
+    return null;
+  }
 };
 
-const emptyAdInsights = () => ({
-  spend: 0,
-  impressions: 0,
-  reach: 0,
-  clicks: 0,
-  inlineLinkClicks: 0,
-  messages: 0,
-  leads: 0,
-  ctr: 0,
-  cpc: 0,
-  cpm: 0,
+const summarizeAdStatuses = (rows: AdPerformanceRow[]) => ({
+  active: rows.filter(row => row.effectiveStatus === 'ACTIVE').length,
+  paused: rows.filter(row => row.effectiveStatus?.includes('PAUSED')).length,
+  failed: rows.filter(row => ['DISAPPROVED', 'WITH_ISSUES', 'FAILED'].includes(row.effectiveStatus ?? '')).length,
+  other: rows.filter(row => ['SCHEDULED', 'IN_PROCESS', 'PENDING_REVIEW', 'PENDING_BILLING_INFO']
+    .includes(row.effectiveStatus ?? '')).length,
 });
-
-const carMarketInsightFields = 'spend,impressions,reach,clicks,inline_link_clicks,actions,cpc,cpm,ctr';
 
 /**
  * Report the business's designated account totals and the ads recorded by its rotation.
@@ -431,11 +383,7 @@ const carMarketInsightFields = 'spend,impressions,reach,clicks,inline_link_click
  */
 const getCarMarketAdPerformance = async (userId: string, limit: number) => {
   const now = Date.now();
-  const kampalaNow = now + 3 * 3_600_000;
-  const window = {
-    since: new Date(kampalaNow - 29 * 86_400_000).toISOString().slice(0, 10),
-    until: new Date(kampalaNow).toISOString().slice(0, 10),
-  };
+  const window = metaAdsReportWindow(now, 'Africa/Kampala');
   const since = new Date(now - 30 * 86_400_000).toISOString();
   const [owner, events] = await Promise.all([
     supabaseFallbackService.getSocialAccountsByEmail('carmarketplace999@gmail.com').catch(() => null),
@@ -443,10 +391,6 @@ const getCarMarketAdPerformance = async (userId: string, limit: number) => {
   ]);
   const accounts = owner?.userId === userId ? (owner.socialAccounts as Record<string, any> | null) : null;
   const token = accounts?.metaAds?.userAccessToken || accounts?.metaAds?.accessToken || accounts?.facebook?.userAccessToken;
-  const read = async (path: string, params: Record<string, string>) =>
-    (await axios.get(`${GRAPH_BASE}/${path}`, {
-      params, timeout: 8_000, headers: { Authorization: `Bearer ${token}` },
-    })).data;
   const ads = new Map<string, { platform: string; createdAt: string }>();
   for (const event of events ?? []) {
     const { metaId, platform } = event.payload ?? {};
@@ -459,12 +403,12 @@ const getCarMarketAdPerformance = async (userId: string, limit: number) => {
   const batches: string[][] = [];
   for (let i = 0; i < ids.length; i += 25) batches.push(ids.slice(i, i + 25));
   const [totals, adBatches] = await (token ? Promise.all([
-    read(`${carMarketAdsAccountId}/insights`, {
-      fields: carMarketInsightFields, date_preset: 'last_30d',
+    readMetaAdsReport(token, `${carMarketAdsAccountId}/insights`, {
+      fields: adInsightFields, time_range: JSON.stringify(window),
     }).catch(() => null),
-    Promise.all(batches.map(batch => read('', {
+    Promise.all(batches.map(batch => readMetaAdsReport(token, '', {
       ids: batch.join(','),
-      fields: `id,account_id,status,effective_status,created_time,updated_time,campaign_id,adset_id,adset{start_time,end_time},creative{object_story_spec},insights.date_preset(last_30d){${carMarketInsightFields}},insights.time_range(${JSON.stringify(window)}).action_report_time(conversion).as(overview_report){date_start,date_stop,impressions,actions}`,
+      fields: `id,name,account_id,status,effective_status,created_time,updated_time,campaign_id,adset_id,adset{start_time,end_time},creative{object_story_spec},insights.time_range(${JSON.stringify(window)}){${adInsightFields}},insights.time_range(${JSON.stringify(window)}).action_report_time(conversion).as(overview_report){date_start,date_stop,impressions,actions}`,
     }).catch(() => null))),
   ]) : Promise.resolve([null, []] as const));
   const metaAds = Object.assign({}, ...adBatches);
@@ -473,38 +417,23 @@ const getCarMarketAdPerformance = async (userId: string, limit: number) => {
     const entry = ads.get(id)!;
     const meta = metaAds[id];
     const verified = meta?.id === id && `act_${meta.account_id}` === carMarketAdsAccountId;
-    if (!verified) return {
-      ...parseMetaAdRow({ id }, null), ...entry, effectiveStatus: 'STATUS_UNAVAILABLE',
-      errorMessage: 'Meta ad status unavailable', reportingStatus: 'unavailable' as const,
-    };
-    const status = meta.effective_status ?? meta.status;
-    const effectiveStatus = status === 'ACTIVE' && Date.parse(meta.adset?.end_time) <= now ? 'COMPLETED'
-      : status === 'ACTIVE' && Date.parse(meta.adset?.start_time) > now ? 'SCHEDULED' : status;
-    return {
-      ...parseMetaAdRow(meta, meta.insights), ...entry, effectiveStatus,
-      reportingStatus: (meta.insights?.data?.length ? 'reported' : 'pending') as 'reported' | 'pending',
-    };
+    if (!verified) return { ...parseMetaAdRow({ id }, null, now), ...entry };
+    return { ...parseMetaAdRow(meta, meta.insights, now), ...entry };
   });
-  const summary = {
-    ...parseAdInsights(totals),
-    active: rows.filter(row => row.effectiveStatus === 'ACTIVE').length,
-    paused: rows.filter(row => row.effectiveStatus?.includes('PAUSED')).length,
-    failed: rows.filter(row => ['DISAPPROVED', 'WITH_ISSUES', 'FAILED'].includes(row.effectiveStatus ?? '')).length,
-    other: rows.filter(row => ['SCHEDULED', 'IN_PROCESS', 'PENDING_REVIEW', 'PENDING_BILLING_INFO'].includes(row.effectiveStatus ?? '')).length,
-  };
   return {
     generatedAt: new Date(now).toISOString(),
     lookbackDays: 30,
     currency: 'USD',
+    accountId: carMarketAdsAccountId,
     accountName: 'Car Market Place',
-    reportingStatus: (Array.isArray(totals?.data) ? totals.data.length ? 'reported' : 'pending' : 'unavailable') as
-      'reported' | 'pending' | 'unavailable',
-    adStatusesAvailable: events !== null && rows.every(row => row.reportingStatus !== 'unavailable'),
+    dateRange: window,
+    reportingStatus: metaAdsReportingStatus(totals),
+    adStatusesAvailable: events !== null && rows.every(row => Boolean(row.effectiveStatus)),
     overview: summarizeCarMarketAds(ids.flatMap(id => {
       const ad = metaAds[id];
       return ad?.id === id && `act_${ad.account_id}` === carMarketAdsAccountId ? [ad] : [];
     }), window, carMarketWebsite),
-    summary,
+    summary: { ...parseAdInsights(totals), ...summarizeAdStatuses(rows) },
     rows: rows.slice(0, limit),
   };
 };
@@ -959,237 +888,77 @@ export const metaAdsService = {
     return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   },
 
-  async getPerformance(userId: string, limit = 25) {
-    const cappedLimit = Math.min(Math.max(Number.isFinite(limit) ? limit : 25, 1), 50);
+  async getPerformance(userId: string, limit = 25, requestedAccountId?: string) {
+    const cappedLimit = Math.min(Math.max(Number.isFinite(limit) ? Math.trunc(limit) : 25, 1), 50);
     if (userId === carMarketAdsOwnerId) return getCarMarketAdPerformance(userId, cappedLimit);
-    const [rule, socialAccounts, storedRuns] = await Promise.all([
+    const [rule, socialAccounts] = await Promise.all([
       resolveRuleWithFallback(userId),
       loadUserSocialAccountsWithFallback(userId),
-      loadAdRunsWithFallback(userId, Math.max(cappedLimit, 25)),
     ]);
     const accessToken = String(
       rule?.accessToken ||
-        socialAccounts.metaAds?.accessToken ||
-        socialAccounts.metaAds?.userAccessToken ||
-        socialAccounts.metaAds?.userAccessToken ||
-        socialAccounts.facebook?.userAccessToken ||
-        socialAccounts.facebook?.accessToken ||
-        process.env.META_GRAPH_TOKEN ||
-        '',
+      socialAccounts.metaAds?.accessToken ||
+      socialAccounts.metaAds?.userAccessToken ||
+      socialAccounts.facebook?.userAccessToken ||
+      socialAccounts.facebook?.accessToken ||
+      '',
     ).trim();
-    let adAccountId = normalizeAdAccountId(
+    let selectedAdAccountId = normalizeAdAccountId(
+      requestedAccountId ||
       rule?.adAccountId ||
       socialAccounts.metaAds?.selectedAdAccountId ||
       socialAccounts.metaAds?.selectedAccountId ||
       socialAccounts.metaAds?.adAccountId ||
-      socialAccounts.metaAds?.accountId ||
-      socialAccounts.metaAds?.adAccountIds?.[0] ||
-      socialAccounts.metaAds?.accounts?.[0]?.id,
+      socialAccounts.metaAds?.accountId,
     );
-    if (!adAccountId && accessToken) {
+    if (!selectedAdAccountId && accessToken) {
       const connection = await metaAdsConnectionsCollection.doc(userId).get().catch(() => null);
-      adAccountId = normalizeAdAccountId(connection?.data()?.selectedAdAccountId);
+      selectedAdAccountId = normalizeAdAccountId(connection?.data()?.selectedAdAccountId);
     }
-    if (!adAccountId && accessToken) {
-      const accountsPayload = await safeGet(`${GRAPH_BASE}/me/adaccounts`, {
-        fields: 'id,account_status,currency,timezone_name,amount_spent',
-        limit: 25,
-        access_token: accessToken,
-      });
-      const discoveredAccounts = Array.isArray(accountsPayload?.data) ? accountsPayload.data : [];
-      const preferredAccount = discoveredAccounts
-        .filter((account: any) => Number(account?.account_status ?? 1) === 1)
-        .sort((left: any, right: any) => Number(right?.amount_spent ?? 0) - Number(left?.amount_spent ?? 0))[0]
-        ?? discoveredAccounts[0];
-      adAccountId = normalizeAdAccountId(preferredAccount?.id);
-    }
-    const runs = storedRuns
-      .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt))
-      .slice(0, cappedLimit);
 
-    const trackedRows = await Promise.all(
-      runs.map(async run => {
-        const adId = String(run.adId || run.id || '').trim();
-        const baseRow: AdPerformanceRow = {
-          id: String(run.id ?? adId),
-          adId: adId || null,
-          platform: run.platform ?? null,
-          sourcePostId: run.sourcePostId ?? null,
-          status: run.status ?? null,
-          effectiveStatus: run.effectiveStatus ?? null,
-          campaignId: run.campaignId ?? null,
-          adSetId: run.adSetId ?? null,
-          ...emptyAdInsights(),
-          createdAt: firestoreDateToIso(run.createdAt),
-          updatedAt: firestoreDateToIso(run.updatedAt),
-          errorMessage: run.errorMessage ?? null,
-        };
-        if (!adId || run.status === 'failed') return baseRow;
-        if (!accessToken) {
-          return {
-            ...baseRow,
-            errorMessage: baseRow.errorMessage ?? 'Missing Meta token with ads insights access',
-          };
-        }
-        try {
-          const [adPayload, insightsPayload] = await Promise.all([
-            graphGet(`${GRAPH_BASE}/${adId}`, {
-              fields: 'id,name,status,effective_status,created_time,updated_time,campaign_id,adset_id',
-              access_token: accessToken,
-            }),
-            graphGet(`${GRAPH_BASE}/${adId}/insights`, {
-              fields:
-                'spend,impressions,reach,clicks,inline_link_clicks,actions,cpc,cpm,ctr,date_start,date_stop',
-              date_preset: 'last_30d',
-              access_token: accessToken,
-            }),
-          ]);
-          return {
-            ...baseRow,
-            status: adPayload?.status ?? baseRow.status,
-            effectiveStatus: adPayload?.effective_status ?? baseRow.effectiveStatus,
-            campaignId: adPayload?.campaign_id ?? baseRow.campaignId,
-            adSetId: adPayload?.adset_id ?? baseRow.adSetId,
-            ...parseAdInsights(insightsPayload),
-            updatedAt: adPayload?.updated_time ?? baseRow.updatedAt,
-          };
-        } catch (error) {
-          return {
-            ...baseRow,
-            errorMessage: errorMessageFromMeta(error),
-          };
-        }
-      }),
-    );
-
-    const liveAdRows: AdPerformanceRow[] = [];
-    let accountInsights = emptyAdInsights();
-    let accountInsightsLoaded = false;
-
-    if (accessToken && adAccountId) {
-      try {
-        const [adsPayload, accountInsightsPayload] = await Promise.all([
-          graphGet(`${GRAPH_BASE}/${adAccountId}/ads`, {
-            fields: 'id,name,status,effective_status,created_time,updated_time,campaign_id,adset_id',
-            limit: Math.max(cappedLimit, 25),
-            access_token: accessToken,
-          }).catch(error => {
-            console.warn('[meta-ads] live ad list unavailable; keeping account insights', errorMessageFromMeta(error));
-            return null;
+    const generatedAt = new Date().toISOString();
+    const accounts = accessToken
+      ? await readMetaAdsReport(accessToken, 'me/adaccounts', { fields: 'id,name,currency,timezone_name', limit: '100' })
+      : null;
+    const availableAccounts: ReportAccount[] = (Array.isArray(accounts?.data) ? accounts.data : [])
+      .filter((account: ReportAccount) => /^act_\d+$/.test(account.id))
+      .map(({ id, name, currency, timezone_name }: ReportAccount) => ({ id, name, currency, timezone_name }));
+    const account = selectedAdAccountId
+      ? availableAccounts.find(item => item.id === selectedAdAccountId) ??
+        (!requestedAccountId && accessToken && /^act_\d+$/.test(selectedAdAccountId)
+          ? await readMetaAdsReport(accessToken, selectedAdAccountId, { fields: 'id,name,currency,timezone_name' })
+          : null)
+      : availableAccounts.length === 1 && !accounts?.paging?.next ? availableAccounts[0] : null;
+    const window = metaAdsReportWindow(Date.parse(generatedAt), account?.timezone_name);
+    const dateRange = JSON.stringify(window);
+    const [totals, ads] = account?.id && accessToken
+      ? await Promise.all([
+          readMetaAdsReport(accessToken, `${account.id}/insights`, {
+            fields: adInsightFields,
+            time_range: dateRange,
           }),
-          graphGet(`${GRAPH_BASE}/${adAccountId}/insights`, {
-            fields: 'spend,impressions,reach,clicks,inline_link_clicks,actions,cpc,cpm,ctr,date_start,date_stop',
-            date_preset: 'last_30d',
-            access_token: accessToken,
-          }).catch(error => {
-            console.warn('[meta-ads] account insights unavailable', errorMessageFromMeta(error));
-            return null;
+          readMetaAdsReport(accessToken, `${account.id}/ads`, {
+            fields: `id,name,status,effective_status,created_time,updated_time,campaign_id,adset_id,adset{start_time,end_time},insights.time_range(${dateRange}){${adInsightFields}}`,
+            limit: String(cappedLimit),
           }),
-        ]);
-        if (accountInsightsPayload) {
-          accountInsights = parseAdInsights(accountInsightsPayload);
-          accountInsightsLoaded = true;
-        }
-
-        const liveAds = Array.isArray(adsPayload?.data) ? adsPayload.data : [];
-        const liveRows = await Promise.all(
-          liveAds.slice(0, Math.max(cappedLimit, 25)).map(async (ad: any) => {
-            try {
-              const insightsPayload = await graphGet(`${GRAPH_BASE}/${ad.id}/insights`, {
-                fields:
-                  'spend,impressions,reach,clicks,inline_link_clicks,actions,cpc,cpm,ctr,date_start,date_stop',
-                date_preset: 'last_30d',
-                access_token: accessToken,
-              });
-              return parseMetaAdRow(ad, insightsPayload);
-            } catch (error) {
-              return {
-                id: `meta:${String(ad?.id ?? '')}`,
-                adId: String(ad?.id ?? '') || null,
-                platform: 'meta_live',
-                sourcePostId: null,
-                status: ad?.status ?? null,
-                effectiveStatus: ad?.effective_status ?? null,
-                campaignId: ad?.campaign_id ?? null,
-                adSetId: ad?.adset_id ?? null,
-                ...emptyAdInsights(),
-                createdAt: ad?.created_time ?? null,
-                updatedAt: ad?.updated_time ?? null,
-                errorMessage: errorMessageFromMeta(error),
-              } satisfies AdPerformanceRow;
-            }
-          }),
-        );
-        liveAdRows.push(...liveRows);
-      } catch (error) {
-        liveAdRows.push({
-          id: `meta-account:${adAccountId}`,
-          adId: null,
-          platform: 'meta_live',
-          sourcePostId: null,
-          status: null,
-          effectiveStatus: null,
-          campaignId: null,
-          adSetId: null,
-          ...emptyAdInsights(),
-          createdAt: null,
-          updatedAt: null,
-          errorMessage: errorMessageFromMeta(error),
-        });
-      }
-    }
-
-    const rows = mergeAdPerformanceRows([...liveAdRows, ...trackedRows], cappedLimit);
-
-    const summary = rows.reduce(
-      (acc, row) => {
-        acc.spend += row.spend;
-        acc.impressions += row.impressions;
-        acc.reach += row.reach;
-        acc.clicks += row.clicks;
-        acc.inlineLinkClicks += row.inlineLinkClicks;
-        acc.messages += row.messages;
-        acc.leads += row.leads;
-        const normalizedStatus = String(row.effectiveStatus || row.status || '').toUpperCase();
-        if (normalizedStatus === 'ACTIVE') acc.active += 1;
-        else if (normalizedStatus.includes('PAUSED')) acc.paused += 1;
-        else if (normalizedStatus === 'FAILED' || row.errorMessage) acc.failed += 1;
-        else acc.other += 1;
-        return acc;
-      },
-      {
-        spend: 0,
-        impressions: 0,
-        reach: 0,
-        clicks: 0,
-        inlineLinkClicks: 0,
-        messages: 0,
-        leads: 0,
-        active: 0,
-        paused: 0,
-        failed: 0,
-        other: 0,
-        ctr: 0,
-      },
-    );
-    if (accountInsightsLoaded && rowHasInsightData({ ...accountInsights, id: 'account' })) {
-      summary.spend = accountInsights.spend;
-      summary.impressions = accountInsights.impressions;
-      summary.reach = accountInsights.reach;
-      summary.clicks = accountInsights.clicks;
-      summary.inlineLinkClicks = accountInsights.inlineLinkClicks;
-      summary.messages = accountInsights.messages;
-      summary.leads = accountInsights.leads;
-      summary.ctr = accountInsights.ctr || (summary.impressions > 0 ? Number(((summary.clicks / summary.impressions) * 100).toFixed(2)) : 0);
-    } else {
-      summary.ctr = summary.impressions > 0 ? Number(((summary.clicks / summary.impressions) * 100).toFixed(2)) : 0;
-    }
-
+        ])
+      : [null, null];
+    const rows: AdPerformanceRow[] = Array.isArray(ads?.data)
+      ? ads.data.map((ad: any) => parseMetaAdRow(ad, ad.insights, Date.parse(generatedAt)))
+      : [];
     return {
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       lookbackDays: 30,
-      currency: rule?.currency || 'USD',
-      summary,
+      dateRange: window,
+      currency: account?.currency || null,
+      accountId: account?.id,
+      accountName: account?.name,
+      availableAccounts,
+      connectionStatus: account?.id ? 'connected' : !accessToken ? 'not_connected'
+        : availableAccounts.length ? 'choose_account' : 'unavailable',
+      reportingStatus: metaAdsReportingStatus(totals),
+      adStatusesAvailable: Array.isArray(ads?.data),
+      summary: { ...parseAdInsights(totals), ...summarizeAdStatuses(rows) },
       rows,
     };
   },

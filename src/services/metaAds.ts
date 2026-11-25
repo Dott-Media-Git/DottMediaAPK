@@ -64,6 +64,10 @@ export type BoostRule = {
 };
 
 export type AdPerformanceRow = {
+  name?: string | null;
+  campaignId?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
   reportingStatus?: 'reported' | 'pending' | 'unavailable';
   id: string;
   adId?: string | null;
@@ -87,13 +91,17 @@ export type AdPerformanceRow = {
 };
 
 export type AdPerformance = {
+  accountId?: string;
+  availableAccounts?: Pick<MetaAdAccount, 'id' | 'name' | 'currency'>[];
+  dateRange?: { since: string; until: string };
+  connectionStatus?: 'connected' | 'not_connected' | 'choose_account' | 'unavailable';
   overview?: { since: string; until: string; views: number; interactions: number; conversions: number };
   accountName?: string;
   reportingStatus?: 'reported' | 'pending' | 'unavailable';
   adStatusesAvailable?: boolean;
   generatedAt: string;
   lookbackDays: number;
-  currency: string;
+  currency: string | null;
   summary: {
     spend: number;
     impressions: number;
@@ -178,8 +186,10 @@ export const boostMetaPost = async (payload: {
 export const fetchAdRuns = async (limit = 25) =>
   authedFetch(`/api/meta-ads/runs?limit=${limit}`) as Promise<{ runs: any[] }>;
 
-export const fetchAdPerformance = async (limit = 12) =>
-  authedFetch(`/api/meta-ads/performance?limit=${limit}`) as Promise<{ performance: AdPerformance }>;
+export const fetchAdPerformance = async (limit = 12, accountId?: string) => {
+  const accountParam = accountId ? `&accountId=${encodeURIComponent(accountId)}` : '';
+  return authedFetch(`/api/meta-ads/performance?limit=${limit}${accountParam}`) as Promise<{ performance: AdPerformance }>;
+};
 
 export const fetchMetaAdsConnection = async () =>
   authedFetch('/api/meta-ads/connection') as Promise<{ connection: MetaAdsConnection }>;

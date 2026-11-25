@@ -143,7 +143,8 @@ router.get('/meta-ads/performance', requireFirebase, async (req, res, next) => {
     const userId = (req as AuthedRequest).authUser?.uid;
     if (!userId) return res.status(401).json({ message: 'Unauthorized' });
     const limit = Number(req.query.limit ?? 25);
-    const performance = await metaAdsService.getPerformance(userId, limit);
+    const accountId = typeof req.query.accountId === 'string' ? req.query.accountId : undefined;
+    const performance = await metaAdsService.getPerformance(userId, limit, accountId);
     res.json({ performance });
   } catch (error) {
     next(error);

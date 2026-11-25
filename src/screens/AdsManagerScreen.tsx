@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '@constants/colors';
 import {
   decideMetaAdsApproval,
-  fetchAdRuns,
+  fetchAdPerformance,
   fetchBoostRule,
   fetchMetaAdsApprovals,
   fetchMetaAdsAudit,
@@ -14,6 +14,8 @@ import {
   requestMetaAdsAction,
   saveBoostRule,
   saveMetaAdsPolicy,
+  type AdPerformance,
+  type AdPerformanceRow,
   type BoostRule,
   type MetaAdAccount,
   type MetaAdsApproval,
@@ -48,16 +50,35 @@ const budgetUsdFromRule = (rule: BoostRule) => {
   return 5;
 };
 
+const adsTabs = [
+  { key: 'performance', title: 'Performance' },
+  { key: 'approvals', title: 'Approvals' },
+  { key: 'setup', title: 'Ad setup' },
+] as const;
+
+type AdsTab = typeof adsTabs[number]['key'];
+
 export const AdsManagerScreen: React.FC = () => {
+  const { state } = useAuth();
+  return <AdsManagerContent key={state.user?.uid ?? 'signed-out'} />;
+};
+
+const AdsManagerContent: React.FC = () => {
   const { state } = useAuth();
   const isShecareAccount =
     state.user?.uid === SHECARE_USER_ID || String(state.user?.email ?? '').toLowerCase() === SHECARE_EMAIL;
   const defaultWhatsapp = isShecareAccount ? DEFAULT_WHATSAPP : '';
-  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<AdsTab>('performance');
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [setupError, setSetupError] = useState('');
+  const [approvalsError, setApprovalsError] = useState('');
+  const [approvalsLoading, setApprovalsLoading] = useState(false);
+  const [policyLoaded, setPolicyLoaded] = useState(false);
+  const [boostLoaded, setBoostLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [boosting, setBoosting] = useState(false);
   const [accounts, setAccounts] = useState<MetaAdAccount[]>([]);
-  const [runs, setRuns] = useState<any[]>([]);
   const [connection, setConnection] = useState<MetaAdsConnection | null>(null);
   const [approvals, setApprovals] = useState<MetaAdsApproval[]>([]);
   const [audit, setAudit] = useState<MetaAdsAuditEntry[]>([]);
@@ -109,51 +130,52 @@ export const AdsManagerScreen: React.FC = () => {
     [displayAccounts, rule.adAccountId],
   );
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const [ruleResponse, accountResponse] = await Promise.all([
-        fetchBoostRule().catch(() => ({ rule: {} as BoostRule })),
-        fetchMetaAdAccounts().catch(() => ({ accounts: [] as MetaAdAccount[] })),
-      ]);
-      const [runsResponse, connectionResponse, policyResponse, approvalsResponse, auditResponse] = await Promise.all([
-        fetchAdRuns(20).catch(() => ({ runs: [] })),
-        fetchMetaAdsConnection().catch(() => null),
-        fetchMetaAdsPolicy().catch(() => null),
-        fetchMetaAdsApprovals(30).catch(() => ({ approvals: [] })),
-        fetchMetaAdsAudit(30).catch(() => ({ audit: [] })),
-      ]);
+    setSetupError('');
+    const [ruleResult, accountResult, connectionResult, policyResult] = await Promise.allSettled([
+      fetchBoostRule(), fetchMetaAdAccounts(), fetchMetaAdsConnection(), fetchMetaAdsPolicy(),
+    ]);
+    if (ruleResult.status === 'fulfilled') {
+      const saved = ruleResult.value.rule;
       setRule(current => ({
         ...current,
-        ...ruleResponse.rule,
-        adAccountId: isShecareAccount ? ruleResponse.rule?.adAccountId || SHECARE_AD_ACCOUNT_ID : ruleResponse.rule?.adAccountId,
-        currency: isShecareAccount ? ruleResponse.rule?.currency || 'USD' : ruleResponse.rule?.currency,
-        whatsappNumber: ruleResponse.rule?.whatsappNumber || defaultWhatsapp,
-        dailyBudgetUsd: budgetUsdFromRule(ruleResponse.rule ?? current),
-        autoBoostPlatforms: ruleResponse.rule?.autoBoostPlatforms?.length
-          ? ruleResponse.rule.autoBoostPlatforms
-          : current.autoBoostPlatforms,
-        autoBoostStrategy: ruleResponse.rule?.autoBoostStrategy ?? current.autoBoostStrategy,
-        performanceWindowHours: ruleResponse.rule?.performanceWindowHours ?? current.performanceWindowHours,
-        minCandidateAgeMinutes: ruleResponse.rule?.minCandidateAgeMinutes ?? current.minCandidateAgeMinutes,
-        autoBoostCooldownHours: ruleResponse.rule?.autoBoostCooldownHours ?? current.autoBoostCooldownHours,
+        ...saved,
+        adAccountId: saved?.adAccountId || (isShecareAccount ? SHECARE_AD_ACCOUNT_ID : undefined),
+        currency: saved?.currency || (isShecareAccount ? 'USD' : undefined),
+        whatsappNumber: saved?.whatsappNumber || defaultWhatsapp,
+        dailyBudgetUsd: budgetUsdFromRule(saved ?? current),
+        autoBoostPlatforms: saved?.autoBoostPlatforms?.length ? saved.autoBoostPlatforms : current.autoBoostPlatforms,
       }));
-      setAccounts(accountResponse.accounts ?? []);
-      setRuns(runsResponse.runs ?? []);
-      setConnection(connectionResponse?.connection ?? null);
-      if (policyResponse?.policy) setPolicy(policyResponse.policy);
-      setApprovals(approvalsResponse.approvals ?? []);
-      setAudit(auditResponse.audit ?? []);
-    } catch (error: any) {
-      Alert.alert('Ads Manager', error.message ?? 'Failed to load ads settings');
-    } finally {
-      setLoading(false);
+      setBoostLoaded(true);
     }
-  };
+    if (accountResult.status === 'fulfilled') setAccounts(accountResult.value.accounts ?? []);
+    if (connectionResult.status === 'fulfilled') setConnection(connectionResult.value.connection ?? null);
+    if (policyResult.status === 'fulfilled') {
+      setPolicy(policyResult.value.policy);
+      setPolicyLoaded(true);
+    }
+    if ([ruleResult, accountResult, connectionResult, policyResult].some(result => result.status === 'rejected')) {
+      setSetupError('Some ad settings could not be loaded. Refresh to try again.');
+    }
+    setLoaded(true);
+    setLoading(false);
+  }, [defaultWhatsapp, isShecareAccount]);
+
+  const loadApprovals = useCallback(async () => {
+    setApprovalsLoading(true);
+    const [approvalResult, auditResult] = await Promise.allSettled([fetchMetaAdsApprovals(30), fetchMetaAdsAudit(30)]);
+    setApprovalsError(approvalResult.status === 'rejected' || auditResult.status === 'rejected'
+      ? 'Some approval history could not be loaded. Refresh to try again.' : '');
+    if (approvalResult.status === 'fulfilled') setApprovals(approvalResult.value.approvals ?? []);
+    if (auditResult.status === 'fulfilled') setAudit(auditResult.value.audit ?? []);
+    setApprovalsLoading(false);
+  }, []);
 
   useEffect(() => {
-    void load();
-  }, [defaultWhatsapp]);
+    if (tab === 'setup' && !loaded) void load();
+    if (tab === 'approvals') void loadApprovals();
+  }, [tab, loaded, load, loadApprovals]);
 
   const updateRule = (patch: Partial<BoostRule>) => setRule(current => ({ ...current, ...patch }));
 
@@ -214,7 +236,7 @@ export const AdsManagerScreen: React.FC = () => {
       }, 'ads_manager');
       setManualPostId('');
       setManualCaption('');
-      await load();
+      setTab('approvals');
       Alert.alert('Ads Manager', 'Paused campaign draft sent for approval.');
     } catch (error: any) {
       Alert.alert('Ads Manager', error.message ?? 'Failed to boost post');
@@ -229,7 +251,6 @@ export const AdsManagerScreen: React.FC = () => {
       const response = await saveMetaAdsPolicy(policy);
       setPolicy(response.policy);
       Alert.alert('Ads safety', 'Spending and approval controls saved.');
-      await load();
     } catch (error: any) {
       Alert.alert('Ads safety', error.message ?? 'Failed to save controls');
     } finally {
@@ -241,7 +262,7 @@ export const AdsManagerScreen: React.FC = () => {
     setApprovalBusy(id);
     try {
       await decideMetaAdsApproval(id, decision);
-      await load();
+      await loadApprovals();
       Alert.alert('Ads approval', decision === 'approve' ? 'Approved and executed.' : 'Request rejected.');
     } catch (error: any) {
       Alert.alert('Ads approval', error.message ?? 'Failed to process approval');
@@ -258,346 +279,548 @@ export const AdsManagerScreen: React.FC = () => {
       await Linking.openURL(response.url);
     } catch (error: any) {
       Alert.alert('Connect Meta Ads', error.message ?? 'Unable to start Meta Ads authorization');
+    } finally {
       setConnectingAds(false);
     }
   };
 
-  if (loading) {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator color={colors.accent} />
-      </View>
-    );
-  }
+  const pendingApprovals = approvals.filter(item => item.status === 'pending');
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>Ads Manager</Text>
-        <Text style={styles.subtitle}>Boost Facebook posts with USD budget and client WhatsApp controls.</Text>
-        </View>
-        <TouchableOpacity style={styles.iconButton} onPress={() => void load()}>
-          <Ionicons name="refresh-outline" size={20} color={colors.text} />
-        </TouchableOpacity>
+      <View style={styles.heading}>
+        <Text style={styles.title}>Ads Manager</Text>
+        <Text style={styles.subtitle}>Track Meta ad results and manage your boosts.</Text>
+      </View>
+      <View style={styles.segment}>
+        {adsTabs.map(item => (
+          <TouchableOpacity key={item.key} accessibilityRole="tab" accessibilityState={{ selected: tab === item.key }}
+            onPress={() => setTab(item.key)} style={[styles.segmentButton, tab === item.key && styles.segmentButtonActive]}>
+            <Text style={[styles.segmentText, tab === item.key && styles.segmentTextActive]}>{item.title}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
-      <View style={styles.panel}>
-        <View style={styles.headerRow}>
-          <View style={styles.flexCopy}>
-            <Text style={styles.sectionTitle}>Meta Ads AI Connector</Text>
-            <Text style={styles.helper}>Dotti uses Meta MCP when authorized and automatically falls back to the connected Meta Marketing API.</Text>
-          </View>
-          <View style={[styles.statusBadge, connection?.provider !== 'none' && styles.statusBadgeActive]}>
-            <Text style={styles.statusBadgeText}>{connection?.provider === 'meta_mcp' ? 'MCP LIVE' : connection?.provider === 'meta_graph' ? 'GRAPH LIVE' : 'NOT CONNECTED'}</Text>
-          </View>
-        </View>
-        <View style={styles.connectionGrid}>
-          <View style={styles.metricBox}>
-            <Text style={styles.metricValue}>{connection?.accountCount ?? 0}</Text>
-            <Text style={styles.helper}>Ad accounts</Text>
-          </View>
-          <View style={styles.metricBox}>
-            <Text style={styles.metricValue}>{connection?.mcpConnected ? 'Yes' : 'Fallback'}</Text>
-            <Text style={styles.helper}>Official MCP</Text>
-          </View>
-        </View>
-        <Text style={styles.helper}>Endpoint: {connection?.endpoint ?? 'https://mcp.facebook.com/ads'}</Text>
-        {!connection?.graphConnected ? <Text style={styles.warning}>Connect Facebook in Social Connections with ads permissions, then return here and refresh.</Text> : null}
-        <TouchableOpacity style={[styles.connectButton, connectingAds && styles.disabled]} onPress={() => void handleConnectAds()} disabled={connectingAds}>
-          <Ionicons name="logo-facebook" size={19} color="#ffffff" />
-          <Text style={styles.saveText}>{connectingAds ? 'Opening Meta...' : connection?.graphConnected ? 'Connect Another Ads Account' : 'Connect Meta Ads Account'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.helper}>You will sign in with Meta, approve Ads access, and then return here to choose an ad account.</Text>
-      </View>
+      {tab === 'performance' && <AdsPerformancePanel onSetup={() => setTab('setup')} />}
 
-      <View style={styles.panel}>
-        <Text style={styles.sectionTitle}>Safety & Spending Controls</Text>
-        <Text style={styles.helper}>Every Dotti write request is checked against these limits and recorded in the audit trail.</Text>
-        <Text style={styles.label}>Maximum daily spend USD</Text>
-        <TextInput
-          style={styles.input}
-          value={String(policy.dailySpendLimitUsd)}
-          onChangeText={value => setPolicy(current => ({ ...current, dailySpendLimitUsd: parseUsdBudget(value) }))}
-          keyboardType="decimal-pad"
-        />
-        <Text style={styles.label}>Maximum spend per action USD</Text>
-        <TextInput
-          style={styles.input}
-          value={String(policy.perActionLimitUsd)}
-          onChangeText={value => setPolicy(current => ({ ...current, perActionLimitUsd: parseUsdBudget(value) }))}
-          keyboardType="decimal-pad"
-        />
-        <View style={styles.switchRow}>
-          <View style={styles.flexCopy}><Text style={styles.accountName}>Require approval</Text><Text style={styles.helper}>Keep all ad changes in the approval queue.</Text></View>
-          <Switch value={policy.requireApproval} onValueChange={value => setPolicy(current => ({ ...current, requireApproval: value }))} />
-        </View>
-        <View style={styles.switchRow}>
-          <View style={styles.flexCopy}><Text style={styles.accountName}>Allow ad activation</Text><Text style={styles.helper}>Dotti may request publishing after your confirmation.</Text></View>
-          <Switch value={policy.allowActivation} onValueChange={value => setPolicy(current => ({ ...current, allowActivation: value }))} />
-        </View>
-        <View style={styles.switchRow}>
-          <View style={styles.flexCopy}><Text style={styles.accountName}>Allow budget changes</Text><Text style={styles.helper}>Budget edits still require confirmation.</Text></View>
-          <Switch value={policy.allowBudgetChanges} onValueChange={value => setPolicy(current => ({ ...current, allowBudgetChanges: value }))} />
-        </View>
-        <TouchableOpacity style={[styles.saveButton, policySaving && styles.disabled]} onPress={handleSavePolicy} disabled={policySaving}>
-          <Ionicons name="shield-checkmark-outline" size={18} color="#ffffff" />
-          <Text style={styles.saveText}>{policySaving ? 'Saving...' : 'Save Safety Controls'}</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.panel}>
-        <Text style={styles.sectionTitle}>Pending Approvals</Text>
-        {approvals.filter(item => item.status === 'pending').length ? approvals.filter(item => item.status === 'pending').map(item => (
-          <View key={item.id} style={styles.approvalCard}>
+      {tab === 'setup' && <>
+        <View style={styles.panel}>
+          <View style={styles.headerRow}>
             <View style={styles.flexCopy}>
-              <Text style={styles.accountName}>{item.action.replace(/_/g, ' ')}</Text>
-              <Text style={styles.helper}>{item.payload?.adId || item.payload?.postId || item.payload?.adSetId || 'Dotti Ads request'} · {item.source}</Text>
-              {item.payload?.dailyBudgetUsd ? <Text style={styles.helper}>Budget: ${Number(item.payload.dailyBudgetUsd).toFixed(2)}/day</Text> : null}
+              <Text style={styles.sectionTitle}>Meta ad accounts</Text>
+              <Text style={styles.helper}>{connection?.graphConnected
+                ? `${connection.accountCount} ad accounts available through Meta`
+                : 'Sign in to Meta to view your ad accounts.'}</Text>
             </View>
-            <View style={styles.approvalActions}>
-              <TouchableOpacity style={styles.rejectButton} disabled={approvalBusy === item.id} onPress={() => void handleApproval(item.id, 'reject')}>
-                <Text style={styles.rejectText}>Reject</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.approveButton} disabled={approvalBusy === item.id} onPress={() => void handleApproval(item.id, 'approve')}>
-                <Text style={styles.saveText}>{approvalBusy === item.id ? 'Working...' : 'Approve'}</Text>
-              </TouchableOpacity>
+            <RefreshButton loading={loading} onPress={() => void load()} />
+          </View>
+          {setupError ? <Text accessibilityRole="alert" style={styles.warning}>{setupError}</Text> : null}
+          <TouchableOpacity accessibilityRole="button" style={[styles.connectButton, connectingAds && styles.disabled]}
+            onPress={() => void handleConnectAds()} disabled={connectingAds}>
+            <Ionicons name="logo-facebook" size={19} color="#ffffff" />
+            <Text style={styles.saveText}>{connectingAds ? 'Opening Meta…' : connection?.graphConnected ? 'Manage Meta connection' : 'Connect Meta Ads'}</Text>
+          </TouchableOpacity>
+        </View>
+        {policyLoaded && (
+          <View style={styles.panel}>
+            <Text style={styles.sectionTitle}>Safety & Spending Controls</Text>
+            <Text style={styles.helper}>These limits apply to ad actions submitted for approval in Ads Manager.</Text>
+            <Text style={styles.label}>Maximum daily spend USD</Text>
+            <TextInput
+              style={styles.input}
+              value={String(policy.dailySpendLimitUsd)}
+              onChangeText={value => setPolicy(current => ({ ...current, dailySpendLimitUsd: parseUsdBudget(value) }))}
+              keyboardType="decimal-pad"
+            />
+            <Text style={styles.label}>Maximum spend per action USD</Text>
+            <TextInput
+              style={styles.input}
+              value={String(policy.perActionLimitUsd)}
+              onChangeText={value => setPolicy(current => ({ ...current, perActionLimitUsd: parseUsdBudget(value) }))}
+              keyboardType="decimal-pad"
+            />
+            <View style={styles.switchRow}>
+              <View style={styles.flexCopy}><Text style={styles.accountName}>Require approval</Text><Text style={styles.helper}>Keep all ad changes in the approval queue.</Text></View>
+              <Switch value={policy.requireApproval} onValueChange={value => setPolicy(current => ({ ...current, requireApproval: value }))} />
             </View>
-          </View>
-        )) : <Text style={styles.helper}>No actions are waiting for approval.</Text>}
-      </View>
-
-      <View style={styles.panel}>
-        <View style={styles.switchRow}>
-          <View>
-            <Text style={styles.sectionTitle}>Auto Boost</Text>
-            <Text style={styles.helper}>When enabled, DottMedia scores eligible posts and boosts one winner after the cooldown.</Text>
-          </View>
-          <Switch value={Boolean(rule.enabled)} onValueChange={value => updateRule({ enabled: value })} />
-        </View>
-
-        <View style={styles.segment}>
-          {(['manual', 'auto'] as const).map(mode => (
-            <TouchableOpacity
-              key={mode}
-              style={[styles.segmentButton, rule.mode === mode && styles.segmentButtonActive]}
-              onPress={() => updateRule({ mode })}
-            >
-              <Text style={[styles.segmentText, rule.mode === mode && styles.segmentTextActive]}>
-                {mode === 'manual' ? 'Manual' : 'Auto'}
-              </Text>
+            <View style={styles.switchRow}>
+              <View style={styles.flexCopy}><Text style={styles.accountName}>Allow ad activation</Text><Text style={styles.helper}>Dotti may request publishing after your confirmation.</Text></View>
+              <Switch value={policy.allowActivation} onValueChange={value => setPolicy(current => ({ ...current, allowActivation: value }))} />
+            </View>
+            <View style={styles.switchRow}>
+              <View style={styles.flexCopy}><Text style={styles.accountName}>Allow budget changes</Text><Text style={styles.helper}>Budget edits still require confirmation.</Text></View>
+              <Switch value={policy.allowBudgetChanges} onValueChange={value => setPolicy(current => ({ ...current, allowBudgetChanges: value }))} />
+            </View>
+            <TouchableOpacity style={[styles.saveButton, policySaving && styles.disabled]} onPress={handleSavePolicy} disabled={policySaving}>
+              <Ionicons name="shield-checkmark-outline" size={18} color="#ffffff" />
+              <Text style={styles.saveText}>{policySaving ? 'Saving...' : 'Save Safety Controls'}</Text>
             </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.panel}>
-        <Text style={styles.sectionTitle}>Auto Selection</Text>
-        <Text style={styles.helper}>Choose which post types can enter the auto-boost pool. The system will not boost all of them at the same time.</Text>
-        <View style={styles.platformGrid}>
-          {AUTO_BOOST_PLATFORMS.map(platform => {
-            const active = Boolean(rule.autoBoostPlatforms?.includes(platform.key));
-            return (
-              <TouchableOpacity
-                key={platform.key}
-                style={[styles.platformChip, active && styles.platformChipActive]}
-                onPress={() => toggleAutoBoostPlatform(platform.key)}
-              >
-                <Ionicons
-                  name={active ? 'checkmark-circle-outline' : 'ellipse-outline'}
-                  size={17}
-                  color={active ? '#ffffff' : colors.subtext}
-                />
-                <Text style={[styles.platformChipText, active && styles.platformChipTextActive]}>{platform.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-        <View style={styles.segment}>
-          {(['best_performing', 'latest'] as const).map(strategy => (
-            <TouchableOpacity
-              key={strategy}
-              style={[styles.segmentButton, rule.autoBoostStrategy === strategy && styles.segmentButtonActive]}
-              onPress={() => updateRule({ autoBoostStrategy: strategy })}
-            >
-              <Text style={[styles.segmentText, rule.autoBoostStrategy === strategy && styles.segmentTextActive]}>
-                {strategy === 'best_performing' ? 'Best post' : 'Latest post'}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <Text style={styles.label}>Performance window hours</Text>
-        <TextInput
-          style={styles.input}
-          value={String(rule.performanceWindowHours ?? 48)}
-          onChangeText={value => updateRule({ performanceWindowHours: Number(value.replace(/[^\d]/g, '')) || 1 })}
-          keyboardType="number-pad"
-          placeholder="48"
-          placeholderTextColor={colors.subtext}
-        />
-        <Text style={styles.label}>Minimum age before scoring (minutes)</Text>
-        <TextInput
-          style={styles.input}
-          value={String(rule.minCandidateAgeMinutes ?? 15)}
-          onChangeText={value => updateRule({ minCandidateAgeMinutes: Number(value.replace(/[^\d]/g, '')) || 0 })}
-          keyboardType="number-pad"
-          placeholder="15"
-          placeholderTextColor={colors.subtext}
-        />
-        <Text style={styles.label}>Cooldown between boosts (hours)</Text>
-        <TextInput
-          style={styles.input}
-          value={String(rule.autoBoostCooldownHours ?? 6)}
-          onChangeText={value => updateRule({ autoBoostCooldownHours: Number(value.replace(/[^\d]/g, '')) || 0 })}
-          keyboardType="number-pad"
-          placeholder="6"
-          placeholderTextColor={colors.subtext}
-        />
-      </View>
-
-      <View style={styles.panel}>
-        <Text style={styles.sectionTitle}>Ad Account</Text>
-        {displayAccounts.length ? (
-          <View style={styles.accountList}>
-            {displayAccounts.map(account => (
-              <TouchableOpacity
-                key={account.id}
-                style={[styles.accountRow, rule.adAccountId === account.id && styles.accountRowActive]}
-                onPress={() => updateRule({ adAccountId: account.id, currency: account.currency ?? rule.currency })}
-              >
-                <Ionicons
-                  name={rule.adAccountId === account.id ? 'radio-button-on-outline' : 'radio-button-off-outline'}
-                  size={18}
-                  color={colors.accent}
-                />
-                <View style={styles.accountText}>
-                  <Text style={styles.accountName}>{account.name || account.id}</Text>
-                  <Text style={styles.helper}>{[account.id, account.currency, account.timezone_name].filter(Boolean).join(' | ')}</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
           </View>
-        ) : (
-          <Text style={styles.warning}>No ad accounts loaded yet. Reconnect Meta with ads permissions, then refresh.</Text>
+
         )}
-        {selectedAccount ? <Text style={styles.helper}>Selected: {selectedAccount.name || selectedAccount.id}</Text> : null}
-      </View>
-
-      <View style={styles.panel}>
-        <Text style={styles.sectionTitle}>Boost Defaults</Text>
-        <Text style={styles.label}>WhatsApp number</Text>
-        <TextInput
-          style={styles.input}
-          value={rule.whatsappNumber ?? ''}
-          onChangeText={value => updateRule({ whatsappNumber: value })}
-          keyboardType="phone-pad"
-          placeholder={isShecareAccount ? '+447463010235' : 'Enter client WhatsApp number'}
-          placeholderTextColor={colors.subtext}
-        />
-        <Text style={styles.helper}>
-          {isShecareAccount
-            ? 'Shecare uses its assigned WhatsApp number. Other accounts must use their own client number.'
-            : 'This number belongs to the current client. Shecare’s number is not shared with other accounts.'}
-        </Text>
-        <Text style={styles.label}>Daily budget USD</Text>
-        <TextInput
-          style={styles.input}
-          value={String(budgetUsdFromRule(rule))}
-          onChangeText={value => updateRule({ dailyBudgetUsd: parseUsdBudget(value) })}
-          keyboardType="decimal-pad"
-          placeholder="5.00"
-          placeholderTextColor={colors.subtext}
-        />
-        <Text style={styles.helper}>Example: enter 5 for $5/day. DottMedia converts this to cents for Meta.</Text>
-        <Text style={styles.label}>Duration hours</Text>
-        <TextInput
-          style={styles.input}
-          value={String(rule.durationHours ?? '')}
-          onChangeText={value => updateRule({ durationHours: Number(value.replace(/[^\d]/g, '')) || 1 })}
-          keyboardType="number-pad"
-          placeholder="24"
-          placeholderTextColor={colors.subtext}
-        />
-        <View style={styles.segment}>
-          {(['PAUSED', 'ACTIVE'] as const).map(status => (
-            <TouchableOpacity
-              key={status}
-              style={[styles.segmentButton, rule.statusOnCreate === status && styles.segmentButtonActive]}
-              onPress={() => updateRule({ statusOnCreate: status })}
-            >
-              <Text style={[styles.segmentText, rule.statusOnCreate === status && styles.segmentTextActive]}>
-                {status === 'PAUSED' ? 'Create paused' : 'Create active'}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
-      <TouchableOpacity style={[styles.saveButton, saving && styles.disabled]} onPress={handleSave} disabled={saving}>
-        <Ionicons name="save-outline" size={18} color="#ffffff" />
-        <Text style={styles.saveText}>{saving ? 'Saving...' : 'Save Boost Settings'}</Text>
-      </TouchableOpacity>
-
-      <View style={styles.panel}>
-        <Text style={styles.sectionTitle}>Manual Boost</Text>
-        <Text style={styles.label}>Facebook post ID</Text>
-        <TextInput
-          style={styles.input}
-          value={manualPostId}
-          onChangeText={setManualPostId}
-          placeholder="page_post_id or post id"
-          placeholderTextColor={colors.subtext}
-          autoCapitalize="none"
-        />
-        <Text style={styles.label}>Ad caption</Text>
-        <TextInput
-          style={[styles.input, styles.textArea]}
-          value={manualCaption}
-          onChangeText={setManualCaption}
-          placeholder="Warm ad caption for this boost"
-          placeholderTextColor={colors.subtext}
-          multiline
-        />
-        <TouchableOpacity style={[styles.saveButton, boosting && styles.disabled]} onPress={handleManualBoost} disabled={boosting}>
-          <Ionicons name="megaphone-outline" size={18} color="#ffffff" />
-          <Text style={styles.saveText}>{boosting ? 'Creating...' : 'Create Boost'}</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.panel}>
-        <Text style={styles.sectionTitle}>Recent Boosts</Text>
-        {runs.length ? (
-          runs.map(run => (
-            <View key={run.id ?? run.adId ?? `${run.sourcePostId}-${run.createdAt}`} style={styles.runRow}>
-              <Text style={styles.accountName}>{run.status ?? 'unknown'}</Text>
-              <Text style={styles.helper}>{run.adId || run.sourcePostId || run.errorMessage || 'No ad ID yet'}</Text>
+        {boostLoaded && <>
+          <View style={styles.panel}>
+            <View style={styles.switchRow}>
+              <View>
+                <Text style={styles.sectionTitle}>Auto Boost</Text>
+                <Text style={styles.helper}>Choose a rule for boosting eligible posts automatically.</Text>
+              </View>
+              <Switch value={Boolean(rule.enabled)} onValueChange={value => updateRule({ enabled: value })} />
             </View>
-          ))
-        ) : (
-          <Text style={styles.helper}>No boost runs recorded yet.</Text>
-        )}
-      </View>
 
-      <View style={styles.panel}>
-        <Text style={styles.sectionTitle}>Ads Activity Log</Text>
-        {audit.length ? audit.slice(0, 20).map(entry => (
-          <View key={entry.id} style={styles.runRow}>
-            <View style={styles.flexCopy}>
-              <Text style={styles.accountName}>{entry.action.replace(/_/g, ' ')}</Text>
-              <Text style={styles.helper}>{entry.createdAt ? new Date(entry.createdAt).toLocaleString() : 'Just now'}</Text>
+            <View style={styles.segment}>
+              {(['manual', 'auto'] as const).map(mode => (
+                <TouchableOpacity
+                  key={mode}
+                  style={[styles.segmentButton, rule.mode === mode && styles.segmentButtonActive]}
+                  onPress={() => updateRule({ mode })}
+                >
+                  <Text style={[styles.segmentText, rule.mode === mode && styles.segmentTextActive]}>
+                    {mode === 'manual' ? 'Manual' : 'Auto'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
-            <Text style={[styles.auditStatus, entry.status === 'completed' || entry.status === 'success' ? styles.auditSuccess : null]}>{entry.status}</Text>
           </View>
-        )) : <Text style={styles.helper}>No controlled ad actions recorded yet.</Text>}
-      </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.sectionTitle}>Auto Selection</Text>
+            <Text style={styles.helper}>Choose which post types can enter the auto-boost pool. Dotti selects one post per boost.</Text>
+            <View style={styles.platformGrid}>
+              {AUTO_BOOST_PLATFORMS.map(platform => {
+                const active = Boolean(rule.autoBoostPlatforms?.includes(platform.key));
+                return (
+                  <TouchableOpacity
+                    key={platform.key}
+                    style={[styles.platformChip, active && styles.platformChipActive]}
+                    onPress={() => toggleAutoBoostPlatform(platform.key)}
+                  >
+                    <Ionicons
+                      name={active ? 'checkmark-circle-outline' : 'ellipse-outline'}
+                      size={17}
+                      color={active ? '#ffffff' : colors.subtext}
+                    />
+                    <Text style={[styles.platformChipText, active && styles.platformChipTextActive]}>{platform.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <View style={styles.segment}>
+              {(['best_performing', 'latest'] as const).map(strategy => (
+                <TouchableOpacity
+                  key={strategy}
+                  style={[styles.segmentButton, rule.autoBoostStrategy === strategy && styles.segmentButtonActive]}
+                  onPress={() => updateRule({ autoBoostStrategy: strategy })}
+                >
+                  <Text style={[styles.segmentText, rule.autoBoostStrategy === strategy && styles.segmentTextActive]}>
+                    {strategy === 'best_performing' ? 'Best post' : 'Latest post'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.label}>Performance window hours</Text>
+            <TextInput
+              style={styles.input}
+              value={String(rule.performanceWindowHours ?? 48)}
+              onChangeText={value => updateRule({ performanceWindowHours: Number(value.replace(/[^\d]/g, '')) || 1 })}
+              keyboardType="number-pad"
+              placeholder="48"
+              placeholderTextColor={colors.subtext}
+            />
+            <Text style={styles.label}>Minimum age before scoring (minutes)</Text>
+            <TextInput
+              style={styles.input}
+              value={String(rule.minCandidateAgeMinutes ?? 15)}
+              onChangeText={value => updateRule({ minCandidateAgeMinutes: Number(value.replace(/[^\d]/g, '')) || 0 })}
+              keyboardType="number-pad"
+              placeholder="15"
+              placeholderTextColor={colors.subtext}
+            />
+            <Text style={styles.label}>Cooldown between boosts (hours)</Text>
+            <TextInput
+              style={styles.input}
+              value={String(rule.autoBoostCooldownHours ?? 6)}
+              onChangeText={value => updateRule({ autoBoostCooldownHours: Number(value.replace(/[^\d]/g, '')) || 0 })}
+              keyboardType="number-pad"
+              placeholder="6"
+              placeholderTextColor={colors.subtext}
+            />
+          </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.sectionTitle}>Ad Account</Text>
+            {displayAccounts.length ? (
+              <View style={styles.accountList}>
+                {displayAccounts.map(account => (
+                  <TouchableOpacity
+                    key={account.id}
+                    style={[styles.accountRow, rule.adAccountId === account.id && styles.accountRowActive]}
+                    onPress={() => updateRule({ adAccountId: account.id, currency: account.currency ?? rule.currency })}
+                  >
+                    <Ionicons
+                      name={rule.adAccountId === account.id ? 'radio-button-on-outline' : 'radio-button-off-outline'}
+                      size={18}
+                      color={colors.accent}
+                    />
+                    <View style={styles.accountText}>
+                      <Text style={styles.accountName}>{account.name || account.id}</Text>
+                      <Text style={styles.helper}>{[account.id, account.currency, account.timezone_name].filter(Boolean).join(' | ')}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.warning}>No ad accounts loaded yet. Reconnect Meta with ads permissions, then refresh.</Text>
+            )}
+            {selectedAccount ? <Text style={styles.helper}>Selected: {selectedAccount.name || selectedAccount.id}</Text> : null}
+          </View>
+
+          <View style={styles.panel}>
+            <Text style={styles.sectionTitle}>Boost Defaults</Text>
+            <Text style={styles.label}>WhatsApp number</Text>
+            <TextInput
+              style={styles.input}
+              value={rule.whatsappNumber ?? ''}
+              onChangeText={value => updateRule({ whatsappNumber: value })}
+              keyboardType="phone-pad"
+              placeholder={isShecareAccount ? '+447463010235' : 'Enter client WhatsApp number'}
+              placeholderTextColor={colors.subtext}
+            />
+
+            <Text style={styles.label}>Daily budget USD</Text>
+            <TextInput
+              style={styles.input}
+              value={String(budgetUsdFromRule(rule))}
+              onChangeText={value => updateRule({ dailyBudgetUsd: parseUsdBudget(value) })}
+              keyboardType="decimal-pad"
+              placeholder="5.00"
+              placeholderTextColor={colors.subtext}
+            />
+
+            <Text style={styles.label}>Duration hours</Text>
+            <TextInput
+              style={styles.input}
+              value={String(rule.durationHours ?? '')}
+              onChangeText={value => updateRule({ durationHours: Number(value.replace(/[^\d]/g, '')) || 1 })}
+              keyboardType="number-pad"
+              placeholder="24"
+              placeholderTextColor={colors.subtext}
+            />
+            <View style={styles.segment}>
+              {(['PAUSED', 'ACTIVE'] as const).map(status => (
+                <TouchableOpacity
+                  key={status}
+                  style={[styles.segmentButton, rule.statusOnCreate === status && styles.segmentButtonActive]}
+                  onPress={() => updateRule({ statusOnCreate: status })}
+                >
+                  <Text style={[styles.segmentText, rule.statusOnCreate === status && styles.segmentTextActive]}>
+                    {status === 'PAUSED' ? 'Create paused' : 'Create active'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <TouchableOpacity style={[styles.saveButton, saving && styles.disabled]} onPress={handleSave} disabled={saving}>
+            <Ionicons name="save-outline" size={18} color="#ffffff" />
+            <Text style={styles.saveText}>{saving ? 'Saving...' : 'Save Boost Settings'}</Text>
+          </TouchableOpacity>
+
+          <View style={styles.panel}>
+            <Text style={styles.sectionTitle}>Manual Boost</Text>
+            <Text style={styles.label}>Facebook post ID</Text>
+            <TextInput
+              style={styles.input}
+              value={manualPostId}
+              onChangeText={setManualPostId}
+              placeholder="page_post_id or post id"
+              placeholderTextColor={colors.subtext}
+              autoCapitalize="none"
+            />
+            <Text style={styles.label}>Ad caption</Text>
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              value={manualCaption}
+              onChangeText={setManualCaption}
+              placeholder="Warm ad caption for this boost"
+              placeholderTextColor={colors.subtext}
+              multiline
+            />
+            <TouchableOpacity style={[styles.saveButton, boosting && styles.disabled]} onPress={handleManualBoost} disabled={boosting}>
+              <Ionicons name="megaphone-outline" size={18} color="#ffffff" />
+              <Text style={styles.saveText}>{boosting ? 'Creating…' : 'Send draft for approval'}</Text>
+            </TouchableOpacity>
+          </View>
+
+        </>}
+      </>}
+
+      {tab === 'approvals' && <>
+        <View style={styles.panel}>
+          <View style={styles.headerRow}>
+            <Text style={styles.sectionTitle}>Pending approvals</Text>
+            <RefreshButton loading={approvalsLoading} onPress={() => void loadApprovals()} />
+          </View>
+          {approvalsError ? <Text accessibilityRole="alert" style={styles.warning}>{approvalsError}</Text> : null}
+          {pendingApprovals.length ? pendingApprovals.map(item => (
+            <View key={item.id} style={styles.approvalCard}>
+              <View style={styles.flexCopy}>
+                <Text style={styles.accountName}>{item.action.replace(/_/g, ' ')}</Text>
+                <Text style={styles.helper}>{item.payload?.adId || item.payload?.postId || item.payload?.adSetId || 'Dotti Ads request'} · {item.source}</Text>
+                {item.payload?.dailyBudgetUsd ? <Text style={styles.helper}>Budget: ${Number(item.payload.dailyBudgetUsd).toFixed(2)}/day</Text> : null}
+              </View>
+              <View style={styles.approvalActions}>
+                <TouchableOpacity style={styles.rejectButton} disabled={approvalBusy === item.id} onPress={() => void handleApproval(item.id, 'reject')}>
+                  <Text style={styles.rejectText}>Reject</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.approveButton} disabled={approvalBusy === item.id} onPress={() => void handleApproval(item.id, 'approve')}>
+                  <Text style={styles.saveText}>{approvalBusy === item.id ? 'Working...' : 'Approve'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )) : approvalsLoading || approvalsError ? null : <Text style={styles.helper}>No actions are waiting for approval.</Text>}
+        </View>
+
+        <View style={styles.panel}>
+          <Text style={styles.sectionTitle}>Ads Activity Log</Text>
+          {audit.length ? audit.slice(0, 20).map(entry => (
+            <View key={entry.id} style={styles.runRow}>
+              <View style={styles.flexCopy}>
+                <Text style={styles.accountName}>{entry.action.replace(/_/g, ' ')}</Text>
+                <Text style={styles.helper}>{entry.createdAt ? new Date(entry.createdAt).toLocaleString() : 'Just now'}</Text>
+              </View>
+              <Text style={[styles.auditStatus, entry.status === 'completed' || entry.status === 'success' ? styles.auditSuccess : null]}>{entry.status}</Text>
+            </View>
+          )) : <Text style={styles.helper}>No controlled ad actions recorded yet.</Text>}
+        </View>
+      </>}
     </ScrollView>
   );
 };
 
+const RefreshButton = ({ loading, onPress }: { loading: boolean; onPress: () => void }) => (
+  <TouchableOpacity accessibilityLabel="Refresh" accessibilityRole="button" accessibilityState={{ busy: loading }}
+    style={styles.iconButton} onPress={onPress} disabled={loading}>
+    {loading ? <ActivityIndicator size="small" color={colors.accent} />
+      : <Ionicons name="refresh-outline" size={20} color={colors.text} />}
+  </TouchableOpacity>
+);
+
+const channelFilters = [
+  { key: 'all', label: 'All ads' },
+  { key: 'facebook', label: 'Facebook' },
+  { key: 'instagram', label: 'Instagram' },
+] as const;
+type ChannelFilter = typeof channelFilters[number]['key'];
+
+const adStatusLabels: Record<string, string> = {
+  ACTIVE: 'Active',
+  SCHEDULED: 'Scheduled',
+  COMPLETED: 'Ended',
+  CAMPAIGN_PAUSED: 'Campaign paused',
+  ADSET_PAUSED: 'Ad set paused',
+  IN_PROCESS: 'Processing',
+  PENDING_REVIEW: 'In review',
+  PENDING_BILLING_INFO: 'Billing required',
+  DISAPPROVED: 'Disapproved',
+  WITH_ISSUES: 'Needs attention',
+};
+
+const adStatus = (row: AdPerformanceRow) => {
+  const status = (row.effectiveStatus || row.status)?.toUpperCase();
+  return status ? adStatusLabels[status] ?? status.toLowerCase().replace(/_/g, ' ') : 'Status unavailable';
+};
+
+const formatCount = (value: number) => value.toLocaleString();
+const formatSpend = (value: number, currency: AdPerformance['currency']) =>
+  currency && /^[A-Z]{3}$/.test(currency)
+    ? value.toLocaleString(undefined, { style: 'currency', currency, currencyDisplay: 'code' })
+    : '—';
+
+function reportDate(date: string, year = false) {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, {
+    month: 'short', day: 'numeric', year: year ? 'numeric' : undefined, timeZone: 'UTC',
+  });
+}
+
+const AdsPerformancePanel = ({ onSetup }: { onSetup: () => void }) => {
+  const [report, setReport] = useState<AdPerformance | null>(null);
+  const [accountId, setAccountId] = useState<string>();
+  const [channel, setChannel] = useState<ChannelFilter>('all');
+  const [loading, setLoading] = useState(true);
+  const [refreshError, setRefreshError] = useState(false);
+  const request = useRef(0);
+
+  const load = useCallback(async (id?: string) => {
+    const currentRequest = ++request.current;
+    setLoading(true);
+    setRefreshError(false);
+    try {
+      const { performance } = await fetchAdPerformance(30, id);
+      if (currentRequest === request.current) setReport(performance);
+    } catch {
+      if (currentRequest === request.current) setRefreshError(true);
+    } finally {
+      if (currentRequest === request.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load(accountId);
+    return () => { request.current += 1; };
+  }, [accountId, load]);
+
+  const reportDisplay = report && (!accountId || report.accountId === accountId) ? report : null;
+  const accounts = report?.availableAccounts ?? [];
+  const dateRange = reportDisplay?.dateRange;
+  const summary = reportDisplay?.summary;
+  const reported = reportDisplay?.reportingStatus === 'reported';
+  const rows = reportDisplay?.rows ?? [];
+  const selectableChannels = channelFilters.filter(filter =>
+    filter.key === 'all' || rows.some(row => row.platform === filter.key));
+  const visibleChannel = selectableChannels.some(filter => filter.key === channel) ? channel : 'all';
+  const visibleRows = rows.filter(row => row.adId && (visibleChannel === 'all' || row.platform === visibleChannel))
+    .sort((left, right) => {
+      const priority = (row: AdPerformanceRow) => row.effectiveStatus === 'ACTIVE' ? 2 : row.effectiveStatus === 'SCHEDULED' ? 1 : 0;
+      return priority(right) - priority(left) || (Date.parse(right.startsAt ?? right.createdAt ?? '') || 0) - (Date.parse(left.startsAt ?? left.createdAt ?? '') || 0);
+    });
+  const metaAccountId = /^act_(\d+)$/.exec(reportDisplay?.accountId ?? '')?.[1];
+  const connectionStatus = report?.connectionStatus;
+  const metrics = summary ? [
+    { label: 'Spend', value: formatSpend(summary.spend, reportDisplay?.currency ?? null) },
+    { label: 'Impressions', value: formatCount(summary.impressions) },
+    { label: 'Reach', value: formatCount(summary.reach) },
+    { label: 'Link clicks', value: formatCount(summary.inlineLinkClicks) },
+    { label: 'Clicks (all)', value: formatCount(summary.clicks) },
+    { label: 'All-click CTR', value: `${summary.ctr.toFixed(2)}%` },
+  ] : [];
+
+  return <>
+    <View style={[styles.panel, styles.reportPanel]}>
+      <View style={styles.headerRow}>
+        <View style={styles.flexCopy}>
+          <Text style={styles.sectionTitle}>{reportDisplay?.accountName || 'Meta ad performance'}</Text>
+          <Text style={styles.helper}>{dateRange
+            ? `${reportDate(dateRange.since)} – ${reportDate(dateRange.until, true)} · 30 days`
+            : 'Last 30 days'}</Text>
+        </View>
+        <RefreshButton loading={loading} onPress={() => void load(accountId)} />
+      </View>
+
+      {accounts.length > 1 || (connectionStatus === 'choose_account' && accounts.length > 0) ? (
+        <View style={styles.filterRow}>
+          {accounts.map(account => (
+            <TouchableOpacity key={account.id} accessibilityRole="button" style={[
+              styles.platformChip, reportDisplay?.accountId === account.id && styles.platformChipActive,
+            ]} accessibilityState={{ selected: reportDisplay?.accountId === account.id }}
+              onPress={() => { setChannel('all'); setAccountId(account.id); }}>
+              <Text style={[styles.platformChipText, reportDisplay?.accountId === account.id && styles.platformChipTextActive]}>
+                {account.name || account.id}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
+
+      {refreshError ? <Text accessibilityRole="alert" style={styles.warning}>{reportDisplay
+        ? 'Refresh failed. Showing the most recent results loaded.' : 'Could not load Meta results. Try refreshing.'}</Text> : null}
+      {loading && !reportDisplay ? <Text style={styles.helper}>Checking Meta…</Text> : null}
+      {connectionStatus === 'not_connected' ? (
+        <TouchableOpacity accessibilityRole="button" style={styles.secondaryButton} onPress={onSetup}>
+          <Text style={styles.accountName}>Connect a Meta ad account</Text>
+          <Ionicons name="arrow-forward-outline" size={16} color={colors.text} />
+        </TouchableOpacity>
+      ) : null}
+      {!loading && connectionStatus === 'choose_account' ? <Text style={styles.helper}>Choose the ad account you want to view.</Text> : null}
+      {!loading && connectionStatus === 'unavailable' ? <Text style={styles.warning}>Meta ad accounts are unavailable. Check your connection in Ad setup.</Text> : null}
+
+      {metaAccountId && (
+        <>
+          <View style={styles.metricsGrid}>
+            {metrics.map(metric => (
+              <View key={metric.label} style={styles.metricBox}>
+                <Text style={styles.helper}>{metric.label}</Text>
+                <Text style={styles.metricValue}>{reported ? metric.value : '—'}</Text>
+              </View>
+            ))}
+          </View>
+          {reportDisplay?.reportingStatus === 'pending' ?
+            <Text style={styles.helper}>Meta has no delivery results for this period yet.</Text> : null}
+          {reportDisplay?.reportingStatus === 'unavailable' ?
+            <Text style={styles.warning}>Meta delivery results are temporarily unavailable.</Text> : null}
+          <View style={styles.reportFooter}>
+            <Text style={styles.helper}>{reportDisplay?.generatedAt && `Checked ${new Date(reportDisplay.generatedAt).toLocaleString()}`}</Text>
+            <TouchableOpacity accessibilityRole="link" style={styles.secondaryButton} onPress={() => {
+              void Linking.openURL(`https://adsmanager.facebook.com/adsmanager/manage/ads?act=${metaAccountId}`)
+                .catch(() => Alert.alert('Ads Manager', 'Could not open Meta Ads Manager.'));
+            }}>
+              <Text style={styles.accountName}>Open Meta Ads Manager</Text>
+              <Ionicons name="open-outline" size={16} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
+    </View>
+
+    {metaAccountId && (
+      <View style={styles.panel}>
+        <View>
+          <Text style={styles.sectionTitle}>Recent ads</Text>
+          <Text style={styles.helper}>Delivery is measured by impressions reported by Meta.</Text>
+        </View>
+        {selectableChannels.length > 1 ? (
+          <View style={styles.filterRow}>
+            {selectableChannels.map(filter => (
+              <TouchableOpacity key={filter.key} accessibilityRole="button"
+                accessibilityState={{ selected: visibleChannel === filter.key }}
+                style={[styles.platformChip, visibleChannel === filter.key && styles.platformChipActive]}
+                onPress={() => setChannel(filter.key)}>
+                <Text style={[styles.platformChipText, visibleChannel === filter.key && styles.platformChipTextActive]}>{filter.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
+        {reportDisplay?.adStatusesAvailable === false ?
+          <Text style={styles.warning}>Some ad statuses are unavailable.</Text> : null}
+        {visibleRows.map(row => {
+          const channelLabel = channelFilters.find(filter => filter.key !== 'all' && filter.key === row.platform)?.label;
+          const isReported = row.reportingStatus === 'reported';
+          return (
+            <View key={row.id} style={styles.adCard}>
+              <View style={styles.headerRow}>
+                <View style={styles.flexCopy}>
+                  <Text style={styles.accountName}>{row.name?.replace(/\s*•\s*(facebook|instagram)$/i, '') || channelLabel || `Ad ${row.adId}`}</Text>
+                  {channelLabel || row.startsAt || row.createdAt ? <Text style={styles.helper}>{[
+                    channelLabel,
+                    row.startsAt || row.createdAt
+                      ? new Date((row.startsAt || row.createdAt) as string).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                      : null,
+                  ].filter(Boolean).join(' · ')}</Text> : null}
+                </View>
+                <View style={[styles.statusBadge, row.effectiveStatus === 'ACTIVE' && styles.statusBadgeActive]}>
+                  <Text style={styles.statusBadgeText}>{adStatus(row)}</Text>
+                </View>
+              </View>
+              {isReported ? (
+                <View style={styles.adMetrics}>
+                  <Text style={styles.helper}><Text style={styles.accountName}>{formatCount(row.impressions)}</Text> impressions</Text>
+                  <Text style={styles.helper}><Text style={styles.accountName}>{formatCount(row.inlineLinkClicks)}</Text> link clicks</Text>
+                  <Text style={styles.helper}><Text style={styles.accountName}>{formatSpend(row.spend, reportDisplay?.currency ?? null)}</Text> spent</Text>
+                </View>
+              ) : <Text style={styles.helper}>{row.reportingStatus === 'pending' ? 'Awaiting delivery data' : 'Delivery data unavailable'}</Text>}
+            </View>
+          );
+        })}
+        {!visibleRows.length && reportDisplay?.adStatusesAvailable !== false ? <Text style={styles.helper}>No ads to show.</Text> : null}
+      </View>
+    )}
+  </>;
+};
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 16, gap: 14 },
-  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
+  content: { width: '100%', maxWidth: 1080, alignSelf: 'center', padding: 16, gap: 16, paddingBottom: 32 },
+  heading: { paddingVertical: 8 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   flexCopy: { flex: 1, minWidth: 0 },
   title: { color: colors.text, fontSize: 24, fontWeight: '700' },
@@ -618,8 +841,14 @@ const styles = StyleSheet.create({
   statusBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.cardOverlay, borderWidth: 1, borderColor: colors.border },
   statusBadgeActive: { borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.12)' },
   statusBadgeText: { color: colors.text, fontSize: 10, fontWeight: '800' },
-  connectionGrid: { flexDirection: 'row', gap: 10 },
-  metricBox: { flex: 1, borderRadius: 8, padding: 12, backgroundColor: colors.cardOverlay, borderWidth: 1, borderColor: colors.border },
+  metricBox: { flexBasis: '28%', minWidth: 120, flexGrow: 1, borderRadius: 10, padding: 12, gap: 6, backgroundColor: colors.cardOverlay, borderWidth: 1, borderColor: colors.border },
+  reportPanel: { gap: 16, borderColor: colors.cardBorderStart },
+  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  reportFooter: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  secondaryButton: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 9, borderRadius: 8, borderWidth: 1, borderColor: colors.border },
+  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  adCard: { backgroundColor: colors.cardOverlay, padding: 12, borderRadius: 10, gap: 8 },
+  adMetrics: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 20, rowGap: 4 },
   metricValue: { color: colors.text, fontSize: 20, fontWeight: '800', marginBottom: 2 },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   segment: { flexDirection: 'row', borderWidth: 1, borderColor: colors.border, borderRadius: 8, overflow: 'hidden' },
