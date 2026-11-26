@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Linking, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DMButton } from '@components/DMButton';
 import { DMCard } from '@components/DMCard';
@@ -15,6 +15,14 @@ import {
   fetchFinancialLedger,
   fetchBillingPlans,
   startPlanCheckout,
+  checkMtnCheckout,
+  fetchCurrentMtnPayment,
+  fetchMtnQuote,
+  getMtnMode,
+  startMtnCheckout,
+  type MtnMode,
+  type MtnPayment,
+  type MtnQuote,
 } from '@services/billing';
 
 const formatPrice = (cents: number | null) => {
@@ -70,8 +78,92 @@ export const SubscriptionScreen: React.FC = () => {
   const [overview, setOverview] = useState<BillingOverview | null>(null);
   const [allocations, setAllocations] = useState<FinancialAllocation[]>([]);
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'flutterwave_mobile_money'>('stripe');
+  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'flutterwave_mobile_money' | 'mtn_momo'>('stripe');
   const [mobileMoneyPhone, setMobileMoneyPhone] = useState('');
+
+  const scroll = useRef<ScrollView>(null);
+  const [mtnMode, setMtnMode] = useState<MtnMode | null>(null);
+  const [mtnQuote, setMtnQuote] = useState<MtnQuote | null>(null);
+  const [mtnPayment, setMtnPayment] = useState<MtnPayment | null>(null);
+  const [checkingMtn, setCheckingMtn] = useState(false);
+  const [mtnError, setMtnError] = useState('');
+  const pendingMtnId = mtnPayment?.state === 'pending' ? mtnPayment.id : null;
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !state.user?.uid) return;
+    let active = true;
+    setMtnMode(null);
+    setMtnQuote(null);
+    setMtnPayment(null);
+    void getMtnMode().then(async ({ mode }) => {
+      if (!active) return;
+      setMtnMode(mode);
+      if (!mode) return;
+      const { payment } = await fetchCurrentMtnPayment();
+      if (active && payment) setMtnPayment(current => current ?? payment);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [state.user?.uid]);
+
+  useEffect(() => {
+    if (!pendingMtnId) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const { payment } = await checkMtnCheckout(pendingMtnId);
+        if (!active) return;
+        setMtnPayment(payment);
+        setMtnError('');
+        if (payment.state !== 'pending') return;
+      } catch {
+        if (!active) return;
+      }
+      timer = setTimeout(poll, 15_000);
+    };
+    timer = setTimeout(poll, 8_000);
+    return () => { active = false; clearTimeout(timer); };
+  }, [pendingMtnId]);
+
+  useEffect(() => {
+    if (mtnPayment?.state !== 'successful' || mtnPayment.mode !== 'production') return;
+    let active = true;
+    void fetchBillingOverview().then(value => {
+      if (active) setOverview(value);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [mtnPayment?.state, mtnPayment?.mode]);
+
+  const confirmMtnCheckout = async (quote: MtnQuote) => {
+    if (!mobileMoneyPhone.trim()) {
+      setMtnError(t('Enter your MoMo number to continue.'));
+      return;
+    }
+    setLoadingPlan(quote.planId);
+    setMtnError('');
+    try {
+      const { payment } = await startMtnCheckout(quote, mobileMoneyPhone.trim());
+      setMtnPayment(payment);
+      setMtnQuote(null);
+    } catch (error) {
+      setMtnError(error instanceof Error ? error.message : t('Please try again.'));
+    } finally {
+      setLoadingPlan(null);
+    }
+  };
+
+  const refreshMtnCheckout = async (id: string) => {
+    setCheckingMtn(true);
+    setMtnError('');
+    try {
+      const { payment } = await checkMtnCheckout(id);
+      setMtnPayment(payment);
+    } catch (error) {
+      setMtnError(error instanceof Error ? error.message : t('Please try again.'));
+    } finally {
+      setCheckingMtn(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -110,12 +202,29 @@ export const SubscriptionScreen: React.FC = () => {
       }
       return;
     }
-    if (plan.id === currentPlanId) {
+    if (plan.id === currentPlanId && !(paymentMethod === 'mtn_momo' && mtnMode === 'sandbox')) {
       Alert.alert(t('Current plan'), t('You are already on this plan.'));
       return;
     }
     if (plan.id === 'enterprise' || plan.priceMonthlyCents === null) {
       Alert.alert(t('Enterprise'), t('Contact Dott Media for a custom contract.'));
+      return;
+    }
+    if (paymentMethod === 'mtn_momo') {
+      setMtnError('');
+      if (mtnPayment?.state === 'pending' || mtnPayment?.state === 'review') {
+        setMtnError(t('Check your current MTN MoMo payment before starting another.'));
+        return;
+      }
+      setLoadingPlan(plan.id);
+      try {
+        setMtnQuote(await fetchMtnQuote(plan.id));
+        scroll.current?.scrollTo({ y: 0, animated: true });
+      } catch (error) {
+        setMtnError(error instanceof Error ? error.message : t('Please try again.'));
+      } finally {
+        setLoadingPlan(null);
+      }
       return;
     }
     const usingMobileMoney = paymentMethod === 'flutterwave_mobile_money';
@@ -162,7 +271,7 @@ export const SubscriptionScreen: React.FC = () => {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView ref={scroll} style={styles.container} contentContainerStyle={styles.content}>
       <LinearGradient colors={[colors.accent, colors.accentSecondary]} style={styles.hero}>
         <Text style={styles.badge}>{t('Packages')}</Text>
         <Text style={styles.title}>{t('Dott Media Packaging')}</Text>
@@ -171,7 +280,7 @@ export const SubscriptionScreen: React.FC = () => {
         </Text>
       </LinearGradient>
 
-      {state.subscriptionStatus === 'active' ? (
+      {state.subscriptionStatus === 'active' || (state.user && mtnMode) ? (
       <DMCard title={t('Payment method')} subtitle={t('Choose how you want to pay for a paid package.')}>
         <View style={styles.paymentMethodRow}>
           <TouchableOpacity
@@ -190,6 +299,16 @@ export const SubscriptionScreen: React.FC = () => {
             <Text style={styles.paymentMethodTitle}>{t('Mobile money')}</Text>
             <Text style={styles.paymentMethodSubtitle}>{t('MTN or Airtel')}</Text>
           </TouchableOpacity>
+          {mtnMode ? (
+            <TouchableOpacity
+              style={[styles.paymentMethodOption, paymentMethod === 'mtn_momo' && styles.paymentMethodOptionActive]}
+              onPress={() => { setPaymentMethod('mtn_momo'); setMtnError(''); }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.paymentMethodTitle}>{t('MTN MoMo')}</Text>
+              <Text style={styles.paymentMethodSubtitle}>{mtnMode === 'sandbox' ? t('Sandbox test') : t('Uganda')}</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
         {paymentMethod === 'flutterwave_mobile_money' ? (
           <DMTextInput
@@ -200,6 +319,52 @@ export const SubscriptionScreen: React.FC = () => {
             placeholder="+256..."
             helperText={t('Flutterwave will send the mobile money approval prompt.')}
           />
+        ) : null}
+        {paymentMethod === 'mtn_momo' && mtnMode ? (
+          <View style={styles.mtnFlow}>
+            <DMTextInput
+              label={t('MTN MoMo number')}
+              value={mobileMoneyPhone}
+              onChangeText={setMobileMoneyPhone}
+              keyboardType="phone-pad"
+              placeholder={mtnMode === 'sandbox' ? '46733123999' : '+256…'}
+              helperText={mtnMode === 'sandbox' ? t('MTN uses a simulated EUR 1 payment in this test. The UGX price is a preview.')
+                : t('Review the UGX price before sending a payment prompt to your phone.')}
+            />
+            {mtnQuote ? (
+              <View style={styles.mtnFlow}>
+                <Text style={styles.currentPlan}>{mtnQuote.planName} · UGX {mtnQuote.amountUgx.toLocaleString('en-UG')}</Text>
+                <Text style={styles.setupNote}>{t('One-time payment for 30 days. Renew manually when your plan ends.')}</Text>
+                <DMButton title={t(mtnMode === 'sandbox' ? 'Confirm sandbox test' : 'Send MTN payment prompt')}
+                  onPress={() => void confirmMtnCheckout(mtnQuote)} disabled={loadingPlan !== null}
+                  loading={loadingPlan === mtnQuote.planId} />
+                <TouchableOpacity onPress={() => setMtnQuote(null)} disabled={loadingPlan !== null}>
+                  <Text style={styles.paymentMethodSubtitle}>{t('Cancel quote')}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+            {mtnPayment && !mtnQuote ? (
+              <View style={styles.mtnFlow}>
+                <Text style={styles.currentPlan}>{mtnPayment.planName} · UGX {mtnPayment.amountUgx.toLocaleString('en-UG')}</Text>
+                <Text accessibilityLiveRegion="polite" style={styles.setupNote}>
+                  {mtnPayment.state === 'pending'
+                    ? t(mtnPayment.submission === 'accepted' ? 'Waiting for MTN to confirm payment.' : 'MTN has yet to confirm receipt of the request. Check the status before retrying.')
+                    : mtnPayment.state === 'successful'
+                      ? t(mtnPayment.mode === 'sandbox' ? 'Sandbox payment confirmed. Your plan is unchanged.' : 'Payment confirmed. Your plan is active.')
+                      : t(mtnPayment.state === 'failed' ? 'MTN did not complete the payment.' : 'This payment needs review. Contact Dotti support before paying again.')}
+                </Text>
+                {mtnPayment.state === 'pending' ? (
+                  <DMButton title={t('Check payment status')} onPress={() => void refreshMtnCheckout(mtnPayment.id)}
+                    disabled={checkingMtn || loadingPlan !== null} loading={checkingMtn} />
+                ) : null}
+                {mtnPayment.state === 'pending' && mtnPayment.submission === 'uncertain' ? (
+                  <DMButton title={t('Retry same payment request')} onPress={() => void confirmMtnCheckout(mtnPayment)}
+                    disabled={loadingPlan !== null || checkingMtn} loading={loadingPlan === mtnPayment.planId} />
+                ) : null}
+              </View>
+            ) : null}
+            {mtnError ? <Text accessibilityRole="alert" style={styles.setupNote}>{mtnError}</Text> : null}
+          </View>
         ) : null}
       </DMCard>
       ) : null}
@@ -223,7 +388,8 @@ export const SubscriptionScreen: React.FC = () => {
 
       <View style={styles.planGrid}>
         {plans.filter(plan => visiblePlanIds.has(plan.id)).map(plan => {
-          const isCurrentPlan = plan.id === currentPlanId && (plan.id !== 'free' || state.subscriptionStatus === 'active');
+          const isCurrentPlan = plan.id === currentPlanId && (plan.id !== 'free' || state.subscriptionStatus === 'active')
+            && !(plan.id !== 'free' && paymentMethod === 'mtn_momo' && mtnMode === 'sandbox');
           return (
           <DMCard
             key={plan.id}
@@ -240,7 +406,7 @@ export const SubscriptionScreen: React.FC = () => {
               title={
                 isCurrentPlan
                   ? t('Current plan')
-                  : t(plan.priceMonthlyCents === 0 ? 'Continue with Free' : paymentMethod === 'flutterwave_mobile_money' ? 'Pay mobile money' : 'Pay by card')
+                  : t(plan.priceMonthlyCents === 0 ? 'Continue with Free' : paymentMethod === 'flutterwave_mobile_money' ? 'Pay mobile money' : paymentMethod === 'mtn_momo' ? 'Review UGX quote' : 'Pay by card')
               }
               onPress={() => handleCheckout(plan)}
               loading={loadingPlan === plan.id}
@@ -303,6 +469,7 @@ export const SubscriptionScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  mtnFlow: { gap: 10 },
   container: {
     flex: 1,
     backgroundColor: colors.background

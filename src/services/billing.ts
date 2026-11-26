@@ -82,3 +82,35 @@ export const fetchFinancialLedger = async (): Promise<FinancialAllocation[]> => 
   const payload = await billingFetch('/api/billing/financial-ledger');
   return payload.allocations ?? [];
 };
+
+export type MtnMode = 'sandbox' | 'production';
+
+export type MtnQuote = {
+  planId: string;
+  planName: string;
+  mode: MtnMode;
+  amountUgx: number;
+};
+
+export type MtnPayment = MtnQuote & {
+  id: string;
+  state: 'pending' | 'failed' | 'successful' | 'review';
+  submission: 'uncertain' | 'accepted';
+};
+
+const mtnPath = '/api/billing/payments/mtn';
+
+export const getMtnMode = (): Promise<{ mode: MtnMode | null }> =>
+  billingFetch(mtnPath + '/config');
+
+export const fetchMtnQuote = (plan: string): Promise<MtnQuote> =>
+  billingFetch(mtnPath + '/quote?plan=' + encodeURIComponent(plan));
+
+export const fetchCurrentMtnPayment = (): Promise<{ payment: MtnPayment | null }> =>
+  billingFetch(mtnPath + '/current');
+
+export const startMtnCheckout = (quote: MtnQuote, phone: string): Promise<{ payment: MtnPayment }> =>
+  billingFetch(mtnPath + '/checkout', { method: 'POST', body: JSON.stringify({ ...quote, phone }) });
+
+export const checkMtnCheckout = (id: string): Promise<{ payment: MtnPayment }> =>
+  billingFetch(mtnPath + '/' + encodeURIComponent(id) + '/check', { method: 'POST' });

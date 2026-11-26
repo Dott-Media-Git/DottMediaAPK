@@ -166,21 +166,22 @@ const calculateAllocation = (planValue: string, grossRevenueCents: number) => {
   };
 };
 
-export async function recordFinancialAllocation(input: {
+type FinancialAllocationInput = {
   scope: BillingScope;
   plan: string;
   amountPaidCents: number;
   currency?: string | null;
-  provider?: 'stripe' | 'flutterwave';
+  provider?: 'stripe' | 'flutterwave' | 'mtn_momo';
   stripeInvoiceId?: string | null;
   stripeSubscriptionId?: string | null;
   stripeCustomerId?: string | null;
   stripeChargeId?: string | null;
   providerPayment?: Record<string, unknown> | null;
-}) {
+};
+
+export function buildFinancialAllocationRecord(input: FinancialAllocationInput) {
   const allocation = calculateAllocation(input.plan, input.amountPaidCents);
-  const docId = input.stripeInvoiceId || `${input.scope.orgId}_${Date.now()}`;
-  const payload = {
+  return {
     orgId: input.scope.orgId,
     userId: input.scope.userId,
     planId: allocation.plan.id,
@@ -195,7 +196,8 @@ export async function recordFinancialAllocation(input: {
     providerPaymentMode: 'external_provider_billing',
     providerPaymentNote:
       'OpenAI, hosting, database, CDN, observability, and queue providers charge their own billing accounts. This ledger records the reserve that should be kept from Stripe revenue for those invoices.',
-    profitDestination: process.env.STRIPE_PROFIT_PAYOUT_LABEL || 'Stripe default payout bank account',
+    profitDestination: input.provider === 'mtn_momo' ? 'MTN MoMo merchant account'
+      : process.env.STRIPE_PROFIT_PAYOUT_LABEL || 'Stripe default payout bank account',
     stripe: {
       invoiceId: input.stripeInvoiceId ?? null,
       subscriptionId: input.stripeSubscriptionId ?? null,
@@ -206,6 +208,11 @@ export async function recordFinancialAllocation(input: {
     providerPayment: input.providerPayment ?? null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+}
+
+export async function recordFinancialAllocation(input: FinancialAllocationInput) {
+  const payload = buildFinancialAllocationRecord(input);
+  const docId = input.stripeInvoiceId || `${input.scope.orgId}_${Date.now()}`;
   await financialLedgerCollection.doc(docId).set(payload, { merge: true });
   return payload;
 }

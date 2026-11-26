@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { Router } from 'express';
 import createHttpError from 'http-errors';
 import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
@@ -12,7 +13,58 @@ import {
 } from '../services/billing/billingService';
 import { UsageResource } from '../services/billing/planCatalog';
 
+import {
+  createMtnQuote, currentMtnPayment, mtnCheckoutMode, startMtnPayment, checkMtnPayment,
+} from '../services/billing/mtnMomoCheckout';
+
 const router = Router();
+
+const mtnPaths = '/billing/payments/mtn';
+
+const mtnBody = z.object({
+  planId: z.enum(['creator', 'agency']),
+  mode: z.enum(['sandbox', 'production']),
+  amountUgx: z.number().int().positive().safe(),
+  phone: z.string().min(1).max(40),
+});
+
+router.use(mtnPaths, requireFirebase, (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
+router.get(mtnPaths + '/config', (req, res) => {
+  res.json({ mode: mtnCheckoutMode((req as AuthedRequest).authUser!.uid) });
+});
+
+router.get(mtnPaths + '/quote', (req, res, next) => {
+  try {
+    const planId = req.query.plan;
+    if (typeof planId !== 'string') throw createHttpError(400, 'Choose a plan.');
+    res.json(createMtnQuote((req as AuthedRequest).authUser!.uid, planId));
+  } catch (error) { next(error); }
+});
+
+router.get(mtnPaths + '/current', async (req, res, next) => {
+  try {
+    res.json({ payment: await currentMtnPayment((req as AuthedRequest).authUser!.uid) });
+  } catch (error) { next(error); }
+});
+
+router.post(mtnPaths + '/checkout', async (req, res, next) => {
+  try {
+    const request = mtnBody.safeParse(req.body);
+    if (!request.success) throw createHttpError(400, 'A valid plan, quote and mobile number are required.');
+    res.json({ payment: await startMtnPayment((req as AuthedRequest).authUser!.uid, request.data) });
+  } catch (error) { next(error); }
+});
+
+router.post(mtnPaths + '/:id/check', async (req, res, next) => {
+  try {
+    if (!z.string().uuid().safeParse(req.params.id).success) throw createHttpError(404, 'MTN MoMo payment not found.');
+    res.json({ payment: await checkMtnPayment((req as AuthedRequest).authUser!.uid, req.params.id) });
+  } catch (error) { next(error); }
+});
 
 const getScope = (req: AuthedRequest) => {
   const user = req.authUser;
