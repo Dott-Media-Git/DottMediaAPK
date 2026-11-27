@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Router } from 'express';
 import createHttpError from 'http-errors';
-import { requireFirebase, AuthedRequest } from '../middleware/firebaseAuth';
+import { requireFirebase, requireFirebaseStrict, AuthedRequest } from '../middleware/firebaseAuth';
 import {
   createCheckoutSession,
   getBillingOverview,
@@ -10,6 +10,7 @@ import {
   consumeUsage,
   listFinancialAllocations,
   applyFlutterwavePayment,
+  isFirestoreResourceExhausted,
 } from '../services/billing/billingService';
 import { UsageResource } from '../services/billing/planCatalog';
 
@@ -28,7 +29,11 @@ const mtnBody = z.object({
   phone: z.string().min(1).max(40),
 });
 
-router.use(mtnPaths, requireFirebase, (_req, res, next) => {
+const mtnStorageError = (error: unknown) => isFirestoreResourceExhausted(error)
+  ? createHttpError(503, 'Payment storage is temporarily unavailable. Check your current payment before trying again.')
+  : error;
+
+router.use(mtnPaths, requireFirebaseStrict, (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   next();
 });
@@ -48,7 +53,7 @@ router.get(mtnPaths + '/quote', (req, res, next) => {
 router.get(mtnPaths + '/current', async (req, res, next) => {
   try {
     res.json({ payment: await currentMtnPayment((req as AuthedRequest).authUser!.uid) });
-  } catch (error) { next(error); }
+  } catch (error) { next(mtnStorageError(error)); }
 });
 
 router.post(mtnPaths + '/checkout', async (req, res, next) => {
@@ -56,7 +61,7 @@ router.post(mtnPaths + '/checkout', async (req, res, next) => {
     const request = mtnBody.safeParse(req.body);
     if (!request.success) throw createHttpError(400, 'A valid plan, quote and mobile number are required.');
     res.json({ payment: await startMtnPayment((req as AuthedRequest).authUser!.uid, request.data) });
-  } catch (error) { next(error); }
+  } catch (error) { next(mtnStorageError(error)); }
 });
 
 router.post(mtnPaths + '/:id/check', async (req, res, next) => {

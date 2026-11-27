@@ -33,10 +33,13 @@ export function mtnConfig(env = process.env): MtnConfig | null {
 
 export function normalizeMtnPayer(input: string, mode: MtnMode) {
   const digits = input.trim().replace(/[\s()-]/g, '').replace(/^\+/, '');
-  if (mode === 'sandbox' && /^46733123\d{3}$/.test(digits)) return digits;
+  if (mode === 'sandbox') {
+    if (/^46733123\d{3}$/.test(digits)) return digits;
+    throw createHttpError(400, 'Use an MTN sandbox test number.');
+  }
   const ugandan = /^0\d{9}$/.test(digits) ? '256' + digits.slice(1) : digits;
   if (!/^2567\d{8}$/.test(ugandan)) {
-    throw createHttpError(400, mode === 'sandbox' ? 'Use an MTN sandbox test number.' : 'Enter a valid Ugandan mobile number.');
+    throw createHttpError(400, 'Enter a valid Ugandan mobile number.');
   }
   return ugandan;
 }

@@ -23,6 +23,7 @@ test('MTN normalizes Ugandan and sandbox test numbers', () => {
   assert.equal(normalizeMtnPayer('0772 123456', 'production'), '256772123456');
   assert.equal(normalizeMtnPayer('+256 772 123 456', 'production'), '256772123456');
   assert.equal(normalizeMtnPayer('46733123451', 'sandbox'), '46733123451');
+  assert.throws(() => normalizeMtnPayer('0772 123456', 'sandbox'), /sandbox test number/);
   assert.throws(() => normalizeMtnPayer('46733123451', 'production'));
 });
 
